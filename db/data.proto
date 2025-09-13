@@ -1,0 +1,268 @@
+syntax = "proto3";
+// protoc --go_out=. --go_opt=paths=source_relative db/data.proto
+package pb;
+
+option go_package = "dex/db;db";
+
+// --------------------- Token & Registry ---------------------
+message Token {
+  string address = 1; // token地址，所有token都是平级，区别是系统token会有代码对它的地址做特殊处理，比如原生代币FB会把地址硬编码到代码里面
+  string symbol = 2; // 例如 "USDT"、"MYT"等
+  string name = 3;   // 例如 "Tether USD"
+  string owner = 4;  // 拥有者地址，可做冻结等管理权限，如果等于 0x0 表示没有拥有者
+  string totalSupply = 5; // 发行总量
+  bool canMint = 6;       // 是否可增发，销毁的话直接打入 0x0 地址即可，查询0x0也可查到被销毁的token数量
+}
+
+message TokenRegistry {
+  map<string, Token> tokens = 1;
+}
+
+// --------------------- 公共字段定义 ---------------------
+message BaseMessage {
+  string tx_id = 1;         // 交易 ID 即hash
+  string from_address = 2;  // 发起者地址
+  uint64 target_height = 3; // 期望执行交易的高度
+  uint64 executed_height = 4; // 实际执行的区块高度
+  string public_key = 5;
+  string signature = 6;     // 签名
+  Status status = 7;
+  uint64 nonce = 8;
+}
+
+// --------------------- 账户 & 区块信息 ---------------------
+message Account {
+  string address = 1; // 账户地址
+  string public_key = 2; // 地址对应的公钥
+  uint64 nonce = 3;   // 账户的操作序号
+  repeated string orders = 4; // 未执行完的 order 状态的 hash 列表
+  map<string, TokenBalance> balances = 5; // key为token地址
+  string receive_votes = 6; // 此账户收到的投票
+  string candidate = 7;     // 被此账户选举的人，一个账户只能同时选举一个人
+  string unclaimed_reward = 8;  // 累计但尚未领取的奖励
+  string last_acc_reward = 9;   // 上次更新时的累积因子
+  bool   is_miner = 10;     // 是否正在参与共识挖矿
+  string ip = 11;
+  uint64 index = 12; // 每个矿工都有唯一的index，用于bitmap
+  string code = 13;    // 为后续合约功能保留字段
+}
+
+message TokenBalance {
+  string balance = 1;       // 可用余额
+  string candidate_locked_balance = 2; // 投票锁定余额
+  string miner_locked_balance = 3; // 共识挖矿锁定余额
+  string liquid_locked_balance = 4; // 流动性挖矿锁定余额
+  string witness_locked_balance = 5; // 见证者挖矿锁定余额
+  string leverage_locked_balance = 6; // 杠杆交易锁定余额
+}
+
+message Block {
+  uint64 height = 1;
+  string txs_hash = 2;
+  string block_hash = 3;
+  string prev_block_hash = 4;
+  string accumulated_reward = 5;// 区块奖励累计因子
+  bytes bit_map = 6; // 矿工在线位图
+  bytes miner_signature = 7;
+  bytes short_txs = 8;
+  string miner = 9;
+  repeated AnyTx body = 10;// 全部交易
+}
+message RewordInfo {
+
+}
+message OrderPriceIndex {// 快速检索到价格区间的订单，与orderTx一并存入
+  bool ok = 1; //占位符,不需要，主要是需要这个字段的key(pair:...|price:...|is_filled：...|order_id:...)来快速查询到价格区间内，还未完全成交（is_filled:false）的tx
+}
+message CandidateIndex {//快速遍历到议员的所有委托人
+  bool ok = 1;// key(candidate:...|user:...)
+}
+// --------------------- 交易相关消息 ---------------------
+message IssueTokenTx {// 发币tx
+  BaseMessage base = 1;
+  string token_name = 2;
+  string token_symbol = 3;
+  string total_supply = 4;
+  bool canMint = 5;
+}
+
+message FreezeTx {//冻结、解冻Token tx
+  BaseMessage base = 1;
+  string token_addr = 2;
+  string target_addr = 3;
+  bool freeze = 4; // true 为冻结，false 为解冻
+}
+
+message Transaction {//转账tx
+  BaseMessage base = 1;
+  string to = 2;
+  string token_address = 3;
+  string amount = 4;
+}
+
+message OrderTx {//下单tx
+  BaseMessage base = 1;
+  string base_token = 2;  // 例如 "bc1q6156"代表USDT
+  string quote_token = 3; // 例如 "bc1q0000"代表BTC
+  OrderOp op = 4; // ADD是更新订单状态REMOVE是撤单，买单和买单是按base_token和quote_token来决定的。比如买BTC，那么base_token=USDT的地址,quote_token=BTC的地址
+  string op_target_id = 5;   // 如果要更新/移除订单id
+  string amount = 6;
+  string price = 7;
+  string filled_base = 8;  // 表示该订单已经成交的base数量
+  string filled_quote = 9; // 表示该订单已经成交的quote数量
+  bool is_filled = 10; // 是否已经完全成交标签
+}
+
+message RechargeTx {//上账TX,用户自己在本地根据公钥+tweak生成充值地址。充值完成后广播RechargeTx
+  BaseMessage base = 1;
+  string token_address = 2;//对应本链的哪个资产
+  //这个字段在打包区块的时候生成，用户直接通过区块链浏览器查询即可
+  string generated_address = 3;//生成的聚合地址，如果是btc就直接用，如果是其他链就对应其合约内的所有者字段
+  string tweak = 4;//在钱包端，生成地址的时候记录下来，
+  //同一个地址多次上账咋搞？
+  //不行，一个AddressTx对应一次上账请求
+}
+
+message CandidateTx {//委托人tx
+  BaseMessage base = 1;
+  OrderOp op = 2;
+  string candidate_address = 3;
+  string amount = 4;
+}
+message MinerTx {//启动或停止挖矿
+  BaseMessage base = 1;
+  OrderOp op = 2;//如果是ADD，则会直接把is_miner置为true,miner_locked_balance会被amount累加。
+  string amount = 3;// 如果是REMOVE不需要传这个参数，is_miner置为false,miner_locked_balance的值直接累加到TokenBalance.balance,miner_locked_balance置0
+
+}
+
+// 新增： 用 oneof 封装各种 Tx
+message AnyTx {
+  oneof content {
+    IssueTokenTx issue_token_tx = 1;
+    FreezeTx freeze_tx = 2;
+    Transaction transaction = 3;
+    OrderTx order_tx = 4;
+    RechargeTx address_tx = 5;
+    CandidateTx candidate_tx = 6;
+    MinerTx miner_tx = 8;
+  }
+}
+// --------------------- 订单 & 状态相关 ---------------------
+enum OrderOp {
+  ADD = 0;
+  REMOVE = 1;
+}
+
+enum Status {
+  PENDING = 0;
+  FAILED = 1;
+  SUCCEED = 2;
+}
+
+// --------------------- 节点==客户端信息 ---------------------
+message NodeInfo {
+  string public_key = 1;
+  string ip = 2;
+  bool isOnline = 4;
+}
+
+message NodeList {
+  repeated NodeInfo nodes = 1;
+}
+
+message ClientInfo {
+  string ip = 1;
+  bool authed = 2;
+  string public_key_pem = 3; // 假设以 PEM 格式存储公钥，也可以存其它形式
+}
+
+// --------------------- Handshake & 状态请求 ---------------------
+message HandshakeRequest {
+  string client_id = 1; // 就是矿工地址
+  string public_key = 2; // PEM
+  string signature = 3;
+}
+
+message HandshakeResponse {
+  string status = 1; // "handshake_ok" 或其它
+}
+
+message StatusRequest {
+  // 如果请求端啥都不需要，也可以留空
+}
+
+message StatusResponse {
+  string status = 1; // "ok"
+  string info = 2;   // "Server is running"
+}
+
+// --------------------- 节点间通讯信息 ---------------------
+
+// 用于请求完整交易数据
+message GetData {
+  string tx_id = 1;
+}
+
+message GetBlockRequest {
+  uint64 height = 1;   // 想要获取哪个高度的区块
+}
+message GetBlockResponse {
+  Block block = 1;     // 若成功，则返回完整区块
+  string error = 2;    // 若出错，把错误信息返回给请求方
+}
+
+message BatchGetShortTxRequest {
+  repeated bytes short_hashes = 1; // 每个 8 字节的短 hash
+}
+
+message BatchGetShortTxResponse {
+  repeated AnyTx transactions = 1;
+}
+message CheckPointInfo {
+  uint64 height = 1;
+  string txs_hash = 2;
+  bytes aggregate_signature = 3;
+  bytes bit_map = 4;
+  bytes txs = 5;// 所有交易的简短tx_hash
+}
+// 拉取共识状态的请求（目前为空，可扩展）
+message GetConsensusStateRequest {}
+// ---------------- Snowman networking ----------------
+message PushQuery {
+  string address = 1;
+  // Timeout (ns) for this request
+  uint64 deadline = 2;
+  bool container_is_block = 3;// 为true表示是完整数据，false表示只有txs
+  bytes container = 4;// 当tx数量小于2500时候，该字段为所有交易的完整二进制数据，>=2500的时候为 所有交易的简短tx_hash
+  // Requesting peer's last accepted height
+  uint64 requested_height = 5;
+  string block_id = 6;
+}
+
+// PullQuery requests the preferences of a remote peer given a container id.
+//
+// Remote peers should respond to a PullQuery with a Chits message
+message PullQuery {
+  string address = 1;
+  // Timeout (ns) for this request
+  uint64 deadline = 2;
+  // Container id being gossiped
+  string block_id = 3;
+  // Requesting peer's last accepted height
+  uint64 requested_height = 4;
+}
+
+// Chits contains the preferences of a peer in response to a PushQuery or
+// PullQuery message.
+message Chits {
+  // ID of the currently preferred block
+  string preferred_block = 2;
+  // ID of the last accepted block
+  string accepted_block = 3;
+  // ID of the currently preferred block at the requested height
+  string preferred_block_at_height = 4;
+  // Last accepted block's height
+  uint64 accepted_height = 5;
+  bytes bitmap = 6;//上一个区块与自己联系过的节点
+}
