@@ -14,7 +14,7 @@ var includeTestFiles = false
 
 func main() {
 	// 创建(或覆盖)一个输出文件
-	file, err := os.Create("output.txt")
+	file, err := os.Create("output_dex.txt")
 	if err != nil {
 		logs.Error("无法创建输出文件: %v", err)
 	}
