@@ -119,15 +119,24 @@ func SortTxsByFBBalanceAndComputeHash(dbMgr interfaces.DBManager, txs []*db.AnyT
 			continue
 		}
 
-		acc, err := dbMgr.GetAccount(fromAddr)
+		// 调用接口方法获取账户
+		accInterface, err := dbMgr.GetAccount(fromAddr)
 		if err != nil {
-			return nil, "", fmt.Errorf("get account %s error: %v", fromAddr, err)
+			// 账户不存在时，余额为0
+			tmpList = append(tmpList, txWithBal{
+				anyTx:   tx,
+				balance: decimal.Zero,
+			})
+			continue
 		}
 
 		var fbBalance decimal.Decimal
-		if acc != nil {
-			if tokenBal, ok := acc.Balances["FB"]; ok && tokenBal != nil {
-				fbBalance, _ = decimal.NewFromString(tokenBal.Balance)
+		// 类型断言为具体类型
+		if acc, ok := accInterface.(*db.Account); ok && acc != nil {
+			if acc.Balances != nil {
+				if tokenBal, exists := acc.Balances["FB"]; exists && tokenBal != nil {
+					fbBalance, _ = decimal.NewFromString(tokenBal.Balance)
+				}
 			}
 		}
 

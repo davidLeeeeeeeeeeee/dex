@@ -76,7 +76,7 @@ func (n *Network) SetMessageHandler(handler MessageHandler) {
 	n.msgHandler = handler
 }
 
-// Start 启动网络服务
+// Start 启动网络服务（实现接口）
 func (n *Network) Start() error {
 	// 启动节点发现
 	n.wg.Add(1)
@@ -94,7 +94,7 @@ func (n *Network) Start() error {
 	return nil
 }
 
-// Stop 停止网络服务
+// Stop 停止网络服务（实现接口）
 func (n *Network) Stop() error {
 	n.cancel()
 	n.wg.Wait()
@@ -140,19 +140,19 @@ func (n *Network) AddOrUpdateNode(pubKey, ip string, isOnline bool) error {
 	return nil
 }
 
-// GetNodeByPubKey 获取节点信息（实现接口）
-func (n *Network) GetNodeByPubKey(pubKey string) *db.NodeInfo {
+// GetNodeByPubKey 获取节点信息（实现接口）- 返回 interface{}
+func (n *Network) GetNodeByPubKey(pubKey string) interface{} {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.nodes[pubKey]
 }
 
-// GetAllNodes 获取所有节点（实现接口）
-func (n *Network) GetAllNodes() []*db.NodeInfo {
+// GetAllNodes 获取所有节点（实现接口）- 返回 []interface{}
+func (n *Network) GetAllNodes() []interface{} {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
-	result := make([]*db.NodeInfo, 0, len(n.nodes))
+	result := make([]interface{}, 0, len(n.nodes))
 	for _, node := range n.nodes {
 		result = append(result, node)
 	}
@@ -167,8 +167,8 @@ func (n *Network) IsKnownNode(pubKey string) bool {
 	return exists
 }
 
-// GetTop100CouncilNodes 获取前100个议员节点（实现接口）
-func (n *Network) GetTop100CouncilNodes() ([]*db.NodeInfo, error) {
+// GetTop100CouncilNodes 获取前100个议员节点（实现接口）- 返回 []interface{}
+func (n *Network) GetTop100CouncilNodes() ([]interface{}, error) {
 	// 从数据库读取stake信息并排序
 	// 这里需要与db层交互
 	return nil, nil
@@ -216,12 +216,18 @@ func (n *Network) Broadcast(msg interface{}) error {
 
 func (n *Network) loadNodesFromDB() error {
 	// 使用注入的dbManager而不是全局单例
-
 	return nil
 }
 
 func (n *Network) saveNodeToDB(info *db.NodeInfo) error {
-	return nil
+	// 使用DBManager接口的方法
+	// 这里需要将NodeInfo序列化后存储
+	data, err := db.ProtoMarshal(info)
+	if err != nil {
+		return err
+	}
+	key := "node_" + info.PublicKey
+	return n.dbManager.Set(key, data)
 }
 
 func (n *Network) connectToPeer(pubKey, ip string) {

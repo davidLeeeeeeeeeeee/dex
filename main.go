@@ -66,13 +66,12 @@ func loadConfig(dataPath string, port int, configFile string) *config.Config {
 		Consensus: config.ConsensusConfig{
 			BlockInterval: 10 * time.Second,
 			MaxTxPerBlock: 2500,
-			UseSnowman:    false, // 添加这个字段到 ConsensusConfig
+			UseSnowman:    false,
 		},
 	}
 
 	// 如果提供了配置文件，可以从文件加载并覆盖默认值
 	if configFile != "" {
-		// TODO: 实现从文件加载配置
 		logs.Info("Loading config from file: %s", configFile)
 	}
 
@@ -145,16 +144,19 @@ func initializeModules(container *app.Container) error {
 		container.Config.DB.WriteQueueSize,
 		container.Config.DB.FlushInterval,
 	)
-	container.DB = dbManager
+	container.DB = interfaces.DBManager(dbManager) // 显式转换为接口类型
 
 	// 2. 网络层（独立模块）
-	networkMgr, _ := network.NewNetwork(container.Config.Network, dbManager)
-	container.Network = networkMgr
+	networkMgr, err := network.NewNetwork(container.Config.Network, dbManager)
+	if err != nil {
+		return fmt.Errorf("network init failed: %w", err)
+	}
+	container.Network = interfaces.Network(networkMgr) // 显式转换为接口类型
 
 	// 3. 共识层（可以独立运行）
 	var consensusMgr interfaces.Consensus
 	if container.Config.Consensus.UseSnowman {
-		// 使用你已经测试好的 Snowman 共识
+		// 使用已经测试好的 Snowman 共识
 		consensusMgr = consensus.NewSnowmanConsensus(
 			container.Config.Consensus,
 			dbManager,
@@ -162,6 +164,7 @@ func initializeModules(container *app.Container) error {
 		)
 	} else {
 		// 其他共识实现
+		consensusMgr = &consensus.SimpleConsensus{}
 		consensusMgr = consensus.NewSimpleConsensus(
 			container.Config.Consensus,
 			dbManager,
@@ -170,24 +173,62 @@ func initializeModules(container *app.Container) error {
 	container.Consensus = consensusMgr
 
 	// 4. 交易池（依赖共识层做验证）
+	// 将 config.TxPoolConfig 转换为 txpool.Config
+	txPoolCfg := &txpool.Config{
+		MaxPendingTxs:    container.Config.TxPool.MaxPendingTxs,
+		MaxShortCacheTxs: container.Config.TxPool.MaxShortCacheTxs,
+		SyncInterval:     container.Config.TxPool.SyncInterval,
+		EnableAutoLoad:   true,
+	}
+
+	// 创建网络管理器适配器
+	networkAdapter := &NetworkManagerAdapter{network: networkMgr}
+
+	// 创建验证器适配器
+	validatorAdapter := &TxValidatorAdapter{consensus: consensusMgr}
+
 	txPoolMgr, err := txpool.NewTxPool(
-		&container.Config.TxPool,
+		txPoolCfg,
 		dbManager,
-		networkMgr,
-		consensusMgr, // 作为 validator
+		networkAdapter,
+		validatorAdapter,
 	)
 	if err != nil {
 		return fmt.Errorf("txpool init failed: %w", err)
 	}
-	container.TxPool = txPoolMgr
+	container.TxPool = interfaces.TxPool(txPoolMgr) // 显式转换为接口类型
 
 	// 5. 执行层（依赖数据库）
 	executorMgr := execution.NewExecutor(dbManager)
-	container.Executor = executorMgr
+	container.Executor = interfaces.Executor(executorMgr) // 显式转换为接口类型
 
 	// 6. 注册其他服务到容器
 	container.Register("api", NewAPIServer(container))
 	container.Register("rpc", NewRPCServer(container))
 
 	return nil
+}
+
+// NetworkManagerAdapter 适配器，将 interfaces.Network 转换为 txpool.NetworkManager
+type NetworkManagerAdapter struct {
+	network interfaces.Network
+}
+
+func (n *NetworkManagerAdapter) IsKnownNode(pubKey string) bool {
+	return n.network.IsKnownNode(pubKey)
+}
+
+func (n *NetworkManagerAdapter) AddOrUpdateNode(pubKey, ip string, isKnown bool) {
+	// 将 isKnown 参数转换为 isOnline
+	// 这里假设 known 节点就是 online 节点
+	n.network.AddOrUpdateNode(pubKey, ip, isKnown)
+}
+
+// TxValidatorAdapter 适配器，将 interfaces.Consensus 转换为 txpool.TxValidator
+type TxValidatorAdapter struct {
+	consensus interfaces.Consensus
+}
+
+func (v *TxValidatorAdapter) CheckAnyTx(tx *db.AnyTx) error {
+	return v.consensus.CheckAnyTx(tx)
 }
