@@ -2,7 +2,7 @@ syntax = "proto3";
 // protoc --go_out=. --go_opt=paths=source_relative db/data.proto
 package pb;
 
-option go_package = "dex/db;db";
+option go_package = "awesomeProject1/db;db";
 
 // --------------------- Token & Registry ---------------------
 message Token {
