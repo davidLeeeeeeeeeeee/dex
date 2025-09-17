@@ -21,7 +21,6 @@ func NewDefaultBlockProposer() interfaces.BlockProposer {
 
 func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, round int) (*types.Block, error) {
 	blockID := fmt.Sprintf("block-%d-%d-r%d", height, proposer, round)
-
 	block := &types.Block{
 		ID:       blockID,
 		Height:   height,
@@ -30,7 +29,6 @@ func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, prop
 		Proposer: int(proposer),
 		Round:    round,
 	}
-
 	return block, nil
 }
 
