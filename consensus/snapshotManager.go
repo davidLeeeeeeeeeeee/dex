@@ -2,6 +2,8 @@ package consensus
 
 import (
 	"context"
+	"dex/interfaces"
+	"dex/types"
 	"sync"
 )
 
@@ -10,14 +12,14 @@ import (
 // ============================================
 
 type SnapshotManager struct {
-	nodeID NodeID
-	store  BlockStore
+	nodeID types.NodeID
+	store  interfaces.BlockStore
 	config *SnapshotConfig
-	events EventBus
+	events interfaces.EventBus
 	mu     sync.Mutex
 }
 
-func NewSnapshotManager(nodeID NodeID, store BlockStore, config *SnapshotConfig, events EventBus) *SnapshotManager {
+func NewSnapshotManager(nodeID types.NodeID, store interfaces.BlockStore, config *SnapshotConfig, events interfaces.EventBus) *SnapshotManager {
 	return &SnapshotManager{
 		nodeID: nodeID,
 		store:  store,
@@ -32,8 +34,8 @@ func (sm *SnapshotManager) Start(ctx context.Context) {
 	}
 
 	// 监听区块最终化事件，定期创建快照
-	sm.events.Subscribe(EventBlockFinalized, func(e Event) {
-		if block, ok := e.Data().(*Block); ok {
+	sm.events.Subscribe(types.EventBlockFinalized, func(e interfaces.Event) {
+		if block, ok := e.Data().(*types.Block); ok {
 			sm.checkAndCreateSnapshot(block.Height)
 		}
 	})
@@ -54,9 +56,9 @@ func (sm *SnapshotManager) checkAndCreateSnapshot(height uint64) {
 
 		Logf("[Node %d] 📸 Created snapshot at height %d\n", sm.nodeID, height)
 
-		sm.events.PublishAsync(BaseEvent{
-			eventType: EventSnapshotCreated,
-			data:      snapshot,
+		sm.events.PublishAsync(types.BaseEvent{
+			EventType: types.EventSnapshotCreated,
+			EventData: snapshot,
 		})
 	}
 }

@@ -2,6 +2,8 @@ package consensus
 
 import (
 	"context"
+	"dex/interfaces"
+	"dex/types"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,23 +14,23 @@ import (
 // ============================================
 
 type SyncManager struct {
-	nodeID         NodeID
+	nodeID         types.NodeID
 	node           *Node // 新增
-	transport      Transport
-	store          BlockStore
+	transport      interfaces.Transport
+	store          interfaces.BlockStore
 	config         *SyncConfig
 	snapshotConfig *SnapshotConfig // 新增
-	events         EventBus
+	events         interfaces.EventBus
 	syncRequests   map[uint32]time.Time
 	nextSyncID     uint32
 	syncing        bool
 	mu             sync.RWMutex
-	peerHeights    map[NodeID]uint64
+	peerHeights    map[types.NodeID]uint64
 	lastPoll       time.Time
 	usingSnapshot  bool // 新增：标记是否正在使用快照同步
 }
 
-func NewSyncManager(nodeID NodeID, transport Transport, store BlockStore, config *SyncConfig, snapshotConfig *SnapshotConfig, events EventBus) *SyncManager {
+func NewSyncManager(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, snapshotConfig *SnapshotConfig, events interfaces.EventBus) *SyncManager {
 	return &SyncManager{
 		nodeID:         nodeID,
 		transport:      transport,
@@ -37,7 +39,7 @@ func NewSyncManager(nodeID NodeID, transport Transport, store BlockStore, config
 		snapshotConfig: snapshotConfig,
 		events:         events,
 		syncRequests:   make(map[uint32]time.Time),
-		peerHeights:    make(map[NodeID]uint64),
+		peerHeights:    make(map[types.NodeID]uint64),
 		lastPoll:       time.Now(),
 	}
 }
@@ -75,29 +77,29 @@ func (sm *SyncManager) Start(ctx context.Context) {
 func (sm *SyncManager) pollPeerHeights() {
 	peers := sm.transport.SamplePeers(sm.nodeID, 10)
 	for _, peer := range peers {
-		sm.transport.Send(peer, Message{
-			Type: MsgHeightQuery,
+		sm.transport.Send(peer, types.Message{
+			Type: types.MsgHeightQuery,
 			From: sm.nodeID,
 		})
 	}
 }
 
-func (sm *SyncManager) HandleHeightQuery(msg Message) {
+func (sm *SyncManager) HandleHeightQuery(msg types.Message) {
 	_, height := sm.store.GetLastAccepted()
 	currentHeight := sm.store.GetCurrentHeight()
 
-	sm.transport.Send(NodeID(msg.From), Message{
-		Type:          MsgHeightResponse,
+	sm.transport.Send(types.NodeID(msg.From), types.Message{
+		Type:          types.MsgHeightResponse,
 		From:          sm.nodeID,
 		Height:        height,
 		CurrentHeight: currentHeight,
 	})
 }
 
-func (sm *SyncManager) HandleHeightResponse(msg Message) {
+func (sm *SyncManager) HandleHeightResponse(msg types.Message) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.peerHeights[NodeID(msg.From)] = msg.CurrentHeight
+	sm.peerHeights[types.NodeID(msg.From)] = msg.CurrentHeight
 }
 
 func (sm *SyncManager) checkAndSync() {
@@ -146,7 +148,7 @@ func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
 
 	// 找一个高度足够的节点
 	sm.mu.RLock()
-	var targetPeer NodeID = -1
+	var targetPeer types.NodeID = -1
 	for peer, height := range sm.peerHeights {
 		if height >= targetHeight {
 			targetPeer = peer
@@ -166,8 +168,8 @@ func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
 		Logf("[Node %d] 📸 Requesting SNAPSHOT sync from Node %d (behind by %d blocks)\n",
 			sm.nodeID, targetPeer, targetHeight-sm.store.GetCurrentHeight())
 
-		msg := Message{
-			Type:            MsgSnapshotRequest,
+		msg := types.Message{
+			Type:            types.MsgSnapshotRequest,
 			From:            sm.nodeID,
 			SyncID:          syncID,
 			RequestSnapshot: true,
@@ -195,7 +197,7 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 	sm.mu.Unlock()
 
 	sm.mu.RLock()
-	var targetPeer NodeID = -1
+	var targetPeer types.NodeID = -1
 	for peer, height := range sm.peerHeights {
 		if height >= toHeight {
 			targetPeer = peer
@@ -215,8 +217,8 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 		Logf("[Node %d] Requesting sync from Node %d for heights %d-%d\n",
 			sm.nodeID, targetPeer, fromHeight, toHeight)
 
-		msg := Message{
-			Type:       MsgSyncRequest,
+		msg := types.Message{
+			Type:       types.MsgSyncRequest,
 			From:       sm.nodeID,
 			SyncID:     syncID,
 			FromHeight: fromHeight,
@@ -232,13 +234,13 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 }
 
 // 处理快照请求（新增）
-func (sm *SyncManager) HandleSnapshotRequest(msg Message) {
+func (sm *SyncManager) HandleSnapshotRequest(msg types.Message) {
 	// 获取最近的快照
 	snapshot, exists := sm.store.GetLatestSnapshot()
 	if !exists {
 		// 如果没有快照，降级到普通同步
-		sm.HandleSyncRequest(Message{
-			Type:       MsgSyncRequest,
+		sm.HandleSyncRequest(types.Message{
+			Type:       types.MsgSyncRequest,
 			From:       msg.From,
 			SyncID:     msg.SyncID,
 			FromHeight: 1,
@@ -257,19 +259,19 @@ func (sm *SyncManager) HandleSnapshotRequest(msg Message) {
 		sm.node.stats.mu.Unlock()
 	}
 
-	response := Message{
-		Type:           MsgSnapshotResponse,
+	response := types.Message{
+		Type:           types.MsgSnapshotResponse,
 		From:           sm.nodeID,
 		SyncID:         msg.SyncID,
 		Snapshot:       snapshot,
 		SnapshotHeight: snapshot.Height,
 	}
 
-	sm.transport.Send(NodeID(msg.From), response)
+	sm.transport.Send(types.NodeID(msg.From), response)
 }
 
 // 处理快照响应（新增）
-func (sm *SyncManager) HandleSnapshotResponse(msg Message) {
+func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -305,9 +307,9 @@ func (sm *SyncManager) HandleSnapshotResponse(msg Message) {
 		sm.nodeID, msg.SnapshotHeight)
 
 	// 发布快照加载事件
-	sm.events.PublishAsync(BaseEvent{
-		eventType: EventSnapshotLoaded,
-		data:      msg.Snapshot,
+	sm.events.PublishAsync(types.BaseEvent{
+		EventType: types.EventSnapshotLoaded,
+		EventData: msg.Snapshot,
 	})
 
 	// 继续同步快照之后的区块
@@ -331,7 +333,7 @@ func (sm *SyncManager) HandleSnapshotResponse(msg Message) {
 	}
 }
 
-func (sm *SyncManager) HandleSyncRequest(msg Message) {
+func (sm *SyncManager) HandleSyncRequest(msg types.Message) {
 	blocks := sm.store.GetBlocksFromHeight(msg.FromHeight, msg.ToHeight)
 
 	if len(blocks) == 0 {
@@ -341,8 +343,8 @@ func (sm *SyncManager) HandleSyncRequest(msg Message) {
 	Logf("[Node %d] Sending %d blocks to Node %d for sync\n",
 		sm.nodeID, len(blocks), msg.From)
 
-	response := Message{
-		Type:       MsgSyncResponse,
+	response := types.Message{
+		Type:       types.MsgSyncResponse,
 		From:       sm.nodeID,
 		SyncID:     msg.SyncID,
 		Blocks:     blocks,
@@ -350,10 +352,10 @@ func (sm *SyncManager) HandleSyncRequest(msg Message) {
 		ToHeight:   msg.ToHeight,
 	}
 
-	sm.transport.Send(NodeID(msg.From), response)
+	sm.transport.Send(types.NodeID(msg.From), response)
 }
 
-func (sm *SyncManager) HandleSyncResponse(msg Message) {
+func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -380,8 +382,8 @@ func (sm *SyncManager) HandleSyncResponse(msg Message) {
 			sm.nodeID, added, msg.FromHeight, msg.ToHeight)
 	}
 
-	sm.events.PublishAsync(BaseEvent{
-		eventType: EventSyncComplete,
-		data:      added,
+	sm.events.PublishAsync(types.BaseEvent{
+		EventType: types.EventSyncComplete,
+		EventData: added,
 	})
 }

@@ -1,18 +1,22 @@
 package consensus
 
-import "context"
+import (
+	"context"
+	"dex/interfaces"
+	"dex/types"
+)
 
 // ============================================
 // 节点实现
 // ============================================
 
 type Node struct {
-	ID              NodeID
+	ID              types.NodeID
 	IsByzantine     bool
-	transport       Transport
-	store           BlockStore
-	engine          ConsensusEngine
-	events          EventBus
+	transport       interfaces.Transport
+	store           interfaces.BlockStore
+	engine          interfaces.ConsensusEngine
+	events          interfaces.EventBus
 	messageHandler  *MessageHandler
 	queryManager    *QueryManager
 	gossipManager   *GossipManager
@@ -25,7 +29,7 @@ type Node struct {
 	stats           *NodeStats
 }
 
-func NewNode(id NodeID, transport Transport, byzantine bool, config *Config) *Node {
+func NewNode(id types.NodeID, transport interfaces.Transport, byzantine bool, config *Config) *Node {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	store := NewMemoryBlockStoreWithConfig(config.Snapshot.MaxSnapshots)

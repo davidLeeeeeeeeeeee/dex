@@ -2,6 +2,8 @@ package consensus
 
 import (
 	"context"
+	"dex/interfaces"
+	"dex/types"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -14,8 +16,8 @@ import (
 // ============================================
 
 type NetworkManager struct {
-	nodes      map[NodeID]*Node
-	transports map[NodeID]Transport
+	nodes      map[types.NodeID]*Node
+	transports map[types.NodeID]interfaces.Transport
 	config     *Config
 	startTime  time.Time
 	mu         sync.RWMutex
@@ -23,44 +25,44 @@ type NetworkManager struct {
 
 func NewNetworkManager(config *Config) *NetworkManager {
 	return &NetworkManager{
-		nodes:      make(map[NodeID]*Node),
-		transports: make(map[NodeID]Transport),
+		nodes:      make(map[types.NodeID]*Node),
+		transports: make(map[types.NodeID]interfaces.Transport),
 		config:     config,
 	}
 }
 
 func (nm *NetworkManager) CreateNodes() {
-	byzantineMap := make(map[NodeID]bool)
+	byzantineMap := make(map[types.NodeID]bool)
 	indices := rand.Perm(nm.config.Network.NumNodes)
 	for i := 0; i < nm.config.Network.NumByzantineNodes; i++ {
-		byzantineMap[NodeID(indices[i])] = true
+		byzantineMap[types.NodeID(indices[i])] = true
 	}
 
 	ctx := context.Background()
 	for i := 0; i < nm.config.Network.NumNodes; i++ {
-		nodeID := NodeID(i)
+		nodeID := types.NodeID(i)
 		transport := NewSimulatedTransport(nodeID, nm, ctx, nm.config.Network.NetworkLatency)
 		nm.transports[nodeID] = transport
 	}
 
 	for i := 0; i < nm.config.Network.NumNodes; i++ {
-		nodeID := NodeID(i)
+		nodeID := types.NodeID(i)
 		node := NewNode(nodeID, nm.transports[nodeID], byzantineMap[nodeID], nm.config)
 		nm.nodes[nodeID] = node
 	}
 }
 
-func (nm *NetworkManager) GetTransport(nodeID NodeID) Transport {
+func (nm *NetworkManager) GetTransport(nodeID types.NodeID) interfaces.Transport {
 	nm.mu.RLock()
 	defer nm.mu.RUnlock()
 	return nm.transports[nodeID]
 }
 
-func (nm *NetworkManager) SamplePeers(exclude NodeID, count int) []NodeID {
+func (nm *NetworkManager) SamplePeers(exclude types.NodeID, count int) []types.NodeID {
 	nm.mu.RLock()
 	defer nm.mu.RUnlock()
 
-	peers := make([]NodeID, 0, len(nm.nodes)-1)
+	peers := make([]types.NodeID, 0, len(nm.nodes)-1)
 	for id := range nm.nodes {
 		if id != exclude {
 			peers = append(peers, id)
@@ -140,7 +142,7 @@ func (nm *NetworkManager) PrintStatus() {
 }
 
 func (nm *NetworkManager) PrintFinalResults() {
-	chains := make(map[NodeID][]string)
+	chains := make(map[types.NodeID][]string)
 
 	for id, node := range nm.nodes {
 		chain := make([]string, 0, nm.config.Consensus.NumHeights)

@@ -1,27 +1,31 @@
 package consensus
 
-import "sort"
+import (
+	"dex/interfaces"
+	"dex/types"
+	"sort"
+)
 
 // ============================================
 // 消息处理器
 // ============================================
 
 type MessageHandler struct {
-	nodeID          NodeID
+	nodeID          types.NodeID
 	node            *Node
 	isByzantine     bool
-	transport       Transport
-	store           BlockStore
-	engine          ConsensusEngine
+	transport       interfaces.Transport
+	store           interfaces.BlockStore
+	engine          interfaces.ConsensusEngine
 	queryManager    *QueryManager
 	gossipManager   *GossipManager
 	syncManager     *SyncManager
 	snapshotManager *SnapshotManager // 新增
-	events          EventBus
+	events          interfaces.EventBus
 	config          *ConsensusConfig
 }
 
-func NewMessageHandler(nodeID NodeID, isByzantine bool, transport Transport, store BlockStore, engine ConsensusEngine, events EventBus, config *ConsensusConfig) *MessageHandler {
+func NewMessageHandler(nodeID types.NodeID, isByzantine bool, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, events interfaces.EventBus, config *ConsensusConfig) *MessageHandler {
 	return &MessageHandler{
 		nodeID:      nodeID,
 		isByzantine: isByzantine,
@@ -40,8 +44,8 @@ func (h *MessageHandler) SetManagers(qm *QueryManager, gm *GossipManager, sm *Sy
 	h.snapshotManager = snapMgr
 }
 
-func (h *MessageHandler) Handle(msg Message) {
-	if h.isByzantine && (msg.Type == MsgPullQuery || msg.Type == MsgPushQuery) {
+func (h *MessageHandler) Handle(msg types.Message) {
+	if h.isByzantine && (msg.Type == types.MsgPullQuery || msg.Type == types.MsgPushQuery) {
 		if h.node != nil {
 			h.node.stats.mu.Lock()
 			h.node.stats.queriesReceived++
@@ -51,34 +55,34 @@ func (h *MessageHandler) Handle(msg Message) {
 	}
 
 	switch msg.Type {
-	case MsgPullQuery:
+	case types.MsgPullQuery:
 		h.handlePullQuery(msg)
-	case MsgPushQuery:
+	case types.MsgPushQuery:
 		h.handlePushQuery(msg)
-	case MsgChits:
+	case types.MsgChits:
 		h.queryManager.HandleChit(msg)
-	case MsgGet:
+	case types.MsgGet:
 		h.handleGet(msg)
-	case MsgPut:
+	case types.MsgPut:
 		h.handlePut(msg)
-	case MsgGossip:
+	case types.MsgGossip:
 		h.gossipManager.HandleGossip(msg)
-	case MsgSyncRequest:
+	case types.MsgSyncRequest:
 		h.syncManager.HandleSyncRequest(msg)
-	case MsgSyncResponse:
+	case types.MsgSyncResponse:
 		h.syncManager.HandleSyncResponse(msg)
-	case MsgHeightQuery:
+	case types.MsgHeightQuery:
 		h.syncManager.HandleHeightQuery(msg)
-	case MsgHeightResponse:
+	case types.MsgHeightResponse:
 		h.syncManager.HandleHeightResponse(msg)
-	case MsgSnapshotRequest: // 新增
+	case types.MsgSnapshotRequest: // 新增
 		h.syncManager.HandleSnapshotRequest(msg)
-	case MsgSnapshotResponse: // 新增
+	case types.MsgSnapshotResponse: // 新增
 		h.syncManager.HandleSnapshotResponse(msg)
 	}
 }
 
-func (h *MessageHandler) handlePullQuery(msg Message) {
+func (h *MessageHandler) handlePullQuery(msg types.Message) {
 	if h.node != nil {
 		h.node.stats.mu.Lock()
 		h.node.stats.queriesReceived++
@@ -87,8 +91,8 @@ func (h *MessageHandler) handlePullQuery(msg Message) {
 
 	block, exists := h.store.Get(msg.BlockID)
 	if !exists {
-		h.transport.Send(NodeID(msg.From), Message{
-			Type:      MsgGet,
+		h.transport.Send(types.NodeID(msg.From), types.Message{
+			Type:      types.MsgGet,
 			From:      h.nodeID,
 			RequestID: msg.RequestID,
 			BlockID:   msg.BlockID,
@@ -96,10 +100,10 @@ func (h *MessageHandler) handlePullQuery(msg Message) {
 		return
 	}
 
-	h.sendChits(NodeID(msg.From), msg.RequestID, block.Height)
+	h.sendChits(types.NodeID(msg.From), msg.RequestID, block.Height)
 }
 
-func (h *MessageHandler) handlePushQuery(msg Message) {
+func (h *MessageHandler) handlePushQuery(msg types.Message) {
 	if h.node != nil {
 		h.node.stats.mu.Lock()
 		h.node.stats.queriesReceived++
@@ -114,17 +118,17 @@ func (h *MessageHandler) handlePushQuery(msg Message) {
 
 		if isNew {
 			Logf("[Node %d] Received new block %s via PushQuery\n", h.nodeID, msg.Block.ID)
-			h.events.Publish(BaseEvent{
-				eventType: EventNewBlock,
-				data:      msg.Block,
+			h.events.Publish(types.BaseEvent{
+				EventType: types.EventNewBlock,
+				EventData: msg.Block,
 			})
 		}
 
-		h.sendChits(NodeID(msg.From), msg.RequestID, msg.Block.Height)
+		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
 	}
 }
 
-func (h *MessageHandler) sendChits(to NodeID, requestID uint32, queryHeight uint64) {
+func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeight uint64) {
 	preferred := h.engine.GetPreference(queryHeight)
 
 	if preferred == "" {
@@ -152,17 +156,17 @@ func (h *MessageHandler) sendChits(to NodeID, requestID uint32, queryHeight uint
 	}
 
 	accepted, acceptedHeight := h.store.GetLastAccepted()
-	h.transport.Send(to, Message{
-		Type: MsgChits, From: h.nodeID, RequestID: requestID,
+	h.transport.Send(to, types.Message{
+		Type: types.MsgChits, From: h.nodeID, RequestID: requestID,
 		PreferredID: preferred, PreferredIDHeight: queryHeight,
 		AcceptedID: accepted, AcceptedHeight: acceptedHeight,
 	})
 }
 
-func (h *MessageHandler) handleGet(msg Message) {
+func (h *MessageHandler) handleGet(msg types.Message) {
 	if block, exists := h.store.Get(msg.BlockID); exists {
-		h.transport.Send(NodeID(msg.From), Message{
-			Type:      MsgPut,
+		h.transport.Send(types.NodeID(msg.From), types.Message{
+			Type:      types.MsgPut,
 			From:      h.nodeID,
 			RequestID: msg.RequestID,
 			Block:     block,
@@ -171,7 +175,7 @@ func (h *MessageHandler) handleGet(msg Message) {
 	}
 }
 
-func (h *MessageHandler) handlePut(msg Message) {
+func (h *MessageHandler) handlePut(msg types.Message) {
 	if msg.Block != nil {
 		isNew, err := h.store.Add(msg.Block)
 		if err != nil {
@@ -181,9 +185,9 @@ func (h *MessageHandler) handlePut(msg Message) {
 		if isNew {
 			Logf("[Node %d] Received new block %s via Put from Node %d, gossiping it\n",
 				h.nodeID, msg.Block.ID, msg.From)
-			h.events.Publish(BaseEvent{
-				eventType: EventBlockReceived,
-				data:      msg.Block,
+			h.events.Publish(types.BaseEvent{
+				EventType: types.EventBlockReceived,
+				EventData: msg.Block,
 			})
 		}
 	}

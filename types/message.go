@@ -1,4 +1,4 @@
-package consensus
+package types
 
 type NodeID int
 

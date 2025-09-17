@@ -1,6 +1,8 @@
 package consensus
 
 import (
+	"dex/interfaces"
+	"dex/types"
 	"fmt"
 	"sort"
 	"sync"
@@ -13,43 +15,43 @@ import (
 
 type MemoryBlockStore struct {
 	mu                 sync.RWMutex
-	blocks             map[string]*Block
-	heightIndex        map[uint64][]*Block
-	lastAccepted       *Block
+	blocks             map[string]*types.Block
+	heightIndex        map[uint64][]*types.Block
+	lastAccepted       *types.Block
 	lastAcceptedHeight uint64
-	finalizedBlocks    map[uint64]*Block
+	finalizedBlocks    map[uint64]*types.Block
 	maxHeight          uint64
 
 	// 快照相关
-	snapshots       map[uint64]*Snapshot
+	snapshots       map[uint64]*types.Snapshot
 	snapshotHeights []uint64 // 有序的快照高度列表
 	maxSnapshots    int
 }
 
-func NewMemoryBlockStore() BlockStore {
+func NewMemoryBlockStore() interfaces.BlockStore {
 	return NewMemoryBlockStoreWithConfig(10)
 }
 
-func NewMemoryBlockStoreWithConfig(maxSnapshots int) BlockStore {
+func NewMemoryBlockStoreWithConfig(maxSnapshots int) interfaces.BlockStore {
 	store := &MemoryBlockStore{
-		blocks:          make(map[string]*Block),
-		heightIndex:     make(map[uint64][]*Block),
-		finalizedBlocks: make(map[uint64]*Block),
+		blocks:          make(map[string]*types.Block),
+		heightIndex:     make(map[uint64][]*types.Block),
+		finalizedBlocks: make(map[uint64]*types.Block),
 		maxHeight:       0,
-		snapshots:       make(map[uint64]*Snapshot),
+		snapshots:       make(map[uint64]*types.Snapshot),
 		snapshotHeights: make([]uint64, 0),
 		maxSnapshots:    maxSnapshots,
 	}
 
 	// 创世区块
-	genesis := &Block{
+	genesis := &types.Block{
 		ID:       "genesis",
 		Height:   0,
 		ParentID: "",
 		Proposer: -1,
 	}
 	store.blocks[genesis.ID] = genesis
-	store.heightIndex[0] = []*Block{genesis}
+	store.heightIndex[0] = []*types.Block{genesis}
 	store.lastAccepted = genesis
 	store.lastAcceptedHeight = 0
 	store.finalizedBlocks[0] = genesis
@@ -58,7 +60,7 @@ func NewMemoryBlockStoreWithConfig(maxSnapshots int) BlockStore {
 	return store
 }
 
-func (s *MemoryBlockStore) Add(block *Block) (bool, error) {
+func (s *MemoryBlockStore) Add(block *types.Block) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -80,7 +82,7 @@ func (s *MemoryBlockStore) Add(block *Block) (bool, error) {
 	return true, nil
 }
 
-func (s *MemoryBlockStore) validateBlock(block *Block) error {
+func (s *MemoryBlockStore) validateBlock(block *types.Block) error {
 	if block == nil || block.ID == "" {
 		return fmt.Errorf("invalid block")
 	}
@@ -93,18 +95,18 @@ func (s *MemoryBlockStore) validateBlock(block *Block) error {
 	return nil
 }
 
-func (s *MemoryBlockStore) Get(id string) (*Block, bool) {
+func (s *MemoryBlockStore) Get(id string) (*types.Block, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	block, exists := s.blocks[id]
 	return block, exists
 }
 
-func (s *MemoryBlockStore) GetByHeight(height uint64) []*Block {
+func (s *MemoryBlockStore) GetByHeight(height uint64) []*types.Block {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	blocks := s.heightIndex[height]
-	result := make([]*Block, len(blocks))
+	result := make([]*types.Block, len(blocks))
 	copy(result, blocks)
 	return result
 }
@@ -115,18 +117,18 @@ func (s *MemoryBlockStore) GetLastAccepted() (string, uint64) {
 	return s.lastAccepted.ID, s.lastAcceptedHeight
 }
 
-func (s *MemoryBlockStore) GetFinalizedAtHeight(height uint64) (*Block, bool) {
+func (s *MemoryBlockStore) GetFinalizedAtHeight(height uint64) (*types.Block, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	block, exists := s.finalizedBlocks[height]
 	return block, exists
 }
 
-func (s *MemoryBlockStore) GetBlocksFromHeight(from, to uint64) []*Block {
+func (s *MemoryBlockStore) GetBlocksFromHeight(from, to uint64) []*types.Block {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	blocks := make([]*Block, 0)
+	blocks := make([]*types.Block, 0)
 	for h := from; h <= to && h <= s.maxHeight; h++ {
 		if heightBlocks, exists := s.heightIndex[h]; exists {
 			blocks = append(blocks, heightBlocks...)
@@ -151,7 +153,7 @@ func (s *MemoryBlockStore) SetFinalized(height uint64, blockID string) {
 		s.lastAcceptedHeight = height
 
 		// 清理同高度其他区块
-		newBlocks := make([]*Block, 0, 1)
+		newBlocks := make([]*types.Block, 0, 1)
 		for _, b := range s.heightIndex[height] {
 			if b.ID == blockID {
 				newBlocks = append(newBlocks, b)
@@ -164,7 +166,7 @@ func (s *MemoryBlockStore) SetFinalized(height uint64, blockID string) {
 }
 
 // 创建快照
-func (s *MemoryBlockStore) CreateSnapshot(height uint64) (*Snapshot, error) {
+func (s *MemoryBlockStore) CreateSnapshot(height uint64) (*types.Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -173,10 +175,10 @@ func (s *MemoryBlockStore) CreateSnapshot(height uint64) (*Snapshot, error) {
 		return nil, fmt.Errorf("cannot create snapshot beyond last accepted height")
 	}
 
-	snapshot := &Snapshot{
+	snapshot := &types.Snapshot{
 		Height:             height,
 		Timestamp:          time.Now(),
-		FinalizedBlocks:    make(map[uint64]*Block),
+		FinalizedBlocks:    make(map[uint64]*types.Block),
 		LastAcceptedID:     s.lastAccepted.ID,
 		LastAcceptedHeight: s.lastAcceptedHeight,
 		BlockHashes:        make(map[string]bool),
@@ -208,7 +210,7 @@ func (s *MemoryBlockStore) CreateSnapshot(height uint64) (*Snapshot, error) {
 }
 
 // 加载快照（新增）
-func (s *MemoryBlockStore) LoadSnapshot(snapshot *Snapshot) error {
+func (s *MemoryBlockStore) LoadSnapshot(snapshot *types.Snapshot) error {
 	if snapshot == nil {
 		return fmt.Errorf("nil snapshot")
 	}
@@ -217,14 +219,14 @@ func (s *MemoryBlockStore) LoadSnapshot(snapshot *Snapshot) error {
 	defer s.mu.Unlock()
 
 	// 清空现有数据
-	s.blocks = make(map[string]*Block)
-	s.heightIndex = make(map[uint64][]*Block)
-	s.finalizedBlocks = make(map[uint64]*Block)
+	s.blocks = make(map[string]*types.Block)
+	s.heightIndex = make(map[uint64][]*types.Block)
+	s.finalizedBlocks = make(map[uint64]*types.Block)
 
 	// 加载快照数据
 	for height, block := range snapshot.FinalizedBlocks {
 		s.blocks[block.ID] = block
-		s.heightIndex[height] = []*Block{block}
+		s.heightIndex[height] = []*types.Block{block}
 		s.finalizedBlocks[height] = block
 
 		if height > s.maxHeight {
@@ -245,7 +247,7 @@ func (s *MemoryBlockStore) LoadSnapshot(snapshot *Snapshot) error {
 }
 
 // 获取最新快照（新增）
-func (s *MemoryBlockStore) GetLatestSnapshot() (*Snapshot, bool) {
+func (s *MemoryBlockStore) GetLatestSnapshot() (*types.Snapshot, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -259,7 +261,7 @@ func (s *MemoryBlockStore) GetLatestSnapshot() (*Snapshot, bool) {
 }
 
 // 获取指定高度或之前的最近快照（新增）
-func (s *MemoryBlockStore) GetSnapshotAtHeight(height uint64) (*Snapshot, bool) {
+func (s *MemoryBlockStore) GetSnapshotAtHeight(height uint64) (*types.Snapshot, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

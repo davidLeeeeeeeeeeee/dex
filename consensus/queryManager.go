@@ -2,6 +2,8 @@ package consensus
 
 import (
 	"context"
+	"dex/interfaces"
+	"dex/types"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -13,13 +15,13 @@ import (
 // ============================================
 
 type QueryManager struct {
-	nodeID      NodeID
+	nodeID      types.NodeID
 	node        *Node
-	transport   Transport
-	store       BlockStore
-	engine      ConsensusEngine
+	transport   interfaces.Transport
+	store       interfaces.BlockStore
+	engine      interfaces.ConsensusEngine
 	config      *ConsensusConfig
-	events      EventBus
+	events      interfaces.EventBus
 	activePolls sync.Map
 	nextReqID   uint32
 	mu          sync.Mutex
@@ -33,7 +35,7 @@ type Poll struct {
 	height    uint64
 }
 
-func NewQueryManager(nodeID NodeID, transport Transport, store BlockStore, engine ConsensusEngine, config *ConsensusConfig, events EventBus) *QueryManager {
+func NewQueryManager(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, config *ConsensusConfig, events interfaces.EventBus) *QueryManager {
 	qm := &QueryManager{
 		nodeID:    nodeID,
 		transport: transport,
@@ -43,28 +45,28 @@ func NewQueryManager(nodeID NodeID, transport Transport, store BlockStore, engin
 		events:    events,
 	}
 
-	events.Subscribe(EventQueryComplete, func(e Event) {
+	events.Subscribe(types.EventQueryComplete, func(e interfaces.Event) {
 		qm.tryIssueQuery()
 	})
 
-	events.Subscribe(EventBlockFinalized, func(e Event) {
+	events.Subscribe(types.EventBlockFinalized, func(e interfaces.Event) {
 		qm.tryIssueQuery()
 	})
 
-	events.Subscribe(EventSyncComplete, func(e Event) {
+	events.Subscribe(types.EventSyncComplete, func(e interfaces.Event) {
 		qm.tryIssueQuery()
 	})
 
 	// 新增：快照加载后也触发查询
-	events.Subscribe(EventSnapshotLoaded, func(e Event) {
+	events.Subscribe(types.EventSnapshotLoaded, func(e interfaces.Event) {
 		qm.tryIssueQuery()
 	})
 
-	events.Subscribe(EventBlockReceived, func(e Event) {
+	events.Subscribe(types.EventBlockReceived, func(e interfaces.Event) {
 		qm.tryIssueQuery()
 	})
 
-	events.Subscribe(EventNewBlock, func(e Event) {
+	events.Subscribe(types.EventNewBlock, func(e interfaces.Event) {
 		qm.tryIssueQuery()
 	})
 
@@ -127,8 +129,8 @@ func (qm *QueryManager) issueQuery() {
 	qm.activePolls.Store(requestID, poll)
 
 	peers := qm.transport.SamplePeers(qm.nodeID, qm.config.K)
-	msg := Message{
-		Type:      MsgPushQuery,
+	msg := types.Message{
+		Type:      types.MsgPushQuery,
 		From:      qm.nodeID,
 		RequestID: requestID,
 		BlockID:   blockID,
@@ -146,10 +148,10 @@ func (qm *QueryManager) issueQuery() {
 	}
 }
 
-func (qm *QueryManager) HandleChit(msg Message) {
+func (qm *QueryManager) HandleChit(msg types.Message) {
 	if poll, ok := qm.activePolls.Load(msg.RequestID); ok {
 		p := poll.(*Poll)
-		qm.engine.SubmitChit(NodeID(msg.From), p.queryKey, msg.PreferredID)
+		qm.engine.SubmitChit(types.NodeID(msg.From), p.queryKey, msg.PreferredID)
 	}
 }
 

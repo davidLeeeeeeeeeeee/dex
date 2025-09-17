@@ -2,6 +2,8 @@ package consensus
 
 import (
 	"context"
+	"dex/interfaces"
+	"dex/types"
 	"fmt"
 	"sync"
 	"time"
@@ -13,10 +15,10 @@ import (
 
 type SnowmanEngine struct {
 	mu            sync.RWMutex
-	nodeID        NodeID
-	store         BlockStore
+	nodeID        types.NodeID
+	store         interfaces.BlockStore
 	config        *ConsensusConfig
-	events        EventBus
+	events        interfaces.EventBus
 	snowballs     map[uint64]*Snowball
 	activeQueries map[string]*QueryContext
 	preferences   map[uint64]string
@@ -26,13 +28,13 @@ type QueryContext struct {
 	queryKey  string
 	blockID   string
 	votes     map[string]int
-	voters    map[NodeID]bool
+	voters    map[types.NodeID]bool
 	responded int
 	startTime time.Time
 	height    uint64
 }
 
-func NewSnowmanEngine(nodeID NodeID, store BlockStore, config *ConsensusConfig, events EventBus) ConsensusEngine {
+func NewSnowmanEngine(nodeID types.NodeID, store interfaces.BlockStore, config *ConsensusConfig, events interfaces.EventBus) interfaces.ConsensusEngine {
 	return &SnowmanEngine{
 		nodeID:        nodeID,
 		store:         store,
@@ -71,7 +73,7 @@ func (e *SnowmanEngine) Start(ctx context.Context) error {
 	return nil
 }
 
-func (e *SnowmanEngine) RegisterQuery(nodeID NodeID, requestID uint32, blockID string, height uint64) string {
+func (e *SnowmanEngine) RegisterQuery(nodeID types.NodeID, requestID uint32, blockID string, height uint64) string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -80,7 +82,7 @@ func (e *SnowmanEngine) RegisterQuery(nodeID NodeID, requestID uint32, blockID s
 		queryKey:  queryKey,
 		blockID:   blockID,
 		votes:     make(map[string]int),
-		voters:    make(map[NodeID]bool),
+		voters:    make(map[types.NodeID]bool),
 		responded: 0,
 		startTime: time.Now(),
 		height:    height,
@@ -89,7 +91,7 @@ func (e *SnowmanEngine) RegisterQuery(nodeID NodeID, requestID uint32, blockID s
 	return queryKey
 }
 
-func (e *SnowmanEngine) SubmitChit(nodeID NodeID, queryKey string, preferredID string) {
+func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferredID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -105,9 +107,9 @@ func (e *SnowmanEngine) SubmitChit(nodeID NodeID, queryKey string, preferredID s
 	if ctx.responded >= e.config.Alpha {
 		e.processVotes(ctx)
 		delete(e.activeQueries, queryKey)
-		e.events.PublishAsync(BaseEvent{
-			eventType: EventQueryComplete,
-			data:      ctx,
+		e.events.PublishAsync(types.BaseEvent{
+			EventType: types.EventQueryComplete,
+			EventData: ctx,
 		})
 	}
 }
@@ -149,9 +151,9 @@ func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string) {
 
 	if block, exists := e.store.Get(blockID); exists {
 		Logf("[Engine] 🎉 Finalized block %s at height %d\n", blockID, height)
-		e.events.PublishAsync(BaseEvent{
-			eventType: EventBlockFinalized,
-			data:      block,
+		e.events.PublishAsync(types.BaseEvent{
+			EventType: types.EventBlockFinalized,
+			EventData: block,
 		})
 	}
 }
@@ -174,9 +176,9 @@ func (e *SnowmanEngine) checkTimeouts() {
 	}
 
 	if len(toDelete) > 0 {
-		e.events.PublishAsync(BaseEvent{
-			eventType: EventQueryComplete,
-			data:      nil,
+		e.events.PublishAsync(types.BaseEvent{
+			EventType: types.EventQueryComplete,
+			EventData: nil,
 		})
 	}
 }

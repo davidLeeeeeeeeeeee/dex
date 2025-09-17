@@ -2,6 +2,8 @@ package consensus
 
 import (
 	"context"
+	"dex/interfaces"
+	"dex/types"
 	"math/rand"
 	"sync"
 	"time"
@@ -12,17 +14,17 @@ import (
 // ============================================
 
 type GossipManager struct {
-	nodeID     NodeID
+	nodeID     types.NodeID
 	node       *Node
-	transport  Transport
-	store      BlockStore
+	transport  interfaces.Transport
+	store      interfaces.BlockStore
 	config     *GossipConfig
-	events     EventBus
+	events     interfaces.EventBus
 	seenBlocks map[string]bool
 	mu         sync.RWMutex
 }
 
-func NewGossipManager(nodeID NodeID, transport Transport, store BlockStore, config *GossipConfig, events EventBus) *GossipManager {
+func NewGossipManager(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *GossipConfig, events interfaces.EventBus) *GossipManager {
 	gm := &GossipManager{
 		nodeID:     nodeID,
 		transport:  transport,
@@ -32,8 +34,8 @@ func NewGossipManager(nodeID NodeID, transport Transport, store BlockStore, conf
 		seenBlocks: make(map[string]bool),
 	}
 
-	events.Subscribe(EventNewBlock, func(e Event) {
-		if block, ok := e.Data().(*Block); ok {
+	events.Subscribe(types.EventNewBlock, func(e interfaces.Event) {
+		if block, ok := e.Data().(*types.Block); ok {
 			gm.gossipBlock(block)
 		}
 	})
@@ -60,7 +62,7 @@ func (gm *GossipManager) Start(ctx context.Context) {
 func (gm *GossipManager) gossipNewBlocks() {
 	_, currentHeight := gm.store.GetLastAccepted()
 
-	blocks := make([]*Block, 0)
+	blocks := make([]*types.Block, 0)
 	blocks = append(blocks, gm.store.GetByHeight(currentHeight+1)...)
 	blocks = append(blocks, gm.store.GetByHeight(currentHeight+2)...)
 
@@ -79,14 +81,14 @@ func (gm *GossipManager) gossipNewBlocks() {
 	}
 }
 
-func (gm *GossipManager) gossipBlock(block *Block) {
+func (gm *GossipManager) gossipBlock(block *types.Block) {
 	gm.mu.Lock()
 	gm.seenBlocks[block.ID] = true
 	gm.mu.Unlock()
 
 	peers := gm.transport.SamplePeers(gm.nodeID, gm.config.Fanout)
-	msg := Message{
-		Type:    MsgGossip,
+	msg := types.Message{
+		Type:    types.MsgGossip,
 		From:    gm.nodeID,
 		Block:   block,
 		BlockID: block.ID,
@@ -96,7 +98,7 @@ func (gm *GossipManager) gossipBlock(block *Block) {
 	gm.transport.Broadcast(msg, peers)
 }
 
-func (gm *GossipManager) HandleGossip(msg Message) {
+func (gm *GossipManager) HandleGossip(msg types.Message) {
 	if msg.Block == nil {
 		return
 	}
@@ -128,9 +130,9 @@ func (gm *GossipManager) HandleGossip(msg Message) {
 		Logf("[Node %d] Received new block %s via gossip from Node %d\n",
 			gm.nodeID, msg.Block.ID, msg.From)
 
-		gm.events.Publish(BaseEvent{
-			eventType: EventBlockReceived,
-			data:      msg.Block,
+		gm.events.Publish(types.BaseEvent{
+			EventType: types.EventBlockReceived,
+			EventData: msg.Block,
 		})
 
 		go func() {

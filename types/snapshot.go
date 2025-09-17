@@ -1,6 +1,8 @@
-package consensus
+package types
 
-import "time"
+import (
+	"time"
+)
 
 type Snapshot struct {
 	Height             uint64            `json:"height"`
