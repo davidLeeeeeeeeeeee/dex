@@ -105,7 +105,7 @@ func (gm *GossipManager) HandleGossip(msg types.Message) {
 
 	if gm.node != nil {
 		gm.node.stats.mu.Lock()
-		gm.node.stats.gossipsReceived++
+		gm.node.stats.GossipsReceived++
 		gm.node.stats.mu.Unlock()
 	}
 

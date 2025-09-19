@@ -26,7 +26,7 @@ func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, prop
 		Height:   height,
 		ParentID: parentID,
 		Data:     fmt.Sprintf("Height %d, Proposer %d, Round %d", height, proposer, round),
-		Proposer: int(proposer),
+		Proposer: string(proposer),
 		Round:    round,
 	}
 	return block, nil
@@ -44,5 +44,5 @@ func (p *DefaultBlockProposer) ShouldPropose(nodeID types.NodeID, round int, cur
 		denom = 1
 	}
 
-	return int(nodeID+types.NodeID(round))%denom == 0
+	return int(nodeID.Last2Mod100()+round)%denom == 0
 }

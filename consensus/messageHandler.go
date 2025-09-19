@@ -48,7 +48,7 @@ func (h *MessageHandler) Handle(msg types.Message) {
 	if h.isByzantine && (msg.Type == types.MsgPullQuery || msg.Type == types.MsgPushQuery) {
 		if h.node != nil {
 			h.node.stats.mu.Lock()
-			h.node.stats.queriesReceived++
+			h.node.stats.QueriesReceived++
 			h.node.stats.mu.Unlock()
 		}
 		return
@@ -85,7 +85,7 @@ func (h *MessageHandler) Handle(msg types.Message) {
 func (h *MessageHandler) handlePullQuery(msg types.Message) {
 	if h.node != nil {
 		h.node.stats.mu.Lock()
-		h.node.stats.queriesReceived++
+		h.node.stats.QueriesReceived++
 		h.node.stats.mu.Unlock()
 	}
 
@@ -106,7 +106,7 @@ func (h *MessageHandler) handlePullQuery(msg types.Message) {
 func (h *MessageHandler) handlePushQuery(msg types.Message) {
 	if h.node != nil {
 		h.node.stats.mu.Lock()
-		h.node.stats.queriesReceived++
+		h.node.stats.QueriesReceived++
 		h.node.stats.mu.Unlock()
 	}
 
@@ -151,7 +151,7 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 
 	if h.node != nil {
 		h.node.stats.mu.Lock()
-		h.node.stats.chitsResponded++
+		h.node.stats.ChitsResponded++
 		h.node.stats.mu.Unlock()
 	}
 

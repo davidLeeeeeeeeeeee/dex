@@ -1,7 +1,7 @@
 package txpool
 
 import (
-	"awesomeProject1/db"
+	"dex/db"
 	"testing"
 	"time"
 )
@@ -105,7 +105,7 @@ func TestGetTxsByTargetHeight(t *testing.T) {
 func TestSortTxsByFBBalanceAndComputeHash(t *testing.T) {
 
 	// 2. 初始化 DB
-	dbMgr, err := db.GetInstance("D:\\awesome\\data")
+	dbMgr, err := db.NewManager("D:\\awesome\\data")
 	if err != nil {
 		t.Fatalf("failed to init db Manager: %v", err)
 	}

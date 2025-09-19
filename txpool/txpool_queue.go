@@ -1,10 +1,10 @@
 package txpool
 
 import (
-	"awesomeProject1/db"
-	"awesomeProject1/internal/network"
-	"awesomeProject1/logs"
-	"awesomeProject1/utils"
+	"dex/db"
+	"dex/logs"
+	"dex/network"
+	"dex/utils"
 	"log"
 	"sync"
 )

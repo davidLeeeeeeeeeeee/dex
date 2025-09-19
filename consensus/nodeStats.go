@@ -8,12 +8,12 @@ import "sync"
 
 type NodeStats struct {
 	mu               sync.Mutex
-	queriesSent      uint32
-	queriesReceived  uint32
-	chitsResponded   uint32
+	QueriesSent      uint32
+	QueriesReceived  uint32
+	ChitsResponded   uint32
 	queriesPerHeight map[uint64]uint32
-	blocksProposed   uint32
-	gossipsReceived  uint32
+	BlocksProposed   uint32
+	GossipsReceived  uint32
 	snapshotsUsed    uint32 // 新增
 	snapshotsServed  uint32 // 新增
 }

@@ -94,7 +94,7 @@ func (pm *ProposalManager) proposeBlock() {
 
 	if pm.node != nil {
 		pm.node.stats.mu.Lock()
-		pm.node.stats.blocksProposed++
+		pm.node.stats.BlocksProposed++
 		pm.node.stats.mu.Unlock()
 	}
 

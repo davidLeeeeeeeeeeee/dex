@@ -1,13 +1,13 @@
 package crt
 
 import (
-	"awesomeProject1/logs"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"dex/logs"
 	"encoding/pem"
 	"fmt"
 	"log"

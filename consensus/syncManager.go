@@ -148,7 +148,7 @@ func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
 
 	// 找一个高度足够的节点
 	sm.mu.RLock()
-	var targetPeer types.NodeID = -1
+	var targetPeer types.NodeID = "-1"
 	for peer, height := range sm.peerHeights {
 		if height >= targetHeight {
 			targetPeer = peer
@@ -157,14 +157,14 @@ func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
 	}
 	sm.mu.RUnlock()
 
-	if targetPeer == -1 {
+	if targetPeer == "-1" {
 		peers := sm.transport.SamplePeers(sm.nodeID, 5)
 		if len(peers) > 0 {
 			targetPeer = peers[0]
 		}
 	}
 
-	if targetPeer != -1 {
+	if targetPeer != "-1" {
 		Logf("[Node %d] 📸 Requesting SNAPSHOT sync from Node %d (behind by %d blocks)\n",
 			sm.nodeID, targetPeer, targetHeight-sm.store.GetCurrentHeight())
 
@@ -197,7 +197,7 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 	sm.mu.Unlock()
 
 	sm.mu.RLock()
-	var targetPeer types.NodeID = -1
+	var targetPeer types.NodeID = "-1"
 	for peer, height := range sm.peerHeights {
 		if height >= toHeight {
 			targetPeer = peer
@@ -206,14 +206,14 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 	}
 	sm.mu.RUnlock()
 
-	if targetPeer == -1 {
+	if targetPeer == "-1" {
 		peers := sm.transport.SamplePeers(sm.nodeID, 5)
 		if len(peers) > 0 {
 			targetPeer = peers[0]
 		}
 	}
 
-	if targetPeer != -1 {
+	if targetPeer != "-1" {
 		Logf("[Node %d] Requesting sync from Node %d for heights %d-%d\n",
 			sm.nodeID, targetPeer, fromHeight, toHeight)
 

@@ -21,7 +21,7 @@ type pullBlockMessage struct {
 // PullBlock 对外暴露的函数：发起对 peerAddr 的 /getblock 请求，想获取指定 height 的区块
 // onSuccess 回调可在请求成功后拿到区块做后续处理。
 func PullBlock(targetAddress string, height uint64, onSuccess func(*db.Block)) {
-	mgr, err := db.GetInstance("")
+	mgr, err := db.NewManager("")
 	if err != nil {
 		logs.Debug("[PullBlock] GetInstance error: %v", err)
 		return

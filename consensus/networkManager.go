@@ -6,6 +6,7 @@ import (
 	"dex/types"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,13 +41,13 @@ func (nm *NetworkManager) CreateNodes() {
 
 	ctx := context.Background()
 	for i := 0; i < nm.config.Network.NumNodes; i++ {
-		nodeID := types.NodeID(i)
+		nodeID := types.NodeID(strconv.Itoa(i))
 		transport := NewSimulatedTransport(nodeID, nm, ctx, nm.config.Network.NetworkLatency)
 		nm.transports[nodeID] = transport
 	}
 
 	for i := 0; i < nm.config.Network.NumNodes; i++ {
-		nodeID := types.NodeID(i)
+		nodeID := types.NodeID(strconv.Itoa(i))
 		node := NewNode(nodeID, nm.transports[nodeID], byzantineMap[nodeID], nm.config)
 		nm.nodes[nodeID] = node
 	}
@@ -214,11 +215,11 @@ func (nm *NetworkManager) PrintQueryStatistics() {
 		honestNodeCount++
 
 		node.stats.mu.Lock()
-		totalQueriesSent += node.stats.queriesSent
-		totalQueriesReceived += node.stats.queriesReceived
-		totalChitsResponded += node.stats.chitsResponded
-		totalGossipsReceived += node.stats.gossipsReceived
-		totalBlocksProposed += node.stats.blocksProposed
+		totalQueriesSent += node.stats.QueriesSent
+		totalQueriesReceived += node.stats.QueriesReceived
+		totalChitsResponded += node.stats.ChitsResponded
+		totalGossipsReceived += node.stats.GossipsReceived
+		totalBlocksProposed += node.stats.BlocksProposed
 		totalSnapshotsUsed += node.stats.snapshotsUsed
 		totalSnapshotsServed += node.stats.snapshotsServed
 

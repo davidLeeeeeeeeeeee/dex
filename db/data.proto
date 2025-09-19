@@ -261,7 +261,7 @@ message Chits {
   // ID of the last accepted block
   string accepted_block = 3;
   // ID of the currently preferred block at the requested height
-  string preferred_block_at_height = 4;
+  uint64 preferred_block_at_height = 4;
   // Last accepted block's height
   uint64 accepted_height = 5;
   bytes bitmap = 6;//上一个区块与自己联系过的节点

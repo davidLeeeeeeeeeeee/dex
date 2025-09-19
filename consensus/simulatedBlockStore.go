@@ -48,7 +48,7 @@ func NewMemoryBlockStoreWithConfig(maxSnapshots int) interfaces.BlockStore {
 		ID:       "genesis",
 		Height:   0,
 		ParentID: "",
-		Proposer: -1,
+		Proposer: "-1",
 	}
 	store.blocks[genesis.ID] = genesis
 	store.heightIndex[0] = []*types.Block{genesis}
