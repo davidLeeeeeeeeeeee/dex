@@ -22,80 +22,72 @@ type ConsensusNodeManager struct {
 	dbManager      *db.Manager
 }
 
-// 全局实例
-var globalConsensusManager *ConsensusNodeManager
-var consensusOnce sync.Once
-
-// InitConsensusManager 初始化全局共识管理器
 func InitConsensusManager(nodeID types.NodeID, dbManager *db.Manager, config *Config) *ConsensusNodeManager {
-	consensusOnce.Do(func() {
-		// 创建真实的组件
-		store := NewRealBlockStore(dbManager, config.Snapshot.MaxSnapshots)
-		events := NewEventBus()
-		engine := NewSnowmanEngine(nodeID, store, &config.Consensus, events)
-		transport := NewRealTransport(nodeID, dbManager, context.Background())
+	// 直接创建新实例，不使用sync.Once
 
-		// 创建节点
-		node := &Node{
-			ID:          nodeID,
-			IsByzantine: false,
-			transport:   transport,
-			store:       store,
-			engine:      engine,
-			events:      events,
-			config:      config,
-			stats:       NewNodeStats(),
-		}
+	// 创建真实的组件
+	store := NewRealBlockStore(dbManager, config.Snapshot.MaxSnapshots)
+	events := NewEventBus()
+	engine := NewSnowmanEngine(nodeID, store, &config.Consensus, events)
+	transport := NewRealTransport(nodeID, dbManager, context.Background())
+	// 创建 context
+	ctx, cancel := context.WithCancel(context.Background())
 
-		// 创建各种管理器
-		messageHandler := NewMessageHandler(nodeID, false, transport, store, engine, events, &config.Consensus)
-		queryManager := NewQueryManager(nodeID, transport, store, engine, &config.Consensus, events)
-		gossipManager := NewGossipManager(nodeID, transport, store, &config.Gossip, events)
-		syncManager := NewSyncManager(nodeID, transport, store, &config.Sync, &config.Snapshot, events)
-		snapshotManager := NewSnapshotManager(nodeID, store, &config.Snapshot, events)
-		proposer := NewRealBlockProposer(dbManager)
-		proposalManager := NewProposalManagerWithProposer(nodeID, transport, store, &config.Node, events, proposer)
-
-		// 设置关联
-		messageHandler.SetManagers(queryManager, gossipManager, syncManager, snapshotManager)
-		messageHandler.node = node
-		queryManager.node = node
-		gossipManager.node = node
-		syncManager.node = node
-		proposalManager.node = node
-
-		node.messageHandler = messageHandler
-		node.queryManager = queryManager
-		node.gossipManager = gossipManager
-		node.syncManager = syncManager
-		node.snapshotManager = snapshotManager
-		node.proposalManager = proposalManager
-
-		globalConsensusManager = &ConsensusNodeManager{
-			node:           node,
-			engine:         engine,
-			store:          store,
-			transport:      transport,
-			messageHandler: messageHandler,
-			queryManager:   queryManager,
-			dbManager:      dbManager,
-		}
-
-		// 启动节点
-		node.Start()
-
-		logs.Info("[ConsensusManager] Initialized with NodeID %d", nodeID)
-	})
-
-	return globalConsensusManager
-}
-
-// GetInstance 获取全局实例
-func GetConsensusManager() *ConsensusNodeManager {
-	if globalConsensusManager == nil {
-		panic("ConsensusManager not initialized")
+	// 创建节点
+	node := &Node{
+		ID:          nodeID,
+		IsByzantine: false,
+		transport:   transport,
+		store:       store,
+		engine:      engine,
+		events:      events,
+		config:      config,
+		stats:       NewNodeStats(),
+		ctx:         ctx,    // 添加
+		cancel:      cancel, // 添加
 	}
-	return globalConsensusManager
+
+	// 创建各种管理器
+	messageHandler := NewMessageHandler(nodeID, false, transport, store, engine, events, &config.Consensus)
+	queryManager := NewQueryManager(nodeID, transport, store, engine, &config.Consensus, events)
+	gossipManager := NewGossipManager(nodeID, transport, store, &config.Gossip, events)
+	syncManager := NewSyncManager(nodeID, transport, store, &config.Sync, &config.Snapshot, events)
+	snapshotManager := NewSnapshotManager(nodeID, store, &config.Snapshot, events)
+	proposer := NewRealBlockProposer(dbManager)
+	proposalManager := NewProposalManagerWithProposer(nodeID, transport, store, &config.Node, events, proposer)
+
+	// 设置关联
+	messageHandler.SetManagers(queryManager, gossipManager, syncManager, snapshotManager)
+	messageHandler.node = node
+	queryManager.node = node
+	gossipManager.node = node
+	syncManager.node = node
+	proposalManager.node = node
+
+	node.messageHandler = messageHandler
+	node.queryManager = queryManager
+	node.gossipManager = gossipManager
+	node.syncManager = syncManager
+	node.snapshotManager = snapshotManager
+	node.proposalManager = proposalManager
+
+	// 创建ConsensusNodeManager
+	consensusManager := &ConsensusNodeManager{
+		node:           node,
+		engine:         engine,
+		store:          store,
+		transport:      transport,
+		messageHandler: messageHandler,
+		queryManager:   queryManager,
+		dbManager:      dbManager,
+	}
+
+	// 启动节点
+	node.Start()
+
+	logs.Info("[ConsensusManager] Initialized with NodeID %s", nodeID)
+
+	return consensusManager
 }
 
 // AddBlock 添加新区块到共识
@@ -214,6 +206,7 @@ func (m *ConsensusNodeManager) IsReady() bool {
 // Stop 停止共识管理器
 func (m *ConsensusNodeManager) Stop() {
 	if m.node != nil {
+		m.node.cancel() // 触发优雅关闭
 		m.node.Stop()
 	}
 	logs.Info("[ConsensusManager] Stopped")

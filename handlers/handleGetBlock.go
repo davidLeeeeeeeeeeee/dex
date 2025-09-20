@@ -32,7 +32,7 @@ func HandleGetBlock(w http.ResponseWriter, r *http.Request) {
 	height := req.Height
 
 	// 4. 调用 DB 层的 GetBlock
-	mgr, err := db.GetInstance("")
+	mgr, err := db.NewManager("")
 	if err != nil {
 		http.Error(w, "Database not available", http.StatusInternalServerError)
 		return

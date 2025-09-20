@@ -225,7 +225,7 @@ func generateChitsResponse(requestedHeight uint64) *db.Chits {
 	return &db.Chits{
 		PreferredBlock:         preferredBlock,
 		AcceptedBlock:          acceptedBlock,
-		PreferredBlockAtHeight: preferredBlock,
+		PreferredBlockAtHeight: acceptedHeight,
 		AcceptedHeight:         acceptedHeight,
 		Bitmap:                 bitmap,
 	}
