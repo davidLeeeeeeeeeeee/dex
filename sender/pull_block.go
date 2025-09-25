@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"dex/db"
-	"dex/logs"
 	"fmt"
 	"google.golang.org/protobuf/proto"
 	"io"
@@ -18,61 +17,14 @@ type pullBlockMessage struct {
 	onSuccess   func(*db.Block)
 }
 
-// PullBlock 对外暴露的函数：发起对 peerAddr 的 /getblock 请求，想获取指定 height 的区块
-// onSuccess 回调可在请求成功后拿到区块做后续处理。
-func PullBlock(targetAddress string, height uint64, onSuccess func(*db.Block)) {
-	mgr, err := db.NewManager("")
-	if err != nil {
-		logs.Debug("[PullBlock] GetInstance error: %v", err)
-		return
-	}
-	// 根据链上地址获取账户信息，从中获得IP
-	account, err := db.GetAccount(mgr, targetAddress)
-	if err != nil || account == nil {
-		logs.Debug("[PullBlock] account not found for address %s", targetAddress)
-		return
-	}
-	if account.Ip == "" {
-		logs.Debug("[PullBlock] IP is empty for address %s", targetAddress)
-		return
-	}
-
-	// 构造 GetBlockRequest 消息
-	req := &db.GetBlockRequest{Height: height}
-	data, err := proto.Marshal(req)
-	if err != nil {
-		logs.Debug("[PullBlock] marshal GetBlockRequest error: %v", err)
-		return
-	}
-
-	// 构造包装消息
-	msg := &pullBlockMessage{
-		requestData: data,
-		onSuccess:   onSuccess,
-	}
-
-	// 构造 SendTask，将目标设为从数据库查到的 IP
-	task := &SendTask{
-		Target:     account.Ip,
-		Message:    msg,
-		RetryCount: 0,
-		MaxRetries: 1,
-		SendFunc:   doSendGetBlock,
-	}
-	GlobalQueue.Enqueue(task)
-
-	logs.Debug("Pull block at height=%d from %s ", height, targetAddress)
-}
-
 // doSendGetBlock 真正执行 HTTP/3 POST /getblock 并解析返回
-func doSendGetBlock(t *SendTask) error {
+func doSendGetBlock(t *SendTask, client *http.Client) error {
 	pm, ok := t.Message.(*pullBlockMessage)
 	if !ok {
 		return fmt.Errorf("doSendGetBlock: t.Message is not *pullBlockMessage")
 	}
 
 	url := fmt.Sprintf("https://%s/getblock", t.Target)
-	client := CreateHttp3Client()
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(pm.requestData))
 	if err != nil {

@@ -12,7 +12,7 @@ const queueSize = 10
 // 缓存的区块切片，最多存 10 个
 var cachedBlocks []*Block
 
-// SaveBlock 将区块存入DB，同时将区块存入内存切片（缓存）
+// 将区块存入DB，同时将区块存入内存切片（缓存）
 func SaveBlock(mgr *Manager, block *Block) error {
 	logs.Info("Saving new block_%d", block.Height)
 	// 1. 保存区块到 DB - 使用高度作为主键

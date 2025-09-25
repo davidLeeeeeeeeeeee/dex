@@ -28,14 +28,14 @@ func NewMinerIndexManager(db *badger.DB) (*MinerIndexManager, error) {
 		db:     db,
 		bitmap: roaring.New(),
 	}
-	if err := m.rebuildBitmapFromDB(); err != nil {
+	if err := m.RebuildBitmapFromDB(); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
 // 在一次只读事务里迭代所有 "indexToAccount_*" 键，填充 bitmap。
-func (m *MinerIndexManager) rebuildBitmapFromDB() error {
+func (m *MinerIndexManager) RebuildBitmapFromDB() error {
 	prefix := []byte("indexToAccount_")
 
 	return m.db.View(func(txn *badger.Txn) error {

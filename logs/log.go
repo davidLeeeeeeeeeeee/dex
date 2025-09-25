@@ -15,7 +15,7 @@ const (
 	LevelError          // 5（最高，最严重）
 )
 
-var logLevel = LevelInfo // 全局日志级别（示例设置为 LevelVerbose）
+var logLevel = LevelTrace // 全局日志级别（示例设置为 LevelVerbose）
 
 // 全局 Logger 实例
 var logger *Logger

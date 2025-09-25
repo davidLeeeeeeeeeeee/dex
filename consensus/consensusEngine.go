@@ -77,7 +77,7 @@ func (e *SnowmanEngine) RegisterQuery(nodeID types.NodeID, requestID uint32, blo
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	queryKey := fmt.Sprintf("%d-%d", nodeID, requestID)
+	queryKey := fmt.Sprintf("%s-%d", nodeID, requestID)
 	e.activeQueries[queryKey] = &QueryContext{
 		queryKey:  queryKey,
 		blockID:   blockID,
@@ -140,9 +140,7 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) {
 }
 
 func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string) {
-	if store, ok := e.store.(*MemoryBlockStore); ok {
-		store.SetFinalized(height, blockID)
-	}
+	e.store.SetFinalized(height, blockID)
 
 	sb := e.snowballs[height]
 	if sb != nil {

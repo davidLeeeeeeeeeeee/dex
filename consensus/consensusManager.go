@@ -5,8 +5,9 @@ import (
 	"dex/db"
 	"dex/interfaces"
 	"dex/logs"
+	"dex/sender"
+	"dex/txpool"
 	"dex/types"
-	"fmt"
 	"sync"
 )
 
@@ -16,70 +17,50 @@ type ConsensusNodeManager struct {
 	node           *Node
 	engine         interfaces.ConsensusEngine
 	store          interfaces.BlockStore
-	transport      interfaces.Transport
+	Transport      interfaces.Transport
 	messageHandler *MessageHandler
 	queryManager   *QueryManager
 	dbManager      *db.Manager
+	senderManager  *sender.SenderManager
+	adapter        *ConsensusAdapter
+	txPool         *txpool.TxPool
 }
 
-func InitConsensusManager(nodeID types.NodeID, dbManager *db.Manager, config *Config) *ConsensusNodeManager {
-	// 直接创建新实例，不使用sync.Once
+// consensus/consensusManager.go 修改版本
 
-	// 创建真实的组件
-	store := NewRealBlockStore(dbManager, config.Snapshot.MaxSnapshots)
-	events := NewEventBus()
-	engine := NewSnowmanEngine(nodeID, store, &config.Consensus, events)
-	transport := NewRealTransport(nodeID, dbManager, context.Background())
-	// 创建 context
-	ctx, cancel := context.WithCancel(context.Background())
+func InitConsensusManager(
+	nodeID types.NodeID,
+	dbManager *db.Manager,
+	config *Config,
+	senderMgr *sender.SenderManager,
+	txPool *txpool.TxPool,
+) *ConsensusNodeManager {
+	// 创建真实的 transport
+	transport := NewRealTransport(nodeID, dbManager, senderMgr, context.Background())
 
-	// 创建节点
-	node := &Node{
-		ID:          nodeID,
-		IsByzantine: false,
-		transport:   transport,
-		store:       store,
-		engine:      engine,
-		events:      events,
-		config:      config,
-		stats:       NewNodeStats(),
-		ctx:         ctx,    // 添加
-		cancel:      cancel, // 添加
-	}
+	// 替换默认的 MemoryBlockStore 为 RealBlockStore
+	realStore := NewRealBlockStore(dbManager, config.Snapshot.MaxSnapshots, txPool)
+	node := NewNode(nodeID, transport, realStore, false, config)
 
-	// 创建各种管理器
-	messageHandler := NewMessageHandler(nodeID, false, transport, store, engine, events, &config.Consensus)
-	queryManager := NewQueryManager(nodeID, transport, store, engine, &config.Consensus, events)
-	gossipManager := NewGossipManager(nodeID, transport, store, &config.Gossip, events)
-	syncManager := NewSyncManager(nodeID, transport, store, &config.Sync, &config.Snapshot, events)
-	snapshotManager := NewSnapshotManager(nodeID, store, &config.Snapshot, events)
-	proposer := NewRealBlockProposer(dbManager)
-	proposalManager := NewProposalManagerWithProposer(nodeID, transport, store, &config.Node, events, proposer)
+	// 重新创建 engine，使用 realStore
+	node.engine = NewSnowmanEngine(nodeID, realStore, &config.Consensus, node.events)
 
-	// 设置关联
-	messageHandler.SetManagers(queryManager, gossipManager, syncManager, snapshotManager)
-	messageHandler.node = node
-	queryManager.node = node
-	gossipManager.node = node
-	syncManager.node = node
-	proposalManager.node = node
+	// 创建使用真实 BlockProposer 的 ProposalManager
+	proposer := NewRealBlockProposer(dbManager, txPool)
+	node.proposalManager.SetProposer(proposer)
 
-	node.messageHandler = messageHandler
-	node.queryManager = queryManager
-	node.gossipManager = gossipManager
-	node.syncManager = syncManager
-	node.snapshotManager = snapshotManager
-	node.proposalManager = proposalManager
-
-	// 创建ConsensusNodeManager
+	// 创建 ConsensusNodeManager
 	consensusManager := &ConsensusNodeManager{
 		node:           node,
-		engine:         engine,
-		store:          store,
-		transport:      transport,
-		messageHandler: messageHandler,
-		queryManager:   queryManager,
+		engine:         node.engine,
+		store:          node.store,
+		Transport:      transport,
+		messageHandler: node.messageHandler,
+		queryManager:   node.queryManager,
 		dbManager:      dbManager,
+		senderManager:  senderMgr,
+		txPool:         txPool,
+		adapter:        NewConsensusAdapter(dbManager),
 	}
 
 	// 启动节点
@@ -90,18 +71,15 @@ func InitConsensusManager(nodeID types.NodeID, dbManager *db.Manager, config *Co
 	return consensusManager
 }
 
-// AddBlock 添加新区块到共识
+// 添加新区块到共识
 func (m *ConsensusNodeManager) AddBlock(block *db.Block) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// 转换为types.Block
-	typesBlock := &types.Block{
-		ID:       block.BlockHash,
-		Height:   block.Height,
-		ParentID: block.PrevBlockHash,
-		Data:     fmt.Sprintf("TxCount: %d", len(block.Body)),
-		Proposer: "0", // 需要从Miner字段解析
+	typesBlock, err := m.adapter.DBBlockToConsensus(block)
+	if err != nil {
+		return err
 	}
 
 	// 添加到存储
@@ -148,7 +126,7 @@ func (m *ConsensusNodeManager) HasBlock(blockId string) bool {
 
 // ProcessMessage 处理接收到的共识消息
 func (m *ConsensusNodeManager) ProcessMessage(msg types.Message) {
-	m.messageHandler.Handle(msg)
+	m.messageHandler.HandleMsg(msg)
 }
 
 // StartQuery 发起查询
@@ -195,7 +173,7 @@ func (m *ConsensusNodeManager) IsReady() bool {
 	}
 
 	// 检查是否有足够的对等节点
-	peers := m.transport.SamplePeers(m.node.ID, 1)
+	peers := m.Transport.SamplePeers(m.node.ID, 1)
 	if len(peers) == 0 {
 		return false
 	}

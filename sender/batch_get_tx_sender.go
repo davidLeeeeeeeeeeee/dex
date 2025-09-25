@@ -3,10 +3,8 @@ package sender
 import (
 	"bytes"
 	"dex/db"
-	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 
 	"google.golang.org/protobuf/proto"
@@ -19,58 +17,8 @@ type pullBatchTxMessage struct {
 	onSuccess func([]*db.AnyTx)
 }
 
-// 接口只需要传入shortHashes和回调函数
-// 注意：该接口为异步接口，实际请求将通过全局发送队列提交
-func BatchGetTxs(peerAddress string, shortHashes map[string]bool, onSuccess func([]*db.AnyTx)) {
-	var result [][]byte
-	for hexStr := range shortHashes {
-		bytes, err := hex.DecodeString(hexStr)
-		if err != nil {
-			log.Printf("invalid hex string: %s, err: %v", hexStr, err)
-			continue
-		}
-		result = append(result, bytes)
-	}
-	// 1. 构造请求消息
-	reqMsg := &db.BatchGetShortTxRequest{
-		ShortHashes: result,
-	}
-	data, err := proto.Marshal(reqMsg)
-	if err != nil {
-		fmt.Printf("failed to marshal BatchGetDataRequest: %v\n", err)
-		return
-	}
-
-	// 2. 构造消息包装体
-	msg := &pullBatchTxMessage{
-		requestData: data,
-		onSuccess:   onSuccess,
-	}
-
-	// 3. 根据传入的 peerAddress 获取对方 IP
-	targetIP, err := Address_Ip(peerAddress)
-	if err != nil {
-		fmt.Printf("failed to get IP for peerAddress %s: %v\n", peerAddress, err)
-		return
-	}
-	if targetIP == "" {
-		fmt.Printf("peerAddress %s returned empty IP\n", peerAddress)
-		return
-	}
-
-	// 4. 构造发送任务并提交到全局发送队列
-	task := &SendTask{
-		Target:     targetIP,
-		Message:    msg,
-		RetryCount: 0,
-		MaxRetries: 1,
-		SendFunc:   doSendBatchGetTxs,
-	}
-	GlobalQueue.Enqueue(task)
-}
-
 // doSendBatchGetTxs 执行HTTP/3 POST请求获取批量交易
-func doSendBatchGetTxs(t *SendTask) error {
+func doSendBatchGetTxs(t *SendTask, client *http.Client) error {
 	msg, ok := t.Message.(*pullBatchTxMessage)
 	if !ok {
 		return fmt.Errorf("doSendBatchGetTxs: message is not *pullBatchTxMessage, got %T", t.Message)
@@ -84,7 +32,6 @@ func doSendBatchGetTxs(t *SendTask) error {
 	}
 	req.Header.Set("Content-Type", "application/x-protobuf")
 
-	client := CreateHttp3Client()
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

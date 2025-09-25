@@ -18,7 +18,7 @@ type RealBlockStore struct {
 	mu        sync.RWMutex
 	dbManager *db.Manager
 	pool      *txpool.TxPool
-
+	adapter   *ConsensusAdapter
 	// 内存缓存
 	blockCache         map[string]*types.Block
 	heightIndex        map[uint64][]*types.Block
@@ -33,11 +33,11 @@ type RealBlockStore struct {
 	maxSnapshots    int
 }
 
-// NewRealBlockStore 创建真实的区块存储
-func NewRealBlockStore(dbManager *db.Manager, maxSnapshots int) interfaces.BlockStore {
+// 创建真实的区块存储
+func NewRealBlockStore(dbManager *db.Manager, maxSnapshots int, pool *txpool.TxPool) interfaces.BlockStore {
 	store := &RealBlockStore{
 		dbManager:       dbManager,
-		pool:            txpool.GetInstance(),
+		pool:            pool,
 		blockCache:      make(map[string]*types.Block),
 		heightIndex:     make(map[uint64][]*types.Block),
 		finalizedBlocks: make(map[uint64]*types.Block),
@@ -45,6 +45,7 @@ func NewRealBlockStore(dbManager *db.Manager, maxSnapshots int) interfaces.Block
 		snapshotHeights: make([]uint64, 0),
 		maxSnapshots:    maxSnapshots,
 		maxHeight:       0,
+		adapter:         NewConsensusAdapter(dbManager),
 	}
 
 	// 初始化创世区块
@@ -141,7 +142,10 @@ func (s *RealBlockStore) GetByHeight(height uint64) []*types.Block {
 		copy(result, blocks)
 		return result
 	}
-
+	// NEW: 如果请求的高度还没被任何区块覆盖，就直接返回空，避免打 DB
+	if height > s.maxHeight {
+		return []*types.Block{}
+	}
 	// 从数据库查找
 	dbBlock, err := db.GetBlock(s.dbManager, height)
 	if err != nil || dbBlock == nil {
@@ -241,7 +245,7 @@ func (s *RealBlockStore) GetCurrentHeight() uint64 {
 	return height
 }
 
-// SetFinalized 设置区块为最终化状态（内部使用）
+// 设置区块为最终化状态（内部使用）
 func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -467,27 +471,15 @@ func (s *RealBlockStore) loadFromDB() {
 }
 
 func (s *RealBlockStore) convertDBBlockToTypes(dbBlock *db.Block) *types.Block {
-	if dbBlock == nil {
+	if s.adapter == nil {
+		s.adapter = NewConsensusAdapter(s.dbManager)
+	}
+	block, err := s.adapter.DBBlockToConsensus(dbBlock)
+	if err != nil {
+		logs.Error("[RealBlockStore] Failed to convert block: %v", err)
 		return nil
 	}
-
-	// 解析Proposer（从Miner字段）
-	proposer := "-1"
-	if dbBlock.Miner != "" {
-		// 假设格式是 "node_123"
-		var nodeID int
-		fmt.Sscanf(dbBlock.Miner, "node_%d", &nodeID)
-		proposer = string(nodeID)
-	}
-
-	return &types.Block{
-		ID:       dbBlock.BlockHash,
-		Height:   dbBlock.Height,
-		ParentID: dbBlock.PrevBlockHash,
-		Data:     fmt.Sprintf("TxCount: %d, TxsHash: %s", len(dbBlock.Body), dbBlock.TxsHash),
-		Proposer: proposer,
-		Round:    0, // 可以从BlockHash中解析
-	}
+	return block
 }
 
 func (s *RealBlockStore) finalizeBlockWithTxs(block *types.Block) {

@@ -25,15 +25,15 @@ const (
 	MsgPullQuery MessageType = iota
 	MsgPushQuery
 	MsgChits
-	MsgGet
-	MsgPut
+	MsgGet // 请求区块数据
+	MsgPut // 发送区块数据
 	MsgGossip
 	MsgSyncRequest
 	MsgSyncResponse
 	MsgHeightQuery
 	MsgHeightResponse
-	MsgSnapshotRequest  // 新增：请求快照
-	MsgSnapshotResponse // 新增：快照响应
+	MsgSnapshotRequest  // 请求快照
+	MsgSnapshotResponse // 快照响应
 )
 
 // 基础消息结构

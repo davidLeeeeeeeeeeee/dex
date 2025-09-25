@@ -20,20 +20,23 @@ type RealBlockProposer struct {
 }
 
 // NewRealBlockProposer 创建真实的区块提案者
-func NewRealBlockProposer(dbManager *db.Manager) interfaces.BlockProposer {
+func NewRealBlockProposer(dbManager *db.Manager, pool *txpool.TxPool) interfaces.BlockProposer {
 	return &RealBlockProposer{
 		maxBlocksPerHeight: 3,
-		maxTxsPerBlock:     2500, // 每个区块最多2500笔交易
-		pool:               txpool.GetInstance(),
+		maxTxsPerBlock:     2500,
+		pool:               pool, // 使用注入的实例
 		dbManager:          dbManager,
 	}
 }
 
-// ProposeBlock 生成包含实际交易的区块
+// 生成包含实际交易的区块
 func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, round int) (*types.Block, error) {
 	// 1. 从TxPool获取待打包的交易
-	pendingTxs := p.pool.GetTxsByTargetHeight(height)
-
+	pendingTxs := p.pool.GetPendingTxs()
+	if len(pendingTxs) == 0 {
+		logs.Debug("[RealBlockProposer] no txs for height %d, skip", height)
+		return nil, nil
+	}
 	// 限制交易数量
 	if len(pendingTxs) > p.maxTxsPerBlock {
 		pendingTxs = pendingTxs[:p.maxTxsPerBlock]
@@ -52,14 +55,14 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 	shortTxs := p.pool.ConcatFirst8Bytes(sortedTxs)
 
 	// 4. 生成区块ID（结合高度、提案者、轮次和交易哈希）
-	blockID := fmt.Sprintf("block-%d-%d-r%d-%s", height, proposer, round, txsHash[:8])
+	blockID := fmt.Sprintf("block-%d-%s-r%d-%s", height, proposer, round, txsHash[:8])
 
 	// 5. 构造实际的区块
 	block := &types.Block{
 		ID:       blockID,
 		Height:   height,
 		ParentID: parentID,
-		Data: fmt.Sprintf("Height %d, Proposer %d, Round %d, TxCount %d",
+		Data: fmt.Sprintf("Height %d, Proposer %s, Round %d, TxCount %d",
 			height, proposer, round, len(sortedTxs)),
 		Proposer: string(proposer),
 		Round:    round,
@@ -71,7 +74,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 		TxsHash:       txsHash,
 		BlockHash:     blockID,
 		PrevBlockHash: parentID,
-		Miner:         fmt.Sprintf("node_%d", proposer),
+		Miner:         fmt.Sprintf("node_%s", proposer),
 		Body:          sortedTxs,
 		ShortTxs:      shortTxs,
 	}
@@ -79,7 +82,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 	// 临时存储到内存，等区块最终化后再持久化
 	p.cacheBlock(blockID, dbBlock)
 
-	logs.Info("[RealBlockProposer] Proposed block %s with %d txs at height %d",
+	logs.Info("[RealBlockProposer] Proposer:%s Proposed block %s with %d txs at height %d", proposer,
 		blockID, len(sortedTxs), height)
 
 	return block, nil
@@ -94,7 +97,7 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, round int, curren
 
 	// 检查TxPool中是否有足够的待处理交易
 	pendingCount := len(p.pool.GetPendingAnyTx())
-	if pendingCount < 10 { // 至少要有10笔交易才提案
+	if pendingCount < 1 { // 至少要有10笔交易才提案
 		return false
 	}
 

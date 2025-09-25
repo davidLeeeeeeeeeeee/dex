@@ -22,4 +22,4 @@ type BaseEvent struct {
 }
 
 func (e BaseEvent) Type() EventType   { return e.EventType }
-func (e BaseEvent) Data() interface{} { return e.Data }
+func (e BaseEvent) Data() interface{} { return e.EventData }

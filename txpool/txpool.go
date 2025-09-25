@@ -10,6 +10,7 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/shopspring/decimal"
 	"log"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -20,51 +21,177 @@ type TxPool struct {
 	dbManager *db.Manager
 	network   *network.Network
 
-	mu sync.RWMutex
-
-	// 内存缓存: pendingTx
+	// 缓存
+	mu                     sync.RWMutex
 	pendingAnyTxCache      *lru.Cache
 	shortPendingAnyTxCache *lru.Cache
 	cacheTx                *lru.Cache
 	shortTxCache           *lru.Cache
-	interval               time.Duration
+
+	// 内部队列管理
+	queue     *txPoolQueue
+	validator TxValidator
+
+	// 控制
+	stopChan chan struct{}
+	wg       sync.WaitGroup
 }
 
-var (
-	instance *TxPool
-	once     sync.Once
-)
+// NewTxPool 创建新的TxPool实例（替代GetInstance）
+func NewTxPool(dbManager *db.Manager, validator TxValidator) (*TxPool, error) {
+	pendingAnyTxCache, err := lru.New(100000)
+	if err != nil {
+		return nil, err
+	}
+	shortPendingAnyTxCache, _ := lru.New(100000)
+	cacheTx, _ := lru.New(100000)
+	shortTxCache, _ := lru.New(100000)
 
-// GetInstance 获取 TxPool 的单例实例
-func GetInstance() *TxPool {
-	once.Do(func() {
-		pendingAnyTxCache, err := lru.New(100000)
-		shortPendingAnyTxCache, _ := lru.New(100000)
-		cacheTx, _ := lru.New(100000)
-		shortTxCache, _ := lru.New(100000)
-		dataPath := "./data"
-		dbManager, err := db.NewManager(dataPath)
-		if err != nil {
-			logs.Error("Failed to initialize DB manager: %v", err)
+	net := network.NewNetwork(dbManager)
+
+	tp := &TxPool{
+		dbManager:              dbManager,
+		network:                net,
+		pendingAnyTxCache:      pendingAnyTxCache,
+		shortPendingAnyTxCache: shortPendingAnyTxCache,
+		cacheTx:                cacheTx,
+		shortTxCache:           shortTxCache,
+		validator:              validator,
+		stopChan:               make(chan struct{}),
+	}
+
+	// 创建内部队列
+	tp.queue = newTxPoolQueue(tp, validator)
+
+	// 从DB加载已有pendingTx
+	tp.loadFromDB()
+
+	return tp, nil
+}
+
+// Start 启动交易池
+func (tp *TxPool) Start() error {
+	// 启动内部队列处理
+	tp.wg.Add(1)
+	go tp.queue.runLoop()
+
+	logs.Info("[TxPool] Started")
+	return nil
+}
+
+// Stop 停止交易池
+func (tp *TxPool) Stop() error {
+	close(tp.stopChan)
+	tp.wg.Wait()
+	logs.Info("[TxPool] Stopped")
+	return nil
+}
+
+// 提交交易（对外的主要接口）
+func (tp *TxPool) SubmitTx(anyTx *db.AnyTx, fromIP string, onAdded OnTxAddedCallback) error {
+	if anyTx == nil {
+		return fmt.Errorf("nil transaction")
+	}
+
+	msg := &txPoolMessage{
+		Type:    msgAddTx,
+		AnyTx:   anyTx,
+		IP:      fromIP,
+		OnAdded: onAdded,
+	}
+
+	select {
+	case tp.queue.msgChan <- msg:
+		return nil
+	default:
+		return fmt.Errorf("txpool queue is full")
+	}
+}
+
+// RemoveTx 移除交易
+func (tp *TxPool) RemoveTx(txID string) error {
+	if txID == "" {
+		return fmt.Errorf("empty txID")
+	}
+
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+
+	tp.pendingAnyTxCache.Remove(txID)
+	tp.shortPendingAnyTxCache.Remove(txID[2:18])
+
+	// 同时从DB删除
+	return db.DeletePendingAnyTx(tp.dbManager, txID)
+}
+
+// 其他公开方法保持不变...
+func (tp *TxPool) HasTransaction(txID string) bool {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+	_, exists := tp.pendingAnyTxCache.Get(txID)
+	return exists
+}
+
+func (tp *TxPool) GetTransactionById(txID string) *db.AnyTx {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+	if v, ok := tp.pendingAnyTxCache.Get(txID); ok {
+		if tx, ok := v.(*db.AnyTx); ok {
+			return tx
 		}
-		net := network.NewNetwork(dbManager)
+	}
+	return nil
+}
 
-		tp := &TxPool{
-			dbManager:              dbManager,
-			network:                net,
-			interval:               3 * time.Second, // 自行决定同步频率
-			pendingAnyTxCache:      pendingAnyTxCache,
-			shortPendingAnyTxCache: shortPendingAnyTxCache,
-			cacheTx:                cacheTx,
-			shortTxCache:           shortTxCache,
+func (tp *TxPool) GetPendingTxs() []*db.AnyTx {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+
+	var result []*db.AnyTx
+	keys := tp.pendingAnyTxCache.Keys()
+	for _, k := range keys {
+		keyStr, ok := k.(string)
+		if !ok {
+			continue
 		}
+		if value, exists := tp.pendingAnyTxCache.Get(keyStr); exists {
+			if anyTx, ok := value.(*db.AnyTx); ok {
+				base := anyTx.GetBase()
+				if base != nil {
+					result = append(result, anyTx)
+				}
+			}
+		}
+	}
+	return result
+}
 
-		// 启动时先从DB加载已有pendingTx
-		tp.loadFromDB()
+// 内部方法
+func (tp *TxPool) storeAnyTx(anyTx *db.AnyTx) error {
+	txID := anyTx.GetTxId()
+	if txID == "" {
+		return fmt.Errorf("txID is empty")
+	}
 
-		instance = tp
-	})
-	return instance
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+
+	// 如果池里已经有了就跳过
+	if _, exists := tp.pendingAnyTxCache.Get(txID); exists {
+		return nil
+	}
+
+	// 加入内存缓存
+	tp.pendingAnyTxCache.Add(txID, anyTx)
+	tp.cacheTx.Add(txID, anyTx)
+	tp.shortPendingAnyTxCache.Add(txID[2:18], txID)
+	tp.shortTxCache.Add(txID[2:18], txID)
+
+	// 保存到DB
+	if err := db.SavePendingAnyTx(tp.dbManager, anyTx); err != nil {
+		return err
+	}
+	return nil
 }
 
 // loadFromDB 从数据库加载"pending_tx_"记录到内存
@@ -121,30 +248,6 @@ func (p *TxPool) RemoveAnyTx(txID string) {
 	p.shortPendingAnyTxCache.Remove(txID[2:18])
 	// —— 直接删DB
 	_ = db.DeletePendingAnyTx(p.dbManager, txID)
-}
-
-// 返回所有 target_height == height 的交易
-func (p *TxPool) GetTxsByTargetHeight(height uint64) []*db.AnyTx {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	var result []*db.AnyTx
-	keys := p.pendingAnyTxCache.Keys()
-	for _, k := range keys {
-		keyStr, ok := k.(string)
-		if !ok {
-			continue
-		}
-		if value, exists := p.pendingAnyTxCache.Get(keyStr); exists {
-			if anyTx, ok := value.(*db.AnyTx); ok {
-				base := anyTx.GetBase()
-				if base != nil && base.TargetHeight == height {
-					result = append(result, anyTx)
-				}
-			}
-		}
-	}
-	return result
 }
 
 // 返回内存里的 pendingTx
@@ -216,7 +319,7 @@ func (p *TxPool) ConcatFirst8Bytes(txs []*db.AnyTx) []byte {
 		txID := tx.GetTxId()
 		idBytes, err := hex.DecodeString(txID[2:])
 		if err != nil {
-			log.Fatalf("invalid hex string: %v", err)
+			log.Fatalf("invalid hex string: %v\n%s", err, debug.Stack())
 		}
 		// 如果交易标识的长度小于3，则跳过或按需求处理
 		if len(idBytes) < 3 {
@@ -231,27 +334,6 @@ func (p *TxPool) ConcatFirst8Bytes(txs []*db.AnyTx) []byte {
 		result = append(result, idBytes[:endIndex]...)
 	}
 	return result
-}
-
-func (p *TxPool) HasTransaction(txID string) bool {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if _, exists := p.pendingAnyTxCache.Get(txID); exists {
-		return true
-	}
-	return false
-}
-
-func (p *TxPool) GetTransactionById(txID string) *db.AnyTx {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if v, ok := p.pendingAnyTxCache.Get(txID); ok {
-		if tx, ok := v.(*db.AnyTx); ok {
-			// 现在 tx 是 *db.AnyTx 类型
-			return tx
-		}
-	}
-	return nil
 }
 
 // ExtractAnyTxId ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"dex/interfaces"
+	"dex/logs"
 	"dex/types"
 	"sort"
 )
@@ -44,7 +45,7 @@ func (h *MessageHandler) SetManagers(qm *QueryManager, gm *GossipManager, sm *Sy
 	h.snapshotManager = snapMgr
 }
 
-func (h *MessageHandler) Handle(msg types.Message) {
+func (h *MessageHandler) HandleMsg(msg types.Message) {
 	if h.isByzantine && (msg.Type == types.MsgPullQuery || msg.Type == types.MsgPushQuery) {
 		if h.node != nil {
 			h.node.stats.mu.Lock()
@@ -156,6 +157,8 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 	}
 
 	accepted, acceptedHeight := h.store.GetLastAccepted()
+	logs.Debug("[sendChits] to=%s req=%d preferred=%v accepted=%v", to, requestID, preferred, accepted)
+
 	h.transport.Send(to, types.Message{
 		Type: types.MsgChits, From: h.nodeID, RequestID: requestID,
 		PreferredID: preferred, PreferredIDHeight: queryHeight,

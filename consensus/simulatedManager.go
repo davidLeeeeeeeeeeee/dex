@@ -48,7 +48,9 @@ func (nm *NetworkManager) CreateNodes() {
 
 	for i := 0; i < nm.config.Network.NumNodes; i++ {
 		nodeID := types.NodeID(strconv.Itoa(i))
-		node := NewNode(nodeID, nm.transports[nodeID], byzantineMap[nodeID], nm.config)
+		// 为模拟场景创建 MemoryBlockStore
+		store := NewMemoryBlockStoreWithConfig(nm.config.Snapshot.MaxSnapshots)
+		node := NewNode(nodeID, nm.transports[nodeID], store, byzantineMap[nodeID], nm.config)
 		nm.nodes[nodeID] = node
 	}
 }

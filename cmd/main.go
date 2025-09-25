@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"dex/consensus"
 	"dex/db"
@@ -18,6 +19,8 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 	"math/big"
 	"net/http"
 	"os"
@@ -27,7 +30,7 @@ import (
 	"time"
 )
 
-// NodeInstance 表示一个节点实例
+// 表示一个节点实例
 type NodeInstance struct {
 	ID               int
 	PrivateKey       string
@@ -37,9 +40,10 @@ type NodeInstance struct {
 	Server           *http.Server
 	ConsensusManager *consensus.ConsensusNodeManager
 	DBManager        *db.Manager
-	TxPoolQueue      *txpool.TxPoolQueue
-	SenderQueue      *sender.SendQueue
 	Cancel           context.CancelFunc
+	TxPool           *txpool.TxPool
+	SenderManager    *sender.SenderManager
+	HandlerManager   *handlers.HandlerManager // 新增
 }
 
 // TestValidator 简单的交易验证器
@@ -58,7 +62,6 @@ func (v *TestValidator) CheckAnyTx(tx *db.AnyTx) error {
 	}
 	return nil
 }
-
 func main() {
 	// 配置参数
 	const numNodes = 100
@@ -77,10 +80,11 @@ func main() {
 	fmt.Println("📦 Phase 1: Initializing all nodes...")
 	for i := 0; i < numNodes; i++ {
 		node := &NodeInstance{
+			Address:    fmt.Sprintf("0x000%d", i),
 			ID:         i,
 			PrivateKey: privateKeys[i],
 			Port:       fmt.Sprintf("%d", basePort+i),
-			DataPath:   fmt.Sprintf("./data_node_%d", i),
+			DataPath:   fmt.Sprintf("./data/data_node_%d", i),
 		}
 
 		// 清理旧数据
@@ -93,7 +97,7 @@ func main() {
 		}
 
 		nodes[i] = node
-		fmt.Printf("  ✓ Node %d initialized (port %s)\n", i, node.Port)
+		fmt.Printf("  ✔ Node %d initialized (port %s)\n", i, node.Port)
 	}
 
 	// 等待一下让所有数据库完成初始化
@@ -105,6 +109,11 @@ func main() {
 
 	// 第三阶段：启动所有HTTP服务器
 	fmt.Println("🌐 Phase 3: Starting HTTP servers...")
+
+	// 创建一个channel来收集服务器启动完成的信号
+	serverReadyChan := make(chan int, numNodes)
+	serverErrorChan := make(chan error, numNodes)
+
 	for _, node := range nodes {
 		if node == nil {
 			continue
@@ -112,13 +121,58 @@ func main() {
 		wg.Add(1)
 		go func(n *NodeInstance) {
 			defer wg.Done()
-			startHTTPServer(n)
+
+			// 启动HTTP服务器并发送就绪信号
+			if err := startHTTPServerWithSignal(n, serverReadyChan, serverErrorChan); err != nil {
+				serverErrorChan <- fmt.Errorf("node %d failed to start: %v", n.ID, err)
+			}
 		}(node)
-		time.Sleep(50 * time.Millisecond) // 避免同时启动太多
+
+		// 稍微错开启动时间，避免资源争抢
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	// 等待服务器启动
-	time.Sleep(5 * time.Second)
+	// 等待所有HTTP服务器启动完成
+	fmt.Println("⏳ Waiting for all HTTP/3 servers to be ready...")
+	readyCount := 0
+	successfulNodes := 0
+
+	// 设置超时时间
+	timeout := time.After(30 * time.Second)
+
+	for readyCount < len(nodes) {
+		select {
+		case nodeID := <-serverReadyChan:
+			successfulNodes++
+			fmt.Printf("  ✅ Node %d HTTP/3 server is ready (%d/%d)\n",
+				nodeID, successfulNodes, len(nodes))
+
+		case err := <-serverErrorChan:
+			fmt.Printf("  ❌ Error: %v\n", err)
+
+		case <-timeout:
+			fmt.Printf("  ⚠️ Timeout waiting for servers. %d/%d started successfully\n",
+				successfulNodes, len(nodes))
+			goto CONTINUE_WITH_CONSENSUS
+		}
+
+		readyCount++
+	}
+
+	fmt.Printf("✅ All %d HTTP/3 servers are ready!\n", successfulNodes)
+
+CONTINUE_WITH_CONSENSUS:
+	// 额外等待一小段时间确保服务器完全稳定
+	time.Sleep(1 * time.Second)
+
+	// Create initial transactions
+	fmt.Println("📝 Creating initial transactions...")
+	for _, node := range nodes {
+		if node != nil && node.ConsensusManager != nil {
+			generateTransactions(node)
+		}
+	}
+	time.Sleep(2 * time.Second)
 
 	// 第四阶段：启动共识
 	fmt.Println("🎯 Phase 4: Starting consensus engines...")
@@ -152,6 +206,83 @@ func main() {
 	fmt.Println("👋 All nodes stopped. Goodbye!")
 }
 
+// 新增：带信号的HTTP服务器启动函数
+func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorChan chan<- error) error {
+	// 创建HTTP路由
+	mux := http.NewServeMux()
+
+	// 使用HandlerManager注册路由
+	node.HandlerManager.RegisterRoutes(mux)
+
+	// 应用中间件
+	handler := middleware.RateLimit(mux)
+
+	// 生成自签名证书
+	certFile := fmt.Sprintf("server_%d.crt", node.ID)
+	keyFile := fmt.Sprintf("server_%d.key", node.ID)
+
+	if err := generateSelfSignedCert(certFile, keyFile); err != nil {
+		errorChan <- fmt.Errorf("Node %d: Failed to generate certificate: %v", node.ID, err)
+		return err
+	}
+
+	// 创建TLS配置
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{},
+		MinVersion:   tls.VersionTLS13,
+		MaxVersion:   tls.VersionTLS13,
+		// 添加ALPN协议支持 - 这是关键修复
+		NextProtos: []string{"h3", "h3-29", "h3-28", "h3-27"}, // HTTP/3协议标识符
+	}
+
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		errorChan <- fmt.Errorf("Node %d: Failed to load certificate: %v", node.ID, err)
+		return err
+	}
+	tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
+
+	// 创建QUIC配置
+	quicConfig := &quic.Config{
+		KeepAlivePeriod: 10 * time.Second,
+		MaxIdleTimeout:  5 * time.Minute,
+		Allow0RTT:       true,
+	}
+
+	// 创建HTTP/3服务器
+	server := &http3.Server{
+		Addr:       ":" + node.Port,
+		Handler:    handler,
+		TLSConfig:  tlsConfig,
+		QUICConfig: quicConfig,
+	}
+
+	node.Server = &http.Server{
+		Addr:    ":" + node.Port,
+		Handler: handler,
+	}
+
+	// 创建QUIC监听器
+	listener, err := quic.ListenAddr(":"+node.Port, tlsConfig, quicConfig)
+	if err != nil {
+		errorChan <- fmt.Errorf("Node %d: Failed to create QUIC listener: %v", node.ID, err)
+		return err
+	}
+
+	logs.Info("Node %d: Starting HTTP/3 server on port %s", node.ID, node.Port)
+
+	// 服务器成功创建监听器，发送就绪信号
+	readyChan <- node.ID
+
+	// 启动服务器（这是阻塞调用）
+	if err := server.ServeListener(listener); err != nil {
+		logs.Error("Node %d: HTTP/3 Server error: %v", node.ID, err)
+		return err
+	}
+
+	return nil
+}
+
 // generatePrivateKeys 生成指定数量的私钥
 func generatePrivateKeys(count int) []string {
 	keys := make([]string, count)
@@ -169,7 +300,7 @@ func generatePrivateKeys(count int) []string {
 	return keys
 }
 
-// initializeNode 初始化单个节点
+// 初始化单个节点
 func initializeNode(node *NodeInstance) error {
 	// 1. 初始化密钥管理器
 	keyMgr := utils.GetKeyManager()
@@ -191,15 +322,25 @@ func initializeNode(node *NodeInstance) error {
 	// 初始化数据库写队列
 	dbManager.InitWriteQueue(100, 200*time.Millisecond)
 
-	// 4. 初始化TxPool队列
+	// 4. 创建验证器
 	validator := &TestValidator{}
-	txpool.InitTxPoolQueue(dbManager, validator)
 
-	// 5. 初始化发送队列
-	sender.InitQueue(10, 10000)
+	// 5. 创建并启动TxPool（不再使用单例）
+	txPool, err := txpool.NewTxPool(dbManager, validator)
+	if err != nil {
+		return fmt.Errorf("failed to create TxPool: %v", err)
+	}
+	if err := txPool.Start(); err != nil {
+		return fmt.Errorf("failed to start TxPool: %v", err)
+	}
+	node.TxPool = txPool
 
-	// 6. 初始化共识系统
-	nodeID := types.NodeID(fmt.Sprintf("%d", node.ID))
+	// 6. 创建发送管理器
+	senderManager := sender.NewSenderManager(dbManager, node.Address, txPool)
+	node.SenderManager = senderManager
+
+	// 7. 初始化共识系统
+	nodeID := types.NodeID(node.Address)
 	config := consensus.DefaultConfig()
 
 	// 调整配置
@@ -213,8 +354,25 @@ func initializeNode(node *NodeInstance) error {
 	config.Node.ProposalInterval = 5 * time.Second
 
 	// 创建共识管理器
-	consensusManager := consensus.InitConsensusManager(nodeID, dbManager, config)
+	consensusManager := consensus.InitConsensusManager(
+		nodeID,
+		dbManager,
+		config,
+		senderManager,
+		txPool,
+	)
 	node.ConsensusManager = consensusManager
+
+	// 8. 创建Handler管理器
+	handlerManager := handlers.NewHandlerManager(
+		dbManager,
+		consensusManager,
+		node.Port,
+		node.Address,
+		senderManager,
+		txPool,
+	)
+	node.HandlerManager = handlerManager
 
 	// 保存节点信息到数据库
 	nodeInfo := &db.NodeInfo{
@@ -246,11 +404,50 @@ func initializeNode(node *NodeInstance) error {
 	if err := db.SaveAccount(dbManager, account); err != nil {
 		return fmt.Errorf("failed to save account: %v", err)
 	}
-
+	// 保存索引映射
+	indexKey := fmt.Sprintf("indexToAccount_%d", account.Index)
+	accountKey := fmt.Sprintf("account_%s", account.Address)
+	dbManager.EnqueueSet(indexKey, accountKey)
+	// Force flush to ensure miner registration is persisted
+	dbManager.ForceFlush()
 	return nil
 }
 
-// registerAllNodes 注册所有节点信息到每个节点的数据库
+// Option 2: Generate transactions continuously
+func generateTransactions(node *NodeInstance) {
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+
+		txID := 0
+		for range ticker.C {
+			// Generate multiple transactions
+			for i := 0; i < 2; i++ {
+				tx := &db.Transaction{
+					Base: &db.BaseMessage{
+						TxId:        fmt.Sprintf("%d%d", i, time.Now().UnixNano()),
+						FromAddress: node.Address,
+						Status:      db.Status_PENDING,
+						Nonce:       uint64(i),
+					},
+					To:           node.Address,
+					TokenAddress: "FB",
+					Amount:       "100",
+				}
+				anyTx := &db.AnyTx{
+					Content: &db.AnyTx_Transaction{Transaction: tx},
+				}
+				// Add to transaction pool
+				if err := node.TxPool.StoreAnyTx(anyTx); err == nil {
+					logs.Trace("Added transaction %s to pool", tx.Base.TxId)
+				}
+			}
+			txID++
+		}
+	}()
+}
+
+// 注册所有节点信息到每个节点的数据库
 func registerAllNodes(nodes []*NodeInstance) {
 	for i, node := range nodes {
 		if node == nil || node.DBManager == nil {
@@ -287,60 +484,24 @@ func registerAllNodes(nodes []*NodeInstance) {
 				IsOnline:  true,
 			}
 			db.SaveNodeInfo(node.DBManager, nodeInfo)
+			// 保存索引映射
+			indexKey := fmt.Sprintf("indexToAccount_%d", j)
+			accountKey := fmt.Sprintf("account_%s", otherNode.Address)
+			node.DBManager.EnqueueSet(indexKey, accountKey)
+
+		}
+		// Force flush to ensure all registrations are persisted
+		node.DBManager.ForceFlush()
+		time.Sleep(100 * time.Millisecond) // 确保写入完成
+
+		// 重新扫描数据库重建 bitmap
+		if err := node.DBManager.IndexMgr.RebuildBitmapFromDB(); err != nil {
+			logs.Error("Failed to rebuild bitmap: %v", err)
 		}
 	}
 }
 
-// startHTTPServer 启动HTTP服务器
-func startHTTPServer(node *NodeInstance) {
-	// 创建HTTP路由
-	mux := http.NewServeMux()
-
-	// 设置handlers的共识管理器
-	handlers.ConsensusManager = node.ConsensusManager
-
-	// 注册路由
-	mux.HandleFunc("/pushquery", handlers.HandlePushQuery)
-	mux.HandleFunc("/pullquery", handlers.HandlePullQuery)
-	mux.HandleFunc("/pullcontainer", handlers.HandlePullContainer)
-	mux.HandleFunc("/status", handlers.HandleStatus)
-	mux.HandleFunc("/tx", handlers.HandleTx)
-	mux.HandleFunc("/getblock", handlers.HandleGetBlock)
-	mux.HandleFunc("/getdata", handlers.HandleGetData)
-	mux.HandleFunc("/batchgetdata", handlers.HandleBatchGetTx)
-	mux.HandleFunc("/nodes", handlers.HandleNodes)
-
-	// 应用中间件
-	handler := middleware.RateLimit(mux)
-
-	// 创建服务器
-	server := &http.Server{
-		Addr:         ":" + node.Port,
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
-
-	node.Server = server
-
-	// 生成自签名证书
-	certFile := fmt.Sprintf("server_%d.crt", node.ID)
-	keyFile := fmt.Sprintf("server_%d.key", node.ID)
-
-	if err := generateSelfSignedCert(certFile, keyFile); err != nil {
-		logs.Error("Node %d: Failed to generate certificate: %v", node.ID, err)
-		return
-	}
-
-	// 启动HTTPS服务
-	logs.Info("Node %d: Starting HTTPS server on port %s", node.ID, node.Port)
-	if err := server.ListenAndServeTLS(certFile, keyFile); err != http.ErrServerClosed {
-		logs.Error("Node %d: Server error: %v", node.ID, err)
-	}
-}
-
-// generateSelfSignedCert 生成自签名证书
+// 生成自签名证书
 func generateSelfSignedCert(certFile, keyFile string) error {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -389,7 +550,7 @@ func generateSelfSignedCert(certFile, keyFile string) error {
 	return nil
 }
 
-// monitorProgress 监控共识进度
+// 监控共识进度
 func monitorProgress(nodes []*NodeInstance) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -397,7 +558,7 @@ func monitorProgress(nodes []*NodeInstance) {
 	for range ticker.C {
 		var minHeight, maxHeight uint64
 		activeNodes := 0
-
+		fmt.Println("[monitor] tick")
 		for _, node := range nodes {
 			if node == nil || node.ConsensusManager == nil {
 				continue
@@ -418,6 +579,18 @@ func monitorProgress(nodes []*NodeInstance) {
 			activeNodes, minHeight, maxHeight)
 
 		// 打印一些节点的详细状态
+		heightCount := map[uint64]int{}
+		activeQueries := int64(0)
+		for _, node := range nodes {
+			if node == nil || node.ConsensusManager == nil {
+				continue
+			}
+			_, h := node.ConsensusManager.GetLastAccepted()
+			heightCount[h]++
+			activeQueries += int64(node.ConsensusManager.GetStats().QueriesSent) - int64(node.ConsensusManager.GetStats().ChitsResponded)
+		}
+		fmt.Printf("  Heights histogram: %+v\n", heightCount)
+		fmt.Printf("  Pending queries (approx): %d\n", activeQueries)
 		for i := 0; i < 3 && i < len(nodes); i++ {
 			if nodes[i] != nil && nodes[i].ConsensusManager != nil {
 				accepted, height := nodes[i].ConsensusManager.GetLastAccepted()
@@ -443,6 +616,21 @@ func shutdownAllNodes(nodes []*NodeInstance) {
 			// 停止共识
 			if n.ConsensusManager != nil {
 				n.ConsensusManager.Stop()
+			}
+
+			// 停止Handler管理器（新增）
+			if n.HandlerManager != nil {
+				n.HandlerManager.Stop()
+			}
+
+			// 停止Sender管理器
+			if n.SenderManager != nil {
+				n.SenderManager.Stop()
+			}
+
+			// 停止TxPool
+			if n.TxPool != nil {
+				n.TxPool.Stop()
 			}
 
 			// 停止HTTP服务器

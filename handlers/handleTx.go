@@ -2,59 +2,40 @@ package handlers
 
 import (
 	"dex/db"
-	"dex/txpool"
+	"fmt"
 	"google.golang.org/protobuf/proto"
 	"io"
 	"net"
 	"net/http"
 )
 
-func HandleTx(w http.ResponseWriter, r *http.Request) {
-	// 1. 先 CheckAuth
-	//if !CheckAuth(r) {
-	//	http.Error(w, "Unauthorized", http.StatusUnauthorized)
-	//	return
-	//}
-
-	//clientIP := strings.Split(r.RemoteAddr, ":")[0]
-	//dbMgr, err := db.GetInstance("")
-	//if err != nil {
-	//	http.Error(w, "DB not available", http.StatusInternalServerError)
-	//	return
-	//}
-
-	//info, err := db.GetClientInfo(dbMgr, clientIP)
-	//if err != nil || !info.GetAuthed() {
-	//	http.Error(w, "Unauthorized", http.StatusUnauthorized)
-	//	return
-	//}
-
-	// 2. 读取并解析 protobuf: AnyTx
+// HandleTx 处理交易提交
+func (hm *HandlerManager) HandleTx(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
+
 	var incomingAny db.AnyTx
 	if err := proto.Unmarshal(bodyBytes, &incomingAny); err != nil {
 		http.Error(w, "Invalid AnyTx proto", http.StatusBadRequest)
 		return
 	}
 
-	// 把剩余的处理逻辑（共识校验、存入TxPool、广播等）“排队”到 TxPoolQueue
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	msg := &txpool.TxPoolMessage{
-		Type:  txpool.MsgAddTx,
-		AnyTx: &incomingAny,
-		IP:    host,
-		OnAdded: func(txID string) {
-			// 这里才调用 sender
-			//sender.BroadcastTx(txID)
-		},
-	}
-	txpool.GlobalTxPoolQueue.Enqueue(msg)
 
-	// 返回protobuf响应
+	// 直接提交给TxPool，不再关心内部队列
+	err = hm.txPool.SubmitTx(&incomingAny, host, func(txID string) {
+		// 广播回调
+		hm.senderManager.BroadcastTx(&incomingAny)
+	})
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to submit tx: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	resProto := &db.StatusResponse{
 		Status: "ok",
 		Info:   "Tx received",

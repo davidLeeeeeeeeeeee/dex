@@ -133,7 +133,7 @@ func (sm *SyncManager) checkAndSync() {
 	}
 }
 
-// 请求快照同步（新增）
+// 请求快照同步
 func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
 	sm.mu.Lock()
 	if sm.syncing {

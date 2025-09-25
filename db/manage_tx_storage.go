@@ -178,38 +178,6 @@ func SaveMinerTx(mgr *Manager, tx *MinerTx) error {
 	return nil
 }
 
-// 去订单ID对应的 OrderTx 读取，
-// 增加 filled_base / filled_quote，然后判断是否 is_filled。
-func UpdateOrderTxInDB(orderID string, tradeAmt, price decimal.Decimal) error {
-	mgr, err := NewManager("./data")
-	if err != nil {
-		return err
-	}
-	orderTx, err := GetOrderTx(mgr, orderID)
-	if err != nil {
-		return err
-	}
-	if orderTx == nil {
-		return fmt.Errorf("orderTx not found: %s", orderID)
-	}
-	oldFilledBase, _ := decimal.NewFromString(orderTx.FilledBase)
-	oldFilledQuote, _ := decimal.NewFromString(orderTx.FilledQuote)
-
-	// 假设 base=tradeAmt, quote= tradeAmt*price
-	newBase := oldFilledBase.Add(tradeAmt)
-	newQuote := oldFilledQuote.Add(tradeAmt.Mul(price))
-
-	orderTx.FilledBase = newBase.String()
-	orderTx.FilledQuote = newQuote.String()
-
-	totalBase, _ := decimal.NewFromString(orderTx.Amount)
-	if newBase.Cmp(totalBase) >= 0 {
-		orderTx.IsFilled = true
-	}
-
-	return SaveOrderTx(mgr, orderTx)
-}
-
 // GetAnyTxById 根据给定的 tx_id 从数据库中读取对应的交易（AnyTx）
 // 这里假设在保存时，除了专用前缀外，还额外保存了一个通用 key "anyTx_<txID>"
 // 其值为实际存储该交易的 key（如 "tx_<txID>" 或 "order_<txID>" 等）。

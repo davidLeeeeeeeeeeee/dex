@@ -3,6 +3,7 @@ package consensus
 import (
 	"context"
 	"dex/interfaces"
+	"dex/logs"
 	"dex/types"
 	"sync"
 	"time"
@@ -78,7 +79,10 @@ func (pm *ProposalManager) proposeBlock() {
 		Logf("[Node %d] Failed to propose block: %v\n", pm.nodeID, err)
 		return
 	}
-
+	if block == nil { // ★ 加这一段
+		logs.Debug("[ProposalManager] no block proposed (pending txs=0?) at height=%d round=%d", targetHeight, currentRound)
+		return
+	}
 	pm.mu.Lock()
 	if pm.proposedBlocks[block.ID] {
 		pm.mu.Unlock()

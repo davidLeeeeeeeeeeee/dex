@@ -22,12 +22,11 @@ message TokenRegistry {
 message BaseMessage {
   string tx_id = 1;         // 交易 ID 即hash
   string from_address = 2;  // 发起者地址
-  uint64 target_height = 3; // 期望执行交易的高度
-  uint64 executed_height = 4; // 实际执行的区块高度
-  string public_key = 5;
-  string signature = 6;     // 签名
-  Status status = 7;
-  uint64 nonce = 8;
+  uint64 executed_height = 3; // 实际执行的区块高度
+  string public_key = 4;
+  string signature = 5;     // 签名
+  Status status = 6;
+  uint64 nonce = 7;
 }
 
 // --------------------- 账户 & 区块信息 ---------------------
@@ -136,7 +135,7 @@ message MinerTx {//启动或停止挖矿
 
 }
 
-// 新增： 用 oneof 封装各种 Tx
+// 用 oneof 封装各种 Tx
 message AnyTx {
   oneof content {
     IssueTokenTx issue_token_tx = 1;
@@ -189,7 +188,7 @@ message HandshakeResponse {
 }
 
 message StatusRequest {
-  // 如果请求端啥都不需要，也可以留空
+  string address = 1;  // 请求方地址
 }
 
 message StatusResponse {
@@ -202,6 +201,7 @@ message StatusResponse {
 // 用于请求完整交易数据
 message GetData {
   string tx_id = 1;
+  string address = 2;// 请求方地址
 }
 
 message GetBlockRequest {
@@ -214,6 +214,7 @@ message GetBlockResponse {
 
 message BatchGetShortTxRequest {
   repeated bytes short_hashes = 1; // 每个 8 字节的短 hash
+  string address = 2;  // 请求方地址
 }
 
 message BatchGetShortTxResponse {
@@ -230,14 +231,17 @@ message CheckPointInfo {
 message GetConsensusStateRequest {}
 // ---------------- Snowman networking ----------------
 message PushQuery {
-  string address = 1;
+  uint32 request_id = 1;
+  string address = 2;
   // Timeout (ns) for this request
-  uint64 deadline = 2;
-  bool container_is_block = 3;// 为true表示是完整数据，false表示只有txs
-  bytes container = 4;// 当tx数量小于2500时候，该字段为所有交易的完整二进制数据，>=2500的时候为 所有交易的简短tx_hash
+  uint64 deadline = 3;
+  bool container_is_block = 4;// 为true表示是完整数据，false表示只有txs
+  bytes container = 5;// 当tx数量小于2500时候，该字段为所有交易的完整二进制数据，>=2500的时候为 所有交易的简短tx_hash
   // Requesting peer's last accepted height
-  uint64 requested_height = 5;
-  string block_id = 6;
+  uint64 requested_height = 6;
+  string block_id = 7;
+  bytes signature = 8;  // TODO：消息签名
+  uint64 nonce = 9;     // TODO：防重放攻击
 }
 
 // PullQuery requests the preferences of a remote peer given a container id.
@@ -256,13 +260,21 @@ message PullQuery {
 // Chits contains the preferences of a peer in response to a PushQuery or
 // PullQuery message.
 message Chits {
+  uint32 request_id = 1;
+  string address = 2;
   // ID of the currently preferred block
-  string preferred_block = 2;
+  string preferred_block = 3;
   // ID of the last accepted block
-  string accepted_block = 3;
+  string accepted_block = 4;
   // ID of the currently preferred block at the requested height
-  uint64 preferred_block_at_height = 4;
+  uint64 preferred_block_at_height = 5;
   // Last accepted block's height
-  uint64 accepted_height = 5;
-  bytes bitmap = 6;//上一个区块与自己联系过的节点
+  uint64 accepted_height = 6;
+  bytes bitmap = 7;//上一个区块与自己联系过的节点
+}
+
+message HeightResponse{ // 需要在proto中定义
+  uint64 LastAcceptedHeight = 1;
+  uint64 CurrentHeight = 2;
+  string address = 3;  // 响应方地址
 }

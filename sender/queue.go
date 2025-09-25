@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"reflect"
 	"runtime"
 	"sync"
@@ -13,12 +14,13 @@ import (
 
 // SendTask 封装一次发送所需的信息
 type SendTask struct {
-	Target      string                     // 目标节点(通常是IP:port)
-	Message     interface{}                // 要发送的具体payload
-	RetryCount  int                        // 当前已重试次数
-	MaxRetries  int                        // 最大重试次数
-	NextAttempt time.Time                  // 下次可发送时间(用于幂次退避)
-	SendFunc    func(task *SendTask) error // 真正执行发送的回调
+	Target      string
+	Message     interface{}
+	RetryCount  int
+	MaxRetries  int
+	NextAttempt time.Time
+	SendFunc    func(task *SendTask, client *http.Client) error
+	HttpClient  *http.Client
 }
 
 // SendQueue 负责管理任务队列 + worker
@@ -27,19 +29,21 @@ type SendQueue struct {
 	taskChan    chan *SendTask
 	stopChan    chan struct{}
 	wg          sync.WaitGroup
+	httpClient  *http.Client
 }
 
-// GlobalQueue 您可以暴露一个全局队列实例, 供其他sender函数使用
-var GlobalQueue *SendQueue
+// 移除 GlobalQueue 和 InitQueue
 
-// InitQueue 在程序启动时初始化全局队列
-func InitQueue(workerCount, queueCapacity int) {
-	GlobalQueue = &SendQueue{
+// NewSendQueue 创建新的发送队列
+func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client) *SendQueue {
+	sq := &SendQueue{
 		workerCount: workerCount,
 		taskChan:    make(chan *SendTask, queueCapacity),
 		stopChan:    make(chan struct{}),
+		httpClient:  httpClient,
 	}
-	GlobalQueue.Start()
+	sq.Start()
+	return sq
 }
 
 // Start 启动 workerCount 个协程
@@ -100,16 +104,18 @@ func (sq *SendQueue) doSend(task *SendTask, workerID int) error {
 	if task.SendFunc == nil {
 		return fmt.Errorf("SendFunc is nil, cannot send")
 	}
+	// 设置任务的 HTTP 客户端
+	task.HttpClient = sq.httpClient
 
 	start := time.Now()
-	err := task.SendFunc(task)
+	err := task.SendFunc(task, sq.httpClient)
 	elapsed := time.Since(start)
 
 	if err != nil {
 		logs.Error("[SendQueue] worker=%d,%s send to %s FAILED after %v: %v",
 			workerID, task.FuncName(), task.Target, elapsed, err)
 	} else {
-		logs.Debug("[SendQueue] worker=%d,%s send to %s success in %v",
+		logs.Trace("[SendQueue] worker=%d,%s send to %s success in %v",
 			workerID, task.FuncName(), task.Target, elapsed)
 	}
 	return err

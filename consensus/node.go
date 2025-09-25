@@ -29,10 +29,9 @@ type Node struct {
 	stats           *NodeStats
 }
 
-func NewNode(id types.NodeID, transport interfaces.Transport, byzantine bool, config *Config) *Node {
+func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, byzantine bool, config *Config) *Node {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	store := NewMemoryBlockStoreWithConfig(config.Snapshot.MaxSnapshots)
 	events := NewEventBus()
 	engine := NewSnowmanEngine(id, store, &config.Consensus, events)
 
@@ -40,7 +39,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, byzantine bool, co
 		ID:          id,
 		IsByzantine: byzantine,
 		transport:   transport,
-		store:       store,
+		store:       store, // 使用传入的 store
 		engine:      engine,
 		events:      events,
 		ctx:         ctx,
@@ -72,7 +71,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, byzantine bool, co
 	node.queryManager = queryManager
 	node.gossipManager = gossipManager
 	node.syncManager = syncManager
-	node.snapshotManager = snapshotManager // 新增
+	node.snapshotManager = snapshotManager
 	node.proposalManager = proposalManager
 
 	return node
@@ -83,7 +82,7 @@ func (n *Node) Start() {
 		for {
 			select {
 			case msg := <-n.transport.Receive():
-				n.messageHandler.Handle(msg)
+				n.messageHandler.HandleMsg(msg)
 			case <-n.ctx.Done():
 				return
 			}
@@ -94,7 +93,7 @@ func (n *Node) Start() {
 	n.queryManager.Start(n.ctx)
 	n.gossipManager.Start(n.ctx)
 	n.syncManager.Start(n.ctx)
-	n.snapshotManager.Start(n.ctx) // 新增
+	n.snapshotManager.Start(n.ctx)
 
 	if !n.IsByzantine {
 		n.proposalManager.Start(n.ctx)

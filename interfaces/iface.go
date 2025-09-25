@@ -19,6 +19,8 @@ type BlockStore interface {
 	LoadSnapshot(snapshot *types.Snapshot) error
 	GetLatestSnapshot() (*types.Snapshot, bool)
 	GetSnapshotAtHeight(height uint64) (*types.Snapshot, bool)
+
+	SetFinalized(height uint64, blockID string)
 }
 
 type ConsensusEngine interface {

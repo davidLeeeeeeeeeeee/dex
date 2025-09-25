@@ -61,21 +61,26 @@ func (gm *GossipManager) Start(ctx context.Context) {
 
 func (gm *GossipManager) gossipNewBlocks() {
 	_, currentHeight := gm.store.GetLastAccepted()
+	curMax := gm.store.GetCurrentHeight()
+	// NEW: 如果链上还没到 next/next+1，就别去 GetByHeight，避免触发 DB 回退
+	if curMax <= currentHeight {
+		return
+	}
 
-	blocks := make([]*types.Block, 0)
+	blocks := make([]*types.Block, 0, 4)
 	blocks = append(blocks, gm.store.GetByHeight(currentHeight+1)...)
-	blocks = append(blocks, gm.store.GetByHeight(currentHeight+2)...)
+	if curMax >= currentHeight+2 {
+		blocks = append(blocks, gm.store.GetByHeight(currentHeight+2)...)
+	}
 
 	for _, block := range blocks {
 		if block.ID == "genesis" {
 			continue
 		}
-
 		gm.mu.RLock()
-		alreadyGossiped := gm.seenBlocks[block.ID]
+		seen := gm.seenBlocks[block.ID]
 		gm.mu.RUnlock()
-
-		if !alreadyGossiped {
+		if !seen {
 			gm.gossipBlock(block)
 		}
 	}
