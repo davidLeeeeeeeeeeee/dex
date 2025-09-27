@@ -7,7 +7,7 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-// flushAndWait 触发后台批量写并等待其完成
+// 触发后台批量写并等待其完成
 func flushAndWait(mgr *Manager) {
 	mgr.ForceFlush()
 	time.Sleep(50 * time.Millisecond) // 让 flushBatch 有时间跑完

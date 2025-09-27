@@ -127,7 +127,7 @@ func (manager *Manager) runWriteQueue() {
 	}
 }
 
-// ForceFlush 提供一个无参函数，触发批量队列 flush
+// 提供一个无参函数，触发批量队列 flush
 func (manager *Manager) ForceFlush() {
 	select {
 	case manager.forceFlushChan <- struct{}{}:

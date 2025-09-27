@@ -208,19 +208,19 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 	}
 
 	// 8. 可选：继续传播给其他节点（避免重复传播）
-	if hm.senderManager != nil && hm.shouldRebroadcast(&block) {
-		go func() {
-			blockData, err := json.Marshal(&block)
-			if err != nil {
-				logs.Debug("[HandleBlockGossip] Failed to marshal block for rebroadcast: %v", err)
-				return
-			}
-			// 广播给随机的其他矿工
-			hm.senderManager.BroadcastToRandomMiners(blockData, 3)
-		}()
-	}
+	//if hm.senderManager != nil && hm.shouldRebroadcast(&block) {
+	//	go func() {
+	//		blockData, err := json.Marshal(&block)
+	//		if err != nil {
+	//			logs.Debug("[HandleBlockGossip] Failed to marshal block for rebroadcast: %v", err)
+	//			return
+	//		}
+	//		// 广播给随机的其他矿工
+	//		hm.senderManager.BroadcastToRandomMiners(blockData, 3)
+	//	}()
+	//}
 
-	// 9. 返回成功响应
+	// 8. 返回成功响应
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }

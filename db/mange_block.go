@@ -14,7 +14,7 @@ var cachedBlocks []*Block
 
 // 将区块存入DB，同时将区块存入内存切片（缓存）
 func SaveBlock(mgr *Manager, block *Block) error {
-	logs.Info("Saving new block_%d", block.Height)
+	logs.Debug("Saving new block_%d", block.Height)
 	// 1. 保存区块到 DB - 使用高度作为主键
 	key := fmt.Sprintf("block_%d", block.Height)
 	data, err := ProtoMarshal(block)

@@ -3,6 +3,7 @@ package consensus
 import (
 	"context"
 	"dex/interfaces"
+	"dex/logs"
 	"dex/types"
 	"math/rand"
 	"sync"
@@ -132,7 +133,7 @@ func (gm *GossipManager) HandleGossip(msg types.Message) {
 	}
 
 	if isNew {
-		Logf("[Node %d] Received new block %s via gossip from Node %d\n",
+		logs.Debug("[Node %d] Received new block %s via gossip from Node %d\n",
 			gm.nodeID, msg.Block.ID, msg.From)
 
 		gm.events.Publish(types.BaseEvent{

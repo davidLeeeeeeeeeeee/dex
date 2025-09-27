@@ -14,8 +14,8 @@ type NodeStats struct {
 	queriesPerHeight map[uint64]uint32
 	BlocksProposed   uint32
 	GossipsReceived  uint32
-	snapshotsUsed    uint32 // 新增
-	snapshotsServed  uint32 // 新增
+	snapshotsUsed    uint32
+	snapshotsServed  uint32
 }
 
 func NewNodeStats() *NodeStats {

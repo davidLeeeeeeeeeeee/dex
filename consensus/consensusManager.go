@@ -63,12 +63,16 @@ func InitConsensusManager(
 		adapter:        NewConsensusAdapter(dbManager),
 	}
 
-	// 启动节点
-	node.Start()
-
 	logs.Info("[ConsensusManager] Initialized with NodeID %s", nodeID)
 
 	return consensusManager
+}
+
+func (m *ConsensusNodeManager) Start() {
+	if m.node != nil {
+		m.node.Start()
+		logs.Info("[ConsensusManager] Started consensus engine")
+	}
 }
 
 // 添加新区块到共识
@@ -95,7 +99,7 @@ func (m *ConsensusNodeManager) AddBlock(block *db.Block) error {
 			EventData: typesBlock,
 		})
 
-		logs.Info("[ConsensusManager] Added new block %s at height %d",
+		logs.Debug("[ConsensusManager] Added new block %s at height %d",
 			block.BlockHash, block.Height)
 	}
 
@@ -181,7 +185,7 @@ func (m *ConsensusNodeManager) IsReady() bool {
 	return true
 }
 
-// Stop 停止共识管理器
+// 停止共识管理器
 func (m *ConsensusNodeManager) Stop() {
 	if m.node != nil {
 		m.node.cancel() // 触发优雅关闭

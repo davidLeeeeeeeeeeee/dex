@@ -164,7 +164,14 @@ func main() {
 CONTINUE_WITH_CONSENSUS:
 	// 额外等待一小段时间确保服务器完全稳定
 	time.Sleep(1 * time.Second)
-
+	// 新增：第3.5阶段 - 启动共识引擎
+	fmt.Println("🔧 Phase 3.5: Starting consensus engines...")
+	for _, node := range nodes {
+		if node != nil && node.ConsensusManager != nil {
+			node.ConsensusManager.Start()
+			fmt.Printf("  ✓ Node %d consensus engine started\n", node.ID)
+		}
+	}
 	// Create initial transactions
 	fmt.Println("📝 Creating initial transactions...")
 	for _, node := range nodes {
@@ -336,7 +343,7 @@ func initializeNode(node *NodeInstance) error {
 	node.TxPool = txPool
 
 	// 6. 创建发送管理器
-	senderManager := sender.NewSenderManager(dbManager, node.Address, txPool)
+	senderManager := sender.NewSenderManager(dbManager, node.Address, txPool, node.ID)
 	node.SenderManager = senderManager
 
 	// 7. 初始化共识系统
@@ -587,7 +594,15 @@ func monitorProgress(nodes []*NodeInstance) {
 			}
 			_, h := node.ConsensusManager.GetLastAccepted()
 			heightCount[h]++
-			activeQueries += int64(node.ConsensusManager.GetStats().QueriesSent) - int64(node.ConsensusManager.GetStats().ChitsResponded)
+
+			sent := int64(node.ConsensusManager.GetStats().QueriesSent)
+			responded := int64(node.ConsensusManager.GetStats().ChitsResponded)
+
+			// 每个节点的 pending = sent - 它收到的响应（不是它发出的响应）
+			nodePending := sent - responded
+			if nodePending > 0 {
+				activeQueries += nodePending
+			}
 		}
 		fmt.Printf("  Heights histogram: %+v\n", heightCount)
 		fmt.Printf("  Pending queries (approx): %d\n", activeQueries)
@@ -600,7 +615,7 @@ func monitorProgress(nodes []*NodeInstance) {
 	}
 }
 
-// shutdownAllNodes 关闭所有节点
+// 关闭所有节点
 func shutdownAllNodes(nodes []*NodeInstance) {
 	var wg sync.WaitGroup
 

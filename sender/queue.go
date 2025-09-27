@@ -30,13 +30,15 @@ type SendQueue struct {
 	stopChan    chan struct{}
 	wg          sync.WaitGroup
 	httpClient  *http.Client
+	nodeID      int // 只用作log,不参与业务逻辑
 }
 
 // 移除 GlobalQueue 和 InitQueue
 
-// NewSendQueue 创建新的发送队列
-func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client) *SendQueue {
+// 创建新的发送队列
+func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client, nodeID int) *SendQueue {
 	sq := &SendQueue{
+		nodeID:      nodeID,
 		workerCount: workerCount,
 		taskChan:    make(chan *SendTask, queueCapacity),
 		stopChan:    make(chan struct{}),
@@ -71,7 +73,9 @@ func (sq *SendQueue) Enqueue(task *SendTask) {
 	case sq.taskChan <- task:
 		// ok
 	default:
-		log.Println("[SendQueue] taskChan is full, discard or handle properly.")
+		// 关键：看到是谁满了、当前长度多少、任务类型是什么
+		logs.Error("[Node %d][SendQueue] FULL: len=%d cap=%d msg=%s target=%s",
+			sq.nodeID, len(sq.taskChan), cap(sq.taskChan), task.Message, task.Target)
 	}
 }
 

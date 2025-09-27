@@ -25,15 +25,16 @@ type SenderManager struct {
 	address    string     // 本节点地址
 	sendQueue  *SendQueue // 持有SendQueue实例
 	httpClient *http.Client
+	nodeID     int // 只用作log,不参与业务逻辑
 }
 
-// NewSenderManager 创建新的发送管理器
-func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool) *SenderManager {
+// 创建新的发送管理器
+func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, nodeID int) *SenderManager {
 	// 创建 HTTP/3 客户端
 	httpClient := createHttp3Client()
 
 	// 创建SendQueue实例，传入 httpClient
-	queue := NewSendQueue(10, 10000, httpClient)
+	queue := NewSendQueue(10, 10000, httpClient, nodeID)
 
 	return &SenderManager{
 		dbManager:  dbMgr,

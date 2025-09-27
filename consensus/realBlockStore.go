@@ -425,6 +425,7 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 			logs.Error("[RealBlockStore] Failed to save block to DB: %v", err)
 		} else {
 			logs.Debug("[RealBlockStore] Saved block %s to DB", block.ID)
+			s.dbManager.ForceFlush() // 立刻刷盘，保证最终化的块可被 DB 即时读取
 		}
 	} else {
 		// 创建简单的数据库区块
