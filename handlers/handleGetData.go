@@ -43,7 +43,7 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 从数据库查找
-	anyTx, err := db.GetAnyTxById(hm.dbManager, getDataMsg.TxId)
+	anyTx, err := hm.dbManager.GetAnyTxById(getDataMsg.TxId)
 	if err != nil || anyTx == nil {
 		http.Error(w, fmt.Sprintf("Transaction %s not found", getDataMsg.TxId), http.StatusNotFound)
 		return

@@ -9,11 +9,8 @@ import (
 
 const queueSize = 10
 
-// 缓存的区块切片，最多存 10 个
-var cachedBlocks []*Block
-
 // 将区块存入DB，同时将区块存入内存切片（缓存）
-func SaveBlock(mgr *Manager, block *Block) error {
+func (mgr *Manager) SaveBlock(block *Block) error {
 	logs.Debug("Saving new block_%d", block.Height)
 	// 1. 保存区块到 DB - 使用高度作为主键
 	key := fmt.Sprintf("block_%d", block.Height)
@@ -32,62 +29,69 @@ func SaveBlock(mgr *Manager, block *Block) error {
 
 	// 4. 更新内存缓存切片
 	//    如果长度 >= 10，就移除最早的一个
-	if len(cachedBlocks) >= queueSize {
-		cachedBlocks = cachedBlocks[1:]
+	mgr.cachedBlocksMu.Lock()
+	if len(mgr.cachedBlocks) >= queueSize {
+		mgr.cachedBlocks = mgr.cachedBlocks[1:]
 	}
-	//    将最新的 block 加到末尾
-	cachedBlocks = append(cachedBlocks, block)
+	mgr.cachedBlocks = append(mgr.cachedBlocks, block)
+	mgr.cachedBlocksMu.Unlock()
 
 	return nil
 }
 
 // GetBlock 根据高度获取对应区块，先看内存缓存，再看 DB
-func GetBlock(mgr *Manager, height uint64) (*Block, error) {
-	// 1. 先从内存缓存中查
-	for _, b := range cachedBlocks {
-		if b.Height == height {
+func (mgr *Manager) GetBlock(height uint64) (*Block, error) {
+	// 1) 读缓存：用 RLock
+	mgr.cachedBlocksMu.RLock()
+	for _, b := range mgr.cachedBlocks {
+		if b != nil && b.Height == height {
+			mgr.cachedBlocksMu.RUnlock()
 			return b, nil
 		}
 	}
+	mgr.cachedBlocksMu.RUnlock()
 
-	// 2. 内存里没找到，则再去数据库查
+	// 2) 读 DB（无关 cachedBlocksMu）
 	key := fmt.Sprintf("block_%d", height)
 	val, err := mgr.Read(key)
 	if err != nil {
 		logs.Warn("[GetBlock err]key: %s, err: %v stack: %s\n", key, err, debug.Stack())
 		return nil, err
 	}
-
 	block := &Block{}
 	if err := ProtoUnmarshal([]byte(val), block); err != nil {
 		return nil, err
 	}
 
-	// 3. 将从 DB 中读到的区块也放到缓存里
-	//    同样保持最多 10 个
-	if len(cachedBlocks) >= queueSize {
-		cachedBlocks = cachedBlocks[1:]
+	// 3) 把 DB 读到的结果写回缓存：用 **写锁**，且解锁要用 Unlock
+	mgr.cachedBlocksMu.Lock()
+	if len(mgr.cachedBlocks) >= queueSize {
+		mgr.cachedBlocks = mgr.cachedBlocks[1:]
 	}
-	cachedBlocks = append(cachedBlocks, block)
+	mgr.cachedBlocks = append(mgr.cachedBlocks, block)
+	mgr.cachedBlocksMu.Unlock()
 
 	return block, nil
 }
 
 // GetBlockByID 根据区块ID（BlockHash）获取区块
-func GetBlockByID(mgr *Manager, blockID string) (*Block, error) {
+func (mgr *Manager) GetBlockByID(blockID string) (*Block, error) {
 	// 1. 先从内存缓存中查找
-	for _, b := range cachedBlocks {
-		if b.BlockHash == blockID {
+	mgr.cachedBlocksMu.RLock()
+	for _, b := range mgr.cachedBlocks {
+		if b != nil && b.BlockHash == blockID {
+			mgr.cachedBlocksMu.RUnlock()
 			return b, nil
 		}
 	}
+	mgr.cachedBlocksMu.RUnlock()
 
 	// 2. 从数据库查找ID到高度的映射
 	idKey := fmt.Sprintf("blockid_%s", blockID)
 	heightStr, err := mgr.Read(idKey)
 	if err != nil {
 		// 没有找到映射，可能是旧数据，尝试遍历查找
-		return getBlockByIDFallback(mgr, blockID)
+		return mgr.getBlockByIDFallback(blockID)
 	}
 
 	// 3. 解析高度
@@ -98,20 +102,20 @@ func GetBlockByID(mgr *Manager, blockID string) (*Block, error) {
 	}
 
 	// 4. 通过高度获取区块
-	return GetBlock(mgr, height)
+	return mgr.GetBlock(height)
 }
 
-// getBlockByIDFallback 当没有ID映射时的降级方案（遍历查找）
-func getBlockByIDFallback(mgr *Manager, blockID string) (*Block, error) {
+// 当没有ID映射时的降级方案（遍历查找）
+func (mgr *Manager) getBlockByIDFallback(blockID string) (*Block, error) {
 	// 获取最新高度
-	latestHeight, err := GetLatestBlockHeight(mgr)
+	latestHeight, err := mgr.GetLatestBlockHeight()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest height: %v", err)
 	}
 
 	// 从最新高度向前遍历查找（通常最近的区块被查询的概率更高）
 	for h := latestHeight; h > 0; h-- {
-		block, err := GetBlock(mgr, h)
+		block, err := mgr.GetBlock(h)
 		if err != nil {
 			continue // 跳过不存在的高度
 		}
@@ -124,7 +128,7 @@ func getBlockByIDFallback(mgr *Manager, blockID string) (*Block, error) {
 	}
 
 	// 检查创世区块
-	genesis, err := GetBlock(mgr, 0)
+	genesis, err := mgr.GetBlock(0)
 	if err == nil && genesis.BlockHash == blockID {
 		return genesis, nil
 	}
@@ -133,7 +137,7 @@ func getBlockByIDFallback(mgr *Manager, blockID string) (*Block, error) {
 }
 
 // GetLatestBlockHeight 直接从 "latest_block_height" 键中读取最新的区块高度
-func GetLatestBlockHeight(mgr *Manager) (uint64, error) {
+func (mgr *Manager) GetLatestBlockHeight() (uint64, error) {
 	latestKey := "latest_block_height"
 	val, err := mgr.Read(latestKey)
 	if err != nil {
@@ -146,15 +150,15 @@ func GetLatestBlockHeight(mgr *Manager) (uint64, error) {
 	return height, nil
 }
 
-// GetBlocksByRange 获取指定高度范围内的所有区块
-func GetBlocksByRange(mgr *Manager, fromHeight, toHeight uint64) ([]*Block, error) {
+// 获取指定高度范围内的所有区块
+func (mgr *Manager) GetBlocksByRange(fromHeight, toHeight uint64) ([]*Block, error) {
 	if fromHeight > toHeight {
 		return nil, fmt.Errorf("invalid range: from %d to %d", fromHeight, toHeight)
 	}
 
 	blocks := make([]*Block, 0, toHeight-fromHeight+1)
 	for h := fromHeight; h <= toHeight; h++ {
-		block, err := GetBlock(mgr, h)
+		block, err := mgr.GetBlock(h)
 		if err != nil {
 			// 跳过不存在的高度
 			logs.Debug("[GetBlocksByRange] Skip height %d: %v", h, err)
@@ -167,33 +171,19 @@ func GetBlocksByRange(mgr *Manager, fromHeight, toHeight uint64) ([]*Block, erro
 }
 
 // BlockExists 检查指定ID的区块是否存在
-func BlockExists(mgr *Manager, blockID string) bool {
+func (mgr *Manager) BlockExists(blockID string) bool {
 	// 1. 先检查缓存
-	for _, b := range cachedBlocks {
-		if b.BlockHash == blockID {
+	mgr.cachedBlocksMu.RLock()
+	for _, b := range mgr.cachedBlocks {
+		if b != nil && b.BlockHash == blockID {
+			mgr.cachedBlocksMu.RUnlock()
 			return true
 		}
 	}
+	mgr.cachedBlocksMu.RUnlock()
 
 	// 2. 检查数据库中的ID映射
 	idKey := fmt.Sprintf("blockid_%s", blockID)
 	_, err := mgr.Read(idKey)
 	return err == nil
-}
-
-// UpdateBlockCache 手动更新缓存（用于优化热点数据）
-func UpdateBlockCache(block *Block) {
-	// 检查是否已在缓存中
-	for i, b := range cachedBlocks {
-		if b.Height == block.Height {
-			cachedBlocks[i] = block
-			return
-		}
-	}
-
-	// 不在缓存中，添加到缓存
-	if len(cachedBlocks) >= queueSize {
-		cachedBlocks = cachedBlocks[1:]
-	}
-	cachedBlocks = append(cachedBlocks, block)
 }

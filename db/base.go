@@ -13,7 +13,8 @@ func NewZeroTokenBalance() *TokenBalance {
 	}
 }
 
-func SaveAnyTx(mgr *Manager, anyTx *AnyTx) error {
+// SaveAnyTx 改为成员函数
+func (mgr *Manager) SaveAnyTx(anyTx *AnyTx) error {
 	txID := anyTx.GetTxId()
 	if txID == "" {
 		return fmt.Errorf("SaveAnyTx: empty txID not allowed")
@@ -38,15 +39,15 @@ func SaveAnyTx(mgr *Manager, anyTx *AnyTx) error {
 	// 4. 调度到不同的落库/索引函数
 	switch content := anyTx.GetContent().(type) {
 	case *AnyTx_OrderTx:
-		err = SaveOrderTx(mgr, content.OrderTx)
+		err = mgr.SaveOrderTx(content.OrderTx)
 	case *AnyTx_MinerTx:
-		err = SaveMinerTx(mgr, content.MinerTx)
+		err = mgr.SaveMinerTx(content.MinerTx)
 	case *AnyTx_Transaction:
-		err = SaveTransaction(mgr, content.Transaction)
+		err = mgr.SaveTransaction(content.Transaction)
 	//case *AnyTx_FreezeTx:
-	//	err = saveFreezeTxIndex(mgr, content.FreezeTx)
+	//	err = mgr.saveFreezeTxIndex(content.FreezeTx)
 	//case *AnyTx_IssueTokenTx:
-	//	err = saveIssueTokenTxIndex(mgr, content.IssueTokenTx)
+	//	err = mgr.saveIssueTokenTxIndex(content.IssueTokenTx)
 
 	default:
 		// 对没有额外索引需求的Tx，可不做任何额外操作

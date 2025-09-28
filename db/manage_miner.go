@@ -8,7 +8,7 @@ import (
 )
 
 // 从索引空间里直接随机采样
-func GetRandomMinersFast(mgr *Manager, k int) ([]*Account, error) {
+func (mgr *Manager) GetRandomMinersFast(k int) ([]*Account, error) {
 	// 使用传入的manager参数而不是创建新的
 	if mgr == nil {
 		return nil, fmt.Errorf("GetRandomMiners: db manager is nil")
@@ -25,7 +25,7 @@ func GetRandomMinersFast(mgr *Manager, k int) ([]*Account, error) {
 
 	accounts := make([]*Account, 0, len(idxs))
 	for _, idx := range idxs {
-		acc, err := mgr.getAccountByIndex(idx) // 使用传入的mgr
+		acc, err := mgr.getAccountByIndex(idx)
 		if errors.Is(badger.ErrKeyNotFound, err) {
 			logs.Error("[GetRandomMinersFast] index %s not exist", idx)
 			continue // 理论不会发生；防御

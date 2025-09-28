@@ -121,7 +121,7 @@ func (tp *TxPool) RemoveTx(txID string) error {
 	tp.shortPendingAnyTxCache.Remove(txID[2:18])
 
 	// 同时从DB删除
-	return db.DeletePendingAnyTx(tp.dbManager, txID)
+	return tp.dbManager.DeletePendingAnyTx(txID)
 }
 
 // 其他公开方法保持不变...
@@ -188,7 +188,7 @@ func (tp *TxPool) storeAnyTx(anyTx *db.AnyTx) error {
 	tp.shortTxCache.Add(txID[2:18], txID)
 
 	// 保存到DB
-	if err := db.SavePendingAnyTx(tp.dbManager, anyTx); err != nil {
+	if err := tp.dbManager.SavePendingAnyTx(anyTx); err != nil {
 		return err
 	}
 	return nil
@@ -196,7 +196,7 @@ func (tp *TxPool) storeAnyTx(anyTx *db.AnyTx) error {
 
 // loadFromDB 从数据库加载"pending_tx_"记录到内存
 func (p *TxPool) loadFromDB() {
-	pendingAnyTxs, err := db.LoadPendingAnyTx(p.dbManager)
+	pendingAnyTxs, err := p.dbManager.LoadPendingAnyTx()
 	if err != nil {
 		logs.Verbose("[TxPool] Failed to load pending AnyTx from DB: %v", err)
 		return
@@ -234,7 +234,7 @@ func (p *TxPool) StoreAnyTx(anyTx *db.AnyTx) error {
 	p.shortTxCache.Add(txID[2:18], txID)
 	//logs.Trace("[TxPool] Added TxId %s to shortPendingAnyTxCache.", txID[2:18])
 	// —— 直接落DB
-	if err := db.SavePendingAnyTx(p.dbManager, anyTx); err != nil {
+	if err := p.dbManager.SavePendingAnyTx(anyTx); err != nil {
 		return err
 	}
 	return nil
@@ -247,7 +247,7 @@ func (p *TxPool) RemoveAnyTx(txID string) {
 	p.pendingAnyTxCache.Remove(txID)
 	p.shortPendingAnyTxCache.Remove(txID[2:18])
 	// —— 直接删DB
-	_ = db.DeletePendingAnyTx(p.dbManager, txID)
+	_ = p.dbManager.DeletePendingAnyTx(txID)
 }
 
 // 返回内存里的 pendingTx
@@ -396,7 +396,7 @@ func SortTxsByFBBalanceAndComputeHash(dbMgr *db.Manager, txs []*db.AnyTx) ([]*db
 			continue
 		}
 		// 2. 从DB中获取该 fromAddr 的账户并拿到其"FB"的可用余额
-		acc, err := db.GetAccount(dbMgr, fromAddr)
+		acc, err := dbMgr.GetAccount(fromAddr)
 		if err != nil {
 			return nil, "", fmt.Errorf("get account %s error: %v", fromAddr, err)
 		}

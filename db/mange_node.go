@@ -5,7 +5,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func GetAllNodeInfos(mgr *Manager) ([]*NodeInfo, error) {
+// GetAllNodeInfos 改为成员函数
+func (mgr *Manager) GetAllNodeInfos() ([]*NodeInfo, error) {
 	var nodes []*NodeInfo
 	err := mgr.Db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -32,7 +33,8 @@ func GetAllNodeInfos(mgr *Manager) ([]*NodeInfo, error) {
 	return nodes, nil
 }
 
-func SaveNodeInfo(mgr *Manager, node *NodeInfo) error {
+// SaveNodeInfo 改为成员函数
+func (mgr *Manager) SaveNodeInfo(node *NodeInfo) error {
 	data, err := ProtoMarshal(node)
 	if err != nil {
 		return err

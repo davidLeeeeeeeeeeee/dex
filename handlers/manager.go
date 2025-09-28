@@ -282,7 +282,7 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 	}
 
 	// 使用注入的dbManager而不是创建新实例
-	block, err := db.GetBlock(hm.dbManager, req.Height)
+	block, err := hm.dbManager.GetBlock(req.Height)
 	if err != nil || block == nil {
 		resp := &db.GetBlockResponse{
 			Error: fmt.Sprintf("Block not found at height %d", req.Height),
@@ -319,7 +319,7 @@ func (hm *HandlerManager) HandleNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, err := db.GetAllNodeInfos(hm.dbManager)
+	nodes, err := hm.dbManager.GetAllNodeInfos()
 	if err != nil {
 		http.Error(w, "Failed to get nodes", http.StatusInternalServerError)
 		return
@@ -411,7 +411,7 @@ func (hm *HandlerManager) checkAuth(r *http.Request) bool {
 	}
 
 	clientIP := strings.Split(r.RemoteAddr, ":")[0]
-	info, err := db.GetClientInfo(hm.dbManager, clientIP)
+	info, err := hm.dbManager.GetClientInfo(clientIP)
 	if err != nil {
 		return false
 	}
@@ -422,7 +422,7 @@ func (hm *HandlerManager) hasBlock(blockId string) bool {
 	if hm.consensusManager != nil {
 		return hm.consensusManager.HasBlock(blockId)
 	}
-	return db.BlockExists(hm.dbManager, blockId)
+	return hm.dbManager.BlockExists(blockId)
 }
 
 func (hm *HandlerManager) Stop() {

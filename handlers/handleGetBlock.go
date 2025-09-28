@@ -38,7 +38,7 @@ func HandleGetBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 这里已经拿到 block 了:
-	block, err := db.GetBlock(mgr, height)
+	block, err := mgr.GetBlock(height)
 	if err != nil || block == nil {
 		// 返回错误
 		return

@@ -64,7 +64,7 @@ func CheckAuth(r *http.Request) bool {
 		logs.Error("CheckAuth GetInstance err : %v", err)
 		return false
 	}
-	info, err := db.GetClientInfo(dbMgr, clientIP)
+	info, err := dbMgr.GetClientInfo(clientIP)
 	if err != nil {
 		logs.Debug("CheckAuth GetClientInfo err : %v key: %s \n", err, clientIP)
 		return false

@@ -6,8 +6,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// db/mange_pending_anytx.go
-func SavePendingAnyTx(mgr *Manager, tx *AnyTx) error {
+// SavePendingAnyTx 改为成员函数
+func (mgr *Manager) SavePendingAnyTx(tx *AnyTx) error {
 	txID := tx.GetTxId()
 	if txID == "" {
 		return fmt.Errorf("SavePendingAnyTx: empty txID")
@@ -17,12 +17,12 @@ func SavePendingAnyTx(mgr *Manager, tx *AnyTx) error {
 		return err
 	}
 	key := "pending_anytx_" + txID
-	// 直接调用 manager.EnqueueSet
 	mgr.EnqueueSet(key, string(data))
 	return nil
 }
 
-func DeletePendingAnyTx(mgr *Manager, txID string) error {
+// DeletePendingAnyTx 改为成员函数
+func (mgr *Manager) DeletePendingAnyTx(txID string) error {
 	if txID == "" {
 		return fmt.Errorf("DeletePendingAnyTx: empty txID")
 	}
@@ -31,7 +31,8 @@ func DeletePendingAnyTx(mgr *Manager, txID string) error {
 	return nil
 }
 
-func LoadPendingAnyTx(mgr *Manager) ([]*AnyTx, error) {
+// LoadPendingAnyTx 改为成员函数
+func (mgr *Manager) LoadPendingAnyTx() ([]*AnyTx, error) {
 	mgr.mu.RLock()
 	db := mgr.Db
 	mgr.mu.RUnlock()

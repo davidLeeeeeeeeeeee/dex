@@ -21,7 +21,7 @@ func NewNetwork(dbMgr *db.Manager) *Network {
 	}
 
 	// 如果需要初始化时加载 DB 里的 node信息
-	nodes, err := db.GetAllNodeInfos(dbMgr)
+	nodes, err := dbMgr.GetAllNodeInfos()
 	if err != nil {
 		logs.Verbose("[Network] Failed to load nodes from DB: %v", err)
 	} else {
@@ -45,7 +45,7 @@ func (n *Network) AddOrUpdateNode(pubKey, ip string, isOnline bool) {
 	n.nodes[pubKey] = info
 
 	// 同步写DB
-	if err := db.SaveNodeInfo(n.dbManager, info); err != nil {
+	if err := n.dbManager.SaveNodeInfo(info); err != nil {
 		logs.Verbose("[Network] Failed to save node info: %v", err)
 	}
 }

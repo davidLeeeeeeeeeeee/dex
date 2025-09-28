@@ -34,7 +34,7 @@ func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, no
 	httpClient := createHttp3Client()
 
 	// 创建SendQueue实例，传入 httpClient
-	queue := NewSendQueue(10, 10000, httpClient, nodeID)
+	queue := NewSendQueue(100, 10000, httpClient, nodeID)
 
 	return &SenderManager{
 		dbManager:  dbMgr,
@@ -157,7 +157,7 @@ func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*db.AnyTx)
 
 // PullBlock 拉取指定高度的区块
 func (sm *SenderManager) PullBlock(targetAddress string, height uint64, onSuccess func(*db.Block)) {
-	account, err := db.GetAccount(sm.dbManager, targetAddress)
+	account, err := sm.dbManager.GetAccount(targetAddress)
 	if err != nil || account == nil {
 		logs.Debug("[PullBlock] account not found for address %s", targetAddress)
 		return
@@ -309,7 +309,7 @@ func (sm *SenderManager) PullQuery(peerAddr string, pq *db.PullQuery) {
 // getRandomMiners 获取随机矿工列表
 func (sm *SenderManager) getRandomMiners(count int) ([]*db.Account, error) {
 	// 使用注入的dbManager，而不是创建新的
-	return db.GetRandomMinersFast(sm.dbManager, count)
+	return sm.dbManager.GetRandomMinersFast(count)
 }
 
 // 将地址转换为IP（确保包含端口）
@@ -328,7 +328,7 @@ func (sm *SenderManager) addressToIp(peerAddr string) (string, error) {
 	}
 
 	// 从数据库查询地址对应的IP（应该包含端口）
-	account, err := db.GetAccount(sm.dbManager, peerAddr)
+	account, err := sm.dbManager.GetAccount(peerAddr)
 	if err != nil {
 		return "", fmt.Errorf("failed to get account for address %s: %v", peerAddr, err)
 	}

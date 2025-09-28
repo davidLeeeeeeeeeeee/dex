@@ -114,7 +114,7 @@ func (s *RealBlockStore) Get(id string) (*types.Block, bool) {
 	}
 
 	// 从数据库通过ID查找
-	dbBlock, err := db.GetBlockByID(s.dbManager, id)
+	dbBlock, err := s.dbManager.GetBlockByID(id)
 	if err != nil || dbBlock == nil {
 		logs.Debug("[RealBlockStore] Block %s not found: %v", id, err)
 		return nil, false
@@ -147,7 +147,7 @@ func (s *RealBlockStore) GetByHeight(height uint64) []*types.Block {
 		return []*types.Block{}
 	}
 	// 从数据库查找
-	dbBlock, err := db.GetBlock(s.dbManager, height)
+	dbBlock, err := s.dbManager.GetBlock(height)
 	if err != nil || dbBlock == nil {
 		return []*types.Block{}
 	}
@@ -173,9 +173,9 @@ func (s *RealBlockStore) GetLastAccepted() (string, uint64) {
 	}
 
 	// 从数据库获取最新高度
-	height, err := db.GetLatestBlockHeight(s.dbManager)
+	height, err := s.dbManager.GetLatestBlockHeight()
 	if err == nil && height > 0 {
-		if block, err := db.GetBlock(s.dbManager, height); err == nil && block != nil {
+		if block, err := s.dbManager.GetBlock(height); err == nil && block != nil {
 			return block.BlockHash, height
 		}
 	}
@@ -194,7 +194,7 @@ func (s *RealBlockStore) GetFinalizedAtHeight(height uint64) (*types.Block, bool
 	}
 
 	// 从数据库查找
-	dbBlock, err := db.GetBlock(s.dbManager, height)
+	dbBlock, err := s.dbManager.GetBlock(height)
 	if err != nil || dbBlock == nil {
 		return nil, false
 	}
@@ -219,7 +219,7 @@ func (s *RealBlockStore) GetBlocksFromHeight(from, to uint64) []*types.Block {
 			blocks = append(blocks, heightBlocks...)
 		} else {
 			// 从数据库加载
-			if dbBlock, err := db.GetBlock(s.dbManager, h); err == nil && dbBlock != nil {
+			if dbBlock, err := s.dbManager.GetBlock(h); err == nil && dbBlock != nil {
 				block := s.convertDBBlockToTypes(dbBlock)
 				if block != nil {
 					blocks = append(blocks, block)
@@ -241,7 +241,7 @@ func (s *RealBlockStore) GetCurrentHeight() uint64 {
 	}
 
 	// 从数据库获取
-	height, _ := db.GetLatestBlockHeight(s.dbManager)
+	height, _ := s.dbManager.GetLatestBlockHeight()
 	return height
 }
 
@@ -253,7 +253,7 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 	block, exists := s.blockCache[blockID]
 	if !exists {
 		// 从数据库通过ID加载
-		if dbBlock, err := db.GetBlockByID(s.dbManager, blockID); err == nil && dbBlock != nil {
+		if dbBlock, err := s.dbManager.GetBlockByID(blockID); err == nil && dbBlock != nil {
 			block = s.convertDBBlockToTypes(dbBlock)
 			s.blockCache[blockID] = block
 		}
@@ -421,7 +421,7 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 	// 获取缓存的完整区块数据
 	if cachedBlock, exists := GetCachedBlock(block.ID); exists {
 		// 保存完整的区块数据
-		if err := db.SaveBlock(s.dbManager, cachedBlock); err != nil {
+		if err := s.dbManager.SaveBlock(cachedBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save block to DB: %v", err)
 		} else {
 			logs.Debug("[RealBlockStore] Saved block %s to DB", block.ID)
@@ -435,7 +435,7 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 			PrevBlockHash: block.ParentID,
 			Miner:         fmt.Sprintf("node_%d", block.Proposer),
 		}
-		if err := db.SaveBlock(s.dbManager, dbBlock); err != nil {
+		if err := s.dbManager.SaveBlock(dbBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save simple block to DB: %v", err)
 		}
 	}
@@ -443,7 +443,7 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 
 func (s *RealBlockStore) loadFromDB() {
 	// 加载最新高度
-	height, err := db.GetLatestBlockHeight(s.dbManager)
+	height, err := s.dbManager.GetLatestBlockHeight()
 	if err == nil {
 		s.maxHeight = height
 
@@ -454,7 +454,7 @@ func (s *RealBlockStore) loadFromDB() {
 		}
 
 		for h := startHeight; h <= height; h++ {
-			if dbBlock, err := db.GetBlock(s.dbManager, h); err == nil && dbBlock != nil {
+			if dbBlock, err := s.dbManager.GetBlock(h); err == nil && dbBlock != nil {
 				block := s.convertDBBlockToTypes(dbBlock)
 				if block != nil {
 					s.blockCache[block.ID] = block
@@ -497,14 +497,14 @@ func (s *RealBlockStore) finalizeBlockWithTxs(block *types.Block) {
 				s.pool.RemoveAnyTx(base.TxId)
 
 				// 保存到数据库
-				if err := db.SaveAnyTx(s.dbManager, tx); err != nil {
+				if err := s.dbManager.SaveAnyTx(tx); err != nil {
 					logs.Error("[RealBlockStore] Failed to save finalized tx %s: %v", base.TxId, err)
 				}
 			}
 		}
 
 		// 保存最终化的区块
-		if err := db.SaveBlock(s.dbManager, cachedBlock); err != nil {
+		if err := s.dbManager.SaveBlock(cachedBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save finalized block: %v", err)
 		}
 

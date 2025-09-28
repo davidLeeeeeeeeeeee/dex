@@ -8,7 +8,7 @@ import (
 )
 
 // ------------- 基础交易 -------------
-func SaveTransaction(mgr *Manager, tx *Transaction) error {
+func (mgr *Manager) SaveTransaction(tx *Transaction) error {
 	//logs.Trace("SaveTransaction %s\n", tx)
 	key := "tx_" + tx.Base.TxId
 	data, err := ProtoMarshal(tx)
@@ -26,7 +26,7 @@ func SaveTransaction(mgr *Manager, tx *Transaction) error {
 	return nil
 }
 
-func GetTransaction(mgr *Manager, txID string) (*Transaction, error) {
+func (mgr *Manager) GetTransaction(txID string) (*Transaction, error) {
 	key := "tx_" + txID
 	val, err := mgr.Read(key)
 	if err != nil {
@@ -41,7 +41,7 @@ func GetTransaction(mgr *Manager, txID string) (*Transaction, error) {
 
 // ------------- OrderTx -------------
 
-func SaveOrderTx(mgr *Manager, order *OrderTx) error {
+func (mgr *Manager) SaveOrderTx(order *OrderTx) error {
 	// 1. 先拿到 pairKey
 	pairKey := utils.GeneratePairKey(order.BaseToken, order.QuoteToken)
 
@@ -70,7 +70,7 @@ func SaveOrderTx(mgr *Manager, order *OrderTx) error {
 	return nil
 }
 
-func GetOrderTx(mgr *Manager, txID string) (*OrderTx, error) {
+func (mgr *Manager) GetOrderTx(txID string) (*OrderTx, error) {
 	key := "order_" + txID
 	val, err := mgr.Read(key)
 	if err != nil {
@@ -83,7 +83,7 @@ func GetOrderTx(mgr *Manager, txID string) (*OrderTx, error) {
 	return order, nil
 }
 
-func SaveMinerTx(mgr *Manager, tx *MinerTx) error {
+func (mgr *Manager) SaveMinerTx(tx *MinerTx) error {
 	// 0) 先把 MinerTx 本身排入写队列（保持你原来的逻辑）
 	mainKey := "minerTx_" + tx.Base.TxId
 	data, err := ProtoMarshal(tx)
@@ -95,7 +95,7 @@ func SaveMinerTx(mgr *Manager, tx *MinerTx) error {
 
 	// 1) 读取 / 初始化账户
 	addr := tx.Base.FromAddress
-	acc, err := GetAccount(mgr, addr)
+	acc, err := mgr.GetAccount(addr)
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func SaveMinerTx(mgr *Manager, tx *MinerTx) error {
 	}
 
 	// 3) 把更新后的账户写回
-	if err := SaveAccount(mgr, acc); err != nil {
+	if err := mgr.SaveAccount(acc); err != nil {
 		return err
 	}
 
@@ -181,7 +181,7 @@ func SaveMinerTx(mgr *Manager, tx *MinerTx) error {
 // GetAnyTxById 根据给定的 tx_id 从数据库中读取对应的交易（AnyTx）
 // 这里假设在保存时，除了专用前缀外，还额外保存了一个通用 key "anyTx_<txID>"
 // 其值为实际存储该交易的 key（如 "tx_<txID>" 或 "order_<txID>" 等）。
-func GetAnyTxById(mgr *Manager, txID string) (*AnyTx, error) {
+func (mgr *Manager) GetAnyTxById(txID string) (*AnyTx, error) {
 	// 1. 先读取通用 key "anyTx_<txID>"
 	anyKey := "anyTx_" + txID
 	specificKey, err := mgr.Read(anyKey)

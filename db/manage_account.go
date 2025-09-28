@@ -10,7 +10,7 @@ import (
 )
 
 // SaveAccount stores an Account in the database
-func SaveAccount(mgr *Manager, account *Account) error {
+func (mgr *Manager) SaveAccount(account *Account) error {
 	key := "account_" + account.Address
 	data, err := ProtoMarshal(account)
 	if err != nil {
@@ -22,7 +22,7 @@ func SaveAccount(mgr *Manager, account *Account) error {
 }
 
 // GetAccount retrieves an Account from the database
-func GetAccount(mgr *Manager, address string) (*Account, error) {
+func (mgr *Manager) GetAccount(address string) (*Account, error) {
 	key := "account_" + address
 	//logs.Trace("GetAccount key:%s", key)
 	val, err := mgr.Read(key)
@@ -56,7 +56,7 @@ func CalcStake(acc *Account) (decimal.Decimal, error) {
 }
 
 // 用来删掉旧stakeIndex再插入新的
-func UpdateStakeIndex(mgr *Manager, oldStake, newStake decimal.Decimal, address string) error {
+func (mgr *Manager) UpdateStakeIndex(oldStake, newStake decimal.Decimal, address string) error {
 	oldKey := buildStakeIndexKey(oldStake, address)
 	newKey := buildStakeIndexKey(newStake, address)
 

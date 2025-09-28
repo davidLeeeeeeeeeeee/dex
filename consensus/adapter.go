@@ -136,7 +136,7 @@ func (a *ConsensusAdapter) PrepareBlockContainer(blockID string, height uint64) 
 	}
 
 	// 从数据库获取
-	block, err := db.GetBlock(a.dbManager, height)
+	block, err := a.dbManager.GetBlock(height)
 	if err != nil {
 		return nil, false, err
 	}

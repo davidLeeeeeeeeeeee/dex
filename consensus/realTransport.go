@@ -93,7 +93,7 @@ func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
 }
 
 func (t *RealTransport) getNodeIP(nodeID types.NodeID) (string, error) {
-	acc, err := db.GetAccount(t.dbManager, string(nodeID))
+	acc, err := t.dbManager.GetAccount(string(nodeID))
 	if err != nil || acc == nil || acc.Ip == "" {
 		return "", fmt.Errorf("no IP for address %s", nodeID)
 	}
@@ -219,7 +219,7 @@ func (t *RealTransport) Broadcast(msg types.Message, peers []types.NodeID) {
 }
 
 func (t *RealTransport) SamplePeers(exclude types.NodeID, count int) []types.NodeID {
-	miners, err := db.GetRandomMinersFast(t.dbManager, count+1)
+	miners, err := t.dbManager.GetRandomMinersFast(count + 1)
 	if err != nil {
 		logs.Error("[RealTransport] Failed to get random miners: %v", err)
 		return nil

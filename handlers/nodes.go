@@ -22,7 +22,7 @@ func HandleNodes(w http.ResponseWriter, r *http.Request) { // 发送所有的节
 		return
 	}
 	clientIP = strings.Split(r.RemoteAddr, ":")[0]
-	info, err := db.GetClientInfo(dbMgr, clientIP)
+	info, err := dbMgr.GetClientInfo(clientIP)
 	if err != nil || !info.GetAuthed() {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

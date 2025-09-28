@@ -132,37 +132,36 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeight uint64) {
 	preferred := h.engine.GetPreference(queryHeight)
 
+	// NEW: 只有当本地 (h-1) 已最终化，才允许对 h 表态
 	if preferred == "" {
-		if block, ok := h.store.GetFinalizedAtHeight(queryHeight); ok {
-			preferred = block.ID
-		}
-	}
-
-	if preferred == "" {
-		blocks := h.store.GetByHeight(queryHeight)
-		if len(blocks) > 0 {
-			ids := make([]string, 0, len(blocks))
+		if parent, ok := h.store.GetFinalizedAtHeight(queryHeight - 1); ok {
+			// 只在“父=本地最终化父”的孩子里选偏好
+			blocks := h.store.GetByHeight(queryHeight)
+			cand := make([]string, 0, len(blocks))
 			for _, b := range blocks {
-				ids = append(ids, b.ID)
+				if b.ParentID == parent.ID {
+					cand = append(cand, b.ID)
+				}
 			}
-			sort.Strings(ids)
-			preferred = ids[len(ids)-1]
+			if len(cand) > 0 {
+				sort.Strings(cand)
+				preferred = cand[len(cand)-1]
+			}
 		}
 	}
 
-	if h.node != nil {
-		h.node.stats.mu.Lock()
-		h.node.stats.ChitsResponded++
-		h.node.stats.mu.Unlock()
-	}
+	// 不允许用“全体块里字典序最大”的兜底；父未定就弃权
+	// if still "", treat as abstain
 
 	accepted, acceptedHeight := h.store.GetLastAccepted()
-	logs.Debug("[sendChits] to=%s req=%d preferred=%v accepted=%v", to, requestID, preferred, accepted)
+	logs.Debug("[sendChits] to=%s req=%d h=%d preferred=%v accepted=%v",
+		to, requestID, queryHeight, preferred, accepted)
 
 	h.transport.Send(to, types.Message{
 		Type: types.MsgChits, From: h.nodeID, RequestID: requestID,
-		PreferredID: preferred, PreferredIDHeight: queryHeight,
-		AcceptedID: accepted, AcceptedHeight: acceptedHeight,
+		PreferredID:       preferred,
+		PreferredIDHeight: queryHeight,
+		AcceptedID:        accepted, AcceptedHeight: acceptedHeight,
 	})
 }
 

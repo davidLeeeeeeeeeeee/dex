@@ -29,6 +29,9 @@ type Manager struct {
 	seq           *badger.Sequence   //自增发号器
 	// 你可以在这里做一个 wait group，保证 close 的时候能等 goroutine 退出
 	wg sync.WaitGroup
+	// 缓存的区块切片，最多存 10 个
+	cachedBlocks   []*Block
+	cachedBlocksMu sync.RWMutex
 }
 
 // NewManager 创建一个新的 DBManager 实例
