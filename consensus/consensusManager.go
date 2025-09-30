@@ -26,8 +26,6 @@ type ConsensusNodeManager struct {
 	txPool         *txpool.TxPool
 }
 
-// consensus/consensusManager.go 修改版本
-
 func InitConsensusManager(
 	nodeID types.NodeID,
 	dbManager *db.Manager,

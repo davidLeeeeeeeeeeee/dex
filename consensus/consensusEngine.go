@@ -174,6 +174,7 @@ func (e *SnowmanEngine) checkTimeouts() {
 	}
 
 	if len(toDelete) > 0 {
+		// 目的是“释放槽位并唤醒调度”
 		e.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventQueryComplete,
 			EventData: nil,

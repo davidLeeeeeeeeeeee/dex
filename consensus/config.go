@@ -85,7 +85,7 @@ func DefaultConfig() *Config {
 			Fanout:   15,
 			Interval: 50 * time.Millisecond,
 		},
-		Snapshot: SnapshotConfig{ // 新增
+		Snapshot: SnapshotConfig{
 			Interval:     100,  // 每100个区块一个快照
 			MaxSnapshots: 10,   // 最多保留10个快照
 			Enabled:      true, // 启用快照
