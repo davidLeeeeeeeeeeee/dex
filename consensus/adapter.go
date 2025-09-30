@@ -1,12 +1,14 @@
 package consensus
 
 import (
+	"dex/config"
 	"dex/db"
 	"dex/types"
 	"fmt"
-	"google.golang.org/protobuf/proto"
 	"strconv"
 	"time"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // 集中处理共识层与外部的所有数据转换
@@ -127,8 +129,9 @@ func (a *ConsensusAdapter) ConsensusMessageToChits(msg types.Message) *db.Chits 
 // PrepareBlockContainer 准备区块容器数据
 func (a *ConsensusAdapter) PrepareBlockContainer(blockID string, height uint64) ([]byte, bool, error) {
 	// 首先检查缓存
+	cfg := config.DefaultConfig()
 	if cachedBlock, exists := GetCachedBlock(blockID); exists {
-		if len(cachedBlock.Body) < 2500 {
+		if len(cachedBlock.Body) < cfg.TxPool.MaxTxsPerBlock {
 			data, err := proto.Marshal(cachedBlock)
 			return data, true, err
 		}
@@ -145,7 +148,7 @@ func (a *ConsensusAdapter) PrepareBlockContainer(blockID string, height uint64) 
 		return nil, false, fmt.Errorf("block ID mismatch")
 	}
 
-	if len(block.Body) < 2500 {
+	if len(block.Body) < cfg.TxPool.MaxTxsPerBlock {
 		data, err := proto.Marshal(block)
 		return data, true, err
 	}

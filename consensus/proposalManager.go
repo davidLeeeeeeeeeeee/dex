@@ -65,24 +65,23 @@ func (pm *ProposalManager) proposeBlock() {
 	lastAcceptedID, lastHeight := pm.store.GetLastAccepted()
 	targetHeight := lastHeight + 1
 
-	// 获取当前高度的区块数量
 	currentBlocks := len(pm.store.GetByHeight(targetHeight))
 
-	// 使用接口判断是否应该提案
 	if !pm.proposer.ShouldPropose(pm.nodeID, currentRound, currentBlocks) {
 		return
 	}
 
-	// 使用接口生成区块
 	block, err := pm.proposer.ProposeBlock(lastAcceptedID, targetHeight, pm.nodeID, currentRound)
 	if err != nil {
 		Logf("[Node %d] Failed to propose block: %v\n", pm.nodeID, err)
 		return
 	}
-	if block == nil { // ★ 加这一段
-		logs.Debug("[ProposalManager] no block proposed (pending txs=0?) at height=%d round=%d", targetHeight, currentRound)
+	if block == nil {
+		logs.Debug("[ProposalManager] no block proposed (pending txs=0?) at height=%d round=%d",
+			targetHeight, currentRound)
 		return
 	}
+
 	pm.mu.Lock()
 	if pm.proposedBlocks[block.ID] {
 		pm.mu.Unlock()
@@ -108,6 +107,13 @@ func (pm *ProposalManager) proposeBlock() {
 		EventType: types.EventNewBlock,
 		EventData: block,
 	})
+
+	// 提议者立即发起PushQuery来传播自己的区块
+	if pm.node != nil && pm.node.queryManager != nil {
+		go func() {
+			pm.node.queryManager.tryIssueQuery()
+		}()
+	}
 }
 
 // SetProposer 允许运行时更换提案者实现

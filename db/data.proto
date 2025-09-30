@@ -248,13 +248,14 @@ message PushQuery {
 //
 // Remote peers should respond to a PullQuery with a Chits message
 message PullQuery {
-  string address = 1;
+  uint32 request_id = 1;
+  string address = 2;
   // Timeout (ns) for this request
-  uint64 deadline = 2;
+  uint64 deadline = 3;
   // Container id being gossiped
-  string block_id = 3;
+  string block_id = 4;
   // Requesting peer's last accepted height
-  uint64 requested_height = 4;
+  uint64 requested_height = 5;
 }
 
 // Chits contains the preferences of a peer in response to a PushQuery or
@@ -278,3 +279,5 @@ message HeightResponse{ // 需要在proto中定义
   uint64 CurrentHeight = 2;
   string address = 3;  // 响应方地址
 }
+
+message GetBlockByIDRequest { string block_id = 1; }

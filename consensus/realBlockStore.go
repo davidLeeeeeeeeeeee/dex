@@ -208,7 +208,7 @@ func (s *RealBlockStore) GetFinalizedAtHeight(height uint64) (*types.Block, bool
 	return nil, false
 }
 
-// GetBlocksFromHeight 获取指定高度范围的区块
+// 获取指定高度范围的区块
 func (s *RealBlockStore) GetBlocksFromHeight(from, to uint64) []*types.Block {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

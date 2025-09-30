@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"dex/config"
 	"dex/db"
 	"dex/interfaces"
 	"dex/logs"
@@ -21,9 +22,10 @@ type RealBlockProposer struct {
 
 // NewRealBlockProposer 创建真实的区块提案者
 func NewRealBlockProposer(dbManager *db.Manager, pool *txpool.TxPool) interfaces.BlockProposer {
+	cfg := config.DefaultConfig()
 	return &RealBlockProposer{
 		maxBlocksPerHeight: 3,
-		maxTxsPerBlock:     2500,
+		maxTxsPerBlock:     cfg.TxPool.MaxTxsPerBlock,
 		pool:               pool, // 使用注入的实例
 		dbManager:          dbManager,
 	}

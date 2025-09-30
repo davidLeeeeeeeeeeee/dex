@@ -5,6 +5,7 @@ import (
 	"dex/logs"
 	"dex/types"
 	"sort"
+	"sync"
 )
 
 // ============================================
@@ -21,20 +22,24 @@ type MessageHandler struct {
 	queryManager    *QueryManager
 	gossipManager   *GossipManager
 	syncManager     *SyncManager
-	snapshotManager *SnapshotManager // 新增
+	snapshotManager *SnapshotManager
 	events          interfaces.EventBus
 	config          *ConsensusConfig
+	// 存储待回复的PullQuery
+	pendingQueries   map[string]types.Message
+	pendingQueriesMu sync.RWMutex
 }
 
 func NewMessageHandler(nodeID types.NodeID, isByzantine bool, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, events interfaces.EventBus, config *ConsensusConfig) *MessageHandler {
 	return &MessageHandler{
-		nodeID:      nodeID,
-		isByzantine: isByzantine,
-		transport:   transport,
-		store:       store,
-		engine:      engine,
-		events:      events,
-		config:      config,
+		nodeID:         nodeID,
+		isByzantine:    isByzantine,
+		transport:      transport,
+		store:          store,
+		engine:         engine,
+		events:         events,
+		config:         config,
+		pendingQueries: make(map[string]types.Message),
 	}
 }
 
@@ -90,18 +95,41 @@ func (h *MessageHandler) handlePullQuery(msg types.Message) {
 		h.node.stats.mu.Unlock()
 	}
 
+	// 检查本地是否有该区块
 	block, exists := h.store.Get(msg.BlockID)
 	if !exists {
+		// 本地没有区块，向发送者请求
+		logs.Debug("[Node %s] Don't have block %s, requesting from %s",
+			h.nodeID, msg.BlockID, msg.From)
+
+		// 发送Get消息请求区块数据
 		h.transport.Send(types.NodeID(msg.From), types.Message{
 			Type:      types.MsgGet,
 			From:      h.nodeID,
 			RequestID: msg.RequestID,
 			BlockID:   msg.BlockID,
+			Height:    msg.Height,
 		})
+
+		// 可以选择存储待回复的查询，等收到区块后再回复chits
+		h.storePendingQuery(msg)
 		return
 	}
 
+	// 有区块，直接发送chits投票
 	h.sendChits(types.NodeID(msg.From), msg.RequestID, block.Height)
+}
+
+// 添加存储待回复查询的方法
+func (h *MessageHandler) storePendingQuery(msg types.Message) {
+	// 可以在MessageHandler中添加一个pendingQueries map
+	// 当收到Put消息后，检查是否有待回复的查询
+	if h.pendingQueries == nil {
+		h.pendingQueries = make(map[string]types.Message)
+	}
+	h.pendingQueriesMu.Lock()
+	h.pendingQueries[msg.BlockID] = msg
+	h.pendingQueriesMu.Unlock()
 }
 
 func (h *MessageHandler) handlePushQuery(msg types.Message) {
@@ -185,12 +213,30 @@ func (h *MessageHandler) handlePut(msg types.Message) {
 		}
 
 		if isNew {
-			logs.Debug("[Node %d] Received new block %s via Put from Node %d, gossiping it\n",
+			logs.Debug("[Node %d] Received new block %s via Put from Node %d",
 				h.nodeID, msg.Block.ID, msg.From)
 			h.events.Publish(types.BaseEvent{
 				EventType: types.EventBlockReceived,
 				EventData: msg.Block,
 			})
+
+			// 检查是否有待回复的PullQuery
+			h.checkPendingQueries(msg.Block.ID)
 		}
+	}
+}
+
+// 添加检查待回复查询的方法
+func (h *MessageHandler) checkPendingQueries(blockID string) {
+	h.pendingQueriesMu.Lock()
+	if pendingMsg, exists := h.pendingQueries[blockID]; exists {
+		delete(h.pendingQueries, blockID)
+		h.pendingQueriesMu.Unlock()
+
+		// 现在有了区块，可以回复chits
+		block, _ := h.store.Get(blockID)
+		h.sendChits(types.NodeID(pendingMsg.From), pendingMsg.RequestID, block.Height)
+	} else {
+		h.pendingQueriesMu.Unlock()
 	}
 }

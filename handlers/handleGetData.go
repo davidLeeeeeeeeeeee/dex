@@ -54,3 +54,27 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	w.Write(respData)
 }
+
+// handlers/handleGetBlockByID.go
+func (hm *HandlerManager) HandleGetBlockByID(w http.ResponseWriter, r *http.Request) {
+	if !hm.checkAuth(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	body, _ := io.ReadAll(r.Body)
+	var req db.GetBlockByIDRequest
+	if err := proto.Unmarshal(body, &req); err != nil {
+		http.Error(w, "Invalid GetBlockByID proto", http.StatusBadRequest)
+		return
+	}
+	blk, err := hm.dbManager.GetBlockByID(req.BlockId)
+	if err != nil || blk == nil {
+		http.Error(w, fmt.Sprintf("Block %s not found", req.BlockId), http.StatusNotFound)
+		return
+	}
+	resp := &db.GetBlockResponse{Block: blk}
+	bytes, _ := proto.Marshal(resp)
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.WriteHeader(http.StatusOK)
+	w.Write(bytes)
+}

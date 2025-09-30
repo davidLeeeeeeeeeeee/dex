@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -49,12 +48,6 @@ func NewHandlerManager(
 	}
 }
 
-var (
-	ChallengeMap      = make(map[string]*ChallengeInfo)
-	ChallengeMu       sync.Mutex
-	challengeLifetime = 30 * time.Second
-)
-
 type ChallengeInfo struct {
 	Challenge   string
 	CreatedTime time.Time
@@ -75,6 +68,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/getdata", hm.HandleGetData)
 	mux.HandleFunc("/batchgetdata", hm.HandleBatchGetTx)
 	mux.HandleFunc("/nodes", hm.HandleNodes)
+	mux.HandleFunc("/getblockbyid", hm.HandleGetBlockByID)
 
 }
 
@@ -109,6 +103,9 @@ func (hm *HandlerManager) HandleChits(w http.ResponseWriter, r *http.Request) {
 		if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 			if err := rt.EnqueueReceivedMessage(msg); err != nil {
 				logs.Warn("[Handler] Failed to enqueue chits message: %v", err)
+				// 控制面消息入队失败，返回 503
+				http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+				return
 			}
 		}
 	}
@@ -206,19 +203,6 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-
-	// 8. 可选：继续传播给其他节点（避免重复传播）
-	//if hm.senderManager != nil && hm.shouldRebroadcast(&block) {
-	//	go func() {
-	//		blockData, err := json.Marshal(&block)
-	//		if err != nil {
-	//			logs.Debug("[HandleBlockGossip] Failed to marshal block for rebroadcast: %v", err)
-	//			return
-	//		}
-	//		// 广播给随机的其他矿工
-	//		hm.senderManager.BroadcastToRandomMiners(blockData, 3)
-	//	}()
-	//}
 
 	// 8. 返回成功响应
 	w.WriteHeader(http.StatusOK)
@@ -373,7 +357,9 @@ func (hm *HandlerManager) HandlePushQuery(w http.ResponseWriter, r *http.Request
 	if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 		if err := rt.EnqueueReceivedMessage(msg); err != nil {
 			logs.Warn("[Handler] Failed to enqueue message: %v", err)
-			// 即使入队失败，也返回成功响应，避免对端重试
+			// 返回 503 Service Unavailable，促使发送方退避重试
+			http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+			return
 		}
 	}
 
@@ -381,7 +367,7 @@ func (hm *HandlerManager) HandlePushQuery(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 }
 
-// HandlePullQuery 处理PullQuery请求（Snowman共识）
+// 处理PullQuery请求（Snowman共识）
 func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -395,9 +381,20 @@ func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !hm.hasBlock(pullQuery.BlockId) {
-		http.Error(w, "Block not found", http.StatusNotFound)
-		return
+	// 构造消息并尝试入队
+	msg := types.Message{
+		Type:    types.MsgPullQuery,
+		From:    types.NodeID(pullQuery.Address),
+		BlockID: pullQuery.BlockId,
+		Height:  pullQuery.RequestedHeight,
+	}
+
+	if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
+		if err := rt.EnqueueReceivedMessage(msg); err != nil {
+			logs.Warn("[Handler] Failed to enqueue PullQuery: %v", err)
+			http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)

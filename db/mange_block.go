@@ -1,36 +1,61 @@
 package db
 
 import (
+	"dex/config"
 	"dex/logs"
+	"encoding/json"
 	"fmt"
-	"runtime/debug"
 	"strconv"
 )
 
-const queueSize = 10
-
 // 将区块存入DB，同时将区块存入内存切片（缓存）
 func (mgr *Manager) SaveBlock(block *Block) error {
-	logs.Debug("Saving new block_%d", block.Height)
-	// 1. 保存区块到 DB - 使用高度作为主键
-	key := fmt.Sprintf("block_%d", block.Height)
+	logs.Debug("Saving new block_%d with ID %s", block.Height, block.BlockHash)
+
+	// 1. 使用 BlockID 作为主键存储完整区块
+	blockKey := fmt.Sprintf("blockdata_%s", block.BlockHash)
 	data, err := ProtoMarshal(block)
 	if err != nil {
 		return err
 	}
-	mgr.EnqueueSet(key, string(data))
+	mgr.EnqueueSet(blockKey, string(data))
 
-	// 2. 额外保存一个ID到高度的映射，方便通过ID查询
+	// 2. 维护高度到区块ID列表的映射
+	heightKey := fmt.Sprintf("height_%d_blocks", block.Height)
+	existingIDs, _ := mgr.Read(heightKey)
+
+	var blockIDs []string
+	if existingIDs != "" {
+		// 解析现有的ID列表
+		json.Unmarshal([]byte(existingIDs), &blockIDs)
+	}
+
+	// 添加新的blockID（去重）
+	found := false
+	for _, id := range blockIDs {
+		if id == block.BlockHash {
+			found = true
+			break
+		}
+	}
+	if !found {
+		blockIDs = append(blockIDs, block.BlockHash)
+	}
+
+	idsData, _ := json.Marshal(blockIDs)
+	mgr.EnqueueSet(heightKey, string(idsData))
+
+	// 3. ID到高度映射
 	idKey := fmt.Sprintf("blockid_%s", block.BlockHash)
 	mgr.EnqueueSet(idKey, strconv.FormatUint(block.Height, 10))
 
-	// 3. 更新最新区块高度
+	// 4. 更新最新区块高度
 	mgr.EnqueueSet("latest_block_height", strconv.FormatUint(block.Height, 10))
 
-	// 4. 更新内存缓存切片
-	//    如果长度 >= 10，就移除最早的一个
+	// 5. 更新内存缓存
+	cfg := config.DefaultConfig()
 	mgr.cachedBlocksMu.Lock()
-	if len(mgr.cachedBlocks) >= queueSize {
+	if len(mgr.cachedBlocks) >= cfg.Database.BlockCacheSize {
 		mgr.cachedBlocks = mgr.cachedBlocks[1:]
 	}
 	mgr.cachedBlocks = append(mgr.cachedBlocks, block)
@@ -41,42 +66,42 @@ func (mgr *Manager) SaveBlock(block *Block) error {
 
 // GetBlock 根据高度获取对应区块，先看内存缓存，再看 DB
 func (mgr *Manager) GetBlock(height uint64) (*Block, error) {
-	// 1) 读缓存：用 RLock
-	mgr.cachedBlocksMu.RLock()
-	for _, b := range mgr.cachedBlocks {
-		if b != nil && b.Height == height {
-			mgr.cachedBlocksMu.RUnlock()
-			return b, nil
+	// 获取该高度的第一个区块（用于兼容旧代码）
+	blocks, err := mgr.GetBlocksByHeight(height)
+	if err != nil || len(blocks) == 0 {
+		return nil, fmt.Errorf("no blocks at height %d", height)
+	}
+	return blocks[0], nil
+}
+
+func (mgr *Manager) GetBlocksByHeight(height uint64) ([]*Block, error) {
+	// 1. 从高度映射获取所有区块ID
+	heightKey := fmt.Sprintf("height_%d_blocks", height)
+	idsStr, err := mgr.Read(heightKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var blockIDs []string
+	if err := json.Unmarshal([]byte(idsStr), &blockIDs); err != nil {
+		return nil, err
+	}
+
+	// 2. 获取每个区块
+	var blocks []*Block
+	for _, id := range blockIDs {
+		block, err := mgr.GetBlockByID(id)
+		if err == nil && block != nil {
+			blocks = append(blocks, block)
 		}
 	}
-	mgr.cachedBlocksMu.RUnlock()
 
-	// 2) 读 DB（无关 cachedBlocksMu）
-	key := fmt.Sprintf("block_%d", height)
-	val, err := mgr.Read(key)
-	if err != nil {
-		logs.Warn("[GetBlock err]key: %s, err: %v stack: %s\n", key, err, debug.Stack())
-		return nil, err
-	}
-	block := &Block{}
-	if err := ProtoUnmarshal([]byte(val), block); err != nil {
-		return nil, err
-	}
-
-	// 3) 把 DB 读到的结果写回缓存：用 **写锁**，且解锁要用 Unlock
-	mgr.cachedBlocksMu.Lock()
-	if len(mgr.cachedBlocks) >= queueSize {
-		mgr.cachedBlocks = mgr.cachedBlocks[1:]
-	}
-	mgr.cachedBlocks = append(mgr.cachedBlocks, block)
-	mgr.cachedBlocksMu.Unlock()
-
-	return block, nil
+	return blocks, nil
 }
 
 // GetBlockByID 根据区块ID（BlockHash）获取区块
 func (mgr *Manager) GetBlockByID(blockID string) (*Block, error) {
-	// 1. 先从内存缓存中查找
+	// 1. 先检查缓存
 	mgr.cachedBlocksMu.RLock()
 	for _, b := range mgr.cachedBlocks {
 		if b != nil && b.BlockHash == blockID {
@@ -86,23 +111,19 @@ func (mgr *Manager) GetBlockByID(blockID string) (*Block, error) {
 	}
 	mgr.cachedBlocksMu.RUnlock()
 
-	// 2. 从数据库查找ID到高度的映射
-	idKey := fmt.Sprintf("blockid_%s", blockID)
-	heightStr, err := mgr.Read(idKey)
+	// 2. 直接从 blockdata_<blockID> 读取
+	blockKey := fmt.Sprintf("blockdata_%s", blockID)
+	val, err := mgr.Read(blockKey)
 	if err != nil {
-		// 没有找到映射，可能是旧数据，尝试遍历查找
-		return mgr.getBlockByIDFallback(blockID)
+		return nil, fmt.Errorf("block %s not found", blockID)
 	}
 
-	// 3. 解析高度
-	height, err := strconv.ParseUint(heightStr, 10, 64)
-	if err != nil {
-		logs.Error("[GetBlockByID] Failed to parse height for block %s: %v", blockID, err)
+	block := &Block{}
+	if err := ProtoUnmarshal([]byte(val), block); err != nil {
 		return nil, err
 	}
 
-	// 4. 通过高度获取区块
-	return mgr.GetBlock(height)
+	return block, nil
 }
 
 // 当没有ID映射时的降级方案（遍历查找）

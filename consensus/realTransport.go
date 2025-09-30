@@ -46,9 +46,9 @@ func NewRealTransport(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.
 	rt := &RealTransport{
 		nodeID:         nodeID,
 		address:        keyMgr.GetAddress(),
-		inbox:          make(chan types.Message, 1000),
+		inbox:          make(chan types.Message, 10000),
 		receiveQueue:   make(chan types.Message, 100000),
-		receiveWorkers: 10,
+		receiveWorkers: 1000,
 		dbManager:      dbMgr,
 		senderManager:  senderMgr,
 		ctx:            ctx,
@@ -112,7 +112,7 @@ func (t *RealTransport) sendPushQuery(targetIP string, msg types.Message) error 
 	return nil
 }
 
-// sendPullQuery 使用senderManager发送
+// 使用senderManager发送
 func (t *RealTransport) sendPullQuery(targetIP string, msg types.Message) error {
 	pq := &db.PullQuery{
 		Address:         t.address,
@@ -132,8 +132,32 @@ func (t *RealTransport) sendChits(targetIP string, msg types.Message) error {
 }
 
 func (t *RealTransport) sendGet(targetIP string, msg types.Message) error {
-	t.senderManager.PullTx(targetIP, msg.BlockID, func(anyTx *db.AnyTx) {
-		logs.Debug("[RealTransport] Received tx %s from %s", anyTx.GetTxId(), targetIP)
+	// 使用新的PullBlockByID方法
+	t.senderManager.PullBlockByID(targetIP, msg.BlockID, func(block *db.Block) {
+		if block != nil {
+			// 转换为types.Block
+			consensusBlock, err := t.adapter.DBBlockToConsensus(block)
+			if err != nil {
+				logs.Error("[RealTransport] Failed to convert block: %v", err)
+				return
+			}
+
+			// 构造Put消息响应
+			putMsg := types.Message{
+				Type:    types.MsgPut,
+				From:    t.nodeID,
+				Block:   consensusBlock,
+				Height:  consensusBlock.Height,
+				BlockID: consensusBlock.ID,
+			}
+
+			// 将消息放入接收队列
+			if err := t.EnqueueReceivedMessage(putMsg); err != nil {
+				logs.Debug("[RealTransport] Failed to enqueue Put message: %v", err)
+			}
+
+			logs.Debug("[RealTransport] Received block %s from %s", block.BlockHash, targetIP)
+		}
 	})
 	return nil
 }
@@ -195,12 +219,31 @@ func (t *RealTransport) sendSnapshotRequest(targetIP string, msg types.Message) 
 }
 
 func (t *RealTransport) EnqueueReceivedMessage(msg types.Message) error {
-	select {
-	case t.receiveQueue <- msg:
-		return nil
-	default:
-		logs.Warn("[RealTransport] Receive queue full, dropping message from %s", msg.From)
-		return fmt.Errorf("receive queue full")
+	// 根据消息类型判断优先级
+	isControlMessage := false
+	switch msg.Type {
+	case types.MsgPushQuery, types.MsgPullQuery, types.MsgChits:
+		isControlMessage = true
+	}
+
+	if isControlMessage {
+		// 控制面消息：短暂等待
+		select {
+		case t.receiveQueue <- msg:
+			return nil
+		case <-time.After(50 * time.Millisecond):
+			logs.Warn("[RealTransport] Control message queue full, dropping from %s", msg.From)
+			return fmt.Errorf("receive queue full for control message")
+		}
+	} else {
+		// 数据面消息：非阻塞
+		select {
+		case t.receiveQueue <- msg:
+			return nil
+		default:
+			logs.Debug("[RealTransport] Data message queue full, dropping from %s", msg.From)
+			return fmt.Errorf("receive queue full for data message")
+		}
 	}
 }
 
