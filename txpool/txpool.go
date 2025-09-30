@@ -1,19 +1,21 @@
 package txpool
 
 import (
+	"dex/config"
 	"dex/db"
 	"dex/logs"
 	"dex/network"
 	"dex/utils"
 	"encoding/hex"
 	"fmt"
-	lru "github.com/hashicorp/golang-lru"
-	"github.com/shopspring/decimal"
 	"log"
 	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru"
+	"github.com/shopspring/decimal"
 )
 
 // TxPool 交易池结构体
@@ -39,13 +41,14 @@ type TxPool struct {
 
 // NewTxPool 创建新的TxPool实例（替代GetInstance）
 func NewTxPool(dbManager *db.Manager, validator TxValidator) (*TxPool, error) {
-	pendingAnyTxCache, err := lru.New(100000)
+	cfg := config.DefaultConfig()
+	pendingAnyTxCache, err := lru.New(cfg.TxPool.PendingTxCacheSize)
 	if err != nil {
 		return nil, err
 	}
-	shortPendingAnyTxCache, _ := lru.New(100000)
-	cacheTx, _ := lru.New(100000)
-	shortTxCache, _ := lru.New(100000)
+	shortPendingAnyTxCache, _ := lru.New(cfg.TxPool.ShortPendingTxCacheSize)
+	cacheTx, _ := lru.New(cfg.TxPool.CacheTxSize)
+	shortTxCache, _ := lru.New(cfg.TxPool.ShortTxCacheSize)
 
 	net := network.NewNetwork(dbManager)
 
@@ -284,10 +287,10 @@ func (p *TxPool) GetPendingAnyTx() []*db.AnyTx {
 func (p *TxPool) GetPending65500Tx() []*db.AnyTx {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-
+	cfg := config.DefaultConfig()
 	var result []*db.AnyTx
 	keys := p.pendingAnyTxCache.Keys()
-	maxCount := 10000
+	maxCount := cfg.TxPool.MaxPendingTxs
 	count := 0
 
 	for _, k := range keys {

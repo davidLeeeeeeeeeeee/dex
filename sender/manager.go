@@ -2,18 +2,15 @@ package sender
 
 import (
 	"bytes"
-	"crypto/tls"
+	"dex/config"
 	"dex/db"
 	"dex/logs"
 	"dex/txpool"
 	"encoding/hex"
 	"fmt"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/http3"
 	"io"
 	"net"
 	"net/http"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -28,13 +25,69 @@ type SenderManager struct {
 	nodeID     int // 只用作log,不参与业务逻辑
 }
 
+// pullBlockByIDMessage 用于通过ID拉取区块
+type pullBlockByIDMessage struct {
+	requestData []byte
+	blockID     string
+	onSuccess   func(*db.Block)
+}
+
+// doSendGetBlockByID 执行通过ID获取区块的请求
+func doSendGetBlockByID(t *SendTask, client *http.Client) error {
+	msg, ok := t.Message.(*pullBlockByIDMessage)
+	if !ok {
+		return fmt.Errorf("doSendGetBlockByID: message is not *pullBlockByIDMessage, got %T", t.Message)
+	}
+
+	url := fmt.Sprintf("https://%s/getblockbyid", t.Target)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(msg.requestData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respData, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("doSendGetBlockByID: status=%d, body=%s", resp.StatusCode, string(respData))
+	}
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	// 解析 GetBlockResponse
+	var gbr db.GetBlockResponse
+	if err := proto.Unmarshal(respBytes, &gbr); err != nil {
+		return fmt.Errorf("doSendGetBlockByID: bad GetBlockResponse: %w", err)
+	}
+	if gbr.Block == nil {
+		return fmt.Errorf("doSendGetBlockByID: empty block in response")
+	}
+	if gbr.Block.BlockHash != msg.blockID {
+		return fmt.Errorf("doSendGetBlockByID: returned block ID mismatch, want %s, got %s",
+			msg.blockID, gbr.Block.BlockHash)
+	}
+
+	if msg.onSuccess != nil {
+		msg.onSuccess(gbr.Block)
+	}
+	return nil
+}
+
 // 创建新的发送管理器
 func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, nodeID int) *SenderManager {
 	// 创建 HTTP/3 客户端
 	httpClient := createHttp3Client()
-
+	cfg := config.DefaultConfig()
 	// 创建SendQueue实例，传入 httpClient
-	queue := NewSendQueue(100, 10000, httpClient, nodeID)
+	queue := NewSendQueue(cfg.Sender.WorkerCount, cfg.Sender.QueueCapacity, httpClient, nodeID)
 
 	return &SenderManager{
 		dbManager:  dbMgr,
@@ -42,33 +95,6 @@ func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, no
 		address:    address,
 		sendQueue:  queue,
 		httpClient: httpClient,
-	}
-}
-
-// createHttp3Client 创建非单例的 HTTP/3 客户端
-func createHttp3Client() *http.Client {
-	tlsCfg := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS13,
-		MaxVersion:         tls.VersionTLS13,
-		ClientSessionCache: tls.NewLRUClientSessionCache(128),
-		// 添加ALPN协议支持
-		NextProtos: []string{"h3", "h3-29", "h3-28", "h3-27"},
-	}
-
-	tr := &http3.Transport{
-		TLSClientConfig: tlsCfg,
-		QUICConfig: &quic.Config{
-			KeepAlivePeriod: 10 * time.Second,
-			MaxIdleTimeout:  5 * time.Minute,
-			// 可选：添加0-RTT支持
-			Allow0RTT: true,
-		},
-	}
-
-	return &http.Client{
-		Transport: tr,
-		Timeout:   30 * time.Second,
 	}
 }
 
@@ -93,6 +119,7 @@ func (sm *SenderManager) BroadcastTx(tx *db.AnyTx) {
 			RetryCount: 0,
 			MaxRetries: 1,
 			SendFunc:   doSendTx,
+			Priority:   PriorityData, // 数据面优先级
 		}
 		sm.sendQueue.Enqueue(task) // 使用实例的队列
 	}
@@ -124,7 +151,7 @@ func (sm *SenderManager) SendTxToAllPeers(tx *db.AnyTx) {
 	}
 }
 
-// PullTx 拉取指定交易
+// 拉取指定交易
 func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*db.AnyTx)) {
 	getDataMsg := &db.GetData{TxId: txID}
 	data, err := proto.Marshal(getDataMsg)
@@ -151,6 +178,35 @@ func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*db.AnyTx)
 		RetryCount: 0,
 		MaxRetries: 3,
 		SendFunc:   doSendGetDataWithManager,
+	}
+	sm.sendQueue.Enqueue(task)
+}
+
+// PullBlockByID 通过BlockID拉取指定区块
+func (sm *SenderManager) PullBlockByID(targetIP string, blockID string, onSuccess func(*db.Block)) {
+	// 构造GetData请求消息
+	req := &db.GetBlockByIDRequest{BlockId: blockID}
+
+	data, err := proto.Marshal(req)
+	if err != nil {
+		logs.Debug("[PullBlockByID] marshal failed: %v", err)
+		return
+	}
+
+	// 创建专门的pullBlockByID消息
+	msg := &pullBlockByIDMessage{
+		requestData: data,
+		blockID:     blockID,
+		onSuccess:   onSuccess,
+	}
+
+	task := &SendTask{
+		Target:     targetIP,
+		Message:    msg,
+		RetryCount: 0,
+		MaxRetries: 2,
+		SendFunc:   doSendGetBlockByID,
+		Priority:   PriorityControl,
 	}
 	sm.sendQueue.Enqueue(task)
 }
@@ -276,6 +332,7 @@ func (sm *SenderManager) PushQuery(peerAddr string, pq *db.PushQuery) {
 		Message:    msg,
 		MaxRetries: 2,
 		SendFunc:   doSendPushQuery,
+		Priority:   PriorityControl, // 设置为控制面优先级
 	}
 	sm.sendQueue.Enqueue(task)
 }
@@ -300,6 +357,7 @@ func (sm *SenderManager) PullQuery(peerAddr string, pq *db.PullQuery) {
 		Message:    msg,
 		MaxRetries: 2,
 		SendFunc:   doSendPullQuery,
+		Priority:   PriorityControl, // 控制面优先级
 	}
 	sm.sendQueue.Enqueue(task)
 }

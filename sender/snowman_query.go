@@ -61,7 +61,7 @@ func doSendPullQuery(t *SendTask, client *http.Client) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("pushquery status=%d: %s", resp.StatusCode, string(b))
+		return fmt.Errorf("pullquery status=%d: %s", resp.StatusCode, string(b))
 	}
 	// 不需要读取/反序列化 chits，等待对端异步POST /chits 过来
 	return nil

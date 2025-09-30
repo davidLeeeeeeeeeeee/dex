@@ -1,6 +1,7 @@
 package sender
 
 import (
+	"dex/config"
 	"dex/logs"
 	"fmt"
 	"log"
@@ -12,6 +13,14 @@ import (
 	"time"
 )
 
+// 添加任务类型枚举
+type TaskPriority int
+
+const (
+	PriorityControl TaskPriority = iota // 控制面：consensus相关
+	PriorityData                        // 数据面：普通数据传输
+)
+
 // SendTask 封装一次发送所需的信息
 type SendTask struct {
 	Target      string
@@ -21,6 +30,7 @@ type SendTask struct {
 	NextAttempt time.Time
 	SendFunc    func(task *SendTask, client *http.Client) error
 	HttpClient  *http.Client
+	Priority    TaskPriority // 任务优先级
 }
 
 // SendQueue 负责管理任务队列 + worker
@@ -64,18 +74,57 @@ func (sq *SendQueue) Stop() {
 	log.Println("[SendQueue] Stopped.")
 }
 
-// Enqueue 提交任务到队列(如果满了,可阻塞/丢弃/返回err)
 func (sq *SendQueue) Enqueue(task *SendTask) {
+	if task == nil {
+		return
+	}
 	if task.NextAttempt.IsZero() {
 		task.NextAttempt = time.Now()
 	}
+	now := time.Now()
+	if task.NextAttempt.After(now) {
+		// 未到执行时间：先等到 NextAttempt，再真正入队
+		delay := time.Until(task.NextAttempt)
+		go func(t *SendTask, d time.Duration) {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				sq.enqueueNow(t) // 见下
+			case <-sq.stopChan: // 若你有 stopChan
+				return
+			}
+		}(task, delay)
+		return
+	}
+	sq.enqueueNow(task)
+}
+
+func (sq *SendQueue) enqueueNow(task *SendTask) {
+	cfg := config.DefaultConfig()
+	// 控制面任务：给一个短暂的阻塞窗口
+	if task.Priority == PriorityControl {
+		select {
+		case sq.taskChan <- task:
+			// 成功入队
+			return
+		case <-time.After(cfg.Sender.ControlTaskTimeout):
+
+			// 80ms 后仍无法入队，记录错误
+			logs.Error("[Node %d][SendQueue] Control task timeout: len=%d cap=%d target=%s",
+				sq.nodeID, len(sq.taskChan), cap(sq.taskChan), task.Target)
+			// 可以选择丢弃或者进一步处理
+			return
+		}
+	}
+
+	// 数据面任务：队列满了直接丢弃
 	select {
 	case sq.taskChan <- task:
-		// ok
+		// 成功入队
 	default:
-		// 关键：看到是谁满了、当前长度多少、任务类型是什么
-		logs.Error("[Node %d][SendQueue] FULL: len=%d cap=%d msg=%s target=%s",
-			sq.nodeID, len(sq.taskChan), cap(sq.taskChan), task.Message, task.Target)
+		logs.Debug("[Node %d][SendQueue] Data task dropped: queue full, target=%s",
+			sq.nodeID, task.Target)
 	}
 }
 
@@ -132,8 +181,9 @@ func (sq *SendQueue) handleRetry(task *SendTask, sendErr error) {
 			task.MaxRetries, task.Target)
 		return
 	}
+	cfg := config.DefaultConfig()
 	// 幂次退避
-	baseDelay := time.Second
+	baseDelay := cfg.Sender.BaseRetryDelay
 	backoff := baseDelay * time.Duration(math.Pow(2, float64(task.RetryCount-1)))
 	task.NextAttempt = time.Now().Add(backoff)
 	sq.Enqueue(task)
