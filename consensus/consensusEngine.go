@@ -109,7 +109,7 @@ func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferr
 		delete(e.activeQueries, queryKey)
 		e.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventQueryComplete,
-			EventData: ctx,
+			EventData: QueryCompleteData{Reason: "success", QueryKeys: []string{queryKey}},
 		})
 	}
 }
@@ -156,28 +156,27 @@ func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string) {
 	}
 }
 
+type QueryCompleteData struct {
+	Reason    string   // "success" | "timeout"
+	QueryKeys []string // 结束的查询键（可选）
+}
+
 func (e *SnowmanEngine) checkTimeouts() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	now := time.Now()
-	toDelete := make([]string, 0)
-
-	for queryKey, ctx := range e.activeQueries {
+	var expired []string
+	for k, ctx := range e.activeQueries {
 		if now.Sub(ctx.startTime) > e.config.QueryTimeout {
-			toDelete = append(toDelete, queryKey)
+			expired = append(expired, k)
+			delete(e.activeQueries, k)
 		}
 	}
+	e.mu.Unlock()
 
-	for _, queryKey := range toDelete {
-		delete(e.activeQueries, queryKey)
-	}
-
-	if len(toDelete) > 0 {
-		// 目的是“释放槽位并唤醒调度”
+	if len(expired) > 0 {
 		e.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventQueryComplete,
-			EventData: nil,
+			EventData: QueryCompleteData{Reason: "timeout", QueryKeys: expired},
 		})
 	}
 }

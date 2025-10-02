@@ -19,6 +19,7 @@ type NetworkConfig struct {
 	NumNodes          int
 	NumByzantineNodes int
 	NetworkLatency    time.Duration
+	PacketLossRate    float64 //丢包率，范围 0.0 到 1.0
 }
 
 type ConsensusConfig struct {
@@ -61,6 +62,7 @@ func DefaultConfig() *Config {
 			NumNodes:          100,
 			NumByzantineNodes: 10,
 			NetworkLatency:    100 * time.Millisecond,
+			PacketLossRate:    0.1, // 10% 丢包率
 		},
 		Consensus: ConsensusConfig{
 			K:                    20,
