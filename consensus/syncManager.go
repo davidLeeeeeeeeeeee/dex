@@ -21,11 +21,11 @@ type SyncManager struct {
 	config         *SyncConfig
 	snapshotConfig *SnapshotConfig // 新增
 	events         interfaces.EventBus
-	syncRequests   map[uint32]time.Time
+	SyncRequests   map[uint32]time.Time
 	nextSyncID     uint32
-	syncing        bool
-	mu             sync.RWMutex
-	peerHeights    map[types.NodeID]uint64
+	Syncing        bool
+	Mu             sync.RWMutex
+	PeerHeights    map[types.NodeID]uint64
 	lastPoll       time.Time
 	usingSnapshot  bool // 新增：标记是否正在使用快照同步
 }
@@ -38,8 +38,8 @@ func NewSyncManager(nodeID types.NodeID, transport interfaces.Transport, store i
 		config:         config,
 		snapshotConfig: snapshotConfig,
 		events:         events,
-		syncRequests:   make(map[uint32]time.Time),
-		peerHeights:    make(map[types.NodeID]uint64),
+		SyncRequests:   make(map[uint32]time.Time),
+		PeerHeights:    make(map[types.NodeID]uint64),
 		lastPoll:       time.Now(),
 	}
 }
@@ -88,34 +88,37 @@ func (sm *SyncManager) HandleHeightQuery(msg types.Message) {
 	_, height := sm.store.GetLastAccepted()
 	currentHeight := sm.store.GetCurrentHeight()
 
-	sm.transport.Send(types.NodeID(msg.From), types.Message{
+	err := sm.transport.Send(types.NodeID(msg.From), types.Message{
 		Type:          types.MsgHeightResponse,
 		From:          sm.nodeID,
 		Height:        height,
 		CurrentHeight: currentHeight,
 	})
+	if err != nil {
+		return
+	}
 }
 
 func (sm *SyncManager) HandleHeightResponse(msg types.Message) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.peerHeights[types.NodeID(msg.From)] = msg.CurrentHeight
+	sm.Mu.Lock()
+	defer sm.Mu.Unlock()
+	sm.PeerHeights[types.NodeID(msg.From)] = msg.CurrentHeight
 }
 
 func (sm *SyncManager) checkAndSync() {
-	sm.mu.Lock()
-	if sm.syncing {
-		sm.mu.Unlock()
+	sm.Mu.Lock()
+	if sm.Syncing {
+		sm.Mu.Unlock()
 		return
 	}
 
 	maxPeerHeight := uint64(0)
-	for _, height := range sm.peerHeights {
+	for _, height := range sm.PeerHeights {
 		if height > maxPeerHeight {
 			maxPeerHeight = height
 		}
 	}
-	sm.mu.Unlock()
+	sm.Mu.Unlock()
 
 	localCurrentHeight := sm.store.GetCurrentHeight()
 	heightDiff := uint64(0)
@@ -135,27 +138,27 @@ func (sm *SyncManager) checkAndSync() {
 
 // 请求快照同步
 func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
-	sm.mu.Lock()
-	if sm.syncing {
-		sm.mu.Unlock()
+	sm.Mu.Lock()
+	if sm.Syncing {
+		sm.Mu.Unlock()
 		return
 	}
-	sm.syncing = true
+	sm.Syncing = true
 	sm.usingSnapshot = true
 	syncID := atomic.AddUint32(&sm.nextSyncID, 1)
-	sm.syncRequests[syncID] = time.Now()
-	sm.mu.Unlock()
+	sm.SyncRequests[syncID] = time.Now()
+	sm.Mu.Unlock()
 
 	// 找一个高度足够的节点
-	sm.mu.RLock()
+	sm.Mu.RLock()
 	var targetPeer types.NodeID = "-1"
-	for peer, height := range sm.peerHeights {
+	for peer, height := range sm.PeerHeights {
 		if height >= targetHeight {
 			targetPeer = peer
 			break
 		}
 	}
-	sm.mu.RUnlock()
+	sm.Mu.RUnlock()
 
 	if targetPeer == "-1" {
 		peers := sm.transport.SamplePeers(sm.nodeID, 5)
@@ -177,34 +180,34 @@ func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
 		}
 		sm.transport.Send(targetPeer, msg)
 	} else {
-		sm.mu.Lock()
-		sm.syncing = false
+		sm.Mu.Lock()
+		sm.Syncing = false
 		sm.usingSnapshot = false
-		delete(sm.syncRequests, syncID)
-		sm.mu.Unlock()
+		delete(sm.SyncRequests, syncID)
+		sm.Mu.Unlock()
 	}
 }
 
 func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
-	sm.mu.Lock()
-	if sm.syncing {
-		sm.mu.Unlock()
+	sm.Mu.Lock()
+	if sm.Syncing {
+		sm.Mu.Unlock()
 		return
 	}
-	sm.syncing = true
+	sm.Syncing = true
 	syncID := atomic.AddUint32(&sm.nextSyncID, 1)
-	sm.syncRequests[syncID] = time.Now()
-	sm.mu.Unlock()
+	sm.SyncRequests[syncID] = time.Now()
+	sm.Mu.Unlock()
 
-	sm.mu.RLock()
+	sm.Mu.RLock()
 	var targetPeer types.NodeID = "-1"
-	for peer, height := range sm.peerHeights {
+	for peer, height := range sm.PeerHeights {
 		if height >= toHeight {
 			targetPeer = peer
 			break
 		}
 	}
-	sm.mu.RUnlock()
+	sm.Mu.RUnlock()
 
 	if targetPeer == "-1" {
 		peers := sm.transport.SamplePeers(sm.nodeID, 5)
@@ -226,10 +229,10 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 		}
 		sm.transport.Send(targetPeer, msg)
 	} else {
-		sm.mu.Lock()
-		sm.syncing = false
-		delete(sm.syncRequests, syncID)
-		sm.mu.Unlock()
+		sm.Mu.Lock()
+		sm.Syncing = false
+		delete(sm.SyncRequests, syncID)
+		sm.Mu.Unlock()
 	}
 }
 
@@ -254,9 +257,9 @@ func (sm *SyncManager) HandleSnapshotRequest(msg types.Message) {
 
 	// 更新统计
 	if sm.node != nil {
-		sm.node.stats.mu.Lock()
+		sm.node.stats.Mu.Lock()
 		sm.node.stats.snapshotsServed++
-		sm.node.stats.mu.Unlock()
+		sm.node.stats.Mu.Unlock()
 	}
 
 	response := types.Message{
@@ -272,17 +275,17 @@ func (sm *SyncManager) HandleSnapshotRequest(msg types.Message) {
 
 // 处理快照响应（新增）
 func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	sm.Mu.Lock()
+	defer sm.Mu.Unlock()
 
-	if _, ok := sm.syncRequests[msg.SyncID]; !ok {
+	if _, ok := sm.SyncRequests[msg.SyncID]; !ok {
 		return
 	}
 
-	delete(sm.syncRequests, msg.SyncID)
+	delete(sm.SyncRequests, msg.SyncID)
 
 	if msg.Snapshot == nil {
-		sm.syncing = false
+		sm.Syncing = false
 		sm.usingSnapshot = false
 		return
 	}
@@ -291,16 +294,16 @@ func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
 	err := sm.store.LoadSnapshot(msg.Snapshot)
 	if err != nil {
 		Logf("[Node %d] Failed to load snapshot: %v\n", sm.nodeID, err)
-		sm.syncing = false
+		sm.Syncing = false
 		sm.usingSnapshot = false
 		return
 	}
 
 	// 更新统计
 	if sm.node != nil {
-		sm.node.stats.mu.Lock()
+		sm.node.stats.Mu.Lock()
 		sm.node.stats.snapshotsUsed++
-		sm.node.stats.mu.Unlock()
+		sm.node.stats.Mu.Unlock()
 	}
 
 	Logf("[Node %d] 📸 Successfully loaded snapshot at height %d\n",
@@ -315,13 +318,13 @@ func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
 	// 继续同步快照之后的区块
 	currentHeight := sm.store.GetCurrentHeight()
 	maxPeerHeight := uint64(0)
-	for _, height := range sm.peerHeights {
+	for _, height := range sm.PeerHeights {
 		if height > maxPeerHeight {
 			maxPeerHeight = height
 		}
 	}
 
-	sm.syncing = false
+	sm.Syncing = false
 	sm.usingSnapshot = false
 
 	// 如果还需要更多区块，继续普通同步
@@ -356,15 +359,15 @@ func (sm *SyncManager) HandleSyncRequest(msg types.Message) {
 }
 
 func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	sm.Mu.Lock()
+	defer sm.Mu.Unlock()
 
-	if _, ok := sm.syncRequests[msg.SyncID]; !ok {
+	if _, ok := sm.SyncRequests[msg.SyncID]; !ok {
 		return
 	}
 
-	delete(sm.syncRequests, msg.SyncID)
-	sm.syncing = false
+	delete(sm.SyncRequests, msg.SyncID)
+	sm.Syncing = false
 
 	added := 0
 	for _, block := range msg.Blocks {

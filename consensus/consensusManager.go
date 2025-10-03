@@ -14,7 +14,7 @@ import (
 // ConsensusNodeManager 管理共识节点的全局状态
 type ConsensusNodeManager struct {
 	mu             sync.RWMutex
-	node           *Node
+	Node           *Node
 	engine         interfaces.ConsensusEngine
 	store          interfaces.BlockStore
 	Transport      interfaces.Transport
@@ -49,7 +49,7 @@ func InitConsensusManager(
 
 	// 创建 ConsensusNodeManager
 	consensusManager := &ConsensusNodeManager{
-		node:           node,
+		Node:           node,
 		engine:         node.engine,
 		store:          node.store,
 		Transport:      transport,
@@ -67,10 +67,16 @@ func InitConsensusManager(
 }
 
 func (m *ConsensusNodeManager) Start() {
-	if m.node != nil {
-		m.node.Start()
+	if m.Node != nil {
+		m.Node.Start()
 		logs.Info("[ConsensusManager] Started consensus engine")
 	}
+}
+func (m *ConsensusNodeManager) GetActiveQueryCount() int {
+	if m.engine != nil {
+		return m.engine.GetActiveQueryCount()
+	}
+	return 0
 }
 
 // 添加新区块到共识
@@ -92,7 +98,7 @@ func (m *ConsensusNodeManager) AddBlock(block *db.Block) error {
 
 	if added {
 		// 触发新区块事件
-		m.node.events.PublishAsync(types.BaseEvent{
+		m.Node.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventNewBlock,
 			EventData: typesBlock,
 		})
@@ -138,7 +144,7 @@ func (m *ConsensusNodeManager) StartQuery() {
 
 // GetStats 获取节点统计信息
 func (m *ConsensusNodeManager) GetStats() *NodeStats {
-	return m.node.stats
+	return m.Node.stats
 }
 
 // CreateSnapshot 创建快照
@@ -170,12 +176,12 @@ func (m *ConsensusNodeManager) GetCurrentHeight() uint64 {
 // IsReady 检查共识是否准备就绪
 func (m *ConsensusNodeManager) IsReady() bool {
 	// 检查各组件是否就绪
-	if m.node == nil || m.engine == nil {
+	if m.Node == nil || m.engine == nil {
 		return false
 	}
 
 	// 检查是否有足够的对等节点
-	peers := m.Transport.SamplePeers(m.node.ID, 1)
+	peers := m.Transport.SamplePeers(m.Node.ID, 1)
 	if len(peers) == 0 {
 		return false
 	}
@@ -185,9 +191,9 @@ func (m *ConsensusNodeManager) IsReady() bool {
 
 // 停止共识管理器
 func (m *ConsensusNodeManager) Stop() {
-	if m.node != nil {
-		m.node.cancel() // 触发优雅关闭
-		m.node.Stop()
+	if m.Node != nil {
+		m.Node.cancel() // 触发优雅关闭
+		m.Node.Stop()
 	}
 	logs.Info("[ConsensusManager] Stopped")
 }

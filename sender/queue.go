@@ -31,16 +31,19 @@ type SendTask struct {
 	SendFunc    func(task *SendTask, client *http.Client) error
 	HttpClient  *http.Client
 	Priority    TaskPriority // 任务优先级
+
 }
 
 // SendQueue 负责管理任务队列 + worker
 type SendQueue struct {
-	workerCount int
-	taskChan    chan *SendTask
-	stopChan    chan struct{}
-	wg          sync.WaitGroup
-	httpClient  *http.Client
-	nodeID      int // 只用作log,不参与业务逻辑
+	workerCount   int
+	TaskChan      chan *SendTask
+	stopChan      chan struct{}
+	wg            sync.WaitGroup
+	httpClient    *http.Client
+	nodeID        int              // 只用作log,不参与业务逻辑
+	InflightMap   map[string]int32 // 目标->在途请求数
+	InflightMutex sync.RWMutex
 }
 
 // 移除 GlobalQueue 和 InitQueue
@@ -50,9 +53,10 @@ func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client, nodeI
 	sq := &SendQueue{
 		nodeID:      nodeID,
 		workerCount: workerCount,
-		taskChan:    make(chan *SendTask, queueCapacity),
+		TaskChan:    make(chan *SendTask, queueCapacity),
 		stopChan:    make(chan struct{}),
 		httpClient:  httpClient,
+		InflightMap: make(map[string]int32),
 	}
 	sq.Start()
 	return sq
@@ -105,14 +109,14 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 	// 控制面任务：给一个短暂的阻塞窗口
 	if task.Priority == PriorityControl {
 		select {
-		case sq.taskChan <- task:
+		case sq.TaskChan <- task:
 			// 成功入队
 			return
 		case <-time.After(cfg.Sender.ControlTaskTimeout):
 
 			// 80ms 后仍无法入队，记录错误
 			logs.Error("[Node %d][SendQueue] Control task timeout: len=%d cap=%d target=%s",
-				sq.nodeID, len(sq.taskChan), cap(sq.taskChan), task.Target)
+				sq.nodeID, len(sq.TaskChan), cap(sq.TaskChan), task.Target)
 			// 可以选择丢弃或者进一步处理
 			return
 		}
@@ -120,7 +124,7 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 
 	// 数据面任务：队列满了直接丢弃
 	select {
-	case sq.taskChan <- task:
+	case sq.TaskChan <- task:
 		// 成功入队
 	default:
 		logs.Debug("[Node %d][SendQueue] Data task dropped: queue full, target=%s",
@@ -136,7 +140,7 @@ func (sq *SendQueue) workerLoop(workerID int) {
 		select {
 		case <-sq.stopChan:
 			return
-		case task := <-sq.taskChan:
+		case task := <-sq.TaskChan:
 			if task == nil {
 				return
 			}
@@ -145,7 +149,19 @@ func (sq *SendQueue) workerLoop(workerID int) {
 				sleepDur := task.NextAttempt.Sub(now)
 				time.Sleep(sleepDur)
 			}
+			// 在 err := sq.doSend(task, workerID) 之前添加
+			sq.InflightMutex.Lock()
+			sq.InflightMap[task.Target]++
+			sq.InflightMutex.Unlock()
+
 			err := sq.doSend(task, workerID)
+			// 在 err := sq.doSend(task, workerID) 之后添加
+			sq.InflightMutex.Lock()
+			sq.InflightMap[task.Target]--
+			if sq.InflightMap[task.Target] <= 0 {
+				delete(sq.InflightMap, task.Target)
+			}
+			sq.InflightMutex.Unlock()
 			if err != nil {
 				sq.handleRetry(task, err)
 			}

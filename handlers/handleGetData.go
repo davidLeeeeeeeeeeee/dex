@@ -13,8 +13,9 @@ import (
 // 客户端会发送 GetData 消息（包含 tx_id），服务器查找该 tx（例如 AnyTx 或 Transaction），
 // 并将完整交易数据返回给请求者。
 
-// HandleGetData 处理获取交易数据请求
+// 处理获取交易数据请求
 func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) {
+	hm.recordAPICall("HandleGetData")
 	if !hm.checkAuth(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -57,6 +58,7 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 
 // handlers/handleGetBlockByID.go
 func (hm *HandlerManager) HandleGetBlockByID(w http.ResponseWriter, r *http.Request) {
+	hm.recordAPICall("HandleGetBlockByID")
 	if !hm.checkAuth(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

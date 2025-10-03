@@ -96,9 +96,9 @@ func (pm *ProposalManager) proposeBlock() {
 	}
 
 	if pm.node != nil {
-		pm.node.stats.mu.Lock()
+		pm.node.stats.Mu.Lock()
 		pm.node.stats.BlocksProposed++
-		pm.node.stats.mu.Unlock()
+		pm.node.stats.Mu.Unlock()
 	}
 
 	Logf("[Node %d] Proposing %s on parent %s\n", pm.nodeID, block, lastAcceptedID)

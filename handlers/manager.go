@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -27,6 +28,9 @@ type HandlerManager struct {
 	port             string // 当前节点端口
 	address          string // 当前节点地址
 	adapter          *consensus.ConsensusAdapter
+	// 统计相关字段
+	statsLock     sync.RWMutex
+	apiCallCounts map[string]uint64
 }
 
 // NewHandlerManager 创建新的处理器管理器
@@ -45,6 +49,7 @@ func NewHandlerManager(
 		port:             port,
 		address:          address,
 		adapter:          consensus.NewConsensusAdapter(dbMgr),
+		apiCallCounts:    make(map[string]uint64),
 	}
 }
 
@@ -73,6 +78,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (hm *HandlerManager) HandleChits(w http.ResponseWriter, r *http.Request) {
+	hm.recordAPICall("HandleChits")
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
@@ -114,7 +120,7 @@ func (hm *HandlerManager) HandleChits(w http.ResponseWriter, r *http.Request) {
 }
 
 func (hm *HandlerManager) HandleHeightQuery(w http.ResponseWriter, r *http.Request) {
-
+	hm.recordAPICall("HandleHeightQuery")
 	// 返回当前节点的高度信息
 	_, height := hm.consensusManager.GetLastAccepted()
 	currentHeight := hm.consensusManager.GetCurrentHeight()
@@ -129,6 +135,7 @@ func (hm *HandlerManager) HandleHeightQuery(w http.ResponseWriter, r *http.Reque
 	w.Write(data)
 }
 func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Request) {
+	hm.recordAPICall("HandleBlockGossip")
 	// 1. 读取请求体
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -209,8 +216,9 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 	w.Write([]byte("OK"))
 }
 
-// shouldRebroadcast 决定是否应该继续传播这个区块
+// 决定是否应该继续传播这个区块
 func (hm *HandlerManager) shouldRebroadcast(block *types.Block) bool {
+
 	// 实现简单的重播保护逻辑
 	// 例如：检查区块是否太旧，或者是否已经广播过
 
@@ -230,8 +238,9 @@ func (hm *HandlerManager) shouldRebroadcast(block *types.Block) bool {
 	return true
 }
 
-// HandleStatus 处理状态查询
+// 处理状态查询
 func (hm *HandlerManager) HandleStatus(w http.ResponseWriter, r *http.Request) {
+	hm.recordAPICall("HandleStatus")
 	if !hm.checkAuth(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -251,8 +260,9 @@ func (hm *HandlerManager) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// HandleGetBlock 处理获取区块请求
+// 处理获取区块请求
 func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request) {
+	hm.recordAPICall("HandleGetBlock")
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
@@ -296,8 +306,9 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 	gz.Write(respBytes)
 }
 
-// HandleNodes 处理节点列表请求
+// 处理节点列表请求
 func (hm *HandlerManager) HandleNodes(w http.ResponseWriter, r *http.Request) {
+	hm.recordAPICall("HandleNodes")
 	if !hm.checkAuth(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -330,8 +341,9 @@ func (hm *HandlerManager) verifyNodeIdentity(address string, message interface{}
 	return true
 }
 
-// HandlePushQuery 处理PushQuery请求（Snowman共识）
+// 处理PushQuery请求（Snowman共识）
 func (hm *HandlerManager) HandlePushQuery(w http.ResponseWriter, r *http.Request) {
+	hm.recordAPICall("HandlePushQuery")
 	bodyBytes, _ := io.ReadAll(r.Body)
 
 	var pushQuery db.PushQuery
@@ -369,6 +381,7 @@ func (hm *HandlerManager) HandlePushQuery(w http.ResponseWriter, r *http.Request
 
 // 处理PullQuery请求（Snowman共识）
 func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request) {
+	hm.recordAPICall("HandlePullQuery")
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
@@ -427,4 +440,44 @@ func (hm *HandlerManager) Stop() {
 		hm.senderManager.Stop()
 	}
 	// 其他清理工作
+}
+
+// ============= 统计相关方法 =============
+
+// 记录API调用
+func (h *HandlerManager) recordAPICall(apiName string) {
+	h.statsLock.Lock()
+	defer h.statsLock.Unlock()
+
+	if h.apiCallCounts == nil {
+		h.apiCallCounts = make(map[string]uint64)
+	}
+	h.apiCallCounts[apiName]++
+}
+
+// 获取API调用统计
+func (h *HandlerManager) GetAPICallStats() map[string]uint64 {
+	h.statsLock.RLock()
+	defer h.statsLock.RUnlock()
+
+	// 复制统计数据
+	stats := make(map[string]uint64)
+	for api, count := range h.apiCallCounts {
+		stats[api] = count
+	}
+	return stats
+}
+
+// GetAPICallCount 获取特定API的调用次数
+func (h *HandlerManager) GetAPICallCount(apiName string) uint64 {
+	h.statsLock.RLock()
+	defer h.statsLock.RUnlock()
+	return h.apiCallCounts[apiName]
+}
+
+// ResetAPIStats 重置统计数据
+func (h *HandlerManager) ResetAPIStats() {
+	h.statsLock.Lock()
+	defer h.statsLock.Unlock()
+	h.apiCallCounts = make(map[string]uint64)
 }

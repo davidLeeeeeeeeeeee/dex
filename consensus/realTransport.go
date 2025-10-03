@@ -217,7 +217,9 @@ func (t *RealTransport) sendSnapshotRequest(targetIP string, msg types.Message) 
 	})
 	return nil
 }
-
+func (t *RealTransport) GetReceiveQueueLen() int {
+	return len(t.receiveQueue)
+}
 func (t *RealTransport) EnqueueReceivedMessage(msg types.Message) error {
 	// 根据消息类型判断优先级
 	isControlMessage := false

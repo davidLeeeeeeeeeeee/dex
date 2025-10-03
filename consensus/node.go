@@ -20,7 +20,7 @@ type Node struct {
 	messageHandler  *MessageHandler
 	queryManager    *QueryManager
 	gossipManager   *GossipManager
-	syncManager     *SyncManager
+	SyncManager     *SyncManager
 	snapshotManager *SnapshotManager
 	proposalManager *ProposalManager
 	ctx             context.Context
@@ -70,7 +70,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 	node.messageHandler = messageHandler
 	node.queryManager = queryManager
 	node.gossipManager = gossipManager
-	node.syncManager = syncManager
+	node.SyncManager = syncManager
 	node.snapshotManager = snapshotManager
 	node.proposalManager = proposalManager
 
@@ -92,7 +92,7 @@ func (n *Node) Start() {
 	n.engine.Start(n.ctx)
 	n.queryManager.Start(n.ctx)
 	n.gossipManager.Start(n.ctx)
-	n.syncManager.Start(n.ctx)
+	n.SyncManager.Start(n.ctx)
 	n.snapshotManager.Start(n.ctx)
 
 	if !n.IsByzantine {

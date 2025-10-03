@@ -20,7 +20,7 @@ type SenderManager struct {
 	dbManager  *db.Manager
 	txPool     *txpool.TxPool
 	address    string     // 本节点地址
-	sendQueue  *SendQueue // 持有SendQueue实例
+	SendQueue  *SendQueue // 持有SendQueue实例
 	httpClient *http.Client
 	nodeID     int // 只用作log,不参与业务逻辑
 }
@@ -93,7 +93,7 @@ func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, no
 		dbManager:  dbMgr,
 		txPool:     pool,
 		address:    address,
-		sendQueue:  queue,
+		SendQueue:  queue,
 		httpClient: httpClient,
 	}
 }
@@ -121,7 +121,7 @@ func (sm *SenderManager) BroadcastTx(tx *db.AnyTx) {
 			SendFunc:   doSendTx,
 			Priority:   PriorityData, // 数据面优先级
 		}
-		sm.sendQueue.Enqueue(task) // 使用实例的队列
+		sm.SendQueue.Enqueue(task) // 使用实例的队列
 	}
 }
 
@@ -147,7 +147,7 @@ func (sm *SenderManager) SendTxToAllPeers(tx *db.AnyTx) {
 			MaxRetries: 3,
 			SendFunc:   doSendTx,
 		}
-		sm.sendQueue.Enqueue(task)
+		sm.SendQueue.Enqueue(task)
 	}
 }
 
@@ -179,7 +179,7 @@ func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*db.AnyTx)
 		MaxRetries: 3,
 		SendFunc:   doSendGetDataWithManager,
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 }
 
 // PullBlockByID 通过BlockID拉取指定区块
@@ -208,7 +208,7 @@ func (sm *SenderManager) PullBlockByID(targetIP string, blockID string, onSucces
 		SendFunc:   doSendGetBlockByID,
 		Priority:   PriorityControl,
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 }
 
 // PullBlock 拉取指定高度的区块
@@ -243,7 +243,7 @@ func (sm *SenderManager) PullBlock(targetAddress string, height uint64, onSucces
 		MaxRetries: 1,
 		SendFunc:   doSendGetBlock,
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 }
 
 // BatchGetTxs 批量获取交易
@@ -284,7 +284,7 @@ func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]
 		MaxRetries: 1,
 		SendFunc:   doSendBatchGetTxs,
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 }
 
 // 广播消息给随机矿工
@@ -306,7 +306,7 @@ func (sm *SenderManager) BroadcastToRandomMiners(msg []byte, count int) {
 			MaxRetries: 3,
 			SendFunc:   doSendToOnePeer,
 		}
-		sm.sendQueue.Enqueue(task)
+		sm.SendQueue.Enqueue(task)
 	}
 }
 
@@ -334,7 +334,7 @@ func (sm *SenderManager) PushQuery(peerAddr string, pq *db.PushQuery) {
 		SendFunc:   doSendPushQuery,
 		Priority:   PriorityControl, // 设置为控制面优先级
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 }
 
 // PullQuery 发送PullQuery（Snowman共识）
@@ -359,7 +359,7 @@ func (sm *SenderManager) PullQuery(peerAddr string, pq *db.PullQuery) {
 		SendFunc:   doSendPullQuery,
 		Priority:   PriorityControl, // 控制面优先级
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 }
 
 // 辅助方法
@@ -477,11 +477,11 @@ func (sm *SenderManager) SendChits(targetAddress string, chits *db.Chits) error 
 		MaxRetries: 2,
 		SendFunc:   doSendChits,
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 	return nil
 }
 
-// SendBlock 发送完整区块数据
+// 发送完整区块数据
 func (sm *SenderManager) SendBlock(targetAddress string, block *db.Block) error {
 	data, err := proto.Marshal(block)
 	if err != nil {
@@ -506,7 +506,7 @@ func (sm *SenderManager) SendBlock(targetAddress string, block *db.Block) error 
 		MaxRetries: 2,
 		SendFunc:   doSendBlock,
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 	return nil
 }
 
@@ -538,7 +538,7 @@ func (sm *SenderManager) SendHeightQuery(targetAddress string, onSuccess func(*d
 		MaxRetries: 2,
 		SendFunc:   doSendHeightQuery,
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 	return nil
 }
 
@@ -573,13 +573,13 @@ func (sm *SenderManager) SendSyncRequest(targetAddress string, fromHeight, toHei
 		MaxRetries: 2,
 		SendFunc:   doSendSyncRequest,
 	}
-	sm.sendQueue.Enqueue(task)
+	sm.SendQueue.Enqueue(task)
 	return nil
 }
 
 // Stop 停止SenderManager（包括其队列）
 func (sm *SenderManager) Stop() {
-	if sm.sendQueue != nil {
-		sm.sendQueue.Stop()
+	if sm.SendQueue != nil {
+		sm.SendQueue.Stop()
 	}
 }

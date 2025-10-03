@@ -10,6 +10,7 @@ import (
 )
 
 func HandleGetBlock(w http.ResponseWriter, r *http.Request) {
+
 	// 1. 可选：权限校验
 	//if !CheckAuth(r) {
 	//	http.Error(w, "Unauthorized", http.StatusUnauthorized)

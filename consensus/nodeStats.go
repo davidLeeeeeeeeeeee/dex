@@ -7,7 +7,7 @@ import "sync"
 // ============================================
 
 type NodeStats struct {
-	mu               sync.Mutex
+	Mu               sync.Mutex
 	QueriesSent      uint32
 	QueriesReceived  uint32
 	ChitsResponded   uint32

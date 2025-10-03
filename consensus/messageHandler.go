@@ -53,9 +53,9 @@ func (h *MessageHandler) SetManagers(qm *QueryManager, gm *GossipManager, sm *Sy
 func (h *MessageHandler) HandleMsg(msg types.Message) {
 	if h.isByzantine && (msg.Type == types.MsgPullQuery || msg.Type == types.MsgPushQuery) {
 		if h.node != nil {
-			h.node.stats.mu.Lock()
+			h.node.stats.Mu.Lock()
 			h.node.stats.QueriesReceived++
-			h.node.stats.mu.Unlock()
+			h.node.stats.Mu.Unlock()
 		}
 		return
 	}
@@ -90,9 +90,9 @@ func (h *MessageHandler) HandleMsg(msg types.Message) {
 
 func (h *MessageHandler) handlePullQuery(msg types.Message) {
 	if h.node != nil {
-		h.node.stats.mu.Lock()
+		h.node.stats.Mu.Lock()
 		h.node.stats.QueriesReceived++
-		h.node.stats.mu.Unlock()
+		h.node.stats.Mu.Unlock()
 	}
 
 	// 检查本地是否有该区块
@@ -134,9 +134,9 @@ func (h *MessageHandler) storePendingQuery(msg types.Message) {
 
 func (h *MessageHandler) handlePushQuery(msg types.Message) {
 	if h.node != nil {
-		h.node.stats.mu.Lock()
+		h.node.stats.Mu.Lock()
 		h.node.stats.QueriesReceived++
-		h.node.stats.mu.Unlock()
+		h.node.stats.Mu.Unlock()
 	}
 
 	if msg.Block != nil {
@@ -194,14 +194,18 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 }
 
 func (h *MessageHandler) handleGet(msg types.Message) {
+	// 请求方需要区块数据，就查本地，发给他
 	if block, exists := h.store.Get(msg.BlockID); exists {
-		h.transport.Send(types.NodeID(msg.From), types.Message{
+		err := h.transport.Send(types.NodeID(msg.From), types.Message{
 			Type:      types.MsgPut,
 			From:      h.nodeID,
 			RequestID: msg.RequestID,
 			Block:     block,
 			Height:    block.Height,
 		})
+		if err != nil {
+			return
+		}
 	}
 }
 

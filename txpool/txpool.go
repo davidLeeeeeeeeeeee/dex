@@ -31,7 +31,7 @@ type TxPool struct {
 	shortTxCache           *lru.Cache
 
 	// 内部队列管理
-	queue     *txPoolQueue
+	Queue     *txPoolQueue
 	validator TxValidator
 
 	// 控制
@@ -64,7 +64,7 @@ func NewTxPool(dbManager *db.Manager, validator TxValidator) (*TxPool, error) {
 	}
 
 	// 创建内部队列
-	tp.queue = newTxPoolQueue(tp, validator)
+	tp.Queue = newTxPoolQueue(tp, validator)
 
 	// 从DB加载已有pendingTx
 	tp.loadFromDB()
@@ -76,7 +76,7 @@ func NewTxPool(dbManager *db.Manager, validator TxValidator) (*TxPool, error) {
 func (tp *TxPool) Start() error {
 	// 启动内部队列处理
 	tp.wg.Add(1)
-	go tp.queue.runLoop()
+	go tp.Queue.runLoop()
 
 	logs.Info("[TxPool] Started")
 	return nil
@@ -104,7 +104,7 @@ func (tp *TxPool) SubmitTx(anyTx *db.AnyTx, fromIP string, onAdded OnTxAddedCall
 	}
 
 	select {
-	case tp.queue.msgChan <- msg:
+	case tp.Queue.MsgChan <- msg:
 		return nil
 	default:
 		return fmt.Errorf("txpool queue is full")

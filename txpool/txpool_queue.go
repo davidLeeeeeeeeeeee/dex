@@ -29,7 +29,7 @@ type txPoolMessage struct {
 type txPoolQueue struct {
 	pool      *TxPool
 	validator TxValidator
-	msgChan   chan *txPoolMessage
+	MsgChan   chan *txPoolMessage
 }
 
 // TxValidator 用于抽象交易校验
@@ -42,7 +42,7 @@ func newTxPoolQueue(pool *TxPool, validator TxValidator) *txPoolQueue {
 	return &txPoolQueue{
 		pool:      pool,
 		validator: validator,
-		msgChan:   make(chan *txPoolMessage, 10000),
+		MsgChan:   make(chan *txPoolMessage, 10000),
 	}
 }
 
@@ -53,7 +53,7 @@ func (tq *txPoolQueue) runLoop() {
 		select {
 		case <-tq.pool.stopChan:
 			return
-		case msg := <-tq.msgChan:
+		case msg := <-tq.MsgChan:
 			if msg == nil {
 				continue
 			}

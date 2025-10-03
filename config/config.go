@@ -194,7 +194,7 @@ func DefaultConfig() *Config {
 			DataMaxRetries:      1,
 			BaseRetryDelay:      1 * time.Second,
 			MaxRetryDelay:       30 * time.Second,
-			ControlTaskTimeout:  80 * time.Millisecond,
+			ControlTaskTimeout:  180 * time.Millisecond,
 			DataTaskDropTimeout: 0,
 		},
 		Auth: AuthConfig{

@@ -216,7 +216,7 @@ func (nm *NetworkManager) PrintQueryStatistics() {
 		}
 		honestNodeCount++
 
-		node.stats.mu.Lock()
+		node.stats.Mu.Lock()
 		totalQueriesSent += node.stats.QueriesSent
 		totalQueriesReceived += node.stats.QueriesReceived
 		totalChitsResponded += node.stats.ChitsResponded
@@ -228,7 +228,7 @@ func (nm *NetworkManager) PrintQueryStatistics() {
 		for height, count := range node.stats.queriesPerHeight {
 			queriesByHeight[height] += count
 		}
-		node.stats.mu.Unlock()
+		node.stats.Mu.Unlock()
 	}
 
 	if honestNodeCount > 0 {
