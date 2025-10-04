@@ -66,7 +66,7 @@ func doSendChits(t *SendTask, client *http.Client) error {
 	return nil
 }
 
-// doSendBlock 执行区块发送
+// 执行区块发送
 func doSendBlock(t *SendTask, client *http.Client) error {
 	msg, ok := t.Message.(*blockMessage)
 	if !ok {

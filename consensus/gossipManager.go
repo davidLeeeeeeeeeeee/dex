@@ -63,7 +63,7 @@ func (gm *GossipManager) Start(ctx context.Context) {
 func (gm *GossipManager) gossipNewBlocks() {
 	_, currentHeight := gm.store.GetLastAccepted()
 	curMax := gm.store.GetCurrentHeight()
-	// NEW: 如果链上还没到 next/next+1，就别去 GetByHeight，避免触发 DB 回退
+	// 如果链上还没到 next/next+1，就别去 GetByHeight，避免触发 DB 回退
 	if curMax <= currentHeight {
 		return
 	}
@@ -89,6 +89,10 @@ func (gm *GossipManager) gossipNewBlocks() {
 
 func (gm *GossipManager) gossipBlock(block *types.Block) {
 	gm.mu.Lock()
+	if gm.seenBlocks[block.ID] { // 已转发过？那就不再发
+		gm.mu.Unlock()
+		return
+	}
 	gm.seenBlocks[block.ID] = true
 	gm.mu.Unlock()
 

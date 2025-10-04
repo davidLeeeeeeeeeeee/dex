@@ -187,7 +187,7 @@ func DefaultConfig() *Config {
 			TxExpirationTime:        24 * time.Hour,
 		},
 		Sender: SenderConfig{
-			WorkerCount:         100,
+			WorkerCount:         10000,
 			QueueCapacity:       10000,
 			DefaultMaxRetries:   3,
 			ControlMaxRetries:   2,

@@ -46,7 +46,7 @@ func NewRealTransport(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.
 	rt := &RealTransport{
 		nodeID:         nodeID,
 		address:        keyMgr.GetAddress(),
-		inbox:          make(chan types.Message, 10000),
+		inbox:          make(chan types.Message, 100000),
 		receiveQueue:   make(chan types.Message, 100000),
 		receiveWorkers: 1000,
 		dbManager:      dbMgr,
@@ -60,7 +60,7 @@ func NewRealTransport(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.
 	return rt
 }
 
-// Send 发送消息到指定节点
+// 发送消息到指定节点
 func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
 	targetIP, err := t.getNodeIP(to)
 	if err != nil {

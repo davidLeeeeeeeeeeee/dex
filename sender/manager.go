@@ -32,7 +32,7 @@ type pullBlockByIDMessage struct {
 	onSuccess   func(*db.Block)
 }
 
-// doSendGetBlockByID 执行通过ID获取区块的请求
+// 执行通过ID获取区块的请求
 func doSendGetBlockByID(t *SendTask, client *http.Client) error {
 	msg, ok := t.Message.(*pullBlockByIDMessage)
 	if !ok {

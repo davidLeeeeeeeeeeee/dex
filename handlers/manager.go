@@ -8,7 +8,6 @@ import (
 	"dex/sender"
 	"dex/txpool"
 	"dex/types"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -28,6 +28,9 @@ type HandlerManager struct {
 	port             string // 当前节点端口
 	address          string // 当前节点地址
 	adapter          *consensus.ConsensusAdapter
+
+	// 添加已知块缓存
+	seenBlocksCache *lru.Cache // 用于记录已处理的区块ID
 	// 统计相关字段
 	statsLock     sync.RWMutex
 	apiCallCounts map[string]uint64
@@ -41,6 +44,8 @@ func NewHandlerManager(
 	senderMgr *sender.SenderManager,
 	txPool *txpool.TxPool, // 只注入TxPool
 ) *HandlerManager {
+	// 创建 LRU 缓存，容量设为 10000
+	seenBlocksCache, _ := lru.New(100)
 	return &HandlerManager{
 		dbManager:        dbMgr,
 		consensusManager: consensusMgr,
@@ -50,6 +55,7 @@ func NewHandlerManager(
 		address:          address,
 		adapter:          consensus.NewConsensusAdapter(dbMgr),
 		apiCallCounts:    make(map[string]uint64),
+		seenBlocksCache:  seenBlocksCache,
 	}
 }
 
@@ -74,6 +80,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/batchgetdata", hm.HandleBatchGetTx)
 	mux.HandleFunc("/nodes", hm.HandleNodes)
 	mux.HandleFunc("/getblockbyid", hm.HandleGetBlockByID)
+	mux.HandleFunc("/put", hm.HandlePut)
 
 }
 
@@ -133,87 +140,6 @@ func (hm *HandlerManager) HandleHeightQuery(w http.ResponseWriter, r *http.Reque
 	data, _ := proto.Marshal(resp)
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.Write(data)
-}
-func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Request) {
-	hm.recordAPICall("HandleBlockGossip")
-	// 1. 读取请求体
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-
-	// 2. 尝试解析为 types.Block（JSON格式）
-	var block types.Block
-	if err := json.Unmarshal(bodyBytes, &block); err != nil {
-		// 如果不是JSON格式，可能是protobuf格式的db.Block
-		var dbBlock db.Block
-		if protoErr := proto.Unmarshal(bodyBytes, &dbBlock); protoErr == nil {
-			// 转换db.Block为types.Block
-			consensusBlock, convertErr := hm.adapter.DBBlockToConsensus(&dbBlock)
-			if convertErr != nil {
-				http.Error(w, "Failed to convert block", http.StatusBadRequest)
-				return
-			}
-			block = *consensusBlock
-		} else {
-			http.Error(w, "Invalid block format", http.StatusBadRequest)
-			return
-		}
-	}
-
-	// 3. 验证区块基本信息
-	if block.ID == "" || block.ID == "genesis" {
-		http.Error(w, "Invalid block ID", http.StatusBadRequest)
-		return
-	}
-
-	// 4. 构造共识层的Gossip消息
-	gossipMsg := types.Message{
-		Type:    types.MsgGossip,
-		From:    types.NodeID(block.Proposer),
-		Block:   &block,
-		BlockID: block.ID,
-		Height:  block.Height,
-	}
-
-	// 5. 如果有共识管理器，将消息传递给它处理
-	if hm.consensusManager != nil {
-		// 添加区块到共识存储
-		dbBlock := hm.adapter.ConsensusBlockToDB(&block, nil)
-		if err := hm.consensusManager.AddBlock(dbBlock); err != nil {
-			logs.Debug("[HandleBlockGossip] Failed to add block to consensus: %v", err)
-			// 不返回错误，因为区块可能已存在
-		}
-
-		// 如果使用RealTransport，通过消息队列处理
-		if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
-			if err := rt.EnqueueReceivedMessage(gossipMsg); err != nil {
-				logs.Warn("[HandleBlockGossip] Failed to enqueue gossip message: %v", err)
-			}
-		} else {
-			// 直接处理消息
-			hm.consensusManager.ProcessMessage(gossipMsg)
-		}
-
-		logs.Debug("[HandleBlockGossip] Received block %s at height %d Proposer %s",
-			block.ID, block.Height, block.Proposer)
-	}
-
-	// 7. 如果区块包含交易，处理交易
-	if dbBlock, ok := consensus.GetCachedBlock(block.ID); ok && len(dbBlock.Body) > 0 {
-		// 将交易添加到交易池
-		for _, tx := range dbBlock.Body {
-			if err := hm.txPool.StoreAnyTx(tx); err != nil {
-				logs.Debug("[HandleBlockGossip] Failed to store tx %s: %v",
-					tx.GetTxId(), err)
-			}
-		}
-	}
-
-	// 8. 返回成功响应
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
 }
 
 // 决定是否应该继续传播这个区块
@@ -339,78 +265,6 @@ func (hm *HandlerManager) verifyNodeIdentity(address string, message interface{}
 	// TODO: 验证消息签名
 	// 这里需要每个消息都包含签名字段
 	return true
-}
-
-// 处理PushQuery请求（Snowman共识）
-func (hm *HandlerManager) HandlePushQuery(w http.ResponseWriter, r *http.Request) {
-	hm.recordAPICall("HandlePushQuery")
-	bodyBytes, _ := io.ReadAll(r.Body)
-
-	var pushQuery db.PushQuery
-	proto.Unmarshal(bodyBytes, &pushQuery)
-	// 使用 pushQuery.Address 而不是从 IP 推断
-	senderAddress := pushQuery.Address
-	// 验证发送方身份（通过签名或其他机制）
-	if !hm.verifyNodeIdentity(senderAddress, pushQuery) {
-		http.Error(w, "Invalid node identity", http.StatusUnauthorized)
-		return
-	}
-	// 1、检查内存txpool是否存在
-	// 2、校验合法性
-	// 3、使用 adapter 转换
-	msg, err := hm.adapter.PushQueryToConsensusMessage(&pushQuery, types.NodeID(senderAddress))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// 4、丢进共识，处理消息
-	// 如果transport是RealTransport，使用队列方式
-	if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
-		if err := rt.EnqueueReceivedMessage(msg); err != nil {
-			logs.Warn("[Handler] Failed to enqueue message: %v", err)
-			// 返回 503 Service Unavailable，促使发送方退避重试
-			http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
-			return
-		}
-	}
-
-	// 5、生成响应直接返回 200 OK，不返回 chits
-	w.WriteHeader(http.StatusOK)
-}
-
-// 处理PullQuery请求（Snowman共识）
-func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request) {
-	hm.recordAPICall("HandlePullQuery")
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-
-	var pullQuery db.PullQuery
-	if err := proto.Unmarshal(bodyBytes, &pullQuery); err != nil {
-		http.Error(w, "Invalid PullQuery proto", http.StatusBadRequest)
-		return
-	}
-
-	// 构造消息并尝试入队
-	msg := types.Message{
-		Type:    types.MsgPullQuery,
-		From:    types.NodeID(pullQuery.Address),
-		BlockID: pullQuery.BlockId,
-		Height:  pullQuery.RequestedHeight,
-	}
-
-	if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
-		if err := rt.EnqueueReceivedMessage(msg); err != nil {
-			logs.Warn("[Handler] Failed to enqueue PullQuery: %v", err)
-			http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
-			return
-		}
-	}
-
-	w.WriteHeader(http.StatusOK)
 }
 
 // 辅助方法

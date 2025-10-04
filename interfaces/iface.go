@@ -40,7 +40,7 @@ type Event interface {
 // 区块提案接口定义
 // ============================================
 
-// BlockProposer 定义了区块提案的接口
+// 定义了区块提案的接口
 type BlockProposer interface {
 	// ProposeBlock 生成一个新的区块提案
 	// parentID: 父区块ID

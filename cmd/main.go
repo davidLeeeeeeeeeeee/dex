@@ -20,8 +20,6 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/http3"
 	"math/big"
 	"net/http"
 	"os"
@@ -31,6 +29,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 )
 
 // 表示一个节点实例
@@ -69,9 +70,9 @@ var globalAPIStats = &APICallStats{
 	NodeCallCounts: make(map[int]map[string]uint64),
 }
 
-// 替换原有的 monitorMetrics 函数
+// 替换原有的  函数
 func monitorMetrics(nodes []*NodeInstance) {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
 	// 用于记录每个节点上次的调用次数，计算增量
@@ -754,7 +755,7 @@ func generateSelfSignedCert(certFile, keyFile string) error {
 
 // 监控共识进度
 func monitorProgress(nodes []*NodeInstance) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {

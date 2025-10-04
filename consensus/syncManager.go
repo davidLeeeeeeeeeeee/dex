@@ -74,6 +74,7 @@ func (sm *SyncManager) Start(ctx context.Context) {
 	}()
 }
 
+// 定时查询其他节点高度
 func (sm *SyncManager) pollPeerHeights() {
 	peers := sm.transport.SamplePeers(sm.nodeID, 10)
 	for _, peer := range peers {
@@ -105,6 +106,7 @@ func (sm *SyncManager) HandleHeightResponse(msg types.Message) {
 	sm.PeerHeights[types.NodeID(msg.From)] = msg.CurrentHeight
 }
 
+// 检查是否有必要启动同步程序
 func (sm *SyncManager) checkAndSync() {
 	sm.Mu.Lock()
 	if sm.Syncing {

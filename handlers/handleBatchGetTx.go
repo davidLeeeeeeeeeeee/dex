@@ -2,13 +2,15 @@ package handlers
 
 import (
 	"dex/db"
-	"google.golang.org/protobuf/proto"
 	"io"
 	"net/http"
+
+	"google.golang.org/protobuf/proto"
 )
 
-// HandleBatchGetTx 处理批量获取交易请求
+// 处理批量获取交易请求
 func (hm *HandlerManager) HandleBatchGetTx(w http.ResponseWriter, r *http.Request) {
+
 	hm.recordAPICall("HandleBatchGetTx")
 	if !hm.checkAuth(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
