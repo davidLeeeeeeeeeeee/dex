@@ -49,7 +49,7 @@ func NewSnowmanEngine(nodeID types.NodeID, store interfaces.BlockStore, config *
 func (e *SnowmanEngine) Start(ctx context.Context) error {
 	// 初始化创世区块的Snowball
 	e.mu.Lock()
-	genesisSB := NewSnowball("genesis")
+	genesisSB := NewSnowball()
 	genesisSB.Finalize()
 	e.snowballs[0] = genesisSB
 	e.preferences[0] = "genesis"
@@ -117,16 +117,17 @@ func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferr
 func (e *SnowmanEngine) processVotes(ctx *QueryContext) {
 	sb, exists := e.snowballs[ctx.height]
 	if !exists {
-		sb = NewSnowball("")
+		sb = NewSnowball()
 		e.snowballs[ctx.height] = sb
 	}
 
+	// 候选区块
 	candidates := make([]string, 0)
 	blocks := e.store.GetByHeight(ctx.height)
 	for _, block := range blocks {
 		candidates = append(candidates, block.ID)
 	}
-
+	//核心：统计投票
 	sb.RecordVote(candidates, ctx.votes, e.config.Alpha)
 
 	newPreference := sb.GetPreference()

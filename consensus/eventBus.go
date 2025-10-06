@@ -6,24 +6,24 @@ import (
 	"sync"
 )
 
-type SimpleEventBus struct {
+type EventBus struct {
 	mu       sync.RWMutex
 	handlers map[types.EventType][]interfaces.EventHandler
 }
 
 func NewEventBus() interfaces.EventBus {
-	return &SimpleEventBus{
+	return &EventBus{
 		handlers: make(map[types.EventType][]interfaces.EventHandler),
 	}
 }
 
-func (eb *SimpleEventBus) Subscribe(topic types.EventType, handler interfaces.EventHandler) {
+func (eb *EventBus) Subscribe(topic types.EventType, handler interfaces.EventHandler) {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 	eb.handlers[topic] = append(eb.handlers[topic], handler)
 }
 
-func (eb *SimpleEventBus) Publish(event interfaces.Event) {
+func (eb *EventBus) Publish(event interfaces.Event) {
 	eb.mu.RLock()
 	handlers := eb.handlers[event.Type()]
 	eb.mu.RUnlock()
@@ -33,6 +33,6 @@ func (eb *SimpleEventBus) Publish(event interfaces.Event) {
 	}
 }
 
-func (eb *SimpleEventBus) PublishAsync(event interfaces.Event) {
+func (eb *EventBus) PublishAsync(event interfaces.Event) {
 	go eb.Publish(event)
 }

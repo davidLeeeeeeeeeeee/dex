@@ -44,10 +44,6 @@ func (mgr *Manager) SaveAnyTx(anyTx *AnyTx) error {
 		err = mgr.SaveMinerTx(content.MinerTx)
 	case *AnyTx_Transaction:
 		err = mgr.SaveTransaction(content.Transaction)
-	//case *AnyTx_FreezeTx:
-	//	err = mgr.saveFreezeTxIndex(content.FreezeTx)
-	//case *AnyTx_IssueTokenTx:
-	//	err = mgr.saveIssueTokenTxIndex(content.IssueTokenTx)
 
 	default:
 		// 对没有额外索引需求的Tx，可不做任何额外操作

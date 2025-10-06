@@ -78,9 +78,9 @@ func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
 	case types.MsgGet:
 		return t.sendGet(targetIP, msg)
 	case types.MsgPut:
-		return t.sendPut(targetIP, msg)
+		return t.sendBlock(targetIP, msg)
 	case types.MsgGossip:
-		return t.sendGossip(targetIP, msg)
+		return t.sendBlock(targetIP, msg)
 	case types.MsgSyncRequest:
 		return t.sendSyncRequest(targetIP, msg)
 	case types.MsgHeightQuery:
@@ -162,23 +162,13 @@ func (t *RealTransport) sendGet(targetIP string, msg types.Message) error {
 	return nil
 }
 
-func (t *RealTransport) sendPut(targetIP string, msg types.Message) error {
+func (t *RealTransport) sendBlock(targetIP string, msg types.Message) error {
 	if msg.Block == nil {
 		return fmt.Errorf("no block data to send")
 	}
 
 	dbBlock := t.adapter.ConsensusBlockToDB(msg.Block, nil)
 	return t.senderManager.SendBlock(targetIP, dbBlock)
-}
-
-func (t *RealTransport) sendGossip(targetIP string, msg types.Message) error {
-	if msg.Block == nil {
-		return fmt.Errorf("no block to gossip")
-	}
-
-	blockData, _ := msg.Block.ToMsg()
-	t.senderManager.BroadcastToRandomMiners(blockData, 5)
-	return nil
 }
 
 func (t *RealTransport) sendSyncRequest(targetIP string, msg types.Message) error {

@@ -11,16 +11,14 @@ import (
 
 type Snowball struct {
 	mu         sync.RWMutex
-	blockID    string
 	preference string
 	confidence int
 	finalized  bool
 	lastVotes  map[string]int
 }
 
-func NewSnowball(blockID string) *Snowball {
+func NewSnowball() *Snowball {
 	return &Snowball{
-		blockID:   blockID,
 		lastVotes: make(map[string]int),
 	}
 }

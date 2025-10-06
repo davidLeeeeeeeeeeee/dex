@@ -47,11 +47,7 @@ func NewQueryManager(nodeID types.NodeID, transport interfaces.Transport, store 
 	}
 
 	events.Subscribe(types.EventQueryComplete, func(e interfaces.Event) {
-		qm.tryIssueQuery()
-	})
-
-	events.Subscribe(types.EventBlockFinalized, func(e interfaces.Event) {
-		qm.tryIssueQuery()
+		//只有timeout才需要清理
 	})
 
 	events.Subscribe(types.EventSyncComplete, func(e interfaces.Event) {
@@ -67,13 +63,10 @@ func NewQueryManager(nodeID types.NodeID, transport interfaces.Transport, store 
 		qm.tryIssueQuery()
 	})
 
-	events.Subscribe(types.EventNewBlock, func(e interfaces.Event) {
-		qm.tryIssueQuery()
-	})
-
 	return qm
 }
 
+// 尝试发起查询
 func (qm *QueryManager) tryIssueQuery() {
 	qm.mu.Lock()
 	defer qm.mu.Unlock()

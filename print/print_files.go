@@ -12,6 +12,20 @@ import (
 // 修改为 true 则打印 _test.go 文件，修改为 false 则跳过 _test.go 文件。
 var includeTestFiles = false
 
+// 要排除的相对目录列表（相对于根目录）
+// 例如: []string{"vendor", "node_modules", ".git", "build"}
+var excludeDirs = []string{
+	"vendor",
+	"node_modules",
+	".git",
+	"build",
+	"dist",
+	"data",
+	"utils",
+	"print",
+	// 在这里添加更多要排除的目录
+}
+
 func main() {
 	// 创建(或覆盖)一个输出文件
 	file, err := os.Create("output_dex.txt")
@@ -38,7 +52,12 @@ func printGoFiles(dir string, outFile *os.File) {
 	for _, f := range files {
 		path := filepath.Join(dir, f.Name())
 		if f.IsDir() {
-			// 如果是目录，则递归调用
+			// 检查是否应该排除该目录
+			if shouldExcludeDir(path) {
+				fmt.Fprintf(outFile, "跳过排除的目录: %s\n", path)
+				continue
+			}
+			// 如果是目录且不在排除列表中，则递归调用
 			printGoFiles(path, outFile)
 		} else {
 			// 处理 .proto 文件，直接打印
@@ -57,6 +76,40 @@ func printGoFiles(dir string, outFile *os.File) {
 			}
 		}
 	}
+}
+
+// shouldExcludeDir 检查给定的路径是否应该被排除
+func shouldExcludeDir(path string) bool {
+	// 清理路径，移除开头的 ./ 或 .\
+	cleanPath := filepath.Clean(path)
+	cleanPath = strings.TrimPrefix(cleanPath, ".")
+	cleanPath = strings.TrimPrefix(cleanPath, string(filepath.Separator))
+
+	// 将路径分割成部分
+	pathParts := strings.Split(cleanPath, string(filepath.Separator))
+
+	// 检查路径的任何部分是否在排除列表中
+	for _, part := range pathParts {
+		for _, excludeDir := range excludeDirs {
+			if part == excludeDir {
+				return true
+			}
+		}
+	}
+
+	// 也可以使用完整路径匹配（如果需要更精确的控制）
+	for _, excludeDir := range excludeDirs {
+		// 完整路径匹配
+		if cleanPath == excludeDir {
+			return true
+		}
+		// 路径前缀匹配
+		if strings.HasPrefix(cleanPath, excludeDir+string(filepath.Separator)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func printFile(path string, outFile *os.File) {
