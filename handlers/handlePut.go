@@ -61,11 +61,6 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 
 	// 6. 通知共识管理器有新区块
 	if hm.consensusManager != nil {
-		// 将区块添加到共识存储
-		if err := hm.consensusManager.AddBlock(&block); err != nil {
-			logs.Debug("[HandlePut] Failed to add block to consensus: %v", err)
-			// 不返回错误，因为区块已经保存到数据库
-		}
 
 		// 如果需要，触发共识处理
 		if hm.adapter != nil {
@@ -74,7 +69,7 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				// 构造消息通知共识层
 				msg := types.Message{
-					Type:    types.MsgGossip,
+					Type:    types.MsgPut,
 					From:    types.NodeID(block.Miner),
 					Block:   consensusBlock,
 					BlockID: block.BlockHash,

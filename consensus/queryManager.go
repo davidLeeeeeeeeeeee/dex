@@ -125,7 +125,7 @@ func (qm *QueryManager) issueQuery() {
 
 	peers := qm.transport.SamplePeers(qm.nodeID, qm.config.K)
 
-	// 关键修改：判断自己是否是该区块的提议者
+	// 判断自己是否是该区块的提议者
 	isProposer := (block.Proposer == string(qm.nodeID))
 
 	var msg types.Message

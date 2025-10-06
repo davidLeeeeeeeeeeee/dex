@@ -23,10 +23,10 @@ func NewConsensusAdapter(dbMgr *db.Manager) *ConsensusAdapter {
 }
 
 // ============================================
-// DB -> Consensus Types 转换
+// DBBlock -> Consensus Types 转换
 // ============================================
 
-// DBBlockToConsensus 将数据库区块转换为共识类型
+// DBBlockToConsensus 将区块转换为共识区块类型
 func (a *ConsensusAdapter) DBBlockToConsensus(dbBlock *db.Block) (*types.Block, error) {
 	if dbBlock == nil {
 		return nil, fmt.Errorf("nil db block")
@@ -97,7 +97,7 @@ func (a *ConsensusAdapter) PushQueryToConsensusMessage(pq *db.PushQuery, from ty
 	return msg, nil
 }
 
-// DB -> Consensus
+// DBChits -> ConsensusChits
 func (a *ConsensusAdapter) ChitsToConsensusMessage(chits *db.Chits, from types.NodeID) types.Message {
 	return types.Message{
 		Type:              types.MsgChits,
@@ -110,7 +110,7 @@ func (a *ConsensusAdapter) ChitsToConsensusMessage(chits *db.Chits, from types.N
 	}
 }
 
-// 将共识消息转换为Chits
+// 将共识消息转换为DBChits
 func (a *ConsensusAdapter) ConsensusMessageToChits(msg types.Message) *db.Chits {
 	return &db.Chits{
 		RequestId:              msg.RequestID,
