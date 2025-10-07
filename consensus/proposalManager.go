@@ -67,7 +67,8 @@ func (pm *ProposalManager) proposeBlock() {
 
 	currentBlocks := len(pm.store.GetByHeight(targetHeight))
 
-	if !pm.proposer.ShouldPropose(pm.nodeID, currentRound, currentBlocks) {
+	// 修改点：传入 currentHeight (lastHeight) 和 proposeHeight (targetHeight) 参数
+	if !pm.proposer.ShouldPropose(pm.nodeID, currentRound, currentBlocks, int(lastHeight), int(targetHeight)) {
 		return
 	}
 

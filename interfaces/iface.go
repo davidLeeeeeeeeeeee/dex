@@ -53,7 +53,7 @@ type BlockProposer interface {
 	// nodeID: 节点ID
 	// round: 当前轮次
 	// currentBlocks: 当前高度已存在的区块数量
-	ShouldPropose(nodeID types.NodeID, round int, currentBlocks int) bool
+	ShouldPropose(nodeID types.NodeID, round int, currentBlocks int, currentHeight int, proposeHeight int) bool
 }
 
 // ============================================

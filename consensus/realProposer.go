@@ -91,7 +91,15 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 }
 
 // ShouldPropose 决定是否应该在当前轮次提出区块
-func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, round int, currentBlocks int) bool {
+func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, round int, currentBlocks int, currentHeight int, proposeHeight int) bool {
+	// 新增的高度检查逻辑：当前高度必须是要提议高度减1
+	if currentHeight != proposeHeight-1 {
+		// 当前高度不是 proposeHeight-1，不允许提议
+		logs.Debug("[RealBlockProposer] Height check failed: currentHeight=%d, proposeHeight=%d",
+			currentHeight, proposeHeight)
+		return false
+	}
+
 	// 如果当前高度已有足够多的区块，不再提案
 	if currentBlocks >= p.maxBlocksPerHeight {
 		return false
@@ -99,7 +107,7 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, round int, curren
 
 	// 检查TxPool中是否有足够的待处理交易
 	pendingCount := len(p.pool.GetPendingAnyTx())
-	if pendingCount < 1 { // 至少要有10笔交易才提案
+	if pendingCount < 1 { // 至少要有1笔交易才提案
 		return false
 	}
 

@@ -32,7 +32,13 @@ func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, prop
 	return block, nil
 }
 
-func (p *DefaultBlockProposer) ShouldPropose(nodeID types.NodeID, round int, currentBlocks int) bool {
+func (p *DefaultBlockProposer) ShouldPropose(nodeID types.NodeID, round int, currentBlocks int, currentHeight int, proposeHeight int) bool {
+	// 新增的高度检查逻辑：当前高度必须是要提议高度减1
+	if currentHeight != proposeHeight-1 {
+		// 当前高度不是 proposeHeight-1，不允许提议
+		return false
+	}
+
 	// 如果当前高度已有足够多的区块，不再提案
 	if currentBlocks >= p.maxBlocksPerHeight {
 		return false
