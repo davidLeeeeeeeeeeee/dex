@@ -159,7 +159,7 @@ func (qm *QueryManager) issueQuery() {
 	if qm.node != nil {
 		qm.node.stats.Mu.Lock()
 		qm.node.stats.QueriesSent++
-		qm.node.stats.queriesPerHeight[block.Height]++
+		qm.node.stats.QueriesPerHeight[block.Height]++
 		qm.node.stats.Mu.Unlock()
 	}
 }

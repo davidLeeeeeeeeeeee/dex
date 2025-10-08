@@ -70,7 +70,6 @@ var globalAPIStats = &APICallStats{
 	NodeCallCounts: make(map[int]map[string]uint64),
 }
 
-// 替换原有的  函数
 func monitorMetrics(nodes []*NodeInstance) {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -158,7 +157,7 @@ func monitorMetrics(nodes []*NodeInstance) {
 	}
 }
 
-// 添加新函数：打印API调用统计
+// 打印API调用统计
 func printAPICallStatistics() {
 	globalAPIStats.RLock()
 	defer globalAPIStats.RUnlock()
@@ -188,7 +187,7 @@ func printAPICallStatistics() {
 
 	// 打印每个节点的统计（可选）
 	if len(globalAPIStats.NodeCallCounts) > 0 {
-		fmt.Println("\nPer-Node API Call Distribution:")
+		//fmt.Println("\nPer-Node API Call Distribution:")
 
 		// 按节点ID排序
 		var nodeIDs []int
@@ -204,7 +203,7 @@ func printAPICallStatistics() {
 			}
 
 			nodeTotalCalls := uint64(0)
-			fmt.Printf("\n  Node %d:\n", nodeID)
+			//fmt.Printf("\n  Node %d:\n", nodeID)
 
 			// 按接口名称排序
 			var nodeAPINames []string
@@ -216,9 +215,9 @@ func printAPICallStatistics() {
 			for _, apiName := range nodeAPINames {
 				count := apis[apiName]
 				nodeTotalCalls += count
-				fmt.Printf("    %-28s: %8d\n", apiName, count)
+				//fmt.Printf("    %-28s: %8d\n", apiName, count)
 			}
-			fmt.Printf("    %-28s: %8d\n", "Node Total", nodeTotalCalls)
+			//fmt.Printf("    %-28s: %8d\n", "Node Total", nodeTotalCalls)
 		}
 	}
 
@@ -759,17 +758,18 @@ func monitorProgress(nodes []*NodeInstance) {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		fmt.Println("\n========== Progress Monitor ==========")
+		fmt.Printf("Time: %s\n", time.Now().Format("15:04:05"))
+
 		var minHeight, maxHeight uint64
 		activeNodes := 0
-		fmt.Println("[monitor] tick")
+
 		for _, node := range nodes {
 			if node == nil || node.ConsensusManager == nil {
 				continue
 			}
-
 			activeNodes++
 			_, height := node.ConsensusManager.GetLastAccepted()
-
 			if minHeight == 0 || height < minHeight {
 				minHeight = height
 			}
@@ -781,33 +781,45 @@ func monitorProgress(nodes []*NodeInstance) {
 		fmt.Printf("\n📈 Progress: Active=%d, MinHeight=%d, MaxHeight=%d\n",
 			activeNodes, minHeight, maxHeight)
 
-		// 打印一些节点的详细状态
-		heightCount := map[uint64]int{}
-		activeQueries := int64(0)
-		for _, node := range nodes {
+		// 打印每个节点的完整统计信息
+		fmt.Println("\nNode Statistics:")
+		for i, node := range nodes {
 			if node == nil || node.ConsensusManager == nil {
+				fmt.Printf("Node %d: inactive\n", i)
 				continue
 			}
-			_, h := node.ConsensusManager.GetLastAccepted()
-			heightCount[h]++
 
-			sent := int64(node.ConsensusManager.GetStats().QueriesSent)
-			responded := int64(node.ConsensusManager.GetStats().ChitsResponded)
+			stats := node.ConsensusManager.GetStats()
+			if stats == nil {
+				fmt.Printf("Node %d: no stats\n", i)
+				continue
+			}
 
-			// 每个节点的 pending = sent - 它收到的响应（不是它发出的响应）
-			nodePending := sent - responded
-			if nodePending > 0 {
-				activeQueries += nodePending
+			lastAccepted, height := node.ConsensusManager.GetLastAccepted()
+
+			// 获取所有统计数据
+			stats.Mu.Lock()
+			fmt.Printf("\nNode %d:\n", i)
+			fmt.Printf("  Last Accepted: %s (height=%d)\n", lastAccepted, height)
+			fmt.Printf("  Queries Sent: %d\n", stats.QueriesSent)
+			fmt.Printf("  Queries Received: %d\n", stats.QueriesReceived)
+			fmt.Printf("  Chits Responded: %d\n", stats.ChitsResponded)
+			fmt.Printf("  Blocks Proposed: %d\n", stats.BlocksProposed)
+			fmt.Printf("  Gossips Received: %d\n", stats.GossipsReceived)
+			fmt.Printf("  Snapshots Used: %d\n", stats.SnapshotsUsed)
+			fmt.Printf("  Snapshots Served: %d\n", stats.SnapshotsServed)
+			fmt.Printf("  GetPreferenceSwitchHistory: %+v\n", stats.GetPreferenceSwitchHistory())
+			// 显示每个高度的查询数
+			if len(stats.QueriesPerHeight) > 0 {
+				fmt.Printf("  Queries Per Height:\n")
+				for h, count := range stats.QueriesPerHeight {
+					fmt.Printf("    Height %d: %d\n", h, count)
+				}
 			}
+			stats.Mu.Unlock()
 		}
-		fmt.Printf("  Heights histogram: %+v\n", heightCount)
-		fmt.Printf("  Pending queries (approx): %d\n", activeQueries)
-		for i := 0; i < 3 && i < len(nodes); i++ {
-			if nodes[i] != nil && nodes[i].ConsensusManager != nil {
-				accepted, height := nodes[i].ConsensusManager.GetLastAccepted()
-				fmt.Printf("  Node %d: height=%d, block=%s\n", i, height, accepted)
-			}
-		}
+
+		fmt.Println()
 	}
 }
 

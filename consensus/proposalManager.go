@@ -104,7 +104,7 @@ func (pm *ProposalManager) proposeBlock() {
 
 	Logf("[Node %d] Proposing %s on parent %s\n", pm.nodeID, block, lastAcceptedID)
 
-	pm.events.Publish(types.BaseEvent{
+	pm.events.PublishAsync(types.BaseEvent{
 		EventType: types.EventNewBlock,
 		EventData: block,
 	})

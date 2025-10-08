@@ -45,7 +45,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 		ctx:         ctx,
 		cancel:      cancel,
 		config:      config,
-		stats:       NewNodeStats(),
+		stats:       NewNodeStats(events),
 	}
 
 	messageHandler := NewMessageHandler(id, byzantine, transport, store, engine, events, &config.Consensus)

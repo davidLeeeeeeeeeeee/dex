@@ -222,10 +222,10 @@ func (nm *NetworkManager) PrintQueryStatistics() {
 		totalChitsResponded += node.stats.ChitsResponded
 		totalGossipsReceived += node.stats.GossipsReceived
 		totalBlocksProposed += node.stats.BlocksProposed
-		totalSnapshotsUsed += node.stats.snapshotsUsed
-		totalSnapshotsServed += node.stats.snapshotsServed
+		totalSnapshotsUsed += node.stats.SnapshotsUsed
+		totalSnapshotsServed += node.stats.SnapshotsServed
 
-		for height, count := range node.stats.queriesPerHeight {
+		for height, count := range node.stats.QueriesPerHeight {
 			queriesByHeight[height] += count
 		}
 		node.stats.Mu.Unlock()

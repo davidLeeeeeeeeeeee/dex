@@ -1,6 +1,8 @@
 package consensus
 
 import (
+	"dex/interfaces"
+	"dex/types"
 	"sort"
 	"sync"
 )
@@ -14,13 +16,20 @@ type Snowball struct {
 	preference string
 	confidence int
 	finalized  bool
-	lastVotes  map[string]int
+	events     interfaces.EventBus
+	lastVotes  map[string]int // 对应区块这一轮有多少赞成
 }
 
-func NewSnowball() *Snowball {
+func NewSnowball(events interfaces.EventBus) *Snowball {
 	return &Snowball{
+		events:    events,
 		lastVotes: make(map[string]int),
 	}
+}
+
+type PreferenceChangedData struct {
+	BlockId    string // "success" | "timeout"
+	Confidence int    // 结束的查询键（可选）
 }
 
 func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha int) {
@@ -40,6 +49,10 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 
 	if maxVotes >= alpha {
 		if winner != sb.preference {
+			sb.events.PublishAsync(types.BaseEvent{
+				EventType: types.EventPreferenceChanged,
+				EventData: PreferenceChangedData{sb.preference, sb.confidence},
+			})
 			sb.preference = winner
 			sb.confidence = 1
 		} else {
@@ -50,6 +63,10 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 			sort.Strings(candidates)
 			largestBlock := candidates[len(candidates)-1]
 			if largestBlock != sb.preference {
+				sb.events.PublishAsync(types.BaseEvent{
+					EventType: types.EventPreferenceChanged,
+					EventData: PreferenceChangedData{sb.preference, sb.confidence},
+				})
 				sb.preference = largestBlock
 				sb.confidence = 0
 			}

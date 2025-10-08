@@ -113,7 +113,7 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, round int, curren
 
 	// 使用轮次和节点ID的组合来决定是否提案
 	// 这里可以加入更复杂的逻辑，比如基于stake的概率
-	proposalProbability := 5 // 5%的概率
+	proposalProbability := 1 // 5%的概率
 
 	return int(nodeID.Last2Mod100()+round)%100 < proposalProbability
 }

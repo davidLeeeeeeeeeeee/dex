@@ -7,13 +7,14 @@ package types
 type EventType string
 
 const (
-	EventBlockFinalized  EventType = "block.finalized"
-	EventBlockReceived   EventType = "block.received"
-	EventQueryComplete   EventType = "query.complete"
-	EventSyncComplete    EventType = "sync.complete"
-	EventNewBlock        EventType = "block.new"
-	EventSnapshotCreated EventType = "snapshot.created" // 新增
-	EventSnapshotLoaded  EventType = "snapshot.loaded"  // 新增
+	EventPreferenceChanged EventType = "snowball.preference"
+	EventBlockFinalized    EventType = "block.finalized"
+	EventBlockReceived     EventType = "block.received"
+	EventQueryComplete     EventType = "query.complete"
+	EventSyncComplete      EventType = "sync.complete"
+	EventNewBlock          EventType = "block.new"
+	EventSnapshotCreated   EventType = "snapshot.created" // 新增
+	EventSnapshotLoaded    EventType = "snapshot.loaded"  // 新增
 )
 
 type BaseEvent struct {

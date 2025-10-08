@@ -147,7 +147,7 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 
 		if isNew {
 			logs.Debug("[Node %d] Received new block %s via PushQuery\n", h.nodeID, msg.Block.ID)
-			h.events.Publish(types.BaseEvent{
+			h.events.PublishAsync(types.BaseEvent{
 				EventType: types.EventNewBlock,
 				EventData: msg.Block,
 			})
@@ -219,7 +219,7 @@ func (h *MessageHandler) handlePut(msg types.Message) {
 		if isNew {
 			logs.Debug("[Node %d] Received new block %s via Put from Node %d",
 				h.nodeID, msg.Block.ID, msg.From)
-			h.events.Publish(types.BaseEvent{
+			h.events.PublishAsync(types.BaseEvent{
 				EventType: types.EventBlockReceived,
 				EventData: msg.Block,
 			})

@@ -260,7 +260,7 @@ func (sm *SyncManager) HandleSnapshotRequest(msg types.Message) {
 	// 更新统计
 	if sm.node != nil {
 		sm.node.stats.Mu.Lock()
-		sm.node.stats.snapshotsServed++
+		sm.node.stats.SnapshotsServed++
 		sm.node.stats.Mu.Unlock()
 	}
 
@@ -304,7 +304,7 @@ func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
 	// 更新统计
 	if sm.node != nil {
 		sm.node.stats.Mu.Lock()
-		sm.node.stats.snapshotsUsed++
+		sm.node.stats.SnapshotsUsed++
 		sm.node.stats.Mu.Unlock()
 	}
 

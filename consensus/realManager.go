@@ -142,7 +142,7 @@ func (m *ConsensusNodeManager) StartQuery() {
 	m.queryManager.tryIssueQuery()
 }
 
-// GetStats 获取节点统计信息
+// 获取节点统计信息
 func (m *ConsensusNodeManager) GetStats() *NodeStats {
 	return m.Node.stats
 }
