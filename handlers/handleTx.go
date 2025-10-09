@@ -3,15 +3,16 @@ package handlers
 import (
 	"dex/db"
 	"fmt"
-	"google.golang.org/protobuf/proto"
 	"io"
 	"net"
 	"net/http"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // HandleTx 处理交易提交
 func (hm *HandlerManager) HandleTx(w http.ResponseWriter, r *http.Request) {
-	hm.recordAPICall("HandleTx")
+	hm.Stats.RecordAPICall("HandleTx")
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)

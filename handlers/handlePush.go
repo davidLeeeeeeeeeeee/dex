@@ -13,7 +13,7 @@ import (
 
 // 处理PushQuery请求（Snowman共识）
 func (hm *HandlerManager) HandlePushQuery(w http.ResponseWriter, r *http.Request) {
-	hm.recordAPICall("HandlePushQuery")
+	hm.Stats.RecordAPICall("HandlePushQuery")
 	bodyBytes, _ := io.ReadAll(r.Body)
 
 	var pushQuery db.PushQuery

@@ -119,6 +119,7 @@ func (mgr *Manager) GetBlockByID(blockID string) (*Block, error) {
 	}
 
 	block := &Block{}
+
 	if err := ProtoUnmarshal([]byte(val), block); err != nil {
 		return nil, err
 	}

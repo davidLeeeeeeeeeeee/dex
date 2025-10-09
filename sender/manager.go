@@ -182,14 +182,14 @@ func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*db.AnyTx)
 	sm.SendQueue.Enqueue(task)
 }
 
-// PullBlockByID 通过BlockID拉取指定区块
-func (sm *SenderManager) PullBlockByID(targetIP string, blockID string, onSuccess func(*db.Block)) {
+// 通过BlockID拉取指定区块
+func (sm *SenderManager) PullGet(targetIP string, blockID string, onSuccess func(*db.Block)) {
 	// 构造GetData请求消息
 	req := &db.GetBlockByIDRequest{BlockId: blockID}
 
 	data, err := proto.Marshal(req)
 	if err != nil {
-		logs.Debug("[PullBlockByID] marshal failed: %v", err)
+		logs.Debug("[PullGet] marshal failed: %v", err)
 		return
 	}
 

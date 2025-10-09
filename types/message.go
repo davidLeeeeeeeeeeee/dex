@@ -19,21 +19,21 @@ func (id NodeID) Last2Mod100() int {
 }
 
 // 消息类型
-type MessageType int
+type MessageType string
 
 const (
-	MsgPullQuery MessageType = iota
-	MsgPushQuery
-	MsgChits
-	MsgGet // 请求区块数据
-	MsgPut // 发送区块数据
-	MsgGossip
-	MsgSyncRequest
-	MsgSyncResponse
-	MsgHeightQuery
-	MsgHeightResponse
-	MsgSnapshotRequest  // 请求快照
-	MsgSnapshotResponse // 快照响应
+	MsgPullQuery        = "MsgPullQuery"
+	MsgPushQuery        = "MsgPushQuery"
+	MsgChits            = "MsgChits"
+	MsgGet              = "MsgGet" // 请求区块数据
+	MsgPut              = "MsgPut" // 发送区块数据
+	MsgGossip           = "MsgGossip"
+	MsgSyncRequest      = "MsgSyncRequest"
+	MsgSyncResponse     = "MsgSyncResponse"
+	MsgHeightQuery      = "MsgHeightQuery"
+	MsgHeightResponse   = "MsgHeightResponse"
+	MsgSnapshotRequest  = "MsgSnapshotRequest"  // 请求快照
+	MsgSnapshotResponse = "MsgSnapshotResponse" // 快照响应
 )
 
 // 基础消息结构

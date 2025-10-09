@@ -133,7 +133,7 @@ func (t *RealTransport) sendChits(targetIP string, msg types.Message) error {
 
 func (t *RealTransport) sendGet(targetIP string, msg types.Message) error {
 	// 使用新的PullBlockByID方法
-	t.senderManager.PullBlockByID(targetIP, msg.BlockID, func(block *db.Block) {
+	t.senderManager.PullGet(targetIP, msg.BlockID, func(block *db.Block) {
 		if block != nil {
 			// 转换为types.Block
 			consensusBlock, err := t.adapter.DBBlockToConsensus(block)

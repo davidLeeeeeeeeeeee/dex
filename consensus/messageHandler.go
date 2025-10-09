@@ -3,6 +3,7 @@ package consensus
 import (
 	"dex/interfaces"
 	"dex/logs"
+	"dex/stats"
 	"dex/types"
 	"sort"
 	"sync"
@@ -26,8 +27,9 @@ type MessageHandler struct {
 	events          interfaces.EventBus
 	config          *ConsensusConfig
 	// 存储待回复的PullQuery
-	pendingQueries   map[string]types.Message
+	pendingQueries   map[uint32]types.Message
 	pendingQueriesMu sync.RWMutex
+	stats            *stats.Stats
 }
 
 func NewMessageHandler(nodeID types.NodeID, isByzantine bool, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, events interfaces.EventBus, config *ConsensusConfig) *MessageHandler {
@@ -39,7 +41,8 @@ func NewMessageHandler(nodeID types.NodeID, isByzantine bool, transport interfac
 		engine:         engine,
 		events:         events,
 		config:         config,
-		pendingQueries: make(map[string]types.Message),
+		pendingQueries: make(map[uint32]types.Message),
+		stats:          stats.NewStats(),
 	}
 }
 
@@ -51,6 +54,7 @@ func (h *MessageHandler) SetManagers(qm *QueryManager, gm *GossipManager, sm *Sy
 }
 
 func (h *MessageHandler) HandleMsg(msg types.Message) {
+	h.stats.RecordAPICall(string(msg.Type))
 	if h.isByzantine && (msg.Type == types.MsgPullQuery || msg.Type == types.MsgPushQuery) {
 		if h.node != nil {
 			h.node.stats.Mu.Lock()
@@ -120,15 +124,20 @@ func (h *MessageHandler) handlePullQuery(msg types.Message) {
 	h.sendChits(types.NodeID(msg.From), msg.RequestID, block.Height)
 }
 
+type PendingQueryKey struct {
+	BlockID   string `json:"block_id"`
+	RequestID uint32 `json:"request_id"`
+}
+
 // 添加存储待回复查询的方法
 func (h *MessageHandler) storePendingQuery(msg types.Message) {
 	// 可以在MessageHandler中添加一个pendingQueries map
 	// 当收到Put消息后，检查是否有待回复的查询
 	if h.pendingQueries == nil {
-		h.pendingQueries = make(map[string]types.Message)
+		h.pendingQueries = make(map[uint32]types.Message)
 	}
 	h.pendingQueriesMu.Lock()
-	h.pendingQueries[msg.BlockID] = msg
+	h.pendingQueries[msg.RequestID] = msg
 	h.pendingQueriesMu.Unlock()
 }
 
@@ -225,16 +234,17 @@ func (h *MessageHandler) handlePut(msg types.Message) {
 			})
 
 			// 检查是否有待回复的PullQuery
-			h.checkPendingQueries(msg.Block.ID)
+			h.checkPendingQueries(msg.RequestID)
 		}
 	}
 }
 
 // 添加检查待回复查询的方法
-func (h *MessageHandler) checkPendingQueries(blockID string) {
+func (h *MessageHandler) checkPendingQueries(requestId uint32) {
 	h.pendingQueriesMu.Lock()
-	if pendingMsg, exists := h.pendingQueries[blockID]; exists {
-		delete(h.pendingQueries, blockID)
+	if pendingMsg, exists := h.pendingQueries[requestId]; exists {
+		blockID := pendingMsg.BlockID
+		delete(h.pendingQueries, requestId)
 		h.pendingQueriesMu.Unlock()
 
 		// 现在有了区块，可以回复chits

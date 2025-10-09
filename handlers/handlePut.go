@@ -14,7 +14,7 @@ import (
 // 这个接口被 doSendBlock 调用，用于节点间传输完整区块
 func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 	// 记录API调用
-	hm.recordAPICall("HandlePut")
+	hm.Stats.RecordAPICall("HandlePut")
 
 	// 1. 读取请求体
 	bodyBytes, err := io.ReadAll(r.Body)

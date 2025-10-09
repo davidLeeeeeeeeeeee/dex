@@ -13,7 +13,7 @@ import (
 
 // 处理PullQuery请求（Snowman共识）
 func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request) {
-	hm.recordAPICall("HandlePullQuery")
+	hm.Stats.RecordAPICall("HandlePullQuery")
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)

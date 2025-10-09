@@ -13,7 +13,7 @@ import (
 )
 
 func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Request) {
-	hm.recordAPICall("HandleBlockGossip0")
+	hm.Stats.RecordAPICall("HandleBlockGossip0")
 	// 1. 读取请求体
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -56,7 +56,7 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 		// 添加到缓存以加速后续查询
 		hm.seenBlocksCache.Add(block.ID, true)
 	}
-	hm.recordAPICall("HandleBlockGossip1")
+	hm.Stats.RecordAPICall("HandleBlockGossip1")
 	// 4. 构造共识层的Gossip消息
 	gossipMsg := types.Message{
 		Type:    types.MsgGossip,

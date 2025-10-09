@@ -11,7 +11,7 @@ import (
 // 处理批量获取交易请求
 func (hm *HandlerManager) HandleBatchGetTx(w http.ResponseWriter, r *http.Request) {
 
-	hm.recordAPICall("HandleBatchGetTx")
+	hm.Stats.RecordAPICall("HandleBatchGetTx")
 	if !hm.checkAuth(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

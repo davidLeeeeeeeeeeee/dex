@@ -111,7 +111,7 @@ func monitorMetrics(nodes []*NodeInstance) {
 
 			// 4. 接口调用统计（新增）
 			if node.HandlerManager != nil {
-				apiStats := node.HandlerManager.GetAPICallStats()
+				apiStats := node.HandlerManager.Stats.GetAPICallStats()
 
 				// 记录当前节点的API调用统计
 				nodeStats[node.ID] = apiStats
@@ -347,7 +347,7 @@ func main() {
 		case <-timeout:
 			fmt.Printf("  ⚠️ Timeout waiting for servers. %d/%d started successfully\n",
 				successfulNodes, len(nodes))
-			goto CONTINUE_WITH_CONSENSUS
+			goto ContinueWithConsensus
 		}
 
 		readyCount++
@@ -355,7 +355,7 @@ func main() {
 
 	fmt.Printf("✅ All %d HTTP/3 servers are ready!\n", successfulNodes)
 
-CONTINUE_WITH_CONSENSUS:
+ContinueWithConsensus:
 	// 额外等待一小段时间确保服务器完全稳定
 	time.Sleep(1 * time.Second)
 	// 新增：第3.5阶段 - 启动共识引擎
@@ -809,6 +809,7 @@ func monitorProgress(nodes []*NodeInstance) {
 			fmt.Printf("  Snapshots Used: %d\n", stats.SnapshotsUsed)
 			fmt.Printf("  Snapshots Served: %d\n", stats.SnapshotsServed)
 			fmt.Printf("  GetPreferenceSwitchHistory: %+v\n", stats.GetPreferenceSwitchHistory())
+			fmt.Printf("  Consensus API: %+v\n", node.HandlerManager.Stats.GetAPICallStats())
 			// 显示每个高度的查询数
 			if len(stats.QueriesPerHeight) > 0 {
 				fmt.Printf("  Queries Per Height:\n")

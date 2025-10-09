@@ -15,7 +15,7 @@ import (
 
 // 处理获取交易数据请求
 func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) {
-	hm.recordAPICall("HandleGetData")
+	hm.Stats.RecordAPICall("HandleGetData")
 	if !hm.checkAuth(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -56,9 +56,8 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 	w.Write(respData)
 }
 
-// handlers/handleGetBlockByID.go
-func (hm *HandlerManager) HandleGetBlockByID(w http.ResponseWriter, r *http.Request) {
-	hm.recordAPICall("HandleGetBlockByID")
+func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
+	hm.Stats.RecordAPICall("HandleGet")
 	if !hm.checkAuth(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

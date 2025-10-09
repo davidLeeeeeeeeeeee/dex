@@ -9,8 +9,10 @@ import (
 /* ----------------- 结构定义 ----------------- */
 
 type PreferenceSwitch struct {
-	BlockID    string  // 被切换的区块ID
-	Confidence float64 // 切换时的置信度
+	BlockID    string // 被切换的区块ID
+	Confidence int    // 切换时的置信度
+	Winner     string
+	Alpha      int
 }
 
 type NodeStats struct {
@@ -68,12 +70,5 @@ func (s *NodeStats) pushPreferenceSwitch(ps PreferenceSwitch) {
 
 // 读取「从旧到新」的快照副本，避免外部改动内部缓冲。
 func (s *NodeStats) GetPreferenceSwitchHistory() []PreferenceSwitch {
-	out := make([]PreferenceSwitch, s.prefHistLen)
-	// oldest 的索引
-	start := (s.prefHistHead - s.prefHistLen + s.prefHistCap) % s.prefHistCap
-	for i := 0; i < s.prefHistLen; i++ {
-		idx := (start + i) % s.prefHistCap
-		out[i] = s.prefHistBuf[idx]
-	}
-	return out
+	return s.prefHistBuf
 }

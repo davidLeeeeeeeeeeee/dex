@@ -51,7 +51,7 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 		if winner != sb.preference {
 			sb.events.PublishAsync(types.BaseEvent{
 				EventType: types.EventPreferenceChanged,
-				EventData: PreferenceChangedData{sb.preference, sb.confidence},
+				EventData: PreferenceSwitch{BlockID: sb.preference, Confidence: sb.confidence, Winner: winner, Alpha: alpha},
 			})
 			sb.preference = winner
 			sb.confidence = 1
@@ -65,7 +65,7 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 			if largestBlock != sb.preference {
 				sb.events.PublishAsync(types.BaseEvent{
 					EventType: types.EventPreferenceChanged,
-					EventData: PreferenceChangedData{sb.preference, sb.confidence},
+					EventData: PreferenceSwitch{BlockID: sb.preference, Confidence: sb.confidence, Winner: winner, Alpha: alpha},
 				})
 				sb.preference = largestBlock
 				sb.confidence = 0
