@@ -68,9 +68,9 @@ func (gm *GossipManager) gossipNewBlocks() {
 		return
 	}
 
-	blocks := make([]*types.Block, 0, 4)
+	blocks := make([]*types.Block, 0, 4) //初始0，最多容纳4个元素
 	blocks = append(blocks, gm.store.GetByHeight(currentHeight+1)...)
-	if curMax >= currentHeight+2 {
+	if curMax >= currentHeight+2 { //控制广播的范围，
 		blocks = append(blocks, gm.store.GetByHeight(currentHeight+2)...)
 	}
 

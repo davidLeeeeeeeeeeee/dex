@@ -132,11 +132,6 @@ func (m *ConsensusNodeManager) HasBlock(blockId string) bool {
 	return exists
 }
 
-// ProcessMessage 处理接收到的共识消息
-func (m *ConsensusNodeManager) ProcessMessage(msg types.Message) {
-	m.messageHandler.HandleMsg(msg)
-}
-
 // StartQuery 发起查询
 func (m *ConsensusNodeManager) StartQuery() {
 	m.queryManager.tryIssueQuery()

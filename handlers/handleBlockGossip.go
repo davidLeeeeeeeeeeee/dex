@@ -80,9 +80,6 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 			if err := rt.EnqueueReceivedMessage(gossipMsg); err != nil {
 				logs.Warn("[HandleBlockGossip] Failed to enqueue gossip message: %v", err)
 			}
-		} else {
-			// 直接处理消息
-			hm.consensusManager.ProcessMessage(gossipMsg)
 		}
 
 		logs.Debug("[HandleBlockGossip] Received block %s at height %d Proposer %s",
