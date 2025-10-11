@@ -7,6 +7,7 @@ import (
 	"dex/interfaces"
 	"dex/logs"
 	"dex/sender"
+	"dex/stats"
 	"dex/types"
 	"dex/utils"
 	"fmt"
@@ -31,6 +32,7 @@ type RealTransport struct {
 	stopOnce sync.Once
 	stopChan chan struct{}
 	wg       sync.WaitGroup
+	Stats    *stats.Stats
 }
 
 type NodeInfo struct {
@@ -54,6 +56,7 @@ func NewRealTransport(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.
 		ctx:            ctx,
 		adapter:        NewConsensusAdapter(dbMgr),
 		stopChan:       make(chan struct{}),
+		Stats:          stats.NewStats(),
 	}
 
 	rt.startReceiveWorkers()
@@ -62,6 +65,7 @@ func NewRealTransport(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.
 
 // 发送消息到指定节点
 func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
+	t.Stats.RecordAPICall(string(msg.Type))
 	targetIP, err := t.getNodeIP(to)
 	if err != nil {
 		logs.Debug("[RealTransport] Failed to get IP for node %s: %v", to, err)
@@ -144,11 +148,12 @@ func (t *RealTransport) sendGet(targetIP string, msg types.Message) error {
 
 			// 构造Put消息响应
 			putMsg := types.Message{
-				Type:    types.MsgPut,
-				From:    t.nodeID,
-				Block:   consensusBlock,
-				Height:  consensusBlock.Height,
-				BlockID: consensusBlock.ID,
+				RequestID: msg.RequestID,
+				Type:      types.MsgPut,
+				From:      t.nodeID,
+				Block:     consensusBlock,
+				Height:    consensusBlock.Height,
+				BlockID:   consensusBlock.ID,
 			}
 
 			// 将消息放入接收队列
@@ -170,7 +175,14 @@ func (t *RealTransport) sendBlock(targetIP string, msg types.Message) error {
 	dbBlock := t.adapter.ConsensusBlockToDB(msg.Block, nil)
 	return t.senderManager.SendBlock(targetIP, dbBlock)
 }
+func (t *RealTransport) sendGossip(targetIP string, msg types.Message) error {
+	if msg.Block == nil {
+		return fmt.Errorf("no block data to send")
+	}
 
+	dbBlock := t.adapter.ConsensusBlockToDB(msg.Block, nil)
+	return t.senderManager.BroadcastGossipToTarget(targetIP, dbBlock)
+}
 func (t *RealTransport) sendSyncRequest(targetIP string, msg types.Message) error {
 	for h := msg.FromHeight; h <= msg.ToHeight; h++ {
 		t.senderManager.PullBlock(targetIP, h, func(dbBlock *db.Block) {

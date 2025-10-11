@@ -288,26 +288,27 @@ func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]
 }
 
 // 广播消息给随机矿工
-func (sm *SenderManager) BroadcastToRandomMiners(msg []byte, count int) {
-	miners, err := sm.getRandomMiners(count)
+func (sm *SenderManager) BroadcastGossipToTarget(targetAddr string, block *db.Block) error {
+	data, err := proto.Marshal(block)
 	if err != nil {
-		logs.Error("[BroadcastToRandomMiners] GetRandomMiners error: %v", err)
-		return
+		logs.Debug("[SendBlock] marshal failed: %v", err)
+		return err
 	}
-
-	for _, m := range miners {
-		if m.Ip == "" {
-			continue
-		}
-		task := &SendTask{
-			Target:     m.Ip,
-			Message:    msg,
-			RetryCount: 0,
-			MaxRetries: 3,
-			SendFunc:   doSendToOnePeer,
-		}
-		sm.SendQueue.Enqueue(task)
+	if targetAddr == "" {
+		return nil
 	}
+	msg := &blockMessage{
+		requestData: data,
+	}
+	task := &SendTask{
+		Target:     targetAddr,
+		Message:    msg,
+		RetryCount: 0,
+		MaxRetries: 3,
+		SendFunc:   doSendToOnePeer,
+	}
+	sm.SendQueue.Enqueue(task)
+	return nil
 }
 
 // 发送PushQuery（Snowman共识）

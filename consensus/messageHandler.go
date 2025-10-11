@@ -248,6 +248,7 @@ func (h *MessageHandler) checkPendingQueries(requestId uint32) {
 		h.pendingQueriesMu.Unlock()
 
 		// 现在有了区块，可以回复chits
+		// TODO:排查为什么可能是nil
 		block, _ := h.store.Get(blockID)
 		h.sendChits(types.NodeID(pendingMsg.From), pendingMsg.RequestID, block.Height)
 	} else {

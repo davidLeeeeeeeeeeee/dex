@@ -2,12 +2,13 @@ package consensus
 
 import (
 	"context"
+	"crypto/rand"
 	"dex/interfaces"
 	"dex/logs"
 	"dex/types"
+	"encoding/binary"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -110,8 +111,7 @@ func (qm *QueryManager) issueQuery() {
 	if !exists {
 		return
 	}
-
-	requestID := atomic.AddUint32(&qm.nextReqID, 1)
+	requestID, _ := secureRandUint32()
 	queryKey := qm.engine.RegisterQuery(qm.nodeID, requestID, blockID, block.Height)
 
 	poll := &Poll{
@@ -162,6 +162,15 @@ func (qm *QueryManager) issueQuery() {
 		qm.node.stats.QueriesPerHeight[block.Height]++
 		qm.node.stats.Mu.Unlock()
 	}
+}
+
+// 返回 [0, 2^32-1] 范围内的安全随机 uint32
+func secureRandUint32() (uint32, error) {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint32(b[:]), nil
 }
 
 func (qm *QueryManager) HandleChit(msg types.Message) {

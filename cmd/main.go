@@ -809,7 +809,15 @@ func monitorProgress(nodes []*NodeInstance) {
 			fmt.Printf("  Snapshots Used: %d\n", stats.SnapshotsUsed)
 			fmt.Printf("  Snapshots Served: %d\n", stats.SnapshotsServed)
 			fmt.Printf("  GetPreferenceSwitchHistory: %+v\n", stats.GetPreferenceSwitchHistory())
-			fmt.Printf("  Consensus API: %+v\n", node.HandlerManager.Stats.GetAPICallStats())
+			fmt.Printf("  Consensus API handler: %+v\n", node.HandlerManager.Stats.GetAPICallStats())
+			rt, ok := node.ConsensusManager.Transport.(*consensus.RealTransport) // 安全断言
+			if !ok {
+				return
+			}
+			if rt == nil {
+				return
+			}
+			fmt.Printf("  Consensus API send: %+v\n", rt.Stats.GetAPICallStats())
 			// 显示每个高度的查询数
 			if len(stats.QueriesPerHeight) > 0 {
 				fmt.Printf("  Queries Per Height:\n")
