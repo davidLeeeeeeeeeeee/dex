@@ -84,7 +84,7 @@ func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
 	case types.MsgPut:
 		return t.sendBlock(targetIP, msg)
 	case types.MsgGossip:
-		return t.sendBlock(targetIP, msg)
+		return t.sendGossip(targetIP, msg)
 	case types.MsgSyncRequest:
 		return t.sendSyncRequest(targetIP, msg)
 	case types.MsgHeightQuery:

@@ -299,12 +299,9 @@ func (sm *SenderManager) BroadcastGossipToTarget(targetAddr string, payload *typ
 	if targetAddr == "" {
 		return nil
 	}
-	msg := &blockMessage{
-		requestData: data,
-	}
 	task := &SendTask{
 		Target:     targetAddr,
-		Message:    msg,
+		Message:    data,
 		RetryCount: 0,
 		MaxRetries: 3,
 		SendFunc:   doSendToOnePeer,

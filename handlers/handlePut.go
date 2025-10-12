@@ -5,17 +5,16 @@ import (
 	"dex/db"
 	"dex/logs"
 	"dex/types"
-	"encoding/json"
 	"io"
 	"net/http"
+
+	"google.golang.org/protobuf/proto"
 )
 
-// 这个接口被 doSendBlock 调用,用于节点间传输完整区块
+// 发送端 /put 发的是 protobuf 的 db.Block，这里只解析这一种
 func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
-	// 记录API调用
 	hm.Stats.RecordAPICall("HandlePut")
 
-	// 1. 读取请求体
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
@@ -23,79 +22,56 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	var block *db.Block
-
-	// 2. 尝试判断是新格式(JSON GossipPayload)还是旧格式(protobuf Block)
-	// 先尝试解析为 GossipPayload (JSON)
-	var gossipPayload types.GossipPayload
-	if err := json.Unmarshal(bodyBytes, &gossipPayload); err == nil && gossipPayload.Block != nil {
-		// 成功解析为 GossipPayload
-		block = gossipPayload.Block
-		logs.Debug("[HandlePut] Received GossipPayload format with RequestID=%d", gossipPayload.RequestID)
-	} else {
-		http.Error(w, "Failed to read GossipPayload", http.StatusBadRequest)
+	var block db.Block
+	if err := proto.Unmarshal(bodyBytes, &block); err != nil {
+		http.Error(w, "Failed to parse protobuf db.Block", http.StatusBadRequest)
 		return
 	}
 
-	// 3. 验证区块基本信息
+	// 基本校验（按你项目习惯来，可保留）
 	if block.BlockHash == "" || block.BlockHash == "genesis" {
 		http.Error(w, "Invalid block hash", http.StatusBadRequest)
 		return
 	}
 
-	// 4. 将区块保存到数据库
-	if err := hm.dbManager.SaveBlock(block); err != nil {
+	// 保存区块
+	if err := hm.dbManager.SaveBlock(&block); err != nil {
 		logs.Error("[HandlePut] Failed to save block %s: %v", block.BlockHash, err)
 		http.Error(w, "Failed to save block", http.StatusInternalServerError)
 		return
 	}
 
-	// 5. 如果有交易,添加到交易池
+	// 将交易放入交易池（标记为已在区块中）
 	if len(block.Body) > 0 {
 		for _, tx := range block.Body {
 			if tx != nil {
-				// 将交易添加到交易池(标记为已在区块中)
 				if err := hm.txPool.StoreAnyTx(tx); err != nil {
-					logs.Debug("[HandlePut] Failed to store tx %s: %v",
-						tx.GetTxId(), err)
+					logs.Debug("[HandlePut] Failed to store tx %s: %v", tx.GetTxId(), err)
 				}
 			}
 		}
-		logs.Debug("[HandlePut] Added %d transactions from block %s to pool",
-			len(block.Body), block.BlockHash)
+		logs.Debug("[HandlePut] Added %d transactions from block %s to pool", len(block.Body), block.BlockHash)
 	}
 
-	// 6. 通知共识管理器有新区块
-	if hm.consensusManager != nil {
-		// 如果需要,触发共识处理
-		if hm.adapter != nil {
-			// 转换为共识层格式
-			consensusBlock, err := hm.adapter.DBBlockToConsensus(block)
-			if err == nil {
-				// 构造消息通知共识层
-				msg := types.Message{
-					RequestID: gossipPayload.RequestID,
-					Type:      types.MsgPut,
-					From:      types.NodeID(block.Miner),
-					Block:     consensusBlock,
-					BlockID:   block.BlockHash,
-					Height:    block.Height,
-				}
-
-				// 使用RealTransport的消息队列
-				if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
-					if err := rt.EnqueueReceivedMessage(msg); err != nil {
-						logs.Warn("[HandlePut] Failed to enqueue block message: %v", err)
-					}
+	// 通知共识（保持你现有逻辑）
+	if hm.consensusManager != nil && hm.adapter != nil {
+		if consensusBlock, err := hm.adapter.DBBlockToConsensus(&block); err == nil {
+			msg := types.Message{
+				RequestID: 0, // /put 不走请求-响应，这里固定 0
+				Type:      types.MsgPut,
+				From:      types.NodeID(block.Miner),
+				Block:     consensusBlock,
+				BlockID:   block.BlockHash,
+				Height:    block.Height,
+			}
+			if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
+				if err := rt.EnqueueReceivedMessage(msg); err != nil {
+					logs.Warn("[HandlePut] Failed to enqueue block message: %v", err)
 				}
 			}
 		}
 	}
 
-	// 7. 记录成功日志
-	logs.Info("[HandlePut] Successfully stored block %s at height %d with %d txs",
-		block.BlockHash, block.Height, len(block.Body))
-
-	// 8. 返回成功响应
+	logs.Info("[HandlePut] Stored block %s at height %d (txs=%d)", block.BlockHash, block.Height, len(block.Body))
 	w.WriteHeader(http.StatusOK)
 }

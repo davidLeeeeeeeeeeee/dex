@@ -33,7 +33,7 @@ func doSendToOnePeer(t *SendTask, client *http.Client) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Type", "application/json")
 
 	// 3. 用http3.Client执行请求
 	resp, err := client.Do(req)

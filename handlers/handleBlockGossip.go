@@ -2,102 +2,96 @@ package handlers
 
 import (
 	"dex/consensus"
-	"dex/db"
 	"dex/logs"
 	"dex/types"
 	"encoding/json"
 	"io"
 	"net/http"
-
-	"google.golang.org/protobuf/proto"
 )
 
+// 发送端 gossip 发的是 JSON 的 types.GossipPayload（里头嵌 db.Block）
+// 这里只解析这一种；不做其他格式兜底。
 func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("HandleBlockGossip0")
-	// 1. 读取请求体
+
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
+	defer r.Body.Close()
 
-	// 2. 尝试解析为 types.Block（JSON格式）
-	var block types.Block
-	if err := json.Unmarshal(bodyBytes, &block); err != nil {
-		// 如果不是JSON格式，可能是protobuf格式的db.Block
-		var dbBlock db.Block
-		if protoErr := proto.Unmarshal(bodyBytes, &dbBlock); protoErr == nil {
-			// 转换db.Block为types.Block
-			consensusBlock, convertErr := hm.adapter.DBBlockToConsensus(&dbBlock)
-			if convertErr != nil {
-				http.Error(w, "Failed to convert block", http.StatusBadRequest)
-				return
-			}
-			block = *consensusBlock
-		} else {
-			http.Error(w, "Invalid block format", http.StatusBadRequest)
-			return
-		}
-	}
-
-	// 3. 验证区块基本信息
-	if block.ID == "" || block.ID == "genesis" {
-		http.Error(w, "Invalid block ID", http.StatusBadRequest)
+	var payload types.GossipPayload
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		http.Error(w, "Failed to parse JSON GossipPayload", http.StatusBadRequest)
 		return
 	}
-	// ========== 已知块短路逻辑 ==========
-	// 3.1 检查 LRU 缓存中是否已处理过该区块
-	if hm.seenBlocksCache.Contains(block.ID) {
-		logs.Debug("[HandleBlockGossip] Block %s already seen in cache, returning 200 OK", block.ID)
+	if payload.Block == nil {
+		http.Error(w, "GossipPayload missing block", http.StatusBadRequest)
+		return
+	}
+
+	// 转为共识层 block
+	if hm.adapter == nil {
+		http.Error(w, "adapter unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	consBlock, err := hm.adapter.DBBlockToConsensus(payload.Block)
+	if err != nil {
+		http.Error(w, "Failed to convert block", http.StatusBadRequest)
+		return
+	}
+
+	// 已见过的区块直接返回 OK（可选，按你现有字段）
+	if hm.seenBlocksCache != nil && consBlock.ID != "" && hm.seenBlocksCache.Contains(consBlock.ID) {
+		logs.Debug("[HandleBlockGossip] Block %s already seen, OK", consBlock.ID)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 		return
-	} else {
-		// 添加到缓存以加速后续查询
-		hm.seenBlocksCache.Add(block.ID, true)
 	}
+	if hm.seenBlocksCache != nil && consBlock.ID != "" {
+		hm.seenBlocksCache.Add(consBlock.ID, true)
+	}
+
+	// 统计点位
 	hm.Stats.RecordAPICall("HandleBlockGossip1")
-	// 4. 构造共识层的Gossip消息
-	gossipMsg := types.Message{
-		Type:    types.MsgGossip,
-		From:    types.NodeID(block.Proposer),
-		Block:   &block,
-		BlockID: block.ID,
-		Height:  block.Height,
+
+	// 交给共识/网络层
+	msg := types.Message{
+		RequestID: payload.RequestID,
+		Type:      types.MsgGossip,
+		From:      types.NodeID(consBlock.Proposer),
+		Block:     consBlock,
+		BlockID:   consBlock.ID,
+		Height:    consBlock.Height,
 	}
 
-	// 5. 如果有共识管理器，将消息传递给它处理
+	// 将 dbBlock 加到共识存储（直接用 payload 里的 db.Block 即可）
 	if hm.consensusManager != nil {
-		// 添加区块到共识存储
-		dbBlock := hm.adapter.ConsensusBlockToDB(&block, nil)
-		if err := hm.consensusManager.AddBlock(dbBlock); err != nil {
-			logs.Debug("[HandleBlockGossip] Failed to add block to consensus: %v", err)
-			// 不返回错误，因为区块可能已存在
+		if err := hm.consensusManager.AddBlock(payload.Block); err != nil {
+			logs.Debug("[HandleBlockGossip] AddBlock warn: %v", err) // 已存在等非致命错误
 		}
-
-		// 如果使用RealTransport，通过消息队列处理
 		if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
-			if err := rt.EnqueueReceivedMessage(gossipMsg); err != nil {
-				logs.Warn("[HandleBlockGossip] Failed to enqueue gossip message: %v", err)
-			}
-		}
-
-		logs.Debug("[HandleBlockGossip] Received block %s at height %d Proposer %s",
-			block.ID, block.Height, block.Proposer)
-	}
-
-	// 7. 如果区块包含交易，处理交易
-	if dbBlock, ok := consensus.GetCachedBlock(block.ID); ok && len(dbBlock.Body) > 0 {
-		// 将交易添加到交易池
-		for _, tx := range dbBlock.Body {
-			if err := hm.txPool.StoreAnyTx(tx); err != nil {
-				logs.Debug("[HandleBlockGossip] Failed to store tx %s: %v",
-					tx.GetTxId(), err)
+			if err := rt.EnqueueReceivedMessage(msg); err != nil {
+				logs.Warn("[HandleBlockGossip] Enqueue gossip message failed: %v", err)
 			}
 		}
 	}
 
-	// 8. 返回成功响应
+	// 将交易放入交易池
+	if len(payload.Block.Body) > 0 {
+		for _, tx := range payload.Block.Body {
+			if tx != nil {
+				if err := hm.txPool.StoreAnyTx(tx); err != nil {
+					logs.Debug("[HandleBlockGossip] Failed to store tx %s: %v", tx.GetTxId(), err)
+				}
+			}
+		}
+	}
+
+	logs.Debug("[HandleBlockGossip] Block %s at height %d proposer=%s",
+		consBlock.ID, consBlock.Height, consBlock.Proposer)
+
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
