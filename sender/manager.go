@@ -6,7 +6,9 @@ import (
 	"dex/db"
 	"dex/logs"
 	"dex/txpool"
+	"dex/types"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -288,11 +290,11 @@ func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]
 }
 
 // 广播消息给随机矿工
-func (sm *SenderManager) BroadcastGossipToTarget(targetAddr string, block *db.Block) error {
-	data, err := proto.Marshal(block)
+func (sm *SenderManager) BroadcastGossipToTarget(targetAddr string, payload *types.GossipPayload) error {
+	// 序列化整个 payload
+	data, err := json.Marshal(payload)
 	if err != nil {
-		logs.Debug("[SendBlock] marshal failed: %v", err)
-		return err
+		return fmt.Errorf("failed to marshal gossip payload: %w", err)
 	}
 	if targetAddr == "" {
 		return nil

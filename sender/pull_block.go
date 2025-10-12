@@ -6,9 +6,10 @@ import (
 	"compress/gzip"
 	"dex/db"
 	"fmt"
-	"google.golang.org/protobuf/proto"
 	"io"
 	"net/http"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // pullBlockMessage 用来包装：要请求的 height + 回调函数
@@ -17,7 +18,7 @@ type pullBlockMessage struct {
 	onSuccess   func(*db.Block)
 }
 
-// doSendGetBlock 真正执行 HTTP/3 POST /getblock 并解析返回
+// 真正执行 HTTP/3 POST /getblock 并解析返回
 func doSendGetBlock(t *SendTask, client *http.Client) error {
 	pm, ok := t.Message.(*pullBlockMessage)
 	if !ok {

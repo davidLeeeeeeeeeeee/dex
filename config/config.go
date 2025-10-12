@@ -163,7 +163,7 @@ func DefaultConfig() *Config {
 		Network: NetworkConfig{
 			BasePort:           6000,
 			MaxNodes:           100,
-			DefaultNumNodes:    100,
+			DefaultNumNodes:    20,
 			ByzantineNodes:     0,
 			PeerSampleSize:     10,
 			RandomMinerCount:   3,

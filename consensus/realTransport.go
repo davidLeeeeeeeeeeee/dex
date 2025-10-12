@@ -119,6 +119,7 @@ func (t *RealTransport) sendPushQuery(targetIP string, msg types.Message) error 
 // 使用senderManager发送
 func (t *RealTransport) sendPullQuery(targetIP string, msg types.Message) error {
 	pq := &db.PullQuery{
+		RequestId:       msg.RequestID,
 		Address:         t.address,
 		Deadline:        t.adapter.calculateDeadline(3),
 		BlockId:         msg.BlockID,
@@ -175,13 +176,19 @@ func (t *RealTransport) sendBlock(targetIP string, msg types.Message) error {
 	dbBlock := t.adapter.ConsensusBlockToDB(msg.Block, nil)
 	return t.senderManager.SendBlock(targetIP, dbBlock)
 }
+
+// 一个专门用于 Gossip 传输的类型
+
 func (t *RealTransport) sendGossip(targetIP string, msg types.Message) error {
 	if msg.Block == nil {
 		return fmt.Errorf("no block data to send")
 	}
 
-	dbBlock := t.adapter.ConsensusBlockToDB(msg.Block, nil)
-	return t.senderManager.BroadcastGossipToTarget(targetIP, dbBlock)
+	payload := &types.GossipPayload{
+		Block:     t.adapter.ConsensusBlockToDB(msg.Block, nil),
+		RequestID: msg.RequestID,
+	}
+	return t.senderManager.BroadcastGossipToTarget(targetIP, payload)
 }
 func (t *RealTransport) sendSyncRequest(targetIP string, msg types.Message) error {
 	for h := msg.FromHeight; h <= msg.ToHeight; h++ {

@@ -28,10 +28,11 @@ func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request
 
 	// 构造消息并尝试入队
 	msg := types.Message{
-		Type:    types.MsgPullQuery,
-		From:    types.NodeID(pullQuery.Address),
-		BlockID: pullQuery.BlockId,
-		Height:  pullQuery.RequestedHeight,
+		RequestID: pullQuery.RequestId,
+		Type:      types.MsgPullQuery,
+		From:      types.NodeID(pullQuery.Address),
+		BlockID:   pullQuery.BlockId,
+		Height:    pullQuery.RequestedHeight,
 	}
 
 	if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
