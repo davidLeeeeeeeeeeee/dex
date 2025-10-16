@@ -90,7 +90,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 	return block, nil
 }
 
-// ShouldPropose 决定是否应该在当前轮次提出区块
+// 决定是否应该在当前轮次提出区块
 func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, round int, currentBlocks int, currentHeight int, proposeHeight int) bool {
 	// 新增的高度检查逻辑：当前高度必须是要提议高度减1
 	if currentHeight != proposeHeight-1 {
