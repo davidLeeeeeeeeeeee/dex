@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -62,7 +63,7 @@ func printGoFiles(dir string, outFile *os.File) {
 		} else {
 			// 处理 .proto 文件，直接打印
 			if strings.HasSuffix(f.Name(), ".proto") {
-				printFile(path, outFile)
+				printFile(path, outFile, false)
 				continue
 			}
 
@@ -72,7 +73,7 @@ func printGoFiles(dir string, outFile *os.File) {
 				if !includeTestFiles && strings.HasSuffix(f.Name(), "_test.go") && !strings.HasSuffix(f.Name(), "main_test.go") {
 					continue
 				}
-				printFile(path, outFile)
+				printFile(path, outFile, true)
 			}
 		}
 	}
@@ -112,7 +113,28 @@ func shouldExcludeDir(path string) bool {
 	return false
 }
 
-func printFile(path string, outFile *os.File) {
+// simplifyGoImports 简化 Go 文件的 import 部分
+func simplifyGoImports(content string) string {
+	// 匹配 import 语句的正则表达式
+	// 支持两种格式：
+	// 1. import "single"
+	// 2. import (
+	//       "multiple"
+	//       "imports"
+	//    )
+
+	// 匹配单行 import
+	singleImportRe := regexp.MustCompile(`(?m)^import\s+"[^"]+"\s*$`)
+	content = singleImportRe.ReplaceAllString(content, "import (...)")
+
+	// 匹配多行 import ()
+	multiImportRe := regexp.MustCompile(`(?s)import\s*\(\s*[^)]+\)`)
+	content = multiImportRe.ReplaceAllString(content, "import (...)")
+
+	return content
+}
+
+func printFile(path string, outFile *os.File, isGoFile bool) {
 	// 将文件路径写入输出文件
 	fmt.Fprintf(outFile, "\n文件路径: %s\n", path)
 
@@ -122,5 +144,13 @@ func printFile(path string, outFile *os.File) {
 		fmt.Fprintf(outFile, "无法读取文件 %s: %v\n", path, err)
 		return
 	}
-	fmt.Fprintf(outFile, "文件内容:\n%s\n", string(content))
+
+	contentStr := string(content)
+
+	// 如果是 Go 文件，简化 import 部分
+	if isGoFile {
+		contentStr = simplifyGoImports(contentStr)
+	}
+
+	fmt.Fprintf(outFile, "文件内容:\n%s\n", contentStr)
 }
