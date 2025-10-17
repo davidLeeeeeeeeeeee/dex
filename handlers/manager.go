@@ -1,22 +1,16 @@
 package handlers
 
 import (
-	"compress/gzip"
 	"dex/consensus"
 	"dex/db"
-	"dex/logs"
 	"dex/sender"
 	"dex/stats"
 	"dex/txpool"
-	"dex/types"
-	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
-	"google.golang.org/protobuf/proto"
 )
 
 // HandlerManager 管理所有HTTP处理器及其依赖
@@ -81,176 +75,6 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/getblockbyid", hm.HandleGet)
 	mux.HandleFunc("/put", hm.HandlePut)
 
-}
-
-func (hm *HandlerManager) HandleChits(w http.ResponseWriter, r *http.Request) {
-	hm.Stats.RecordAPICall("HandleChits")
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-
-	var chits db.Chits
-	if err := proto.Unmarshal(bodyBytes, &chits); err != nil {
-		http.Error(w, "Invalid Chits proto", http.StatusBadRequest)
-		return
-	}
-
-	// 转换为共识消息并处理
-	if hm.adapter != nil {
-		// 使用 chits.Address 而不是从 RemoteAddr 推断
-		senderAddress := chits.Address
-
-		// 验证发送方
-		if !hm.verifyNodeIdentity(senderAddress, &chits) {
-			http.Error(w, "Invalid sender", http.StatusUnauthorized)
-			return
-		}
-
-		from := types.NodeID(senderAddress)
-		msg := hm.adapter.ChitsToConsensusMessage(&chits, from)
-
-		// 如果是RealTransport，使用队列方式处理
-		if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
-			if err := rt.EnqueueReceivedMessage(msg); err != nil {
-				logs.Warn("[Handler] Failed to enqueue chits message: %v", err)
-				// 控制面消息入队失败，返回 503
-				http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
-				return
-			}
-		}
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func (hm *HandlerManager) HandleHeightQuery(w http.ResponseWriter, r *http.Request) {
-	hm.Stats.RecordAPICall("HandleHeightQuery")
-	// 返回当前节点的高度信息
-	_, height := hm.consensusManager.GetLastAccepted()
-	currentHeight := hm.consensusManager.GetCurrentHeight()
-
-	resp := &db.HeightResponse{ // 需要在proto中定义
-		LastAcceptedHeight: height,
-		CurrentHeight:      currentHeight,
-	}
-
-	data, _ := proto.Marshal(resp)
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.Write(data)
-}
-
-// 决定是否应该继续传播这个区块
-func (hm *HandlerManager) shouldRebroadcast(block *types.Block) bool {
-
-	// 实现简单的重播保护逻辑
-	// 例如：检查区块是否太旧，或者是否已经广播过
-
-	// 获取当前高度
-	_, currentHeight := hm.consensusManager.GetLastAccepted()
-
-	// 如果区块高度太旧（比当前高度低超过10个区块），不再传播
-	if block.Height < currentHeight-10 {
-		return false
-	}
-
-	// 如果区块高度太新（比当前高度高超过100个区块），可能是恶意的，不传播
-	if block.Height > currentHeight+100 {
-		return false
-	}
-
-	return true
-}
-
-// 处理状态查询
-func (hm *HandlerManager) HandleStatus(w http.ResponseWriter, r *http.Request) {
-	hm.Stats.RecordAPICall("HandleStatus")
-	if !hm.checkAuth(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	resProto := &db.StatusResponse{
-		Status: "ok",
-		Info:   fmt.Sprintf("Server is running on port %s", hm.port),
-	}
-	data, err := proto.Marshal(resProto)
-	if err != nil {
-		http.Error(w, "Failed to marshal status response", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.WriteHeader(http.StatusOK)
-	w.Write(data)
-}
-
-// 处理获取区块请求
-func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request) {
-	hm.Stats.RecordAPICall("HandleGetBlock")
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-
-	var req db.GetBlockRequest
-	if err := proto.Unmarshal(bodyBytes, &req); err != nil {
-		http.Error(w, "Invalid GetBlockRequest proto", http.StatusBadRequest)
-		return
-	}
-
-	// 使用注入的dbManager而不是创建新实例
-	block, err := hm.dbManager.GetBlock(req.Height)
-	if err != nil || block == nil {
-		resp := &db.GetBlockResponse{
-			Error: fmt.Sprintf("Block not found at height %d", req.Height),
-		}
-		respBytes, _ := proto.Marshal(resp)
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		w.WriteHeader(http.StatusNotFound)
-		w.Write(respBytes)
-		return
-	}
-
-	resp := &db.GetBlockResponse{
-		Block: block,
-	}
-	respBytes, err := proto.Marshal(resp)
-	if err != nil {
-		http.Error(w, "Failed to marshal GetBlockResponse", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Encoding", "gzip")
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.WriteHeader(http.StatusOK)
-
-	gz := gzip.NewWriter(w)
-	defer gz.Close()
-	gz.Write(respBytes)
-}
-
-// 处理节点列表请求
-func (hm *HandlerManager) HandleNodes(w http.ResponseWriter, r *http.Request) {
-	hm.Stats.RecordAPICall("HandleNodes")
-	if !hm.checkAuth(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	nodes, err := hm.dbManager.GetAllNodeInfos()
-	if err != nil {
-		http.Error(w, "Failed to get nodes", http.StatusInternalServerError)
-		return
-	}
-
-	nodeList := &db.NodeList{
-		Nodes: nodes,
-	}
-	data, _ := proto.Marshal(nodeList)
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.Write(data)
 }
 
 // 添加身份验证方法
