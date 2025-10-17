@@ -27,11 +27,16 @@ type SenderManager struct {
 	nodeID     int // 只用作log,不参与业务逻辑
 }
 
-// pullBlockByIDMessage 用于通过ID拉取区块
+// 用于通过ID拉取区块
 type pullBlockByIDMessage struct {
 	requestData []byte
 	blockID     string
 	onSuccess   func(*db.Block)
+}
+type pullTxMessage struct {
+	requestData []byte
+	onSuccess   func(*db.AnyTx)
+	txPool      *txpool.TxPool
 }
 
 // 执行通过ID获取区块的请求
@@ -213,7 +218,7 @@ func (sm *SenderManager) PullGet(targetIP string, blockID string, onSuccess func
 	sm.SendQueue.Enqueue(task)
 }
 
-// PullBlock 拉取指定高度的区块
+// 拉取指定高度的区块
 func (sm *SenderManager) PullBlock(targetAddress string, height uint64, onSuccess func(*db.Block)) {
 	account, err := sm.dbManager.GetAccount(targetAddress)
 	if err != nil || account == nil {
@@ -248,7 +253,7 @@ func (sm *SenderManager) PullBlock(targetAddress string, height uint64, onSucces
 	sm.SendQueue.Enqueue(task)
 }
 
-// BatchGetTxs 批量获取交易
+// 批量获取交易
 func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]bool, onSuccess func([]*db.AnyTx)) {
 	var result [][]byte
 	for hexStr := range shortHashes {

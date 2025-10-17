@@ -1,4 +1,3 @@
-// 文件: sender/pull_block.go
 package sender
 
 import (
