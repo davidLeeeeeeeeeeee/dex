@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// doSendSyncRequest 执行同步请求
+// 执行同步请求
 func doSendSyncRequest(t *SendTask, client *http.Client) error {
 	msg, ok := t.Message.(*syncRequestMessage)
 	if !ok {

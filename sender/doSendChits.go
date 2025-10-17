@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-// doSendChits 执行Chits发送
+// 执行Chits发送
 func doSendChits(t *SendTask, client *http.Client) error {
 	msg, ok := t.Message.(*chitsMessage)
 	if !ok {

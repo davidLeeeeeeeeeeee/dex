@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// doSendHeightQuery 执行高度查询
+// 执行高度查询
 func doSendHeightQuery(t *SendTask, client *http.Client) error {
 	msg, ok := t.Message.(*heightQueryMessage)
 	if !ok {

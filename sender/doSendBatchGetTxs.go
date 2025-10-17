@@ -17,7 +17,7 @@ type pullBatchTxMessage struct {
 	onSuccess func([]*db.AnyTx)
 }
 
-// doSendBatchGetTxs 执行HTTP/3 POST请求获取批量交易
+// 执行HTTP/3 POST请求获取批量交易
 func doSendBatchGetTxs(t *SendTask, client *http.Client) error {
 	msg, ok := t.Message.(*pullBatchTxMessage)
 	if !ok {
