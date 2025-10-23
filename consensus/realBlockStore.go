@@ -92,7 +92,7 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 	if block.Height > s.maxHeight {
 		s.maxHeight = block.Height
 		// 更新数据库中的最新高度
-		s.dbManager.EnqueueSet("latest_block_height", strconv.FormatUint(block.Height, 10))
+		s.dbManager.EnqueueSet(db.KeyLatestHeight(), strconv.FormatUint(block.Height, 10))
 	}
 
 	// 异步保存到数据库（非最终化的区块暂时只在内存中）
@@ -433,7 +433,7 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 			Height:        block.Height,
 			BlockHash:     block.ID,
 			PrevBlockHash: block.ParentID,
-			Miner:         fmt.Sprintf("node_%d", block.Proposer),
+			Miner:         fmt.Sprintf(db.KeyNode()+"%d", block.Proposer),
 		}
 		if err := s.dbManager.SaveBlock(dbBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save simple block to DB: %v", err)

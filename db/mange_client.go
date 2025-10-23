@@ -2,7 +2,7 @@ package db
 
 // SaveClientInfo 改为成员函数
 func (mgr *Manager) SaveClientInfo(info *ClientInfo) error {
-	key := "clientinfo_" + info.Ip
+	key := KeyClientInfo(info.Ip)
 	data, err := ProtoMarshal(info)
 	if err != nil {
 		return err
@@ -13,7 +13,7 @@ func (mgr *Manager) SaveClientInfo(info *ClientInfo) error {
 
 // GetClientInfo 改为成员函数
 func (mgr *Manager) GetClientInfo(ip string) (*ClientInfo, error) {
-	key := "clientinfo_" + ip
+	key := KeyClientInfo(ip)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err

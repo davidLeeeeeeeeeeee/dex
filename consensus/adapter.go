@@ -186,7 +186,7 @@ func (a *ConsensusAdapter) ProcessReceivedContainer(container []byte, isBlock bo
 
 func (a *ConsensusAdapter) parseMinerToNodeID(miner string) types.NodeID {
 	var nodeID int
-	fmt.Sscanf(miner, "node_%d", &nodeID)
+	fmt.Sscanf(miner, db.KeyNode()+"%d", &nodeID)
 	return types.NodeID(strconv.Itoa(nodeID))
 }
 

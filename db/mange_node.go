@@ -12,7 +12,7 @@ func (mgr *Manager) GetAllNodeInfos() ([]*NodeInfo, error) {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
-		prefix := []byte("node_")
+		prefix := []byte(KeyNode())
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			item := it.Item()
 			val, err := item.ValueCopy(nil)
@@ -39,7 +39,7 @@ func (mgr *Manager) SaveNodeInfo(node *NodeInfo) error {
 	if err != nil {
 		return err
 	}
-	key := "node_" + node.PublicKey
+	key := KeyNode() + node.PublicKey
 	mgr.EnqueueSet(key, string(data))
 	return nil
 }

@@ -25,15 +25,15 @@ func (mgr *Manager) SaveAnyTx(anyTx *AnyTx) error {
 		return err
 	}
 	// 2. 主存储
-	mainKey := "anyTx_" + txID
+	mainKey := KeyAnyTx(txID)
 	mgr.EnqueueSet(mainKey, string(data))
 
 	// 3. 如果 BaseMessage 是 PENDING，则写 "pending_anytx_<txID>"
 	base := anyTx.GetBase()
 	if base != nil && base.Status == Status_PENDING {
-		mgr.EnqueueSet("pending_anytx_"+txID, "")
+		mgr.EnqueueSet(KeyPendingAnyTx(txID), "")
 	} else {
-		mgr.EnqueueDelete("pending_anytx_" + txID)
+		mgr.EnqueueDelete(KeyPendingAnyTx(txID))
 	}
 
 	// 4. 调度到不同的落库/索引函数

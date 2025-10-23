@@ -607,7 +607,7 @@ func initializeNode(node *NodeInstance) error {
 		return fmt.Errorf("failed to save account: %v", err)
 	}
 	// 保存索引映射
-	indexKey := fmt.Sprintf("indexToAccount_%d", account.Index)
+	indexKey := db.KeyIndexToAccount(account.Index)
 	accountKey := fmt.Sprintf("account_%s", account.Address)
 	dbManager.EnqueueSet(indexKey, accountKey)
 	// Force flush to ensure miner registration is persisted
@@ -687,7 +687,7 @@ func registerAllNodes(nodes []*NodeInstance) {
 			}
 			node.DBManager.SaveNodeInfo(nodeInfo)
 			// 保存索引映射
-			indexKey := fmt.Sprintf("indexToAccount_%d", j)
+			indexKey := fmt.Sprintf(db.KeyIndexToAccount(uint64(j)))
 			accountKey := fmt.Sprintf("account_%s", otherNode.Address)
 			node.DBManager.EnqueueSet(indexKey, accountKey)
 

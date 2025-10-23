@@ -1,17 +1,17 @@
 package db
 
 import (
-	"fmt"
 	_ "fmt"
+	"strings"
+
 	"github.com/dgraph-io/badger/v4"
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
-	"strings"
 )
 
 // SaveAccount stores an Account in the database
 func (mgr *Manager) SaveAccount(account *Account) error {
-	key := "account_" + account.Address
+	key := KeyAccount(account.Address)
 	data, err := ProtoMarshal(account)
 	if err != nil {
 		return err
@@ -23,7 +23,7 @@ func (mgr *Manager) SaveAccount(account *Account) error {
 
 // GetAccount retrieves an Account from the database
 func (mgr *Manager) GetAccount(address string) (*Account, error) {
-	key := "account_" + address
+	key := KeyAccount(address)
 	//logs.Trace("GetAccount key:%s", key)
 	val, err := mgr.Read(key)
 	if err != nil {
@@ -93,7 +93,7 @@ func buildStakeIndexKey(stake decimal.Decimal, address string) string {
 	zeros := strings.Repeat("0", padNeeded)
 	finalStr := zeros + invStr
 
-	return "stakeIndex_" + finalStr + "_address:" + address
+	return KeyStakeIndex(finalStr, address)
 }
 
 // getAccountByIndex 根据顺序索引取出完整 Account。
@@ -104,7 +104,7 @@ func (mgr *Manager) getAccountByIndex(idx uint64) (*Account, error) {
 	// ① 取出地址字符串
 	//----------------------------------------
 	var addr string
-	indexKey := []byte(fmt.Sprintf("indexToAccount_%d", idx))
+	indexKey := []byte(KeyIndexToAccount(idx))
 
 	err := mgr.Db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(indexKey)

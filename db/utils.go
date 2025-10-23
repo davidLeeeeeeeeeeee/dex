@@ -5,9 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
+
 	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/protobuf/proto"
-	"strconv"
 )
 
 func ProtoMarshal(m proto.Message) ([]byte, error) {
@@ -74,7 +75,7 @@ func getNewIndex(mgr *Manager) (uint64, []WriteTask, error) {
 	// ① 只读事务：尝试寻找可复用的 free_idx_*
 	err := mgr.Db.View(func(txn *badger.Txn) error {
 		itOpts := badger.DefaultIteratorOptions
-		itOpts.Prefix = []byte("free_idx_")
+		itOpts.Prefix = []byte(KeyFreeIdx())
 		it := txn.NewIterator(itOpts)
 		defer it.Close()
 
@@ -82,7 +83,7 @@ func getNewIndex(mgr *Manager) (uint64, []WriteTask, error) {
 		if it.Valid() {
 			// 找到了可复用的 index
 			freeIdxKey = it.Item().KeyCopy(nil)
-			idxStr := bytes.TrimPrefix(freeIdxKey, []byte("free_idx_"))
+			idxStr := bytes.TrimPrefix(freeIdxKey, []byte(KeyFreeIdx()))
 			i, _ := strconv.ParseUint(string(idxStr), 10, 64)
 			idx = i
 			return nil
@@ -113,7 +114,7 @@ func getNewIndex(mgr *Manager) (uint64, []WriteTask, error) {
 }
 
 func removeIndex(idx uint64) WriteTask {
-	k := []byte(fmt.Sprintf("free_idx_%020d", idx))
+	k := []byte(fmt.Sprintf(KeyFreeIdx()+"%020d", idx))
 	return WriteTask{Key: k, Op: OpSet} // 值为空即可，也可以存时间戳
 }
 

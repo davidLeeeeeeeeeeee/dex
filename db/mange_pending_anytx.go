@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+
 	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/protobuf/proto"
 )
@@ -16,7 +17,7 @@ func (mgr *Manager) SavePendingAnyTx(tx *AnyTx) error {
 	if err != nil {
 		return err
 	}
-	key := "pending_anytx_" + txID
+	key := KeyPendingAnyTx(txID)
 	mgr.EnqueueSet(key, string(data))
 	return nil
 }
@@ -26,7 +27,7 @@ func (mgr *Manager) DeletePendingAnyTx(txID string) error {
 	if txID == "" {
 		return fmt.Errorf("DeletePendingAnyTx: empty txID")
 	}
-	key := "pending_anytx_" + txID
+	key := KeyPendingAnyTx(txID)
 	mgr.EnqueueDelete(key)
 	return nil
 }
@@ -45,7 +46,7 @@ func (mgr *Manager) LoadPendingAnyTx() ([]*AnyTx, error) {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
-		prefix := []byte("pending_anytx_")
+		prefix := []byte(KeyPendingAnyTx(""))
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			item := it.Item()
 			val, e := item.ValueCopy(nil)

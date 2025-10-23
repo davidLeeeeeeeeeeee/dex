@@ -13,7 +13,7 @@ func (mgr *Manager) SaveBlock(block *Block) error {
 	logs.Debug("Saving new block_%d with ID %s", block.Height, block.BlockHash)
 
 	// 1. 使用 BlockID 作为主键存储完整区块
-	blockKey := fmt.Sprintf("blockdata_%s", block.BlockHash)
+	blockKey := KeyBlockData(block.BlockHash)
 	data, err := ProtoMarshal(block)
 	if err != nil {
 		return err
@@ -21,7 +21,7 @@ func (mgr *Manager) SaveBlock(block *Block) error {
 	mgr.EnqueueSet(blockKey, string(data))
 
 	// 2. 维护高度到区块ID列表的映射
-	heightKey := fmt.Sprintf("height_%d_blocks", block.Height)
+	heightKey := KeyHeightBlocks(block.Height)
 	existingIDs, _ := mgr.Read(heightKey)
 
 	var blockIDs []string
@@ -46,11 +46,11 @@ func (mgr *Manager) SaveBlock(block *Block) error {
 	mgr.EnqueueSet(heightKey, string(idsData))
 
 	// 3. ID到高度映射
-	idKey := fmt.Sprintf("blockid_%s", block.BlockHash)
+	idKey := KeyBlockIDToHeight(block.BlockHash)
 	mgr.EnqueueSet(idKey, strconv.FormatUint(block.Height, 10))
 
 	// 4. 更新最新区块高度
-	mgr.EnqueueSet("latest_block_height", strconv.FormatUint(block.Height, 10))
+	mgr.EnqueueSet(KeyLatestHeight(), strconv.FormatUint(block.Height, 10))
 
 	// 5. 更新内存缓存
 	cfg := config.DefaultConfig()
@@ -76,7 +76,7 @@ func (mgr *Manager) GetBlock(height uint64) (*Block, error) {
 
 func (mgr *Manager) GetBlocksByHeight(height uint64) ([]*Block, error) {
 	// 1. 从高度映射获取所有区块ID
-	heightKey := fmt.Sprintf("height_%d_blocks", height)
+	heightKey := KeyHeightBlocks(height)
 	idsStr, err := mgr.Read(heightKey)
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func (mgr *Manager) GetBlockByID(blockID string) (*Block, error) {
 	mgr.cachedBlocksMu.RUnlock()
 
 	// 2. 直接从 blockdata_<blockID> 读取
-	blockKey := fmt.Sprintf("blockdata_%s", blockID)
+	blockKey := KeyBlockData(blockID)
 	val, err := mgr.Read(blockKey)
 	if err != nil {
 		return nil, fmt.Errorf("block %s not found", blockID)
@@ -143,7 +143,7 @@ func (mgr *Manager) getBlockByIDFallback(blockID string) (*Block, error) {
 		}
 		if block.BlockHash == blockID {
 			// 找到了，顺便建立映射关系以加速后续查询
-			idKey := fmt.Sprintf("blockid_%s", blockID)
+			idKey := KeyBlockIDToHeight(blockID)
 			mgr.EnqueueSet(idKey, strconv.FormatUint(h, 10))
 			return block, nil
 		}
@@ -160,7 +160,7 @@ func (mgr *Manager) getBlockByIDFallback(blockID string) (*Block, error) {
 
 // GetLatestBlockHeight 直接从 "latest_block_height" 键中读取最新的区块高度
 func (mgr *Manager) GetLatestBlockHeight() (uint64, error) {
-	latestKey := "latest_block_height"
+	latestKey := KeyLatestHeight()
 	val, err := mgr.Read(latestKey)
 	if err != nil {
 		return 0, err
@@ -205,7 +205,7 @@ func (mgr *Manager) BlockExists(blockID string) bool {
 	mgr.cachedBlocksMu.RUnlock()
 
 	// 2. 检查数据库中的ID映射
-	idKey := fmt.Sprintf("blockid_%s", blockID)
+	idKey := KeyBlockIDToHeight(blockID)
 	_, err := mgr.Read(idKey)
 	return err == nil
 }

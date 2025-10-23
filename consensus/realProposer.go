@@ -76,7 +76,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 		TxsHash:       txsHash,
 		BlockHash:     blockID,
 		PrevBlockHash: parentID,
-		Miner:         fmt.Sprintf("node_%s", proposer),
+		Miner:         fmt.Sprintf(db.KeyNode()+"%s", proposer),
 		Body:          sortedTxs,
 		ShortTxs:      shortTxs,
 	}

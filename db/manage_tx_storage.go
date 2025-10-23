@@ -3,14 +3,14 @@ package db
 import (
 	"dex/utils"
 	"fmt"
+
 	"github.com/shopspring/decimal"
-	"strconv"
 )
 
 // ------------- 基础交易 -------------
 func (mgr *Manager) SaveTransaction(tx *Transaction) error {
 	//logs.Trace("SaveTransaction %s\n", tx)
-	key := "tx_" + tx.Base.TxId
+	key := KeyTx(tx.Base.TxId)
 	data, err := ProtoMarshal(tx)
 	if err != nil {
 		return err
@@ -18,16 +18,16 @@ func (mgr *Manager) SaveTransaction(tx *Transaction) error {
 	mgr.EnqueueSet(key, string(data))
 	// 如果是PENDING
 	if tx.Base.Status == Status_PENDING {
-		pendingKey := "pending_tx_" + tx.Base.TxId
+		pendingKey := KeyPendingAnyTx(tx.Base.TxId)
 		mgr.EnqueueSet(pendingKey, string(data))
 	}
 	// 2. 同时把它封装进 AnyTx 并存 "anyTx_<txid>"
-	mgr.EnqueueSet("anyTx_"+tx.Base.TxId, key)
+	mgr.EnqueueSet(KeyAnyTx(tx.Base.TxId), key)
 	return nil
 }
 
 func (mgr *Manager) GetTransaction(txID string) (*Transaction, error) {
-	key := "tx_" + txID
+	key := KeyTx(txID)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func (mgr *Manager) SaveOrderTx(order *OrderTx) error {
 
 	// 3. 构造索引key
 	//    例如: "pair:BTC_USDT|price:000000000123123|order_id:..."
-	indexKey := fmt.Sprintf("pair:%s|is_filled:%t|price:%s|order_id:%s", pairKey, order.IsFilled, priceKey, order.Base.TxId)
+	indexKey := KeyOrderPriceIndex(pairKey, order.IsFilled, priceKey, order.Base.TxId)
 
 	// 4. 存储 (跟你现在的逻辑一样，只是把 "base_token_base_quote" 替换成 pairKey)
 	data, err := ProtoMarshal(order)
@@ -63,15 +63,15 @@ func (mgr *Manager) SaveOrderTx(order *OrderTx) error {
 	mgr.EnqueueSet(indexKey, string(data))
 
 	// 存储原始订单
-	orderKey := "order_" + order.Base.TxId
+	orderKey := KeyOrderTx(order.Base.TxId)
 	mgr.EnqueueSet(orderKey, string(data))
 	// 5. 同时把它封装进 AnyTx 并存 "anyTx_<txid>"
-	mgr.EnqueueSet("anyTx_"+order.Base.TxId, orderKey)
+	mgr.EnqueueSet(KeyAnyTx(order.Base.TxId), orderKey)
 	return nil
 }
 
 func (mgr *Manager) GetOrderTx(txID string) (*OrderTx, error) {
-	key := "order_" + txID
+	key := KeyOrderTx(txID)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -85,13 +85,13 @@ func (mgr *Manager) GetOrderTx(txID string) (*OrderTx, error) {
 
 func (mgr *Manager) SaveMinerTx(tx *MinerTx) error {
 	// 0) 先把 MinerTx 本身排入写队列（保持你原来的逻辑）
-	mainKey := "minerTx_" + tx.Base.TxId
+	mainKey := KeyMinerTx(tx.Base.TxId)
 	data, err := ProtoMarshal(tx)
 	if err != nil {
 		return err
 	}
 	mgr.EnqueueSet(mainKey, string(data))
-	mgr.EnqueueSet("anyTx_"+tx.Base.TxId, mainKey)
+	mgr.EnqueueSet(KeyAnyTx(tx.Base.TxId), mainKey)
 
 	// 1) 读取 / 初始化账户
 	addr := tx.Base.FromAddress
@@ -139,8 +139,8 @@ func (mgr *Manager) SaveMinerTx(tx *MinerTx) error {
 			prevLocked, _ := decimal.NewFromString(fb.MinerLockedBalance)
 			fb.MinerLockedBalance = prevLocked.Add(amt).String()
 			// 存入indexToAccount
-			indexToAccount := "account_" + acc.Address
-			mgr.EnqueueSet("indexToAccount_"+strconv.FormatUint(idx, 10), indexToAccount)
+			indexToAccount := KeyAccount(acc.Address)
+			mgr.EnqueueSet(KeyIndexToAccount(idx), indexToAccount)
 			mgr.IndexMgr.Add(idx) //内存维护在线矿工索引
 		}
 
@@ -163,7 +163,7 @@ func (mgr *Manager) SaveMinerTx(tx *MinerTx) error {
 		// 3) 回收 index (tx.Index 必须在上层填好)
 		mgr.writeQueueChan <- removeIndex(acc.Index)
 		// 4) 回收indexToAccount_
-		mgr.EnqueueDelete("indexToAccount_" + strconv.FormatUint(acc.Index, 10))
+		mgr.EnqueueDelete(KeyIndexToAccount(acc.Index))
 		mgr.IndexMgr.Remove(acc.Index)
 
 	default:
@@ -183,7 +183,7 @@ func (mgr *Manager) SaveMinerTx(tx *MinerTx) error {
 // 其值为实际存储该交易的 key（如 "tx_<txID>" 或 "order_<txID>" 等）。
 func (mgr *Manager) GetAnyTxById(txID string) (*AnyTx, error) {
 	// 1. 先读取通用 key "anyTx_<txID>"
-	anyKey := "anyTx_" + txID
+	anyKey := KeyAnyTx(txID)
 	specificKey, err := mgr.Read(anyKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read anyTx key %s: %v", anyKey, err)
