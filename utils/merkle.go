@@ -1,4 +1,3 @@
-// 文件路径：internal/miner/merkle.go
 package utils
 
 import "crypto/sha256"
