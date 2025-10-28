@@ -69,7 +69,47 @@ func (mgr *Manager) SaveOrderTx(order *OrderTx) error {
 	mgr.EnqueueSet(KeyAnyTx(order.Base.TxId), orderKey)
 	return nil
 }
+func GetOrderTx(mgr *Manager, txID string) (*OrderTx, error) {
+	key := "order_" + txID
+	val, err := mgr.Read(key)
+	if err != nil {
+		return nil, err
+	}
+	order := &OrderTx{}
+	if err := ProtoUnmarshal([]byte(val), order); err != nil {
+		return nil, err
+	}
+	return order, nil
+}
 
+// 去订单ID对应的 OrderTx 读取，
+// 增加 filled_base / filled_quote，然后判断是否 is_filled。
+func (mgr *Manager) UpdateOrderTxInDB(orderID string, tradeAmt, price decimal.Decimal) error {
+
+	orderTx, err := GetOrderTx(mgr, orderID)
+	if err != nil {
+		return err
+	}
+	if orderTx == nil {
+		return fmt.Errorf("orderTx not found: %s", orderID)
+	}
+	oldFilledBase, _ := decimal.NewFromString(orderTx.FilledBase)
+	oldFilledQuote, _ := decimal.NewFromString(orderTx.FilledQuote)
+
+	// 假设 base=tradeAmt, quote= tradeAmt*price
+	newBase := oldFilledBase.Add(tradeAmt)
+	newQuote := oldFilledQuote.Add(tradeAmt.Mul(price))
+
+	orderTx.FilledBase = newBase.String()
+	orderTx.FilledQuote = newQuote.String()
+
+	totalBase, _ := decimal.NewFromString(orderTx.Amount)
+	if newBase.Cmp(totalBase) >= 0 {
+		orderTx.IsFilled = true
+	}
+
+	return mgr.SaveOrderTx(orderTx)
+}
 func (mgr *Manager) GetOrderTx(txID string) (*OrderTx, error) {
 	key := KeyOrderTx(txID)
 	val, err := mgr.Read(key)

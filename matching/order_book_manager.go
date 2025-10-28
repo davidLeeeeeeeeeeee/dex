@@ -5,10 +5,11 @@ import (
 	"dex/logs"
 	"dex/utils"
 	"fmt"
-	"github.com/shopspring/decimal"
-	"google.golang.org/protobuf/proto"
 	"strings"
 	"sync"
+
+	"github.com/shopspring/decimal"
+	"google.golang.org/protobuf/proto"
 )
 
 // TradingPair 结构体用于区分不同交易对
@@ -75,7 +76,7 @@ func (obm *OrderBookManager) handleTradeUpdates() {
 		case ev := <-obm.tradeCh:
 			// 这里你可以更新数据库
 			// 调用一个 DB 函数，比如 db.UpdateOrderTxInDB 来增加撮合量
-			err := db.UpdateOrderTxInDB(ev.OrderID, ev.TradeAmt, ev.TradePrice)
+			err := obm.dbMgr.UpdateOrderTxInDB(ev.OrderID, ev.TradeAmt, ev.TradePrice)
 			if err != nil {
 				logs.Verbose("[OrderBookManager] failed to update DB for order %s: %v", ev.OrderID, err)
 			}
