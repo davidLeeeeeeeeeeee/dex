@@ -3,6 +3,7 @@ package consensus
 import (
 	"dex/config"
 	"dex/db"
+	"dex/pb"
 	"dex/types"
 	"fmt"
 	"strconv"
@@ -27,7 +28,7 @@ func NewConsensusAdapter(dbMgr *db.Manager) *ConsensusAdapter {
 // ============================================
 
 // DBBlockToConsensus 将区块转换为共识区块类型
-func (a *ConsensusAdapter) DBBlockToConsensus(dbBlock *db.Block) (*types.Block, error) {
+func (a *ConsensusAdapter) DBBlockToConsensus(dbBlock *pb.Block) (*types.Block, error) {
 	if dbBlock == nil {
 		return nil, fmt.Errorf("nil db block")
 	}
@@ -42,8 +43,8 @@ func (a *ConsensusAdapter) DBBlockToConsensus(dbBlock *db.Block) (*types.Block, 
 }
 
 // ConsensusBlockToDB 将共识区块转换为数据库格式
-func (a *ConsensusAdapter) ConsensusBlockToDB(block *types.Block, txs []*db.AnyTx) *db.Block {
-	return &db.Block{
+func (a *ConsensusAdapter) ConsensusBlockToDB(block *types.Block, txs []*pb.AnyTx) *pb.Block {
+	return &pb.Block{
 		Height:        block.Height,
 		BlockHash:     block.ID,
 		PrevBlockHash: block.ParentID,
@@ -58,10 +59,10 @@ func (a *ConsensusAdapter) ConsensusBlockToDB(block *types.Block, txs []*db.AnyT
 // ============================================
 
 // 将共识消息转换为PushQuery
-func (a *ConsensusAdapter) ConsensusMessageToPushQuery(msg types.Message, address string) (*db.PushQuery, error) {
+func (a *ConsensusAdapter) ConsensusMessageToPushQuery(msg types.Message, address string) (*pb.PushQuery, error) {
 	container, isBlock := a.prepareContainer(msg)
 
-	return &db.PushQuery{
+	return &pb.PushQuery{
 		Address:          address,
 		Deadline:         a.calculateDeadline(3),
 		ContainerIsBlock: isBlock,
@@ -73,7 +74,7 @@ func (a *ConsensusAdapter) ConsensusMessageToPushQuery(msg types.Message, addres
 }
 
 // PushQueryToConsensusMessage 将PushQuery转换为共识消息
-func (a *ConsensusAdapter) PushQueryToConsensusMessage(pq *db.PushQuery, from types.NodeID) (types.Message, error) {
+func (a *ConsensusAdapter) PushQueryToConsensusMessage(pq *pb.PushQuery, from types.NodeID) (types.Message, error) {
 	msg := types.Message{
 		Type:      types.MsgPushQuery,
 		From:      from,
@@ -83,7 +84,7 @@ func (a *ConsensusAdapter) PushQueryToConsensusMessage(pq *db.PushQuery, from ty
 	}
 
 	if pq.ContainerIsBlock {
-		var block db.Block
+		var block pb.Block
 		if err := proto.Unmarshal(pq.Container, &block); err != nil {
 			return msg, err
 		}
@@ -98,7 +99,7 @@ func (a *ConsensusAdapter) PushQueryToConsensusMessage(pq *db.PushQuery, from ty
 }
 
 // DBChits -> ConsensusChits
-func (a *ConsensusAdapter) ChitsToConsensusMessage(chits *db.Chits, from types.NodeID) types.Message {
+func (a *ConsensusAdapter) ChitsToConsensusMessage(chits *pb.Chits, from types.NodeID) types.Message {
 	return types.Message{
 		Type:              types.MsgChits,
 		From:              from,
@@ -111,8 +112,8 @@ func (a *ConsensusAdapter) ChitsToConsensusMessage(chits *db.Chits, from types.N
 }
 
 // 将共识消息转换为DBChits
-func (a *ConsensusAdapter) ConsensusMessageToChits(msg types.Message) *db.Chits {
-	return &db.Chits{
+func (a *ConsensusAdapter) ConsensusMessageToChits(msg types.Message) *pb.Chits {
+	return &pb.Chits{
 		RequestId:              msg.RequestID,
 		PreferredBlock:         msg.PreferredID,
 		AcceptedBlock:          msg.AcceptedID,
@@ -157,9 +158,9 @@ func (a *ConsensusAdapter) PrepareBlockContainer(blockID string, height uint64) 
 }
 
 // ProcessReceivedContainer 处理接收到的容器数据
-func (a *ConsensusAdapter) ProcessReceivedContainer(container []byte, isBlock bool, height uint64, blockID string) (*db.Block, error) {
+func (a *ConsensusAdapter) ProcessReceivedContainer(container []byte, isBlock bool, height uint64, blockID string) (*pb.Block, error) {
 	if isBlock {
-		var block db.Block
+		var block pb.Block
 		if err := proto.Unmarshal(container, &block); err != nil {
 			return nil, err
 		}
@@ -172,7 +173,7 @@ func (a *ConsensusAdapter) ProcessReceivedContainer(container []byte, isBlock bo
 		return nil, err
 	}
 
-	return &db.Block{
+	return &pb.Block{
 		Height:    height,
 		BlockHash: blockID,
 		Body:      txs,
@@ -226,7 +227,7 @@ func (a *ConsensusAdapter) prepareContainer(msg types.Message) ([]byte, bool) {
 	return nil, false
 }
 
-func (a *ConsensusAdapter) resolveShorHashesToTxs(shortHashes []byte) ([]*db.AnyTx, error) {
+func (a *ConsensusAdapter) resolveShorHashesToTxs(shortHashes []byte) ([]*pb.AnyTx, error) {
 	// TODO: 实现短哈希到交易的解析
 	return nil, nil
 }

@@ -4,6 +4,7 @@ import (
 	"dex/db"
 	"dex/interfaces"
 	"dex/logs"
+	"dex/pb"
 	"dex/txpool"
 	"dex/types"
 	"encoding/json"
@@ -429,7 +430,7 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 		}
 	} else {
 		// 创建简单的数据库区块
-		dbBlock := &db.Block{
+		dbBlock := &pb.Block{
 			Height:        block.Height,
 			BlockHash:     block.ID,
 			PrevBlockHash: block.ParentID,
@@ -471,7 +472,7 @@ func (s *RealBlockStore) loadFromDB() {
 	}
 }
 
-func (s *RealBlockStore) convertDBBlockToTypes(dbBlock *db.Block) *types.Block {
+func (s *RealBlockStore) convertDBBlockToTypes(dbBlock *pb.Block) *types.Block {
 	if s.adapter == nil {
 		s.adapter = NewConsensusAdapter(s.dbManager)
 	}
@@ -490,7 +491,7 @@ func (s *RealBlockStore) finalizeBlockWithTxs(block *types.Block) {
 		for _, tx := range cachedBlock.Body {
 			base := tx.GetBase()
 			if base != nil {
-				base.Status = db.Status_SUCCEED
+				base.Status = pb.Status_SUCCEED
 				base.ExecutedHeight = block.Height
 
 				// 更新交易池

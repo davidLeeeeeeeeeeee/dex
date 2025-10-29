@@ -2,7 +2,7 @@ package sender
 
 import (
 	"bytes"
-	"dex/db"
+	"dex/pb"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +14,7 @@ import (
 type pullBatchTxMessage struct {
 	requestData []byte
 	// onSuccess 回调返回获取到的交易切片
-	onSuccess func([]*db.AnyTx)
+	onSuccess func([]*pb.AnyTx)
 }
 
 // 执行HTTP/3 POST请求获取批量交易
@@ -48,7 +48,7 @@ func doSendBatchGetTxs(t *SendTask, client *http.Client) error {
 		return err
 	}
 
-	var respMsg db.BatchGetShortTxResponse
+	var respMsg pb.BatchGetShortTxResponse
 	if err := proto.Unmarshal(respBytes, &respMsg); err != nil {
 		return fmt.Errorf("doSendBatchGetTxs: unmarshal BatchGetDataResponse failed: %v", err)
 	}

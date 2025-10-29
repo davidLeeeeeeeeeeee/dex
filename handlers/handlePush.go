@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"dex/consensus"
-	"dex/db"
 	"dex/logs"
+	"dex/pb"
 	"dex/types"
 	"io"
 	"net/http"
@@ -16,7 +16,7 @@ func (hm *HandlerManager) HandlePushQuery(w http.ResponseWriter, r *http.Request
 	hm.Stats.RecordAPICall("HandlePushQuery")
 	bodyBytes, _ := io.ReadAll(r.Body)
 
-	var pushQuery db.PushQuery
+	var pushQuery pb.PushQuery
 	proto.Unmarshal(bodyBytes, &pushQuery)
 	// 使用 pushQuery.Address 而不是从 IP 推断
 	senderAddress := pushQuery.Address

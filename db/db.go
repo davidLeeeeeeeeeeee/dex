@@ -3,6 +3,7 @@ package db
 import (
 	"dex/config"
 	"dex/logs"
+	"dex/pb"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,7 +33,7 @@ type Manager struct {
 	// 你可以在这里做一个 wait group，保证 close 的时候能等 goroutine 退出
 	wg sync.WaitGroup
 	// 缓存的区块切片，最多存 10 个
-	cachedBlocks   []*Block
+	cachedBlocks   []*pb.Block
 	cachedBlocksMu sync.RWMutex
 }
 
@@ -329,7 +330,7 @@ func (manager *Manager) Read(key string) (string, error) {
 }
 
 // 将 db.Transaction 序列化为 [][]byte
-func SerializeAllTransactions(txCopy []*AnyTx) [][]byte {
+func SerializeAllTransactions(txCopy []*pb.AnyTx) [][]byte {
 
 	// 1) 按 TxId 排序
 	sort.Slice(txCopy, func(i, j int) bool {
@@ -346,7 +347,7 @@ func SerializeAllTransactions(txCopy []*AnyTx) [][]byte {
 
 // 根据 db.Transaction 的字段进行序列化
 // 实际中应根据业务需求将交易变成字节切片，这里只作简单示例
-func serializeTransaction(tx *AnyTx) []byte {
+func serializeTransaction(tx *pb.AnyTx) []byte {
 	data := []byte(tx.GetTxId() + "|" + tx.GetBase().FromAddress)
 	// 可以增加更多字段序列化逻辑
 	return data

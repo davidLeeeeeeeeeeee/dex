@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/pb"
 	_ "fmt"
 	"strings"
 
@@ -10,7 +11,7 @@ import (
 )
 
 // SaveAccount stores an Account in the database
-func (mgr *Manager) SaveAccount(account *Account) error {
+func (mgr *Manager) SaveAccount(account *pb.Account) error {
 	key := KeyAccount(account.Address)
 	data, err := ProtoMarshal(account)
 	if err != nil {
@@ -22,14 +23,14 @@ func (mgr *Manager) SaveAccount(account *Account) error {
 }
 
 // GetAccount retrieves an Account from the database
-func (mgr *Manager) GetAccount(address string) (*Account, error) {
+func (mgr *Manager) GetAccount(address string) (*pb.Account, error) {
 	key := KeyAccount(address)
 	//logs.Trace("GetAccount key:%s", key)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
 	}
-	account := &Account{}
+	account := &pb.Account{}
 	if err := ProtoUnmarshal([]byte(val), account); err != nil {
 		return nil, err
 	}
@@ -37,7 +38,7 @@ func (mgr *Manager) GetAccount(address string) (*Account, error) {
 }
 
 // CalcStake = receive_votes + FB.miner_locked_balance
-func CalcStake(acc *Account) (decimal.Decimal, error) {
+func CalcStake(acc *pb.Account) (decimal.Decimal, error) {
 	rv, err := decimal.NewFromString(acc.ReceiveVotes)
 	if err != nil {
 		rv = decimal.Zero // 如果acc.ReceiveVotes空或解析失败，可设为0
@@ -96,10 +97,7 @@ func buildStakeIndexKey(stake decimal.Decimal, address string) string {
 	return KeyStakeIndex(finalStr, address)
 }
 
-// getAccountByIndex 根据顺序索引取出完整 Account。
-// 1. 先用 "indexToAccount_<idx>" 拿到地址字符串
-// 2. 再用 "account_<addr>" 拿到 Account 序列化字节并反序列化
-func (mgr *Manager) getAccountByIndex(idx uint64) (*Account, error) {
+func (mgr *Manager) getAccountByIndex(idx uint64) (*pb.Account, error) {
 	//----------------------------------------
 	// ① 取出地址字符串
 	//----------------------------------------
@@ -143,7 +141,7 @@ func (mgr *Manager) getAccountByIndex(idx uint64) (*Account, error) {
 	//----------------------------------------
 	// ③ 反序列化并返回
 	//----------------------------------------
-	acc := &Account{}
+	acc := &pb.Account{}
 	if err := proto.Unmarshal(accBytes, acc); err != nil {
 		return nil, err
 	}

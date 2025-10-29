@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"dex/db"
+	"dex/pb"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,7 +27,7 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var getDataMsg db.GetData
+	var getDataMsg pb.GetData
 	if err := proto.Unmarshal(bodyBytes, &getDataMsg); err != nil {
 		http.Error(w, "Invalid GetData proto", http.StatusBadRequest)
 		return
@@ -63,7 +63,7 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
-	var req db.GetBlockByIDRequest
+	var req pb.GetBlockByIDRequest
 	if err := proto.Unmarshal(body, &req); err != nil {
 		http.Error(w, "Invalid GetBlockByID proto", http.StatusBadRequest)
 		return
@@ -73,7 +73,7 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Block %s not found", req.BlockId), http.StatusNotFound)
 		return
 	}
-	resp := &db.GetBlockResponse{Block: blk}
+	resp := &pb.GetBlockResponse{Block: blk}
 	bytes, _ := proto.Marshal(resp)
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.WriteHeader(http.StatusOK)

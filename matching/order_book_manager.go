@@ -3,6 +3,7 @@ package matching
 import (
 	"dex/db"
 	"dex/logs"
+	"dex/pb"
 	"dex/utils"
 	"fmt"
 	"strings"
@@ -142,7 +143,7 @@ func (obm *OrderBookManager) LoadOrdersInRange(
 			if err != nil {
 				continue
 			}
-			var idx db.OrderPriceIndex
+			var idx pb.OrderPriceIndex
 			if err := proto.Unmarshal(val, &idx); err != nil {
 				// 不是一个有效的 OrderPriceIndex 结构，跳过
 				continue

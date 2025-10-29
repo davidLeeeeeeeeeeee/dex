@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"crypto/sha256"
+	"dex/pb"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -32,32 +33,6 @@ func (manager *Manager) DeleteKey(key string) error {
 	return db.Update(func(txn *badger.Txn) error {
 		return txn.Delete([]byte(key))
 	})
-}
-func (m *AnyTx) GetBase() *BaseMessage {
-	switch tx := m.GetContent().(type) {
-	case *AnyTx_IssueTokenTx:
-		return tx.IssueTokenTx.Base
-	case *AnyTx_FreezeTx:
-		return tx.FreezeTx.Base
-	case *AnyTx_Transaction:
-		return tx.Transaction.Base
-	case *AnyTx_OrderTx:
-		return tx.OrderTx.Base
-	case *AnyTx_AddressTx:
-		return tx.AddressTx.Base
-	case *AnyTx_CandidateTx:
-		return tx.CandidateTx.Base
-	default:
-		return nil
-	}
-}
-
-func (m *AnyTx) GetTxId() string {
-	base := m.GetBase()
-	if base == nil {
-		return ""
-	}
-	return base.TxId
 }
 
 // getNewIndex 只做只读操作，计算“应该用哪个下标”
@@ -128,66 +103,66 @@ func HashTx(tx proto.Message) (string, error) {
 
 	// 根据不同的 tx 类型，清空其中 BaseMessage 的 tx_id 和 signature 字段
 	switch t := txCopy.(type) {
-	case *IssueTokenTx:
+	case *pb.IssueTokenTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
 			t.Base.Signature = ""
 		}
-	case *FreezeTx:
+	case *pb.FreezeTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
 			t.Base.Signature = ""
 		}
-	case *Transaction:
+	case *pb.Transaction:
 		if t.Base != nil {
 			t.Base.TxId = ""
 			t.Base.Signature = ""
 		}
-	case *OrderTx:
+	case *pb.OrderTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
 			t.Base.Signature = ""
 		}
-	case *CandidateTx:
+	case *pb.CandidateTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
 			t.Base.Signature = ""
 		}
-	case *MinerTx:
+	case *pb.MinerTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
 			t.Base.Signature = ""
 		}
 
-	case *AnyTx:
+	case *pb.AnyTx:
 		// 对于 AnyTx，需要判断当前存放的是哪种 tx，并清空其中的 BaseMessage 中相关字段
 		switch content := t.Content.(type) {
-		case *AnyTx_IssueTokenTx:
+		case *pb.AnyTx_IssueTokenTx:
 			if content.IssueTokenTx.Base != nil {
 				content.IssueTokenTx.Base.TxId = ""
 				content.IssueTokenTx.Base.Signature = ""
 			}
-		case *AnyTx_FreezeTx:
+		case *pb.AnyTx_FreezeTx:
 			if content.FreezeTx.Base != nil {
 				content.FreezeTx.Base.TxId = ""
 				content.FreezeTx.Base.Signature = ""
 			}
-		case *AnyTx_Transaction:
+		case *pb.AnyTx_Transaction:
 			if content.Transaction.Base != nil {
 				content.Transaction.Base.TxId = ""
 				content.Transaction.Base.Signature = ""
 			}
-		case *AnyTx_OrderTx:
+		case *pb.AnyTx_OrderTx:
 			if content.OrderTx.Base != nil {
 				content.OrderTx.Base.TxId = ""
 				content.OrderTx.Base.Signature = ""
 			}
-		case *AnyTx_AddressTx:
+		case *pb.AnyTx_AddressTx:
 			if content.AddressTx.Base != nil {
 				content.AddressTx.Base.TxId = ""
 				content.AddressTx.Base.Signature = ""
 			}
-		case *AnyTx_CandidateTx:
+		case *pb.AnyTx_CandidateTx:
 			if content.CandidateTx.Base != nil {
 				content.CandidateTx.Base.TxId = ""
 				content.CandidateTx.Base.Signature = ""

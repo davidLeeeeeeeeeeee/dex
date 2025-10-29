@@ -2,7 +2,7 @@ package sender
 
 import (
 	"bytes"
-	"dex/db"
+	"dex/pb"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,7 +40,7 @@ func doSendHeightQuery(t *SendTask, client *http.Client) error {
 		return err
 	}
 
-	var heightResp db.HeightResponse
+	var heightResp pb.HeightResponse
 	if err := proto.Unmarshal(respBytes, &heightResp); err != nil {
 		return fmt.Errorf("doSendHeightQuery: unmarshal HeightResponse fail: %v", err)
 	}

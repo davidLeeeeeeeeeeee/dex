@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/pb"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -8,7 +9,7 @@ import (
 )
 
 // SavePendingAnyTx 改为成员函数
-func (mgr *Manager) SavePendingAnyTx(tx *AnyTx) error {
+func (mgr *Manager) SavePendingAnyTx(tx *pb.AnyTx) error {
 	txID := tx.GetTxId()
 	if txID == "" {
 		return fmt.Errorf("SavePendingAnyTx: empty txID")
@@ -33,14 +34,14 @@ func (mgr *Manager) DeletePendingAnyTx(txID string) error {
 }
 
 // LoadPendingAnyTx 改为成员函数
-func (mgr *Manager) LoadPendingAnyTx() ([]*AnyTx, error) {
+func (mgr *Manager) LoadPendingAnyTx() ([]*pb.AnyTx, error) {
 	mgr.mu.RLock()
 	db := mgr.Db
 	mgr.mu.RUnlock()
 	if db == nil {
 		return nil, fmt.Errorf("database is not initialized or closed")
 	}
-	var result []*AnyTx
+	var result []*pb.AnyTx
 
 	err := db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -53,7 +54,7 @@ func (mgr *Manager) LoadPendingAnyTx() ([]*AnyTx, error) {
 			if e != nil {
 				return e
 			}
-			var anyTx AnyTx
+			var anyTx pb.AnyTx
 			if uerr := proto.Unmarshal(val, &anyTx); uerr != nil {
 				continue
 			}

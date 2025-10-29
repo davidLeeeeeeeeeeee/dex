@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"dex/db"
+	"dex/pb"
 	"net/http"
 
 	"google.golang.org/protobuf/proto"
@@ -21,7 +21,7 @@ func (hm *HandlerManager) HandleNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodeList := &db.NodeList{
+	nodeList := &pb.NodeList{
 		Nodes: nodes,
 	}
 	data, _ := proto.Marshal(nodeList)

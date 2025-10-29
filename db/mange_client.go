@@ -1,7 +1,9 @@
 package db
 
+import "dex/pb"
+
 // SaveClientInfo 改为成员函数
-func (mgr *Manager) SaveClientInfo(info *ClientInfo) error {
+func (mgr *Manager) SaveClientInfo(info *pb.ClientInfo) error {
 	key := KeyClientInfo(info.Ip)
 	data, err := ProtoMarshal(info)
 	if err != nil {
@@ -12,13 +14,13 @@ func (mgr *Manager) SaveClientInfo(info *ClientInfo) error {
 }
 
 // GetClientInfo 改为成员函数
-func (mgr *Manager) GetClientInfo(ip string) (*ClientInfo, error) {
+func (mgr *Manager) GetClientInfo(ip string) (*pb.ClientInfo, error) {
 	key := KeyClientInfo(ip)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
 	}
-	info := &ClientInfo{}
+	info := &pb.ClientInfo{}
 	if err := ProtoUnmarshal([]byte(val), info); err != nil {
 		return nil, err
 	}

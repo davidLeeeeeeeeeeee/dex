@@ -5,6 +5,7 @@ import (
 	"dex/db"
 	"dex/interfaces"
 	"dex/logs"
+	"dex/pb"
 	"dex/sender"
 	"dex/txpool"
 	"dex/types"
@@ -80,7 +81,7 @@ func (m *ConsensusNodeManager) GetActiveQueryCount() int {
 }
 
 // 添加新区块到共识
-func (m *ConsensusNodeManager) AddBlock(block *db.Block) error {
+func (m *ConsensusNodeManager) AddBlock(block *pb.Block) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

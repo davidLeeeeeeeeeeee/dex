@@ -3,7 +3,7 @@ package sender
 import (
 	"bytes"
 	"compress/gzip"
-	"dex/db"
+	"dex/pb"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +14,7 @@ import (
 // pullBlockMessage 用来包装：要请求的 height + 回调函数
 type pullBlockMessage struct {
 	requestData []byte
-	onSuccess   func(*db.Block)
+	onSuccess   func(*pb.Block)
 }
 
 // 真正执行 HTTP/3 POST /getblock 并解析返回
@@ -61,7 +61,7 @@ func doSendGetBlock(t *SendTask, client *http.Client) error {
 		return fmt.Errorf("doSendGetBlock: read body error: %v", err)
 	}
 
-	var blockResp db.GetBlockResponse
+	var blockResp pb.GetBlockResponse
 	if err := proto.Unmarshal(respBytes, &blockResp); err != nil {
 		return fmt.Errorf("doSendGetBlock: unmarshal GetBlockResponse err=%v", err)
 	}

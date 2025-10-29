@@ -6,6 +6,7 @@ import (
 	"dex/db"
 	"dex/interfaces"
 	"dex/logs"
+	"dex/pb"
 	"dex/sender"
 	"dex/stats"
 	"dex/types"
@@ -118,7 +119,7 @@ func (t *RealTransport) sendPushQuery(targetIP string, msg types.Message) error 
 
 // 使用senderManager发送
 func (t *RealTransport) sendPullQuery(targetIP string, msg types.Message) error {
-	pq := &db.PullQuery{
+	pq := &pb.PullQuery{
 		RequestId:       msg.RequestID,
 		Address:         t.address,
 		Deadline:        t.adapter.calculateDeadline(3),
@@ -138,7 +139,7 @@ func (t *RealTransport) sendChits(targetIP string, msg types.Message) error {
 
 func (t *RealTransport) sendGet(targetIP string, msg types.Message) error {
 	// 使用新的PullBlockByID方法
-	t.senderManager.PullGet(targetIP, msg.BlockID, func(block *db.Block) {
+	t.senderManager.PullGet(targetIP, msg.BlockID, func(block *pb.Block) {
 		if block != nil {
 			// 转换为types.Block
 			consensusBlock, err := t.adapter.DBBlockToConsensus(block)
@@ -192,7 +193,7 @@ func (t *RealTransport) sendGossip(targetIP string, msg types.Message) error {
 }
 func (t *RealTransport) sendSyncRequest(targetIP string, msg types.Message) error {
 	for h := msg.FromHeight; h <= msg.ToHeight; h++ {
-		t.senderManager.PullBlock(targetIP, h, func(dbBlock *db.Block) {
+		t.senderManager.PullBlock(targetIP, h, func(dbBlock *pb.Block) {
 			block, err := t.adapter.DBBlockToConsensus(dbBlock)
 			if err != nil {
 				logs.Error("[RealTransport] Failed to convert DB block: %v", err)
@@ -210,7 +211,7 @@ func (t *RealTransport) sendSyncRequest(targetIP string, msg types.Message) erro
 }
 
 func (t *RealTransport) sendHeightQuery(targetIP string, msg types.Message) error {
-	return t.senderManager.SendHeightQuery(targetIP, func(resp *db.HeightResponse) {
+	return t.senderManager.SendHeightQuery(targetIP, func(resp *pb.HeightResponse) {
 		t.inbox <- types.Message{
 			Type:          types.MsgHeightResponse,
 			From:          msg.From,
@@ -221,7 +222,7 @@ func (t *RealTransport) sendHeightQuery(targetIP string, msg types.Message) erro
 }
 
 func (t *RealTransport) sendSnapshotRequest(targetIP string, msg types.Message) error {
-	t.senderManager.PullBlock(targetIP, msg.Height, func(block *db.Block) {
+	t.senderManager.PullBlock(targetIP, msg.Height, func(block *pb.Block) {
 		logs.Info("[RealTransport] Received snapshot at height %d", block.Height)
 	})
 	return nil

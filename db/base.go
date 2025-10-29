@@ -1,9 +1,12 @@
 package db
 
-import "fmt"
+import (
+	"dex/pb"
+	"fmt"
+)
 
-func NewZeroTokenBalance() *TokenBalance {
-	return &TokenBalance{
+func NewZeroTokenBalance() *pb.TokenBalance {
+	return &pb.TokenBalance{
 		Balance:                "0",
 		CandidateLockedBalance: "0",
 		MinerLockedBalance:     "0",
@@ -14,7 +17,7 @@ func NewZeroTokenBalance() *TokenBalance {
 }
 
 // SaveAnyTx 改为成员函数
-func (mgr *Manager) SaveAnyTx(anyTx *AnyTx) error {
+func (mgr *Manager) SaveAnyTx(anyTx *pb.AnyTx) error {
 	txID := anyTx.GetTxId()
 	if txID == "" {
 		return fmt.Errorf("SaveAnyTx: empty txID not allowed")
@@ -30,7 +33,7 @@ func (mgr *Manager) SaveAnyTx(anyTx *AnyTx) error {
 
 	// 3. 如果 BaseMessage 是 PENDING，则写 "pending_anytx_<txID>"
 	base := anyTx.GetBase()
-	if base != nil && base.Status == Status_PENDING {
+	if base != nil && base.Status == pb.Status_PENDING {
 		mgr.EnqueueSet(KeyPendingAnyTx(txID), "")
 	} else {
 		mgr.EnqueueDelete(KeyPendingAnyTx(txID))
@@ -38,11 +41,11 @@ func (mgr *Manager) SaveAnyTx(anyTx *AnyTx) error {
 
 	// 4. 调度到不同的落库/索引函数
 	switch content := anyTx.GetContent().(type) {
-	case *AnyTx_OrderTx:
+	case *pb.AnyTx_OrderTx:
 		err = mgr.SaveOrderTx(content.OrderTx)
-	case *AnyTx_MinerTx:
+	case *pb.AnyTx_MinerTx:
 		err = mgr.SaveMinerTx(content.MinerTx)
-	case *AnyTx_Transaction:
+	case *pb.AnyTx_Transaction:
 		err = mgr.SaveTransaction(content.Transaction)
 
 	default:

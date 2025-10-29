@@ -3,6 +3,7 @@ package network
 import (
 	"dex/db"
 	"dex/logs"
+	"dex/pb"
 	"sync"
 )
 
@@ -10,14 +11,14 @@ import (
 type Network struct {
 	dbManager *db.Manager
 	mu        sync.RWMutex
-	nodes     map[string]*db.NodeInfo // key=publicKey
+	nodes     map[string]*pb.NodeInfo // key=publicKey
 }
 
 // NewNetwork 创建一个 Network 实例并从DB加载已有节点
 func NewNetwork(dbMgr *db.Manager) *Network {
 	n := &Network{
 		dbManager: dbMgr,
-		nodes:     make(map[string]*db.NodeInfo),
+		nodes:     make(map[string]*pb.NodeInfo),
 	}
 
 	// 如果需要初始化时加载 DB 里的 node信息
@@ -37,7 +38,7 @@ func (n *Network) AddOrUpdateNode(pubKey, ip string, isOnline bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	info := &db.NodeInfo{
+	info := &pb.NodeInfo{
 		PublicKey: pubKey,
 		Ip:        ip,
 		IsOnline:  isOnline,
@@ -51,18 +52,18 @@ func (n *Network) AddOrUpdateNode(pubKey, ip string, isOnline bool) {
 }
 
 // GetNodeByPubKey 获取某个公钥对应的NodeInfo
-func (n *Network) GetNodeByPubKey(pubKey string) *db.NodeInfo {
+func (n *Network) GetNodeByPubKey(pubKey string) *pb.NodeInfo {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.nodes[pubKey]
 }
 
 // GetAllNodes 返回所有节点信息
-func (n *Network) GetAllNodes() []*db.NodeInfo {
+func (n *Network) GetAllNodes() []*pb.NodeInfo {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
-	var result []*db.NodeInfo
+	var result []*pb.NodeInfo
 	for _, node := range n.nodes {
 		result = append(result, node)
 	}

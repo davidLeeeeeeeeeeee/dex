@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"dex/consensus"
-	"dex/db"
 	"dex/logs"
+	"dex/pb"
 	"dex/types"
 	"io"
 	"net/http"
@@ -20,7 +20,7 @@ func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var pullQuery db.PullQuery
+	var pullQuery pb.PullQuery
 	if err := proto.Unmarshal(bodyBytes, &pullQuery); err != nil {
 		http.Error(w, "Invalid PullQuery proto", http.StatusBadRequest)
 		return

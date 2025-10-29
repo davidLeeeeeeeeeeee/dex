@@ -5,6 +5,7 @@ import (
 	"dex/db"
 	"dex/logs"
 	"dex/network"
+	"dex/pb"
 	"dex/utils"
 	"encoding/hex"
 	"fmt"
@@ -91,7 +92,7 @@ func (tp *TxPool) Stop() error {
 }
 
 // 提交交易（对外的主要接口）
-func (tp *TxPool) SubmitTx(anyTx *db.AnyTx, fromIP string, onAdded OnTxAddedCallback) error {
+func (tp *TxPool) SubmitTx(anyTx *pb.AnyTx, fromIP string, onAdded OnTxAddedCallback) error {
 	if anyTx == nil {
 		return fmt.Errorf("nil transaction")
 	}
@@ -135,22 +136,22 @@ func (tp *TxPool) HasTransaction(txID string) bool {
 	return exists
 }
 
-func (tp *TxPool) GetTransactionById(txID string) *db.AnyTx {
+func (tp *TxPool) GetTransactionById(txID string) *pb.AnyTx {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 	if v, ok := tp.pendingAnyTxCache.Get(txID); ok {
-		if tx, ok := v.(*db.AnyTx); ok {
+		if tx, ok := v.(*pb.AnyTx); ok {
 			return tx
 		}
 	}
 	return nil
 }
 
-func (tp *TxPool) GetPendingTxs() []*db.AnyTx {
+func (tp *TxPool) GetPendingTxs() []*pb.AnyTx {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 
-	var result []*db.AnyTx
+	var result []*pb.AnyTx
 	keys := tp.pendingAnyTxCache.Keys()
 	for _, k := range keys {
 		keyStr, ok := k.(string)
@@ -158,7 +159,7 @@ func (tp *TxPool) GetPendingTxs() []*db.AnyTx {
 			continue
 		}
 		if value, exists := tp.pendingAnyTxCache.Get(keyStr); exists {
-			if anyTx, ok := value.(*db.AnyTx); ok {
+			if anyTx, ok := value.(*pb.AnyTx); ok {
 				base := anyTx.GetBase()
 				if base != nil {
 					result = append(result, anyTx)
@@ -170,7 +171,7 @@ func (tp *TxPool) GetPendingTxs() []*db.AnyTx {
 }
 
 // 内部方法
-func (tp *TxPool) storeAnyTx(anyTx *db.AnyTx) error {
+func (tp *TxPool) storeAnyTx(anyTx *pb.AnyTx) error {
 	txID := anyTx.GetTxId()
 	if txID == "" {
 		return fmt.Errorf("txID is empty")
@@ -217,7 +218,7 @@ func (p *TxPool) loadFromDB() {
 	logs.Verbose("[TxPool] Loaded %d pending AnyTx from DB.\n", len(pendingAnyTxs))
 }
 
-func (p *TxPool) StoreAnyTx(anyTx *db.AnyTx) error {
+func (p *TxPool) StoreAnyTx(anyTx *pb.AnyTx) error {
 	txID := anyTx.GetTxId()
 	if txID == "" {
 		return fmt.Errorf("txID is empty")
@@ -254,12 +255,12 @@ func (p *TxPool) RemoveAnyTx(txID string) {
 }
 
 // 返回内存里的 pendingTx
-func (p *TxPool) GetPendingAnyTx() []*db.AnyTx {
+func (p *TxPool) GetPendingAnyTx() []*pb.AnyTx {
 
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	var result []*db.AnyTx
+	var result []*pb.AnyTx
 	// Step 1: 获取所有 key，并转为 []string
 	rawKeys := p.pendingAnyTxCache.Keys()
 	var keys []string
@@ -275,7 +276,7 @@ func (p *TxPool) GetPendingAnyTx() []*db.AnyTx {
 	// Step 3: 遍历已排序的 key 获取值
 	for _, k := range keys {
 		if value, exists := p.pendingAnyTxCache.Get(k); exists {
-			if anyTx, ok := value.(*db.AnyTx); ok {
+			if anyTx, ok := value.(*pb.AnyTx); ok {
 				result = append(result, anyTx)
 			}
 		}
@@ -284,11 +285,11 @@ func (p *TxPool) GetPendingAnyTx() []*db.AnyTx {
 }
 
 // GetPending65500Tx returns up to the first 65500 AnyTx from pendingAnyTxCache.
-func (p *TxPool) GetPending65500Tx() []*db.AnyTx {
+func (p *TxPool) GetPending65500Tx() []*pb.AnyTx {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	cfg := config.DefaultConfig()
-	var result []*db.AnyTx
+	var result []*pb.AnyTx
 	keys := p.pendingAnyTxCache.Keys()
 	maxCount := cfg.TxPool.MaxPendingTxs
 	count := 0
@@ -302,7 +303,7 @@ func (p *TxPool) GetPending65500Tx() []*db.AnyTx {
 			continue
 		}
 		if value, exists := p.pendingAnyTxCache.Get(keyStr); exists {
-			if anyTx, ok := value.(*db.AnyTx); ok {
+			if anyTx, ok := value.(*pb.AnyTx); ok {
 				result = append(result, anyTx)
 				count++
 			}
@@ -311,7 +312,7 @@ func (p *TxPool) GetPending65500Tx() []*db.AnyTx {
 	return result
 }
 
-func (p *TxPool) ConcatFirst8Bytes(txs []*db.AnyTx) []byte {
+func (p *TxPool) ConcatFirst8Bytes(txs []*pb.AnyTx) []byte {
 	start := time.Now()
 	defer func() {
 		elapsed := time.Since(start)
@@ -344,29 +345,29 @@ func (p *TxPool) ConcatFirst8Bytes(txs []*db.AnyTx) []byte {
 //	用于从 AnyTx 提取 TxId
 //
 // ---------------------------------------------------------------------------
-func ExtractAnyTxId(a *db.AnyTx) string {
+func ExtractAnyTxId(a *pb.AnyTx) string {
 	switch content := a.GetContent().(type) {
-	case *db.AnyTx_IssueTokenTx:
+	case *pb.AnyTx_IssueTokenTx:
 		if content.IssueTokenTx.Base != nil {
 			return content.IssueTokenTx.Base.TxId
 		}
-	case *db.AnyTx_FreezeTx:
+	case *pb.AnyTx_FreezeTx:
 		if content.FreezeTx.Base != nil {
 			return content.FreezeTx.Base.TxId
 		}
-	case *db.AnyTx_Transaction:
+	case *pb.AnyTx_Transaction:
 		if content.Transaction.Base != nil {
 			return content.Transaction.Base.TxId
 		}
-	case *db.AnyTx_OrderTx:
+	case *pb.AnyTx_OrderTx:
 		if content.OrderTx.Base != nil {
 			return content.OrderTx.Base.TxId
 		}
-	case *db.AnyTx_AddressTx:
+	case *pb.AnyTx_AddressTx:
 		if content.AddressTx.Base != nil {
 			return content.AddressTx.Base.TxId
 		}
-	case *db.AnyTx_CandidateTx:
+	case *pb.AnyTx_CandidateTx:
 		if content.CandidateTx.Base != nil {
 			return content.CandidateTx.Base.TxId
 		}
@@ -378,11 +379,11 @@ func ExtractAnyTxId(a *db.AnyTx) string {
 // 根据每笔Tx的发起方(FB余额)由大到小排序，
 // 并将排序后序列生成一个聚合哈希(txs_hash)。
 // 返回： (sortedTxs, txsHashHexString, error)
-func SortTxsByFBBalanceAndComputeHash(dbMgr *db.Manager, txs []*db.AnyTx) ([]*db.AnyTx, string, error) {
+func SortTxsByFBBalanceAndComputeHash(dbMgr *db.Manager, txs []*pb.AnyTx) ([]*pb.AnyTx, string, error) {
 
 	// 1. 准备一个临时结构，用来同时保存 Tx 和 对应FB余额
 	type txWithBal struct {
-		anyTx   *db.AnyTx
+		anyTx   *pb.AnyTx
 		balance decimal.Decimal
 	}
 
@@ -421,7 +422,7 @@ func SortTxsByFBBalanceAndComputeHash(dbMgr *db.Manager, txs []*db.AnyTx) ([]*db
 	})
 
 	// 4. 生成排序后的结果切片
-	sortedTxs := make([]*db.AnyTx, len(tmpList))
+	sortedTxs := make([]*pb.AnyTx, len(tmpList))
 	for i, v := range tmpList {
 		sortedTxs[i] = v.anyTx
 	}
@@ -444,7 +445,7 @@ func SortTxsByFBBalanceAndComputeHash(dbMgr *db.Manager, txs []*db.AnyTx) ([]*db
 
 	return sortedTxs, txsHashHex, nil
 }
-func (p *TxPool) GetTxsByShortHashes(shortHashes [][]byte, isSync bool) []*db.AnyTx {
+func (p *TxPool) GetTxsByShortHashes(shortHashes [][]byte, isSync bool) []*pb.AnyTx {
 	//start := time.Now()
 	//defer func() {
 	//	elapsed := time.Since(start)
@@ -455,7 +456,7 @@ func (p *TxPool) GetTxsByShortHashes(shortHashes [][]byte, isSync bool) []*db.An
 
 	//logs.Trace("GetTxsByShortHashes called: %d shortHashes", len(shortHashes))
 
-	var results []*db.AnyTx
+	var results []*pb.AnyTx
 	seen := make(map[string]struct{}, len(shortHashes))
 
 	for _, shortHash := range shortHashes {
@@ -489,7 +490,7 @@ func (p *TxPool) GetTxsByShortHashes(shortHashes [][]byte, isSync bool) []*db.An
 			//logs.Trace("pendingAnyTxCache miss for txID %s", txID)
 			continue
 		}
-		anyTx, ok := txData.(*db.AnyTx)
+		anyTx, ok := txData.(*pb.AnyTx)
 		if !ok {
 			//logs.Trace("pendingAnyTxCache value for %s is not *db.AnyTx (got %T)", txID, txData)
 			continue

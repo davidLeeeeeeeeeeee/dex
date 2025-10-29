@@ -5,6 +5,7 @@ import (
 	"dex/config"
 	"dex/db"
 	"dex/logs"
+	"dex/pb"
 	"dex/txpool"
 	"dex/types"
 	"encoding/hex"
@@ -31,11 +32,11 @@ type SenderManager struct {
 type pullBlockByIDMessage struct {
 	requestData []byte
 	blockID     string
-	onSuccess   func(*db.Block)
+	onSuccess   func(*pb.Block)
 }
 type pullTxMessage struct {
 	requestData []byte
-	onSuccess   func(*db.AnyTx)
+	onSuccess   func(*pb.AnyTx)
 	txPool      *txpool.TxPool
 }
 
@@ -57,7 +58,7 @@ func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, no
 }
 
 // BroadcastTx 广播交易
-func (sm *SenderManager) BroadcastTx(tx *db.AnyTx) {
+func (sm *SenderManager) BroadcastTx(tx *pb.AnyTx) {
 	data, err := proto.Marshal(tx)
 	if err != nil {
 		logs.Verbose("BroadcastTx: proto marshal failed: %v", err)
@@ -84,7 +85,7 @@ func (sm *SenderManager) BroadcastTx(tx *db.AnyTx) {
 }
 
 // SendTxToAllPeers 发送交易给所有节点
-func (sm *SenderManager) SendTxToAllPeers(tx *db.AnyTx) {
+func (sm *SenderManager) SendTxToAllPeers(tx *pb.AnyTx) {
 	data, err := proto.Marshal(tx)
 	if err != nil {
 		logs.Error("SendTxToAllPeers: marshal failed: %v", err)
@@ -110,8 +111,8 @@ func (sm *SenderManager) SendTxToAllPeers(tx *db.AnyTx) {
 }
 
 // 拉取指定交易
-func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*db.AnyTx)) {
-	getDataMsg := &db.GetData{TxId: txID}
+func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*pb.AnyTx)) {
+	getDataMsg := &pb.GetData{TxId: txID}
 	data, err := proto.Marshal(getDataMsg)
 	if err != nil {
 		logs.Debug("[PullTx] marshal failed: %v", err)
@@ -141,9 +142,9 @@ func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*db.AnyTx)
 }
 
 // 通过BlockID拉取指定区块
-func (sm *SenderManager) PullGet(targetIP string, blockID string, onSuccess func(*db.Block)) {
+func (sm *SenderManager) PullGet(targetIP string, blockID string, onSuccess func(*pb.Block)) {
 	// 构造GetData请求消息
-	req := &db.GetBlockByIDRequest{BlockId: blockID}
+	req := &pb.GetBlockByIDRequest{BlockId: blockID}
 
 	data, err := proto.Marshal(req)
 	if err != nil {
@@ -170,7 +171,7 @@ func (sm *SenderManager) PullGet(targetIP string, blockID string, onSuccess func
 }
 
 // 拉取指定高度的区块
-func (sm *SenderManager) PullBlock(targetAddress string, height uint64, onSuccess func(*db.Block)) {
+func (sm *SenderManager) PullBlock(targetAddress string, height uint64, onSuccess func(*pb.Block)) {
 	account, err := sm.dbManager.GetAccount(targetAddress)
 	if err != nil || account == nil {
 		logs.Debug("[PullBlock] account not found for address %s", targetAddress)
@@ -182,7 +183,7 @@ func (sm *SenderManager) PullBlock(targetAddress string, height uint64, onSucces
 		return
 	}
 
-	req := &db.GetBlockRequest{Height: height}
+	req := &pb.GetBlockRequest{Height: height}
 	data, err := proto.Marshal(req)
 	if err != nil {
 		logs.Debug("[PullBlock] marshal GetBlockRequest error: %v", err)
@@ -205,7 +206,7 @@ func (sm *SenderManager) PullBlock(targetAddress string, height uint64, onSucces
 }
 
 // 批量获取交易
-func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]bool, onSuccess func([]*db.AnyTx)) {
+func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]bool, onSuccess func([]*pb.AnyTx)) {
 	var result [][]byte
 	for hexStr := range shortHashes {
 		bytes, err := hex.DecodeString(hexStr)
@@ -215,7 +216,7 @@ func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]
 		result = append(result, bytes)
 	}
 
-	reqMsg := &db.BatchGetShortTxRequest{
+	reqMsg := &pb.BatchGetShortTxRequest{
 		ShortHashes: result,
 	}
 	data, err := proto.Marshal(reqMsg)
@@ -267,7 +268,7 @@ func (sm *SenderManager) BroadcastGossipToTarget(targetAddr string, payload *typ
 }
 
 // 发送PushQuery（Snowman共识）
-func (sm *SenderManager) PushQuery(peerAddr string, pq *db.PushQuery) {
+func (sm *SenderManager) PushQuery(peerAddr string, pq *pb.PushQuery) {
 	// 确保 PushQuery 包含发送方地址
 	pq.Address = sm.address // 使用节点自己的地址
 	data, err := proto.Marshal(pq)
@@ -294,7 +295,7 @@ func (sm *SenderManager) PushQuery(peerAddr string, pq *db.PushQuery) {
 }
 
 // PullQuery 发送PullQuery（Snowman共识）
-func (sm *SenderManager) PullQuery(peerAddr string, pq *db.PullQuery) {
+func (sm *SenderManager) PullQuery(peerAddr string, pq *pb.PullQuery) {
 	data, err := proto.Marshal(pq)
 	if err != nil {
 		logs.Debug("[PullQuery] marshal fail: %v", err)
@@ -321,7 +322,7 @@ func (sm *SenderManager) PullQuery(peerAddr string, pq *db.PullQuery) {
 // 辅助方法
 
 // getRandomMiners 获取随机矿工列表
-func (sm *SenderManager) getRandomMiners(count int) ([]*db.Account, error) {
+func (sm *SenderManager) getRandomMiners(count int) ([]*pb.Account, error) {
 	// 使用注入的dbManager，而不是创建新的
 	return sm.dbManager.GetRandomMinersFast(count)
 }
@@ -385,7 +386,7 @@ func doSendGetDataWithManager(t *SendTask, client *http.Client) error {
 		return err
 	}
 
-	var anyTx db.AnyTx
+	var anyTx pb.AnyTx
 	if err := proto.Unmarshal(respBytes, &anyTx); err != nil {
 		return fmt.Errorf("doSendGetData: unmarshal AnyTx fail: %v", err)
 	}
@@ -408,7 +409,7 @@ func doSendGetDataWithManager(t *SendTask, client *http.Client) error {
 }
 
 // 发送Chits消息（Snowman共识响应）
-func (sm *SenderManager) SendChits(targetAddress string, chits *db.Chits) error {
+func (sm *SenderManager) SendChits(targetAddress string, chits *pb.Chits) error {
 	chits.Address = sm.address // 添加发送方地址
 	data, err := proto.Marshal(chits)
 	if err != nil {
@@ -438,7 +439,7 @@ func (sm *SenderManager) SendChits(targetAddress string, chits *db.Chits) error 
 }
 
 // 发送完整区块数据
-func (sm *SenderManager) SendBlock(targetAddress string, block *db.Block) error {
+func (sm *SenderManager) SendBlock(targetAddress string, block *pb.Block) error {
 	data, err := proto.Marshal(block)
 	if err != nil {
 		logs.Debug("[SendBlock] marshal failed: %v", err)
@@ -467,9 +468,9 @@ func (sm *SenderManager) SendBlock(targetAddress string, block *db.Block) error 
 }
 
 // SendHeightQuery 发送高度查询请求
-func (sm *SenderManager) SendHeightQuery(targetAddress string, onSuccess func(*db.HeightResponse)) error {
+func (sm *SenderManager) SendHeightQuery(targetAddress string, onSuccess func(*pb.HeightResponse)) error {
 	// 构造空的高度查询请求
-	req := &db.StatusRequest{} // 使用StatusRequest或创建专门的HeightQueryRequest
+	req := &pb.StatusRequest{} // 使用StatusRequest或创建专门的HeightQueryRequest
 	data, err := proto.Marshal(req)
 	if err != nil {
 		logs.Debug("[SendHeightQuery] marshal failed: %v", err)
@@ -499,8 +500,8 @@ func (sm *SenderManager) SendHeightQuery(targetAddress string, onSuccess func(*d
 }
 
 // SendSyncRequest 发送同步请求
-func (sm *SenderManager) SendSyncRequest(targetAddress string, fromHeight, toHeight uint64, onSuccess func([]*db.Block)) error {
-	req := &db.GetBlockRequest{
+func (sm *SenderManager) SendSyncRequest(targetAddress string, fromHeight, toHeight uint64, onSuccess func([]*pb.Block)) error {
+	req := &pb.GetBlockRequest{
 		Height: fromHeight, // 可以扩展为支持范围查询
 	}
 	data, err := proto.Marshal(req)

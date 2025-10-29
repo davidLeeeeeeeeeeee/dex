@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"dex/db"
+	"dex/pb"
 	"net/http"
 
 	"google.golang.org/protobuf/proto"
@@ -13,7 +13,7 @@ func (hm *HandlerManager) HandleHeightQuery(w http.ResponseWriter, r *http.Reque
 	_, height := hm.consensusManager.GetLastAccepted()
 	currentHeight := hm.consensusManager.GetCurrentHeight()
 
-	resp := &db.HeightResponse{ // 需要在proto中定义
+	resp := &pb.HeightResponse{ // 需要在proto中定义
 		LastAcceptedHeight: height,
 		CurrentHeight:      currentHeight,
 	}

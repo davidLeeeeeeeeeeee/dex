@@ -13,6 +13,7 @@ import (
 	"dex/handlers"
 	"dex/logs"
 	"dex/middleware"
+	"dex/pb"
 	"dex/sender"
 	"dex/txpool"
 	"dex/types"
@@ -241,7 +242,7 @@ func printAPICallStatistics() {
 
 	fmt.Println("==========================================\n")
 }
-func (v *TestValidator) CheckAnyTx(tx *db.AnyTx) error {
+func (v *TestValidator) CheckAnyTx(tx *pb.AnyTx) error {
 	if tx == nil {
 		return fmt.Errorf("nil transaction")
 	}
@@ -577,7 +578,7 @@ func initializeNode(node *NodeInstance) error {
 	node.HandlerManager = handlerManager
 
 	// 保存节点信息到数据库
-	nodeInfo := &db.NodeInfo{
+	nodeInfo := &pb.NodeInfo{
 		PublicKey: keyMgr.GetPublicKey(),
 		Ip:        fmt.Sprintf("127.0.0.1:%s", node.Port),
 		IsOnline:  true,
@@ -588,17 +589,17 @@ func initializeNode(node *NodeInstance) error {
 	}
 
 	// 创建账户
-	account := &db.Account{
+	account := &pb.Account{
 		Address:   node.Address,
 		PublicKey: keyMgr.GetPublicKey(),
 		Ip:        fmt.Sprintf("127.0.0.1:%s", node.Port),
 		Index:     uint64(node.ID),
 		IsMiner:   true,
-		Balances:  make(map[string]*db.TokenBalance),
+		Balances:  make(map[string]*pb.TokenBalance),
 	}
 
 	// 初始化FB代币余额
-	account.Balances["FB"] = &db.TokenBalance{
+	account.Balances["FB"] = &pb.TokenBalance{
 		Balance:            "1000000",
 		MinerLockedBalance: "100000",
 	}
@@ -608,7 +609,7 @@ func initializeNode(node *NodeInstance) error {
 	}
 	// 保存索引映射
 	indexKey := db.KeyIndexToAccount(account.Index)
-	accountKey := fmt.Sprintf("account_%s", account.Address)
+	accountKey := db.KeyAccount(account.Address)
 	dbManager.EnqueueSet(indexKey, accountKey)
 	// Force flush to ensure miner registration is persisted
 	dbManager.ForceFlush()
@@ -625,19 +626,19 @@ func generateTransactions(node *NodeInstance) {
 		for range ticker.C {
 			// Generate multiple transactions
 			for i := 0; i < 2; i++ {
-				tx := &db.Transaction{
-					Base: &db.BaseMessage{
+				tx := &pb.Transaction{
+					Base: &pb.BaseMessage{
 						TxId:        fmt.Sprintf("%d%d", i, time.Now().UnixNano()),
 						FromAddress: node.Address,
-						Status:      db.Status_PENDING,
+						Status:      pb.Status_PENDING,
 						Nonce:       uint64(i),
 					},
 					To:           node.Address,
 					TokenAddress: "FB",
 					Amount:       "100",
 				}
-				anyTx := &db.AnyTx{
-					Content: &db.AnyTx_Transaction{Transaction: tx},
+				anyTx := &pb.AnyTx{
+					Content: &pb.AnyTx_Transaction{Transaction: tx},
 				}
 				// Add to transaction pool
 				if err := node.TxPool.StoreAnyTx(anyTx); err == nil {
@@ -663,16 +664,16 @@ func registerAllNodes(nodes []*NodeInstance) {
 			}
 
 			// 保存其他节点的账户信息
-			account := &db.Account{
+			account := &pb.Account{
 				Address:   otherNode.Address,
 				PublicKey: utils.GetKeyManager().GetPublicKey(), // 这里简化处理
 				Ip:        fmt.Sprintf("127.0.0.1:%s", otherNode.Port),
 				Index:     uint64(j),
 				IsMiner:   true,
-				Balances:  make(map[string]*db.TokenBalance),
+				Balances:  make(map[string]*pb.TokenBalance),
 			}
 
-			account.Balances["FB"] = &db.TokenBalance{
+			account.Balances["FB"] = &pb.TokenBalance{
 				Balance:            "1000000",
 				MinerLockedBalance: "100000",
 			}
@@ -680,15 +681,15 @@ func registerAllNodes(nodes []*NodeInstance) {
 			node.DBManager.SaveAccount(account)
 
 			// 保存节点信息
-			nodeInfo := &db.NodeInfo{
+			nodeInfo := &pb.NodeInfo{
 				PublicKey: fmt.Sprintf("node_%d_pub", j),
 				Ip:        fmt.Sprintf("127.0.0.1:%s", otherNode.Port),
 				IsOnline:  true,
 			}
 			node.DBManager.SaveNodeInfo(nodeInfo)
 			// 保存索引映射
-			indexKey := fmt.Sprintf(db.KeyIndexToAccount(uint64(j)))
-			accountKey := fmt.Sprintf("account_%s", otherNode.Address)
+			indexKey := db.KeyIndexToAccount(uint64(j))
+			accountKey := db.KeyAccount(otherNode.Address)
 			node.DBManager.EnqueueSet(indexKey, accountKey)
 
 		}

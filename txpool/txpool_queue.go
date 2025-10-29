@@ -1,8 +1,8 @@
 package txpool
 
 import (
-	"dex/db"
 	"dex/logs"
+	"dex/pb"
 	"dex/utils"
 	"log"
 )
@@ -21,7 +21,7 @@ type OnTxAddedCallback func(txID string)
 // TxPoolMessage 封装了要在 txpool 里处理的各种任务
 type txPoolMessage struct {
 	Type    txMsgType
-	AnyTx   *db.AnyTx
+	AnyTx   *pb.AnyTx
 	IP      string
 	OnAdded OnTxAddedCallback
 }
@@ -34,7 +34,7 @@ type txPoolQueue struct {
 
 // TxValidator 用于抽象交易校验
 type TxValidator interface {
-	CheckAnyTx(tx *db.AnyTx) error
+	CheckAnyTx(tx *pb.AnyTx) error
 }
 
 // NewTxPoolQueue 创建新的队列实例
@@ -71,7 +71,7 @@ func (tq *txPoolQueue) runLoop() {
 	}
 }
 
-func (tq *txPoolQueue) handleAddTx(incoming *db.AnyTx, ip string, onAdded OnTxAddedCallback) {
+func (tq *txPoolQueue) handleAddTx(incoming *pb.AnyTx, ip string, onAdded OnTxAddedCallback) {
 	txID := incoming.GetTxId()
 	if txID == "" {
 		log.Println("[TxPoolQueue] AddTx but no txID, skip.")
@@ -106,7 +106,7 @@ func (tq *txPoolQueue) handleAddTx(incoming *db.AnyTx, ip string, onAdded OnTxAd
 		}
 
 		// 异步校验 & 入池
-		go func(tx *db.AnyTx) {
+		go func(tx *pb.AnyTx) {
 			if err := tq.validator.CheckAnyTx(tx); err != nil {
 				return
 			}

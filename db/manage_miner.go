@@ -2,13 +2,15 @@ package db
 
 import (
 	"dex/logs"
+	"dex/pb"
 	"errors"
 	"fmt"
+
 	"github.com/dgraph-io/badger/v4"
 )
 
 // 从索引空间里直接随机采样
-func (mgr *Manager) GetRandomMinersFast(k int) ([]*Account, error) {
+func (mgr *Manager) GetRandomMinersFast(k int) ([]*pb.Account, error) {
 	// 使用传入的manager参数而不是创建新的
 	if mgr == nil {
 		return nil, fmt.Errorf("GetRandomMiners: db manager is nil")
@@ -23,7 +25,7 @@ func (mgr *Manager) GetRandomMinersFast(k int) ([]*Account, error) {
 		return nil, fmt.Errorf("GetRandomMiners: k out of range")
 	}
 
-	accounts := make([]*Account, 0, len(idxs))
+	accounts := make([]*pb.Account, 0, len(idxs))
 	for _, idx := range idxs {
 		acc, err := mgr.getAccountByIndex(idx)
 		if errors.Is(badger.ErrKeyNotFound, err) {

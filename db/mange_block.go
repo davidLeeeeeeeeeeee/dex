@@ -3,13 +3,14 @@ package db
 import (
 	"dex/config"
 	"dex/logs"
+	"dex/pb"
 	"encoding/json"
 	"fmt"
 	"strconv"
 )
 
 // 将区块存入DB，同时将区块存入内存切片（缓存）
-func (mgr *Manager) SaveBlock(block *Block) error {
+func (mgr *Manager) SaveBlock(block *pb.Block) error {
 	logs.Debug("Saving new block_%d with ID %s", block.Height, block.BlockHash)
 
 	// 1. 使用 BlockID 作为主键存储完整区块
@@ -65,7 +66,7 @@ func (mgr *Manager) SaveBlock(block *Block) error {
 }
 
 // GetBlock 根据高度获取对应区块，先看内存缓存，再看 DB
-func (mgr *Manager) GetBlock(height uint64) (*Block, error) {
+func (mgr *Manager) GetBlock(height uint64) (*pb.Block, error) {
 	// 获取该高度的第一个区块（用于兼容旧代码）
 	blocks, err := mgr.GetBlocksByHeight(height)
 	if err != nil || len(blocks) == 0 {
@@ -74,7 +75,7 @@ func (mgr *Manager) GetBlock(height uint64) (*Block, error) {
 	return blocks[0], nil
 }
 
-func (mgr *Manager) GetBlocksByHeight(height uint64) ([]*Block, error) {
+func (mgr *Manager) GetBlocksByHeight(height uint64) ([]*pb.Block, error) {
 	// 1. 从高度映射获取所有区块ID
 	heightKey := KeyHeightBlocks(height)
 	idsStr, err := mgr.Read(heightKey)
@@ -88,7 +89,7 @@ func (mgr *Manager) GetBlocksByHeight(height uint64) ([]*Block, error) {
 	}
 
 	// 2. 获取每个区块
-	var blocks []*Block
+	var blocks []*pb.Block
 	for _, id := range blockIDs {
 		block, err := mgr.GetBlockByID(id)
 		if err == nil && block != nil {
@@ -100,7 +101,7 @@ func (mgr *Manager) GetBlocksByHeight(height uint64) ([]*Block, error) {
 }
 
 // GetBlockByID 根据区块ID（BlockHash）获取区块
-func (mgr *Manager) GetBlockByID(blockID string) (*Block, error) {
+func (mgr *Manager) GetBlockByID(blockID string) (*pb.Block, error) {
 	// 1. 先检查缓存
 	mgr.cachedBlocksMu.RLock()
 	for _, b := range mgr.cachedBlocks {
@@ -118,7 +119,7 @@ func (mgr *Manager) GetBlockByID(blockID string) (*Block, error) {
 		return nil, fmt.Errorf("block %s not found", blockID)
 	}
 
-	block := &Block{}
+	block := &pb.Block{}
 
 	if err := ProtoUnmarshal([]byte(val), block); err != nil {
 		return nil, err
@@ -128,7 +129,7 @@ func (mgr *Manager) GetBlockByID(blockID string) (*Block, error) {
 }
 
 // 当没有ID映射时的降级方案（遍历查找）
-func (mgr *Manager) getBlockByIDFallback(blockID string) (*Block, error) {
+func (mgr *Manager) getBlockByIDFallback(blockID string) (*pb.Block, error) {
 	// 获取最新高度
 	latestHeight, err := mgr.GetLatestBlockHeight()
 	if err != nil {
@@ -173,12 +174,12 @@ func (mgr *Manager) GetLatestBlockHeight() (uint64, error) {
 }
 
 // 获取指定高度范围内的所有区块
-func (mgr *Manager) GetBlocksByRange(fromHeight, toHeight uint64) ([]*Block, error) {
+func (mgr *Manager) GetBlocksByRange(fromHeight, toHeight uint64) ([]*pb.Block, error) {
 	if fromHeight > toHeight {
 		return nil, fmt.Errorf("invalid range: from %d to %d", fromHeight, toHeight)
 	}
 
-	blocks := make([]*Block, 0, toHeight-fromHeight+1)
+	blocks := make([]*pb.Block, 0, toHeight-fromHeight+1)
 	for h := fromHeight; h <= toHeight; h++ {
 		block, err := mgr.GetBlock(h)
 		if err != nil {

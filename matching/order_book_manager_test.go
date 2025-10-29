@@ -1,6 +1,7 @@
 package matching_test
 
 import (
+	"dex/pb"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -41,12 +42,12 @@ func TestOrderBookManager_Basic(t *testing.T) {
 		{"10", "20", "txid_4"},
 	}
 	for _, o := range testOrders {
-		orderTx := &db.OrderTx{
-			Base: &db.BaseMessage{TxId: o.txID},
+		orderTx := &pb.OrderTx{
+			Base: &pb.BaseMessage{TxId: o.txID},
 			// 注意：BaseToken/QuoteToken 与索引键生成一致
 			BaseToken:  "USDT",
 			QuoteToken: "BTC",
-			Op:         db.OrderOp_ADD, // BUY
+			Op:         pb.OrderOp_ADD, // BUY
 			IsFilled:   false,
 			Amount:     o.amount,
 			Price:      o.price,
@@ -119,14 +120,14 @@ func TestOrderBookManager_MassiveRebuild_WithMatching(t *testing.T) {
 		price := decimal.NewFromInt(int64(priceVal))
 
 		amount := decimal.NewFromInt(100)
-		op := db.OrderOp_ADD // BUY
+		op := pb.OrderOp_ADD // BUY
 		if rand.Intn(2) == 0 {
-			op = db.OrderOp_REMOVE // SELL
+			op = pb.OrderOp_REMOVE // SELL
 		}
 
 		txID := fmt.Sprintf("bulk_txid_%d", i)
-		orderTx := &db.OrderTx{
-			Base:       &db.BaseMessage{TxId: txID},
+		orderTx := &pb.OrderTx{
+			Base:       &pb.BaseMessage{TxId: txID},
 			BaseToken:  baseToken,
 			QuoteToken: quoteToken,
 			Op:         op,

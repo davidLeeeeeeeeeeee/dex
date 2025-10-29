@@ -2,7 +2,7 @@ package sender
 
 import (
 	"bytes"
-	"dex/db"
+	"dex/pb"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,10 +17,10 @@ func doSendSyncRequest(t *SendTask, client *http.Client) error {
 		return fmt.Errorf("doSendSyncRequest: message is not *syncRequestMessage, got %T", t.Message)
 	}
 
-	var blocks []*db.Block
+	var blocks []*pb.Block
 
 	for height := msg.fromHeight; height <= msg.toHeight; height++ {
-		req := &db.GetBlockRequest{Height: height}
+		req := &pb.GetBlockRequest{Height: height}
 		data, err := proto.Marshal(req)
 		if err != nil {
 			continue
@@ -42,7 +42,7 @@ func doSendSyncRequest(t *SendTask, client *http.Client) error {
 			respBytes, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if err == nil {
-				var blockResp db.GetBlockResponse
+				var blockResp pb.GetBlockResponse
 				if err := proto.Unmarshal(respBytes, &blockResp); err == nil && blockResp.Block != nil {
 					blocks = append(blocks, blockResp.Block)
 				}

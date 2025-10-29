@@ -1,13 +1,15 @@
 package db
 
 import (
+	"dex/pb"
+
 	"github.com/dgraph-io/badger/v4"
 	"google.golang.org/protobuf/proto"
 )
 
 // GetAllNodeInfos 改为成员函数
-func (mgr *Manager) GetAllNodeInfos() ([]*NodeInfo, error) {
-	var nodes []*NodeInfo
+func (mgr *Manager) GetAllNodeInfos() ([]*pb.NodeInfo, error) {
+	var nodes []*pb.NodeInfo
 	err := mgr.Db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
@@ -19,7 +21,7 @@ func (mgr *Manager) GetAllNodeInfos() ([]*NodeInfo, error) {
 			if err != nil {
 				return err
 			}
-			var node NodeInfo
+			var node pb.NodeInfo
 			if err := proto.Unmarshal(val, &node); err != nil {
 				return err
 			}
@@ -34,7 +36,7 @@ func (mgr *Manager) GetAllNodeInfos() ([]*NodeInfo, error) {
 }
 
 // SaveNodeInfo 改为成员函数
-func (mgr *Manager) SaveNodeInfo(node *NodeInfo) error {
+func (mgr *Manager) SaveNodeInfo(node *pb.NodeInfo) error {
 	data, err := ProtoMarshal(node)
 	if err != nil {
 		return err

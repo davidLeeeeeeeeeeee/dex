@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/pb"
 	"dex/utils"
 	"fmt"
 
@@ -8,7 +9,7 @@ import (
 )
 
 // ------------- 基础交易 -------------
-func (mgr *Manager) SaveTransaction(tx *Transaction) error {
+func (mgr *Manager) SaveTransaction(tx *pb.Transaction) error {
 	//logs.Trace("SaveTransaction %s\n", tx)
 	key := KeyTx(tx.Base.TxId)
 	data, err := ProtoMarshal(tx)
@@ -17,7 +18,7 @@ func (mgr *Manager) SaveTransaction(tx *Transaction) error {
 	}
 	mgr.EnqueueSet(key, string(data))
 	// 如果是PENDING
-	if tx.Base.Status == Status_PENDING {
+	if tx.Base.Status == pb.Status_PENDING {
 		pendingKey := KeyPendingAnyTx(tx.Base.TxId)
 		mgr.EnqueueSet(pendingKey, string(data))
 	}
@@ -26,13 +27,13 @@ func (mgr *Manager) SaveTransaction(tx *Transaction) error {
 	return nil
 }
 
-func (mgr *Manager) GetTransaction(txID string) (*Transaction, error) {
+func (mgr *Manager) GetTransaction(txID string) (*pb.Transaction, error) {
 	key := KeyTx(txID)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
 	}
-	tx := &Transaction{}
+	tx := &pb.Transaction{}
 	if err := ProtoUnmarshal([]byte(val), tx); err != nil {
 		return nil, err
 	}
@@ -41,7 +42,7 @@ func (mgr *Manager) GetTransaction(txID string) (*Transaction, error) {
 
 // ------------- OrderTx -------------
 
-func (mgr *Manager) SaveOrderTx(order *OrderTx) error {
+func (mgr *Manager) SaveOrderTx(order *pb.OrderTx) error {
 	// 1. 先拿到 pairKey
 	pairKey := utils.GeneratePairKey(order.BaseToken, order.QuoteToken)
 
@@ -69,13 +70,13 @@ func (mgr *Manager) SaveOrderTx(order *OrderTx) error {
 	mgr.EnqueueSet(KeyAnyTx(order.Base.TxId), orderKey)
 	return nil
 }
-func GetOrderTx(mgr *Manager, txID string) (*OrderTx, error) {
+func GetOrderTx(mgr *Manager, txID string) (*pb.OrderTx, error) {
 	key := "order_" + txID
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
 	}
-	order := &OrderTx{}
+	order := &pb.OrderTx{}
 	if err := ProtoUnmarshal([]byte(val), order); err != nil {
 		return nil, err
 	}
@@ -110,20 +111,20 @@ func (mgr *Manager) UpdateOrderTxInDB(orderID string, tradeAmt, price decimal.De
 
 	return mgr.SaveOrderTx(orderTx)
 }
-func (mgr *Manager) GetOrderTx(txID string) (*OrderTx, error) {
+func (mgr *Manager) GetOrderTx(txID string) (*pb.OrderTx, error) {
 	key := KeyOrderTx(txID)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
 	}
-	order := &OrderTx{}
+	order := &pb.OrderTx{}
 	if err := ProtoUnmarshal([]byte(val), order); err != nil {
 		return nil, err
 	}
 	return order, nil
 }
 
-func (mgr *Manager) SaveMinerTx(tx *MinerTx) error {
+func (mgr *Manager) SaveMinerTx(tx *pb.MinerTx) error {
 	// 0) 先把 MinerTx 本身排入写队列（保持你原来的逻辑）
 	mainKey := KeyMinerTx(tx.Base.TxId)
 	data, err := ProtoMarshal(tx)
@@ -157,7 +158,7 @@ func (mgr *Manager) SaveMinerTx(tx *MinerTx) error {
 	}
 
 	switch tx.Op {
-	case OrderOp_ADD:
+	case pb.OrderOp_ADD:
 		// (ADD) 2-a 判断是否已是矿工
 		if acc.IsMiner {
 			// 已是矿工 → 只增加质押
@@ -189,7 +190,7 @@ func (mgr *Manager) SaveMinerTx(tx *MinerTx) error {
 		fb.Balance = prevBal.Sub(amt).String()
 		//logs.Trace("fb.Balance =%s amt=%s idx=%s", fb.Balance, amt, acc.Index)
 
-	case OrderOp_REMOVE:
+	case pb.OrderOp_REMOVE:
 		// (REMOVE) 回退锁仓 + 取消矿工标记 + 释放 index
 		// 1) 回退余额
 		prevLocked, _ := decimal.NewFromString(fb.MinerLockedBalance)
@@ -221,7 +222,7 @@ func (mgr *Manager) SaveMinerTx(tx *MinerTx) error {
 // GetAnyTxById 根据给定的 tx_id 从数据库中读取对应的交易（AnyTx）
 // 这里假设在保存时，除了专用前缀外，还额外保存了一个通用 key "anyTx_<txID>"
 // 其值为实际存储该交易的 key（如 "tx_<txID>" 或 "order_<txID>" 等）。
-func (mgr *Manager) GetAnyTxById(txID string) (*AnyTx, error) {
+func (mgr *Manager) GetAnyTxById(txID string) (*pb.AnyTx, error) {
 	// 1. 先读取通用 key "anyTx_<txID>"
 	anyKey := KeyAnyTx(txID)
 	specificKey, err := mgr.Read(anyKey)
@@ -242,7 +243,7 @@ func (mgr *Manager) GetAnyTxById(txID string) (*AnyTx, error) {
 	}
 
 	// 3. 反序列化为 AnyTx 对象
-	var anyTx AnyTx
+	var anyTx pb.AnyTx
 	if err := ProtoUnmarshal([]byte(txData), &anyTx); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal AnyTx data: %v", err)
 	}

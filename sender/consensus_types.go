@@ -1,7 +1,7 @@
 package sender
 
 import (
-	"dex/db"
+	"dex/pb"
 )
 
 // ============= Message Types =============
@@ -19,7 +19,7 @@ type blockMessage struct {
 // heightQueryMessage 用于发送高度查询
 type heightQueryMessage struct {
 	requestData []byte
-	onSuccess   func(*db.HeightResponse)
+	onSuccess   func(*pb.HeightResponse)
 }
 
 // syncRequestMessage 用于同步请求
@@ -27,5 +27,5 @@ type syncRequestMessage struct {
 	requestData []byte
 	fromHeight  uint64
 	toHeight    uint64
-	onSuccess   func([]*db.Block)
+	onSuccess   func([]*pb.Block)
 }

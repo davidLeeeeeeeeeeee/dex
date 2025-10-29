@@ -1,7 +1,7 @@
 package matching
 
 import (
-	"dex/db"
+	"dex/pb"
 	"errors"
 	"fmt"
 
@@ -48,9 +48,9 @@ func NewOrderBook(tradeCh chan<- TradeUpdate) *OrderBook {
 }
 
 // extractOrderTx 尝试从 AnyTx 提取 OrderTx
-func extractOrderTx(a *db.AnyTx) *db.OrderTx {
+func extractOrderTx(a *pb.AnyTx) *pb.OrderTx {
 	content := a.GetContent()
-	otx, ok := content.(*db.AnyTx_OrderTx)
+	otx, ok := content.(*pb.AnyTx_OrderTx)
 	if !ok {
 		return nil
 	}
@@ -58,13 +58,13 @@ func extractOrderTx(a *db.AnyTx) *db.OrderTx {
 }
 
 // convertOrderTxToOrder 将 db.OrderTx 转为 match.go 里的 Order 结构
-func convertOrderTxToOrder(o *db.OrderTx) (*Order, error) {
+func convertOrderTxToOrder(o *pb.OrderTx) (*Order, error) {
 	if o == nil || o.Base == nil {
 		return nil, errors.New("orderTx invalid")
 	}
 	// side：示例中, OrderOp_ADD = BUY, OrderOp_REMOVE = SELL
 	var side OrderSide
-	if o.Op == db.OrderOp_ADD {
+	if o.Op == pb.OrderOp_ADD {
 		side = BUY
 	} else {
 		side = SELL

@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"dex/db"
+	"dex/pb"
 	"fmt"
 	"net/http"
 
@@ -16,7 +16,7 @@ func (hm *HandlerManager) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resProto := &db.StatusResponse{
+	resProto := &pb.StatusResponse{
 		Status: "ok",
 		Info:   fmt.Sprintf("Server is running on port %s", hm.port),
 	}

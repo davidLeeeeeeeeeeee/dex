@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"compress/gzip"
-	"dex/db"
+	"dex/pb"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,7 +19,7 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req db.GetBlockRequest
+	var req pb.GetBlockRequest
 	if err := proto.Unmarshal(bodyBytes, &req); err != nil {
 		http.Error(w, "Invalid GetBlockRequest proto", http.StatusBadRequest)
 		return
@@ -28,7 +28,7 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 	// 使用注入的dbManager而不是创建新实例
 	block, err := hm.dbManager.GetBlock(req.Height)
 	if err != nil || block == nil {
-		resp := &db.GetBlockResponse{
+		resp := &pb.GetBlockResponse{
 			Error: fmt.Sprintf("Block not found at height %d", req.Height),
 		}
 		respBytes, _ := proto.Marshal(resp)
@@ -38,7 +38,7 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resp := &db.GetBlockResponse{
+	resp := &pb.GetBlockResponse{
 		Block: block,
 	}
 	respBytes, err := proto.Marshal(resp)

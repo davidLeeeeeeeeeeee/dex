@@ -5,6 +5,7 @@ import (
 	"dex/db"
 	"dex/interfaces"
 	"dex/logs"
+	"dex/pb"
 	"dex/txpool"
 	"dex/types"
 	"dex/utils"
@@ -71,7 +72,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 	}
 
 	// 6. 将区块数据保存到数据库（包含交易信息）
-	dbBlock := &db.Block{
+	dbBlock := &pb.Block{
 		Height:        height,
 		TxsHash:       txsHash,
 		BlockHash:     blockID,
@@ -119,7 +120,7 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, round int, curren
 }
 
 // computeSimpleTxsHash 计算简单的交易哈希（备用方案）
-func (p *RealBlockProposer) computeSimpleTxsHash(txs []*db.AnyTx) string {
+func (p *RealBlockProposer) computeSimpleTxsHash(txs []*pb.AnyTx) string {
 	var allBytes []byte
 	for _, tx := range txs {
 		txID := tx.GetTxId()
@@ -130,17 +131,17 @@ func (p *RealBlockProposer) computeSimpleTxsHash(txs []*db.AnyTx) string {
 }
 
 // cacheBlock 临时缓存区块，等待最终化
-var blockCache = make(map[string]*db.Block)
+var blockCache = make(map[string]*pb.Block)
 var blockCacheMu sync.RWMutex
 
-func (p *RealBlockProposer) cacheBlock(blockID string, block *db.Block) {
+func (p *RealBlockProposer) cacheBlock(blockID string, block *pb.Block) {
 	blockCacheMu.Lock()
 	defer blockCacheMu.Unlock()
 	blockCache[blockID] = block
 }
 
 // GetCachedBlock 获取缓存的区块
-func GetCachedBlock(blockID string) (*db.Block, bool) {
+func GetCachedBlock(blockID string) (*pb.Block, bool) {
 	blockCacheMu.RLock()
 	defer blockCacheMu.RUnlock()
 	block, exists := blockCache[blockID]

@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"dex/consensus"
-	"dex/db"
 	"dex/logs"
+	"dex/pb"
 	"dex/types"
 	"io"
 	"net/http"
@@ -22,7 +22,7 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	var block db.Block
+	var block pb.Block
 	if err := proto.Unmarshal(bodyBytes, &block); err != nil {
 		http.Error(w, "Failed to parse protobuf db.Block", http.StatusBadRequest)
 		return

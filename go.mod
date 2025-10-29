@@ -7,11 +7,9 @@ require (
 	github.com/btcsuite/btcd v0.24.2
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5
 	github.com/btcsuite/btcd/btcutil v1.1.6
-	github.com/celestiaorg/smt v0.3.0
 	github.com/dchest/siphash v1.2.3
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/dgraph-io/badger/v4 v4.8.0
-	github.com/dgraph-io/ristretto v0.2.0
 	github.com/hashicorp/golang-lru v1.0.2
 	github.com/quic-go/quic-go v0.54.0
 	github.com/shopspring/decimal v1.4.0
@@ -36,7 +34,6 @@ require (
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	go.dedis.ch/fixbuf v1.0.3 // indirect

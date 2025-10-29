@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"dex/db"
+	"dex/pb"
 	"fmt"
 	"io"
 	"net"
@@ -19,7 +19,7 @@ func (hm *HandlerManager) HandleTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var incomingAny db.AnyTx
+	var incomingAny pb.AnyTx
 	if err := proto.Unmarshal(bodyBytes, &incomingAny); err != nil {
 		http.Error(w, "Invalid AnyTx proto", http.StatusBadRequest)
 		return
@@ -38,7 +38,7 @@ func (hm *HandlerManager) HandleTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resProto := &db.StatusResponse{
+	resProto := &pb.StatusResponse{
 		Status: "ok",
 		Info:   "Tx received",
 	}

@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"dex/consensus"
-	"dex/db"
 	"dex/logs"
+	"dex/pb"
 	"dex/types"
 	"io"
 	"net/http"
@@ -19,7 +19,7 @@ func (hm *HandlerManager) HandleChits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var chits db.Chits
+	var chits pb.Chits
 	if err := proto.Unmarshal(bodyBytes, &chits); err != nil {
 		http.Error(w, "Invalid Chits proto", http.StatusBadRequest)
 		return

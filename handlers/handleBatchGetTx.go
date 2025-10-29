@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"dex/db"
+	"dex/pb"
 	"io"
 	"net/http"
 
@@ -23,14 +23,14 @@ func (hm *HandlerManager) HandleBatchGetTx(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var req db.BatchGetShortTxRequest
+	var req pb.BatchGetShortTxRequest
 	if err := proto.Unmarshal(bodyBytes, &req); err != nil {
 		http.Error(w, "Invalid BatchGetDataRequest proto", http.StatusBadRequest)
 		return
 	}
 
 	matchedTxs := hm.txPool.GetTxsByShortHashes(req.ShortHashes, true)
-	resp := &db.BatchGetShortTxResponse{
+	resp := &pb.BatchGetShortTxResponse{
 		Transactions: matchedTxs,
 	}
 

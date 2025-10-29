@@ -2,7 +2,7 @@ package sender
 
 import (
 	"bytes"
-	"dex/db"
+	"dex/pb"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,7 +41,7 @@ func doSendGetBlockByID(t *SendTask, client *http.Client) error {
 	}
 
 	// 解析 GetBlockResponse
-	var gbr db.GetBlockResponse
+	var gbr pb.GetBlockResponse
 	if err := proto.Unmarshal(respBytes, &gbr); err != nil {
 		return fmt.Errorf("doSendGetBlockByID: bad GetBlockResponse: %w", err)
 	}

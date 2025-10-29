@@ -13,14 +13,14 @@ var (
 
 // ========== 基础类型定义 ==========
 
-// WriteOp 表示一次写操作，Commit时按Key覆盖写
+// “要怎么改状态”的清单
 type WriteOp struct {
 	Key   string
 	Value []byte
 	Del   bool // true表示删除操作
 }
 
-// Receipt 是预执行阶段产出的结果
+// 记录执行结果
 type Receipt struct {
 	TxID       string
 	Status     string // "SUCCEED" or "FAILED"
