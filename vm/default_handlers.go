@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/pb"
 	"encoding/json"
 	"fmt"
 )
@@ -16,31 +17,32 @@ func (h *OrderTxHandler) Kind() string {
 	return "order"
 }
 
-func (h *OrderTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 解析交易数据
-	type OrderTx struct {
-		FromAddress string `json:"from_address"`
-		Symbol      string `json:"symbol"`
-		Side        string `json:"side"` // "buy" or "sell"
-		Price       string `json:"price"`
-		Amount      string `json:"amount"`
+func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
+	// 1. 提取OrderTx
+	orderTx, ok := tx.GetContent().(*pb.AnyTx_OrderTx)
+	if !ok {
+		return nil, &Receipt{
+			TxID:   tx.GetTxId(),
+			Status: "FAILED",
+			Error:  "not an order transaction",
+		}, fmt.Errorf("not an order transaction")
 	}
 
-	var ord OrderTx
-	if err := json.Unmarshal(tx.Payload, &ord); err != nil {
+	ord := orderTx.OrderTx
+	if ord == nil || ord.Base == nil {
 		return nil, &Receipt{
-			TxID:   tx.TxID,
+			TxID:   tx.GetTxId(),
 			Status: "FAILED",
-			Error:  "bad payload",
-		}, err
+			Error:  "invalid order transaction",
+		}, fmt.Errorf("invalid order transaction")
 	}
 
 	// 2. 验证交易（余额、权限等）
-	accountKey := fmt.Sprintf("account_%s", ord.FromAddress)
+	accountKey := fmt.Sprintf("account_%s", ord.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil {
 		return nil, &Receipt{
-			TxID:   tx.TxID,
+			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "read account failed",
 		}, err
@@ -48,17 +50,17 @@ func (h *OrderTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, e
 
 	if !exists {
 		return nil, &Receipt{
-			TxID:   tx.TxID,
+			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "account not found",
-		}, fmt.Errorf("account not found: %s", ord.FromAddress)
+		}, fmt.Errorf("account not found: %s", ord.Base.FromAddress)
 	}
 
 	// 3. 执行交易逻辑，生成状态变更
 	ws := make([]WriteOp, 0)
 
 	// 示例：创建订单记录
-	orderKey := fmt.Sprintf("order_%s", tx.TxID)
+	orderKey := fmt.Sprintf("order_%s", ord.Base.TxId)
 	orderData, _ := json.Marshal(ord)
 	ws = append(ws, WriteOp{
 		Key:   orderKey,
@@ -75,7 +77,7 @@ func (h *OrderTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, e
 
 	// 4. 返回执行结果
 	rc := &Receipt{
-		TxID:       tx.TxID,
+		TxID:       ord.Base.TxId,
 		Status:     "SUCCEED",
 		WriteCount: len(ws),
 	}
@@ -83,7 +85,7 @@ func (h *OrderTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, e
 	return ws, rc, nil
 }
 
-func (h *OrderTxHandler) Apply(tx *AnyTx) error {
+func (h *OrderTxHandler) Apply(tx *pb.AnyTx) error {
 	// 兜底实现，通常不需要
 	return ErrNotImplemented
 }
@@ -95,36 +97,39 @@ func (h *TransferTxHandler) Kind() string {
 	return "transfer"
 }
 
-func (h *TransferTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	type TransferTx struct {
-		From   string `json:"from"`
-		To     string `json:"to"`
-		Amount string `json:"amount"`
-		Token  string `json:"token"`
+func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
+	// 1. 提取Transaction
+	transferTx, ok := tx.GetContent().(*pb.AnyTx_Transaction)
+	if !ok {
+		return nil, &Receipt{
+			TxID:   tx.GetTxId(),
+			Status: "FAILED",
+			Error:  "not a transfer transaction",
+		}, fmt.Errorf("not a transfer transaction")
 	}
 
-	var transfer TransferTx
-	if err := json.Unmarshal(tx.Payload, &transfer); err != nil {
+	transfer := transferTx.Transaction
+	if transfer == nil || transfer.Base == nil {
 		return nil, &Receipt{
-			TxID:   tx.TxID,
+			TxID:   tx.GetTxId(),
 			Status: "FAILED",
-			Error:  "bad payload",
-		}, err
+			Error:  "invalid transfer transaction",
+		}, fmt.Errorf("invalid transfer transaction")
 	}
 
 	// 读取发送方账户
-	fromKey := fmt.Sprintf("balance_%s_%s", transfer.From, transfer.Token)
+	fromKey := fmt.Sprintf("balance_%s_%s", transfer.Base.FromAddress, transfer.TokenAddress)
 	fromData, exists, err := sv.Get(fromKey)
 	if err != nil || !exists {
 		return nil, &Receipt{
-			TxID:   tx.TxID,
+			TxID:   transfer.Base.TxId,
 			Status: "FAILED",
 			Error:  "from account not found",
 		}, fmt.Errorf("from account not found")
 	}
 
 	// 读取接收方账户
-	toKey := fmt.Sprintf("balance_%s_%s", transfer.To, transfer.Token)
+	toKey := fmt.Sprintf("balance_%s_%s", transfer.To, transfer.TokenAddress)
 	toData, _, _ := sv.Get(toKey)
 	if toData == nil {
 		toData = []byte("0") // 初始化接收方余额
@@ -140,7 +145,7 @@ func (h *TransferTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt
 	}
 
 	// 记录转账历史
-	historyKey := fmt.Sprintf("transfer_history_%s", tx.TxID)
+	historyKey := fmt.Sprintf("transfer_history_%s", transfer.Base.TxId)
 	historyData, _ := json.Marshal(transfer)
 	ws = append(ws, WriteOp{
 		Key:   historyKey,
@@ -149,13 +154,13 @@ func (h *TransferTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt
 	})
 
 	return ws, &Receipt{
-		TxID:       tx.TxID,
+		TxID:       transfer.Base.TxId,
 		Status:     "SUCCEED",
 		WriteCount: len(ws),
 	}, nil
 }
 
-func (h *TransferTxHandler) Apply(tx *AnyTx) error {
+func (h *TransferTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
 
@@ -166,24 +171,28 @@ func (h *MinerTxHandler) Kind() string {
 	return "miner"
 }
 
-func (h *MinerTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	type MinerTx struct {
-		Miner  string `json:"miner"`
-		Reward string `json:"reward"`
-		Height uint64 `json:"height"`
+func (h *MinerTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
+	// 1. 提取MinerTx
+	minerTxWrapper, ok := tx.GetContent().(*pb.AnyTx_MinerTx)
+	if !ok {
+		return nil, &Receipt{
+			TxID:   tx.GetTxId(),
+			Status: "FAILED",
+			Error:  "not a miner transaction",
+		}, fmt.Errorf("not a miner transaction")
 	}
 
-	var minerTx MinerTx
-	if err := json.Unmarshal(tx.Payload, &minerTx); err != nil {
+	minerTx := minerTxWrapper.MinerTx
+	if minerTx == nil || minerTx.Base == nil {
 		return nil, &Receipt{
-			TxID:   tx.TxID,
+			TxID:   tx.GetTxId(),
 			Status: "FAILED",
-			Error:  "bad payload",
-		}, err
+			Error:  "invalid miner transaction",
+		}, fmt.Errorf("invalid miner transaction")
 	}
 
 	// 更新矿工余额
-	minerBalanceKey := fmt.Sprintf("balance_%s_native", minerTx.Miner)
+	minerBalanceKey := fmt.Sprintf("balance_%s_native", minerTx.Base.FromAddress)
 	balanceData, _, _ := sv.Get(minerBalanceKey)
 	if balanceData == nil {
 		balanceData = []byte("0")
@@ -196,7 +205,7 @@ func (h *MinerTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, e
 	}
 
 	// 记录挖矿历史
-	minerHistoryKey := fmt.Sprintf("miner_history_%d", minerTx.Height)
+	minerHistoryKey := fmt.Sprintf("miner_history_%d", minerTx.Base.ExecutedHeight)
 	minerData, _ := json.Marshal(minerTx)
 	ws = append(ws, WriteOp{
 		Key:   minerHistoryKey,
@@ -205,7 +214,7 @@ func (h *MinerTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, e
 	})
 
 	rc := &Receipt{
-		TxID:       tx.TxID,
+		TxID:       minerTx.Base.TxId,
 		Status:     "SUCCEED",
 		WriteCount: len(ws),
 	}
@@ -213,7 +222,7 @@ func (h *MinerTxHandler) DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, e
 	return ws, rc, nil
 }
 
-func (h *MinerTxHandler) Apply(tx *AnyTx) error {
+func (h *MinerTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
 

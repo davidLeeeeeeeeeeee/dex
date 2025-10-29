@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/pb"
 	"errors"
 	"fmt"
 	"sync"
@@ -58,16 +59,29 @@ func (r *HandlerRegistry) List() []string {
 	return kinds
 }
 
-// DefaultKindFn 默认的KindFn实现
-func DefaultKindFn(tx *AnyTx) (string, error) {
+// DefaultKindFn 默认的KindFn实现，根据pb.AnyTx的oneof结构提取交易类型
+func DefaultKindFn(tx *pb.AnyTx) (string, error) {
 	if tx == nil {
 		return "", ErrNilTx
 	}
-	if tx.Type != "" {
-		return tx.Type, nil
+
+	// 根据 pb.AnyTx 的 oneof content 字段判断交易类型
+	switch tx.GetContent().(type) {
+	case *pb.AnyTx_IssueTokenTx:
+		return "issue_token", nil
+	case *pb.AnyTx_FreezeTx:
+		return "freeze", nil
+	case *pb.AnyTx_Transaction:
+		return "transfer", nil
+	case *pb.AnyTx_OrderTx:
+		return "order", nil
+	case *pb.AnyTx_AddressTx:
+		return "recharge", nil
+	case *pb.AnyTx_CandidateTx:
+		return "candidate", nil
+	case *pb.AnyTx_MinerTx:
+		return "miner", nil
+	default:
+		return "", fmt.Errorf("unknown tx type: %v", tx.GetTxId())
 	}
-	if tx.Kind != "" {
-		return tx.Kind, nil
-	}
-	return "", fmt.Errorf("cannot infer tx kind: %v", tx.TxID)
 }

@@ -39,20 +39,6 @@ type SpecResult struct {
 	Diff     []WriteOp  // 状态变更集合
 }
 
-// ========== 数据结构定义 ==========
-
-// Block 区块
-type Block struct {
-	ID       string
-	ParentID string
-	Height   uint64
-	Txs      []*AnyTx
-}
-
-// AnyTx 通用交易
-type AnyTx struct {
-	TxID    string
-	Type    string // 交易类型
-	Kind    string // 备用类型字段
-	Payload []byte // 序列化的交易数据
-}
+// ========== 注意 ==========
+// Block 和 AnyTx 类型现在使用 pb 包中的定义
+// 请导入 "dex/pb" 并使用 pb.Block 和 pb.AnyTx

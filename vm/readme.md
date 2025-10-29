@@ -38,8 +38,8 @@ vm/
 - `WriteOp`: 写操作
 - `Receipt`: 执行收据
 - `SpecResult`: 执行结果
-- `Block`: 区块结构
-- `AnyTx`: 通用交易结构
+
+**注意**: `Block` 和 `AnyTx` 类型现在使用 `pb` 包中的定义（`pb.Block` 和 `pb.AnyTx`），遵循单一事实来源原则。
 
 ### interfaces.go
 定义了核心接口：
@@ -91,32 +91,41 @@ go get github.com/yourproject/vm
 package main
 
 import (
+    "dex/pb"
     "dex/vm"
 )
 
 func main() {
     // 1. 创建数据库管理器
     db := NewYourDBManager()
-    
+
     // 2. 创建Handler注册表
     registry := vm.NewHandlerRegistry()
-    
+
     // 3. 注册Handler
     vm.RegisterDefaultHandlers(registry)
-    
+
     // 4. 创建缓存
     cache := vm.NewSpecExecLRU(1000)
-    
+
     // 5. 创建执行器
     executor := vm.NewExecutor(db, registry, cache)
-    
-    // 6. 预执行区块
+
+    // 6. 创建pb.Block区块（使用pb包的类型）
+    block := &pb.Block{
+        BlockHash:     "block_001",
+        PrevBlockHash: "genesis",
+        Height:        1,
+        Body:          []*pb.AnyTx{...}, // pb.AnyTx交易列表
+    }
+
+    // 7. 预执行区块
     result, err := executor.PreExecuteBlock(block)
     if err != nil {
         // 处理错误
     }
-    
-    // 7. 共识后提交
+
+    // 8. 共识后提交
     err = executor.CommitFinalizedBlock(block)
 }
 ```
@@ -124,21 +133,34 @@ func main() {
 ### 3. 自定义Handler
 
 ```go
+import (
+    "dex/pb"
+    "dex/vm"
+)
+
 type MyHandler struct{}
 
 func (h *MyHandler) Kind() string {
     return "my_tx_type"
 }
 
-func (h *MyHandler) DryRun(tx *vm.AnyTx, sv vm.StateView) ([]vm.WriteOp, *vm.Receipt, error) {
-    // 1. 解析交易
+func (h *MyHandler) DryRun(tx *pb.AnyTx, sv vm.StateView) ([]vm.WriteOp, *vm.Receipt, error) {
+    // 1. 从pb.AnyTx中提取具体交易类型
     // 2. 读取状态
     // 3. 执行逻辑
     // 4. 生成变更
     // 5. 返回结果
+
+    txID := tx.GetTxId()
+    // ... 处理逻辑
+
+    return []vm.WriteOp{...}, &vm.Receipt{
+        TxID:   txID,
+        Status: "SUCCEED",
+    }, nil
 }
 
-func (h *MyHandler) Apply(tx *vm.AnyTx) error {
+func (h *MyHandler) Apply(tx *pb.AnyTx) error {
     return vm.ErrNotImplemented
 }
 ```

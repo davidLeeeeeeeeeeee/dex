@@ -1,11 +1,11 @@
 package vm_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
 
+	"dex/pb"
 	"dex/vm"
 )
 
@@ -63,8 +63,8 @@ func (db *MockDB) ForceFlush() error {
 func TestBasicExecution(t *testing.T) {
 	// 创建数据库和组件
 	db := NewMockDB()
-	db.data["balance_alice_FB"] = []byte("1000")
-	db.data["balance_bob_FB"] = []byte("500")
+	db.data["balance_alice_token123"] = []byte("1000")
+	db.data["balance_bob_token123"] = []byte("500")
 
 	// 创建执行器
 	registry := vm.NewHandlerRegistry()
@@ -75,23 +75,28 @@ func TestBasicExecution(t *testing.T) {
 	cache := vm.NewSpecExecLRU(100)
 	executor := vm.NewExecutor(db, registry, cache)
 
-	// 创建交易
-	transfer1 := map[string]interface{}{
-		"from":   "alice",
-		"to":     "bob",
-		"amount": "100",
-		"token":  "FB",
-	}
-	payload1, _ := json.Marshal(transfer1)
-
-	// 创建区块
-	block := &vm.Block{
-		ID:       "block_001",
-		ParentID: "genesis",
-		Height:   1,
-		Txs: []*vm.AnyTx{
-			{TxID: "tx_001", Type: "transfer", Payload: payload1},
+	// 创建pb.AnyTx交易
+	transferTx := &pb.AnyTx{
+		Content: &pb.AnyTx_Transaction{
+			Transaction: &pb.Transaction{
+				Base: &pb.BaseMessage{
+					TxId:        "tx_001",
+					FromAddress: "alice",
+					Status:      pb.Status_PENDING,
+				},
+				To:           "bob",
+				TokenAddress: "token123",
+				Amount:       "100",
+			},
 		},
+	}
+
+	// 创建pb.Block区块
+	block := &pb.Block{
+		BlockHash:     "block_001",
+		PrevBlockHash: "genesis",
+		Height:        1,
+		Body:          []*pb.AnyTx{transferTx},
 	}
 
 	// 预执行区块
@@ -109,7 +114,7 @@ func TestBasicExecution(t *testing.T) {
 	}
 
 	// 检查数据库没有变化（预执行不应改变数据库）
-	if val, _ := db.Get("balance_alice_FB"); string(val) != "1000" {
+	if val, _ := db.Get("balance_alice_token123"); string(val) != "1000" {
 		t.Fatal("Database should not change during PreExecute")
 	}
 
@@ -134,7 +139,7 @@ func TestBasicExecution(t *testing.T) {
 
 func TestCacheEffectiveness(t *testing.T) {
 	db := NewMockDB()
-	db.data["balance_alice"] = []byte("1000")
+	db.data["balance_alice_token123"] = []byte("1000")
 
 	registry := vm.NewHandlerRegistry()
 	vm.RegisterDefaultHandlers(registry)
@@ -142,18 +147,27 @@ func TestCacheEffectiveness(t *testing.T) {
 	cache := vm.NewSpecExecLRU(10)
 	executor := vm.NewExecutor(db, registry, cache)
 
-	// 创建区块
-	block := &vm.Block{
-		ID:       "block_cache_test",
-		ParentID: "genesis",
-		Height:   1,
-		Txs: []*vm.AnyTx{
-			{
-				TxID:    "tx_cache_001",
-				Type:    "transfer",
-				Payload: []byte(`{"from":"alice","to":"bob","amount":"100","token":"FB"}`),
+	// 创建pb.Block区块
+	transferTx := &pb.AnyTx{
+		Content: &pb.AnyTx_Transaction{
+			Transaction: &pb.Transaction{
+				Base: &pb.BaseMessage{
+					TxId:        "tx_cache_001",
+					FromAddress: "alice",
+					Status:      pb.Status_PENDING,
+				},
+				To:           "bob",
+				TokenAddress: "token123",
+				Amount:       "100",
 			},
 		},
+	}
+
+	block := &pb.Block{
+		BlockHash:     "block_cache_test",
+		PrevBlockHash: "genesis",
+		Height:        1,
+		Body:          []*pb.AnyTx{transferTx},
 	}
 
 	// 第一次执行
@@ -184,18 +198,27 @@ func TestInvalidTransaction(t *testing.T) {
 	cache := vm.NewSpecExecLRU(10)
 	executor := vm.NewExecutor(db, registry, cache)
 
-	// 创建包含无效交易的区块
-	block := &vm.Block{
-		ID:       "block_invalid",
-		ParentID: "genesis",
-		Height:   2,
-		Txs: []*vm.AnyTx{
-			{
-				TxID:    "tx_invalid_001",
-				Type:    "transfer",
-				Payload: []byte(`{"from":"alice","to":"bob","amount":"200","token":"FB"}`),
+	// 创建包含无效交易的pb.Block区块
+	transferTx := &pb.AnyTx{
+		Content: &pb.AnyTx_Transaction{
+			Transaction: &pb.Transaction{
+				Base: &pb.BaseMessage{
+					TxId:        "tx_invalid_001",
+					FromAddress: "alice",
+					Status:      pb.Status_PENDING,
+				},
+				To:           "bob",
+				TokenAddress: "token123",
+				Amount:       "200",
 			},
 		},
+	}
+
+	block := &pb.Block{
+		BlockHash:     "block_invalid",
+		PrevBlockHash: "genesis",
+		Height:        2,
+		Body:          []*pb.AnyTx{transferTx},
 	}
 
 	// 预执行
@@ -216,7 +239,7 @@ func TestConcurrentExecution(t *testing.T) {
 
 	// 初始化多个账户
 	for i := 0; i < 10; i++ {
-		key := fmt.Sprintf("balance_user%d_FB", i)
+		key := fmt.Sprintf("balance_user%d_token123", i)
 		db.data[key] = []byte("1000")
 	}
 
@@ -227,30 +250,34 @@ func TestConcurrentExecution(t *testing.T) {
 		go func(blockNum int) {
 			defer wg.Done()
 
-			// 创建区块
-			txs := make([]*vm.AnyTx, 0)
+			// 创建pb.AnyTx交易列表
+			txs := make([]*pb.AnyTx, 0)
 			for j := 0; j < 5; j++ {
 				from := fmt.Sprintf("user%d", j)
 				to := fmt.Sprintf("user%d", (j+1)%10)
-				payload, _ := json.Marshal(map[string]string{
-					"from":   from,
-					"to":     to,
-					"amount": "10",
-					"token":  "FB",
-				})
-				tx := &vm.AnyTx{
-					TxID:    fmt.Sprintf("tx_%d_%d", blockNum, j),
-					Type:    "transfer",
-					Payload: payload,
+
+				tx := &pb.AnyTx{
+					Content: &pb.AnyTx_Transaction{
+						Transaction: &pb.Transaction{
+							Base: &pb.BaseMessage{
+								TxId:        fmt.Sprintf("tx_%d_%d", blockNum, j),
+								FromAddress: from,
+								Status:      pb.Status_PENDING,
+							},
+							To:           to,
+							TokenAddress: "token123",
+							Amount:       "10",
+						},
+					},
 				}
 				txs = append(txs, tx)
 			}
 
-			block := &vm.Block{
-				ID:       fmt.Sprintf("block_%d", blockNum),
-				ParentID: "genesis",
-				Height:   uint64(blockNum + 1),
-				Txs:      txs,
+			block := &pb.Block{
+				BlockHash:     fmt.Sprintf("block_%d", blockNum),
+				PrevBlockHash: "genesis",
+				Height:        uint64(blockNum + 1),
+				Body:          txs,
 			}
 
 			// 预执行
@@ -368,31 +395,34 @@ func BenchmarkPreExecute(b *testing.B) {
 
 	// 准备数据
 	for i := 0; i < 100; i++ {
-		key := fmt.Sprintf("balance_user%d_FB", i)
+		key := fmt.Sprintf("balance_user%d_token123", i)
 		db.data[key] = []byte("10000")
 	}
 
 	// 创建测试区块
-	txs := make([]*vm.AnyTx, 100)
+	txs := make([]*pb.AnyTx, 100)
 	for i := 0; i < 100; i++ {
-		payload, _ := json.Marshal(map[string]string{
-			"from":   fmt.Sprintf("user%d", i%100),
-			"to":     fmt.Sprintf("user%d", (i+1)%100),
-			"amount": "1",
-			"token":  "FB",
-		})
-		txs[i] = &vm.AnyTx{
-			TxID:    fmt.Sprintf("tx_%d", i),
-			Type:    "transfer",
-			Payload: payload,
+		txs[i] = &pb.AnyTx{
+			Content: &pb.AnyTx_Transaction{
+				Transaction: &pb.Transaction{
+					Base: &pb.BaseMessage{
+						TxId:        fmt.Sprintf("tx_%d", i),
+						FromAddress: fmt.Sprintf("user%d", i%100),
+						Status:      pb.Status_PENDING,
+					},
+					To:           fmt.Sprintf("user%d", (i+1)%100),
+					TokenAddress: "token123",
+					Amount:       "1",
+				},
+			},
 		}
 	}
 
-	block := &vm.Block{
-		ID:       "bench_block",
-		ParentID: "genesis",
-		Height:   1,
-		Txs:      txs,
+	block := &pb.Block{
+		BlockHash:     "bench_block",
+		PrevBlockHash: "genesis",
+		Height:        1,
+		Body:          txs,
 	}
 
 	b.ResetTimer()

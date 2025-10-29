@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/pb"
 	"fmt"
 	"sync"
 )
@@ -47,28 +48,28 @@ func (x *Executor) SetKindFn(fn KindFn) {
 }
 
 // PreExecuteBlock 预执行区块（不写数据库）
-func (x *Executor) PreExecuteBlock(b *Block) (*SpecResult, error) {
+func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	if b == nil {
 		return nil, ErrNilBlock
 	}
 
 	// 检查缓存
-	if cached, ok := x.Cache.Get(b.ID); ok {
+	if cached, ok := x.Cache.Get(b.BlockHash); ok {
 		return cached, nil
 	}
 
 	// 创建新的状态视图
 	sv := NewStateView(x.ReadFn)
-	receipts := make([]*Receipt, 0, len(b.Txs))
+	receipts := make([]*Receipt, 0, len(b.Body))
 
 	// 遍历执行每个交易
-	for idx, tx := range b.Txs {
+	for idx, tx := range b.Body {
 		// 提取交易类型
 		kind, err := x.KFn(tx)
 		if err != nil {
 			return &SpecResult{
-				BlockID:  b.ID,
-				ParentID: b.ParentID,
+				BlockID:  b.BlockHash,
+				ParentID: b.PrevBlockHash,
 				Height:   b.Height,
 				Valid:    false,
 				Reason:   fmt.Sprintf("tx %d: %v", idx, err),
@@ -79,8 +80,8 @@ func (x *Executor) PreExecuteBlock(b *Block) (*SpecResult, error) {
 		h, ok := x.Reg.Get(kind)
 		if !ok {
 			return &SpecResult{
-				BlockID:  b.ID,
-				ParentID: b.ParentID,
+				BlockID:  b.BlockHash,
+				ParentID: b.PrevBlockHash,
 				Height:   b.Height,
 				Valid:    false,
 				Reason:   fmt.Sprintf("no handler for tx %d (kind: %s)", idx, kind),
@@ -96,8 +97,8 @@ func (x *Executor) PreExecuteBlock(b *Block) (*SpecResult, error) {
 			// 回滚状态
 			sv.Revert(snapshot)
 			return &SpecResult{
-				BlockID:  b.ID,
-				ParentID: b.ParentID,
+				BlockID:  b.BlockHash,
+				ParentID: b.PrevBlockHash,
 				Height:   b.Height,
 				Valid:    false,
 				Reason:   fmt.Sprintf("tx %d invalid: %v", idx, err),
@@ -117,8 +118,8 @@ func (x *Executor) PreExecuteBlock(b *Block) (*SpecResult, error) {
 
 	// 创建执行结果
 	res := &SpecResult{
-		BlockID:  b.ID,
-		ParentID: b.ParentID,
+		BlockID:  b.BlockHash,
+		ParentID: b.PrevBlockHash,
 		Height:   b.Height,
 		Valid:    true,
 		Receipts: receipts,
@@ -131,7 +132,7 @@ func (x *Executor) PreExecuteBlock(b *Block) (*SpecResult, error) {
 }
 
 // CommitFinalizedBlock 最终化提交（写入数据库）
-func (x *Executor) CommitFinalizedBlock(b *Block) error {
+func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 	if b == nil {
 		return ErrNilBlock
 	}
@@ -140,7 +141,7 @@ func (x *Executor) CommitFinalizedBlock(b *Block) error {
 	defer x.mu.Unlock()
 
 	// 优先使用缓存的执行结果
-	if res, ok := x.Cache.Get(b.ID); ok && res.Valid {
+	if res, ok := x.Cache.Get(b.BlockHash); ok && res.Valid {
 		return x.applyResult(res, b)
 	}
 
@@ -158,7 +159,7 @@ func (x *Executor) CommitFinalizedBlock(b *Block) error {
 }
 
 // applyResult 应用执行结果到数据库
-func (x *Executor) applyResult(res *SpecResult, b *Block) error {
+func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 	// 批量写入状态变更
 	for _, w := range res.Diff {
 		if w.Del {
@@ -170,7 +171,7 @@ func (x *Executor) applyResult(res *SpecResult, b *Block) error {
 
 	// 写入幂等标记：高度提交
 	heightKey := fmt.Sprintf("vm_commit_h_%d", b.Height)
-	x.DB.EnqueueSet(heightKey, b.ID)
+	x.DB.EnqueueSet(heightKey, b.BlockHash)
 
 	// 写入交易处理状态
 	for _, rc := range res.Receipts {
@@ -233,17 +234,17 @@ func (x *Executor) CleanupCache(finalizedHeight uint64) {
 }
 
 // ValidateBlock 验证区块基本信息
-func ValidateBlock(b *Block) error {
+func ValidateBlock(b *pb.Block) error {
 	if b == nil {
 		return ErrNilBlock
 	}
-	if b.ID == "" {
-		return fmt.Errorf("empty block ID")
+	if b.BlockHash == "" {
+		return fmt.Errorf("empty block hash")
 	}
-	if b.Height == 0 && b.ParentID != "" {
+	if b.Height == 0 && b.PrevBlockHash != "" {
 		return fmt.Errorf("genesis block should not have parent")
 	}
-	if b.Height > 0 && b.ParentID == "" {
+	if b.Height > 0 && b.PrevBlockHash == "" {
 		return fmt.Errorf("non-genesis block should have parent")
 	}
 	return nil

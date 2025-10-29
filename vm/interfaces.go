@@ -1,5 +1,7 @@
 package vm
 
+import "dex/pb"
+
 // ========== 核心接口定义 ==========
 
 // StateView 状态视图接口
@@ -20,9 +22,9 @@ type TxHandler interface {
 	//标识这个 Handler 处理哪种交易类型（比如 "order"）。
 	Kind() string
 	//在给定 StateView 上预执行，返回写集 []WriteOp 与执行回执 *Receipt（成功/失败、错误原因、写入条数等）
-	DryRun(tx *AnyTx, sv StateView) ([]WriteOp, *Receipt, error)
+	DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error)
 	//可选的“兜底”落库方法（也可以返回 ErrNotImplemented，让你统一用 Diff() + DB 批量入库）。
-	Apply(tx *AnyTx) error // 可选兜底；或返回 ErrNotImplemented
+	Apply(tx *pb.AnyTx) error // 可选兜底；或返回 ErrNotImplemented
 }
 
 // （预执行结果缓存）
@@ -51,4 +53,4 @@ type ReadThroughFn func(key string) ([]byte, error)
 
 // （交易类型提取函数）
 // 给 AnyTx 提取“交易种类”的小工具。默认实现会优先看 tx.Type，否则看 tx.Kind，失败则报错；这让 VM 能用 Kind() 去路由到正确的 TxHandler
-type KindFn func(tx *AnyTx) (string, error)
+type KindFn func(tx *pb.AnyTx) (string, error)
