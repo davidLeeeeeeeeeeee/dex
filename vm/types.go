@@ -38,7 +38,3 @@ type SpecResult struct {
 	Receipts []*Receipt // 交易执行结果
 	Diff     []WriteOp  // 状态变更集合
 }
-
-// ========== 注意 ==========
-// Block 和 AnyTx 类型现在使用 pb 包中的定义
-// 请导入 "dex/pb" 并使用 pb.Block 和 pb.AnyTx

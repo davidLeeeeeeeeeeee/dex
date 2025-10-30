@@ -128,7 +128,7 @@ message CandidateTx {//委托人tx
   string candidate_address = 3;
   string amount = 4;
 }
-message MinerTx {//启动或停止挖矿
+message MinerTx {//告知全网自己是否参与共识挖矿
   BaseMessage base = 1;
   OrderOp op = 2;//如果是ADD，则会直接把is_miner置为true,miner_locked_balance会被amount累加。
   string amount = 3;// 如果是REMOVE不需要传这个参数，is_miner置为false,miner_locked_balance的值直接累加到TokenBalance.balance,miner_locked_balance置0
