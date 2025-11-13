@@ -9,7 +9,7 @@ import (
 )
 
 // ---- 外部调用：管理更新 ----
-// 在 db/manage_account.go 里每次账户变更都调用
+// 在 db/manage_account.go 里每次账户变更都调用stateDB.ApplyAccountUpdate(height, key, val)
 func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 	E := epochOf(height, s.conf.EpochSize)
 	s.mu.Lock()
@@ -158,4 +158,3 @@ func (s *DB) FlushAndRotate(epochEnd uint64) error {
 
 	return nil
 }
-
