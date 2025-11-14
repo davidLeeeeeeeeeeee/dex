@@ -1,8 +1,9 @@
 package db
 
 import (
+	"dex/logs"
 	"dex/pb"
-	_ "fmt"
+	statedb "dex/stateDB"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -10,7 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// SaveAccount stores an Account in the database
+// stores an Account in the database
 func (mgr *Manager) SaveAccount(account *pb.Account) error {
 	key := KeyAccount(account.Address)
 	data, err := ProtoMarshal(account)
@@ -19,6 +20,19 @@ func (mgr *Manager) SaveAccount(account *pb.Account) error {
 	}
 	//logs.Trace("SaveAccount key:%s", key)
 	mgr.EnqueueSet(key, string(data))
+
+	// 同步到 StateDB（如果已初始化）
+	if mgr.StateDB != nil {
+		height := mgr.GetCurrentHeight()
+		if err := mgr.StateDB.ApplyAccountUpdate(height, statedb.KVUpdate{
+			Key:     key,
+			Value:   data,
+			Deleted: false,
+		}); err != nil {
+			logs.Error("[DB] failed to sync account to StateDB: %v", err)
+		}
+	}
+
 	return nil
 }
 

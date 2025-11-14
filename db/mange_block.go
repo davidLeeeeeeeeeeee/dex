@@ -173,6 +173,15 @@ func (mgr *Manager) GetLatestBlockHeight() (uint64, error) {
 	return height, nil
 }
 
+// GetCurrentHeight 返回当前最大高度；如果还没有任何区块，则返回 0
+func (mgr *Manager) GetCurrentHeight() uint64 {
+	height, err := mgr.GetLatestBlockHeight()
+	if err != nil {
+		return 0
+	}
+	return height
+}
+
 // 获取指定高度范围内的所有区块
 func (mgr *Manager) GetBlocksByRange(fromHeight, toHeight uint64) ([]*pb.Block, error) {
 	if fromHeight > toHeight {

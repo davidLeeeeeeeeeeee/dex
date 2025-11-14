@@ -4,7 +4,9 @@ import (
 	"dex/config"
 	"dex/logs"
 	"dex/pb"
+	statedb "dex/stateDB"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -15,8 +17,9 @@ import (
 
 // Manager 封装 BadgerDB 的管理器
 type Manager struct {
-	Db *badger.DB
-	mu sync.RWMutex
+	Db      *badger.DB
+	StateDB *statedb.DB
+	mu      sync.RWMutex
 
 	// 队列通道，批量写的 goroutine 用它来取写请求
 	writeQueueChan chan WriteTask
@@ -54,19 +57,38 @@ func NewManager(path string) (*Manager, error) {
 
 	indexMgr, err := NewMinerIndexManager(db)
 	if err != nil {
-		db.Close() // 清理已打开的数据库
+		_ = db.Close() // 清理已打开的数据库
 		return nil, fmt.Errorf("failed to create index manager: %w", err)
 	}
 
 	// ① 创建 Sequence（一次预取 1 000 个号段，可按业务量调大/调小）
 	seq, err := db.GetSequence([]byte("meta:max_index"), cfg.Database.SequenceBandwidth)
 	if err != nil {
-		db.Close() // 清理已打开的数据库
+		_ = db.Close() // 清理已打开的数据库
 		return nil, fmt.Errorf("failed to create sequence: %w", err)
 	}
 
+	// 初始化 StateDB，使用主 DB 目录下的 state 子目录
+	stateCfg := statedb.Config{
+		DataDir:         filepath.Join(path, "state"),
+		EpochSize:       40000,
+		ShardHexWidth:   1,
+		PageSize:        1000,
+		UseWAL:          true,
+		VersionsToKeep:  10,
+		AccountNSPrefix: "v1_account_",
+	}
+
+	stateDB, err := statedb.New(stateCfg)
+	if err != nil {
+		_ = seq.Release()
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to create StateDB: %w", err)
+	}
+
 	manager := &Manager{
-		Db:       db,
+		Db:      db,
+		StateDB: stateDB,
 		IndexMgr: indexMgr,
 		seq:      seq,
 	}
@@ -292,6 +314,11 @@ func (manager *Manager) Close() {
 	if manager.seq != nil {
 		_ = manager.seq.Release() // 无须处理返回值；Close() 时 Badger 仍会安全落盘
 		manager.seq = nil
+	}
+
+	if manager.StateDB != nil {
+		_ = manager.StateDB.Close()
+		manager.StateDB = nil
 	}
 
 	if manager.Db != nil {
