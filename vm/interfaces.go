@@ -15,6 +15,8 @@ type StateView interface {
 	Revert(snap int) error
 	//把这段预执行期间累积的写入集合（写集）导出来，给后续“真正落库”用。
 	Diff() []WriteOp
+	// 扫描指定前缀下的所有键值对（用于订单簿重建等场景）
+	Scan(prefix string) (map[string][]byte, error)
 }
 
 // TxHandler 交易处理器接口
@@ -44,12 +46,17 @@ type DBManager interface {
 	EnqueueDel(key string)
 	ForceFlush() error
 	Get(key string) ([]byte, error)
+	// 前缀扫描，返回所有以 prefix 开头的键值对
+	Scan(prefix string) (map[string][]byte, error)
 }
 
 // （读穿函数）
 // 当 StateView.Get 本地 overlay 没命中时，定义“如何从底层存储读真实值”的函数签名
 // 让 预执行的 StateView 在不落库的情况下依然能读到链上最新持久状态，从而实现 预执行 + 延迟落库 的闭环。
 type ReadThroughFn func(key string) ([]byte, error)
+
+// ScanFn 用于 StateView 从底层存储做前缀扫描
+type ScanFn func(prefix string) (map[string][]byte, error)
 
 // （交易类型提取函数）
 // 给 AnyTx 提取“交易种类”的小工具。默认实现会优先看 tx.Type，否则看 tx.Kind，失败则报错；这让 VM 能用 Kind() 去路由到正确的 TxHandler

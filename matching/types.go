@@ -22,6 +22,12 @@ type TradeUpdate struct {
 	IsFilled   bool            // 是否已完全成交
 }
 
+// TradeSink 用于接收撮合事件的回调函数。
+// 在不同的使用场景里可以注入：
+//   - 链下撮合服务：sink 把事件写入 channel/goroutine，再更新 DB
+//   - VM 预执行：sink 把事件追加到 slice，交由 VM 生成 WriteOp
+type TradeSink func(TradeUpdate)
+
 // OrderBook 包含买、卖双方的价格映射、堆，以及订单ID索引
 type OrderBook struct {
 	buyMap  map[decimal.Decimal]*PriceLevel
@@ -32,19 +38,37 @@ type OrderBook struct {
 
 	orderIndex map[string]*OrderRef
 
-	// 用于发送撮合事件
-	tradeCh chan<- TradeUpdate
+	// 用于发送撮合事件（可选），由上层注入。
+	onTrade TradeSink
 }
 
-func NewOrderBook(tradeCh chan<- TradeUpdate) *OrderBook {
+// NewOrderBookWithSink 使用自定义 TradeSink 创建订单簿。
+// sink 可以为 nil，此时撮合事件会被忽略（只更新内存订单簿状态）。
+func NewOrderBookWithSink(sink TradeSink) *OrderBook {
 	return &OrderBook{
 		buyMap:     make(map[decimal.Decimal]*PriceLevel),
 		sellMap:    make(map[decimal.Decimal]*PriceLevel),
 		buyHeap:    &MaxPriceHeap{},
 		sellHeap:   &MinPriceHeap{},
 		orderIndex: make(map[string]*OrderRef),
-		tradeCh:    tradeCh,
+		onTrade:    sink,
 	}
+}
+
+// NewOrderBook 保持原有签名，使用 channel 作为事件出口，供现有 OrderBookManager 使用。
+func NewOrderBook(tradeCh chan<- TradeUpdate) *OrderBook {
+	var sink TradeSink
+	if tradeCh != nil {
+		sink = func(ev TradeUpdate) {
+			tradeCh <- ev
+		}
+	}
+	return NewOrderBookWithSink(sink)
+}
+
+// SetTradeSink 设置或更新 TradeSink，用于在订单簿创建后动态注入事件处理器
+func (ob *OrderBook) SetTradeSink(sink TradeSink) {
+	ob.onTrade = sink
 }
 
 // extractOrderTx 尝试从 AnyTx 提取 OrderTx

@@ -133,6 +133,13 @@ func KeyOrderPriceIndex(pair string, isFilled bool, priceKey67 string, orderID s
 	return withVer(fmt.Sprintf("pair:%s|is_filled:%t|price:%s|order_id:%s", pair, isFilled, priceKey67, orderID))
 }
 
+// KeyOrderPriceIndexPrefix 返回给定交易对和是否已成交状态下的价格索引前缀
+// 例：v1_pair:<pair>|is_filled:<true|false>|
+func KeyOrderPriceIndexPrefix(pair string, isFilled bool) string {
+	return withVer(fmt.Sprintf("pair:%s|is_filled:%t|", pair, isFilled))
+}
+
+
 // ===================== Token 相关 =====================
 
 // KeyToken Token 数据

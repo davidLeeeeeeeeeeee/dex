@@ -224,21 +224,21 @@ func (ob *OrderBook) executeTrade(pl *PriceLevel, side OrderSide) bool {
 		o.Amount = o.Amount.Sub(tradeAmt)
 		opp.Amount = opp.Amount.Sub(tradeAmt)
 
-		// ★ 在这里发送撮合事件 => Manager 后台去DB更新
-		ob.tradeCh <- TradeUpdate{
+		// ★ 在这里发送撮合事件 => 由上层决定如何处理（VM 写入状态、或链下服务更新 DB）
+		ob.emitTrade(TradeUpdate{
 			OrderID:    o.ID,
 			TradeAmt:   tradeAmt,
 			TradePrice: actualPrice,
 			RemainAmt:  o.Amount,
 			IsFilled:   o.Amount.Cmp(decimal.Zero) == 0,
-		}
-		ob.tradeCh <- TradeUpdate{
+		})
+		ob.emitTrade(TradeUpdate{
 			OrderID:    opp.ID,
 			TradeAmt:   tradeAmt,
 			TradePrice: actualPrice,
 			RemainAmt:  opp.Amount,
 			IsFilled:   opp.Amount.Cmp(decimal.Zero) == 0,
-		}
+		})
 
 		// 如果对手单耗尽 => remove
 		if opp.Amount.Cmp(decimal.Zero) <= 0 {
@@ -279,6 +279,14 @@ func (ob *OrderBook) removeFromPriceLevel(o *Order) {
 // removeOrderIndex 从orderIndex移除
 func (ob *OrderBook) removeOrderIndex(orderID string) {
 	delete(ob.orderIndex, orderID)
+}
+
+// emitTrade 
+func (ob *OrderBook) emitTrade(ev TradeUpdate) {
+	if ob == nil || ob.onTrade == nil {
+		return
+	}
+	ob.onTrade(ev)
 }
 
 // CancelOrder 通过订单ID删除订单

@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"strings"
 	"sync"
 )
 
@@ -27,14 +28,16 @@ type change struct {
 type overlayStateView struct {
 	mu        sync.RWMutex
 	read      ReadThroughFn
+	scan      ScanFn
 	overlay   map[string]ovVal
 	changelog []change
 }
 
 // NewStateView 创建新的StateView
-func NewStateView(read ReadThroughFn) StateView {
+func NewStateView(read ReadThroughFn, scan ScanFn) StateView {
 	return &overlayStateView{
 		read:      read,
+		scan:      scan,
 		overlay:   make(map[string]ovVal, 1024),
 		changelog: make([]change, 0, 1024),
 	}
@@ -88,6 +91,43 @@ func (s *overlayStateView) SetWithMeta(key string, val []byte, syncStateDB bool,
 	valCopy := make([]byte, len(val))
 	copy(valCopy, val)
 	s.overlay[key] = ovVal{val: valCopy, exist: true, syncStateDB: syncStateDB, category: category}
+}
+
+// Scan scans all keys with the given prefix
+func (s *overlayStateView) Scan(prefix string) (map[string][]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string][]byte)
+
+	// First, get base results from underlying storage if scan function is available
+	if s.scan != nil {
+		base, err := s.scan(prefix)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range base {
+			valCopy := make([]byte, len(v))
+			copy(valCopy, v)
+			result[k] = valCopy
+		}
+	}
+
+	// Merge overlay entries
+	for k, v := range s.overlay {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if !v.exist {
+			delete(result, k)
+			continue
+		}
+		valCopy := make([]byte, len(v.val))
+		copy(valCopy, v.val)
+		result[k] = valCopy
+	}
+
+	return result, nil
 }
 
 func (s *overlayStateView) Del(key string) {

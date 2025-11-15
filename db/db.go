@@ -157,13 +157,46 @@ func (manager *Manager) runWriteQueue() {
 	}
 }
 
-// 提供一个无参函数，触发批量队列 flush
-func (manager *Manager) ForceFlush() {
+// ForceFlush triggers a batch queue flush
+func (manager *Manager) ForceFlush() error {
 	select {
 	case manager.forceFlushChan <- struct{}{}:
 	default:
 		// 如果通道已满，不阻塞
 	}
+	return nil
+}
+
+// Scan scans all keys with the given prefix and returns a map of key-value pairs
+func (manager *Manager) Scan(prefix string) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+
+	err := manager.Db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		p := []byte(prefix)
+		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
+			item := it.Item()
+			k := item.KeyCopy(nil)
+			v, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			result[string(k)] = v
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// EnqueueDel wraps EnqueueDelete for interface compatibility
+func (manager *Manager) EnqueueDel(key string) {
+	manager.EnqueueDelete(key)
 }
 
 // 这里 flushBatch 就是把 batch 里所有请求一次性地在一个事务中提交到 BadgerDB。

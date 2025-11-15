@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"dex/pb"
 	"dex/vm"
@@ -39,6 +40,18 @@ func (db *SimpleDB) EnqueueDel(key string) {
 func (db *SimpleDB) ForceFlush() error {
 	// 内存数据库，无需刷新
 	return nil
+}
+
+func (db *SimpleDB) Scan(prefix string) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+	for k, v := range db.data {
+		if strings.HasPrefix(k, prefix) {
+			valCopy := make([]byte, len(v))
+			copy(valCopy, v)
+			result[k] = valCopy
+		}
+	}
+	return result, nil
 }
 
 // CustomHandler 自定义Handler示例

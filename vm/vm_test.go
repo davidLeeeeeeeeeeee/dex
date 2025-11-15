@@ -3,6 +3,7 @@ package vm_test
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -58,6 +59,21 @@ func (db *MockDB) ForceFlush() error {
 	}
 	db.pending = db.pending[:0]
 	return nil
+}
+
+func (db *MockDB) Scan(prefix string) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	for k, v := range db.data {
+		if strings.HasPrefix(k, prefix) {
+			valCopy := make([]byte, len(v))
+			copy(valCopy, v)
+			result[k] = valCopy
+		}
+	}
+	return result, nil
 }
 
 // ========== 测试用例 ==========
@@ -373,7 +389,11 @@ func TestStateViewSnapshot(t *testing.T) {
 		return nil, nil
 	}
 
-	sv := vm.NewStateView(readFn)
+	scanFn := func(prefix string) (map[string][]byte, error) {
+		return make(map[string][]byte), nil
+	}
+
+	sv := vm.NewStateView(readFn, scanFn)
 
 	// 初始状态
 	val, exists, _ := sv.Get("test_key")

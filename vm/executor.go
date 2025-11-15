@@ -15,6 +15,7 @@ type Executor struct {
 	Cache  SpecExecCache
 	KFn    KindFn
 	ReadFn ReadThroughFn
+	ScanFn ScanFn
 }
 
 // 创建新的执行器
@@ -36,6 +37,11 @@ func NewExecutor(db DBManager, reg *HandlerRegistry, cache SpecExecCache) *Execu
 	// 设置ReadFn
 	executor.ReadFn = func(key string) ([]byte, error) {
 		return db.Get(key)
+	}
+
+	// 设置ScanFn
+	executor.ScanFn = func(prefix string) (map[string][]byte, error) {
+		return db.Scan(prefix)
 	}
 
 	return executor
@@ -60,7 +66,7 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	}
 
 	// 创建新的状态视图
-	sv := NewStateView(x.ReadFn)
+	sv := NewStateView(x.ReadFn, x.ScanFn)
 	receipts := make([]*Receipt, 0, len(b.Body))
 
 	// 遍历执行每个交易
