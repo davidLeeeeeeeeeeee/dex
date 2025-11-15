@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"encoding/json"
 	"fmt"
@@ -62,7 +63,7 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 	}
 
 	// 读取投票者账户
-	voterAccountKey := fmt.Sprintf("account_%s", candidate.Base.FromAddress)
+	voterAccountKey := keys.KeyAccount(candidate.Base.FromAddress)
 	voterAccountData, voterExists, err := sv.Get(voterAccountKey)
 	if err != nil || !voterExists {
 		return nil, &Receipt{
@@ -82,7 +83,7 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 	}
 
 	// 读取候选人账户（验证候选人是否存在）
-	candidateAccountKey := fmt.Sprintf("account_%s", candidate.CandidateAddress)
+	candidateAccountKey := keys.KeyAccount(candidate.CandidateAddress)
 	candidateAccountData, candidateExists, err := sv.Get(candidateAccountKey)
 	if err != nil || !candidateExists {
 		return nil, &Receipt{
@@ -158,9 +159,11 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   voterAccountKey,
-		Value: updatedVoterData,
-		Del:   false,
+		Key:         voterAccountKey,
+		Value:       updatedVoterData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 更新候选人收到的投票数
@@ -182,30 +185,36 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   candidateAccountKey,
-		Value: updatedCandidateData,
-		Del:   false,
+		Key:         candidateAccountKey,
+		Value:       updatedCandidateData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 创建候选人索引，用于快速查询候选人的所有委托人
 	// key格式: candidate:xxx|user:xxx
-	candidateIndexKey := fmt.Sprintf("candidate:%s|user:%s", candidate.CandidateAddress, candidate.Base.FromAddress)
+	candidateIndexKey := keys.KeyCandidateIndex(candidate.CandidateAddress, candidate.Base.FromAddress)
 	candidateIndex := &pb.CandidateIndex{Ok: true}
 	candidateIndexData, _ := json.Marshal(candidateIndex)
-	
+
 	ws = append(ws, WriteOp{
-		Key:   candidateIndexKey,
-		Value: candidateIndexData,
-		Del:   false,
+		Key:         candidateIndexKey,
+		Value:       candidateIndexData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "index",
 	})
 
 	// 记录投票历史
-	historyKey := fmt.Sprintf("candidate_history_%s", candidate.Base.TxId)
+	historyKey := keys.KeyCandidateHistory(candidate.Base.TxId)
 	historyData, _ := json.Marshal(candidate)
 	ws = append(ws, WriteOp{
-		Key:   historyKey,
-		Value: historyData,
-		Del:   false,
+		Key:         historyKey,
+		Value:       historyData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "history",
 	})
 
 	return ws, &Receipt{
@@ -218,7 +227,7 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 // handleRemoveVote 处理取消投票
 func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	// 读取投票者账户
-	voterAccountKey := fmt.Sprintf("account_%s", candidate.Base.FromAddress)
+	voterAccountKey := keys.KeyAccount(candidate.Base.FromAddress)
 	voterAccountData, voterExists, err := sv.Get(voterAccountKey)
 	if err != nil || !voterExists {
 		return nil, &Receipt{
@@ -258,7 +267,7 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 	targetCandidateAddr := voterAccount.Candidate
 
 	// 读取候选人账户
-	candidateAccountKey := fmt.Sprintf("account_%s", targetCandidateAddr)
+	candidateAccountKey := keys.KeyAccount(targetCandidateAddr)
 	candidateAccountData, candidateExists, err := sv.Get(candidateAccountKey)
 	if err != nil || !candidateExists {
 		return nil, &Receipt{
@@ -323,9 +332,11 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   voterAccountKey,
-		Value: updatedVoterData,
-		Del:   false,
+		Key:         voterAccountKey,
+		Value:       updatedVoterData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 减少候选人收到的投票数
@@ -350,26 +361,32 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   candidateAccountKey,
-		Value: updatedCandidateData,
-		Del:   false,
+		Key:         candidateAccountKey,
+		Value:       updatedCandidateData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 删除候选人索引
-	candidateIndexKey := fmt.Sprintf("candidate:%s|user:%s", targetCandidateAddr, candidate.Base.FromAddress)
+	candidateIndexKey := keys.KeyCandidateIndex(targetCandidateAddr, candidate.Base.FromAddress)
 	ws = append(ws, WriteOp{
-		Key:   candidateIndexKey,
-		Value: nil,
-		Del:   true,
+		Key:         candidateIndexKey,
+		Value:       nil,
+		Del:         true,
+		SyncStateDB: false,
+		Category:    "index",
 	})
 
 	// 记录取消投票历史
-	historyKey := fmt.Sprintf("candidate_history_%s", candidate.Base.TxId)
+	historyKey := keys.KeyCandidateHistory(candidate.Base.TxId)
 	historyData, _ := json.Marshal(candidate)
 	ws = append(ws, WriteOp{
-		Key:   historyKey,
-		Value: historyData,
-		Del:   false,
+		Key:         historyKey,
+		Value:       historyData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "history",
 	})
 
 	return ws, &Receipt{

@@ -8,8 +8,10 @@ import (
 
 // ovVal overlay中的值
 type ovVal struct {
-	val   []byte
-	exist bool // false表示已删除
+	val         []byte
+	exist       bool   // false表示已删除
+	syncStateDB bool   // 是否同步到 StateDB
+	category    string // 数据分类
 }
 
 // change 变更记录，用于回滚
@@ -72,7 +74,20 @@ func (s *overlayStateView) Set(key string, val []byte) {
 	// 复制值，避免外部修改影响内部状态
 	valCopy := make([]byte, len(val))
 	copy(valCopy, val)
-	s.overlay[key] = ovVal{val: valCopy, exist: true}
+	s.overlay[key] = ovVal{val: valCopy, exist: true, syncStateDB: false, category: ""}
+}
+
+// SetWithMeta 设置值并保留元数据
+func (s *overlayStateView) SetWithMeta(key string, val []byte, syncStateDB bool, category string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	prev, has := s.overlay[key]
+	s.changelog = append(s.changelog, change{key: key, prev: prev, hasPrev: has})
+	// 复制值，避免外部修改影响内部状态
+	valCopy := make([]byte, len(val))
+	copy(valCopy, val)
+	s.overlay[key] = ovVal{val: valCopy, exist: true, syncStateDB: syncStateDB, category: category}
 }
 
 func (s *overlayStateView) Del(key string) {
@@ -119,7 +134,13 @@ func (s *overlayStateView) Diff() []WriteOp {
 	for k, v := range s.overlay {
 		valCopy := make([]byte, len(v.val))
 		copy(valCopy, v.val)
-		diff = append(diff, WriteOp{Key: k, Value: valCopy, Del: !v.exist})
+		diff = append(diff, WriteOp{
+			Key:         k,
+			Value:       valCopy,
+			Del:         !v.exist,
+			SyncStateDB: v.syncStateDB,
+			Category:    v.category,
+		})
 	}
 	return diff
 }

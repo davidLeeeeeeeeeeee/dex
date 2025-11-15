@@ -15,9 +15,28 @@ var (
 
 // “要怎么改状态”的清单
 type WriteOp struct {
-	Key   string
-	Value []byte
-	Del   bool // true表示删除操作
+	Key         string // 完整的 key（包括命名空间前缀）
+	Value       []byte // 序列化后的值
+	Del         bool   // true表示删除操作
+	SyncStateDB bool   // 是否同步到 StateDB（用于账户相关的关键数据）
+	Category    string // 数据分类：account, token, order, receipt, meta 等，便于追踪和调试
+}
+
+// ========== WriteOp 方法 ==========
+
+// GetKey 获取 key
+func (w *WriteOp) GetKey() string {
+	return w.Key
+}
+
+// GetValue 获取 value
+func (w *WriteOp) GetValue() []byte {
+	return w.Value
+}
+
+// IsDel 是否删除操作
+func (w *WriteOp) IsDel() bool {
+	return w.Del
 }
 
 // 记录执行结果

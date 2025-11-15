@@ -8,7 +8,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// SavePendingAnyTx 改为成员函数
+// SavePendingAnyTx saves a pending AnyTx to the database
+//
+// ⚠️ INTERNAL API - DO NOT CALL DIRECTLY FROM OUTSIDE DB PACKAGE
+// This method is used internally by db package for legacy compatibility.
+// New code should use VM's unified write path (applyResult) instead.
+//
+// Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SavePendingAnyTx(tx *pb.AnyTx) error {
 	txID := tx.GetTxId()
 	if txID == "" {

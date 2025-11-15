@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"encoding/json"
 	"fmt"
@@ -34,7 +35,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 	}
 
 	// 2. 验证发行者账户是否存在
-	accountKey := fmt.Sprintf("account_%s", issueTx.Base.FromAddress)
+	accountKey := keys.KeyAccount(issueTx.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil {
 		return nil, &Receipt{
@@ -66,7 +67,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 	tokenAddress := issueTx.Base.TxId
 
 	// 检查token是否已存在
-	tokenKey := fmt.Sprintf("token_%s", tokenAddress)
+	tokenKey := keys.KeyToken(tokenAddress)
 	_, tokenExists, _ := sv.Get(tokenKey)
 	if tokenExists {
 		return nil, &Receipt{
@@ -99,9 +100,11 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 
 	// 保存Token记录
 	ws = append(ws, WriteOp{
-		Key:   tokenKey,
-		Value: tokenData,
-		Del:   false,
+		Key:         tokenKey,
+		Value:       tokenData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "token",
 	})
 
 	// 5. 将总供应量分配给发行者
@@ -135,15 +138,17 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   accountKey,
-		Value: updatedAccountData,
-		Del:   false,
+		Key:         accountKey,
+		Value:       updatedAccountData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 6. 更新TokenRegistry
-	registryKey := "token_registry"
+	registryKey := keys.KeyTokenRegistry()
 	registryData, _, _ := sv.Get(registryKey)
-	
+
 	var registry pb.TokenRegistry
 	if registryData != nil {
 		if err := json.Unmarshal(registryData, &registry); err != nil {
@@ -166,9 +171,11 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   registryKey,
-		Value: updatedRegistryData,
-		Del:   false,
+		Key:         registryKey,
+		Value:       updatedRegistryData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "registry",
 	})
 
 	// 7. 返回执行结果

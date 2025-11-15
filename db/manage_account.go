@@ -11,7 +11,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// stores an Account in the database
+// SaveAccount stores an Account in the database
+//
+// ⚠️ INTERNAL API - DO NOT CALL DIRECTLY FROM OUTSIDE DB PACKAGE
+// This method is used internally by db package for legacy compatibility.
+// New code should use VM's unified write path (applyResult) instead.
+//
+// Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveAccount(account *pb.Account) error {
 	key := KeyAccount(account.Address)
 	data, err := ProtoMarshal(account)

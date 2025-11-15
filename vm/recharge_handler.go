@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"encoding/json"
 	"fmt"
@@ -52,7 +53,7 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	// 3. 验证Token是否存在
-	tokenKey := fmt.Sprintf("token_%s", recharge.TokenAddress)
+	tokenKey := keys.KeyToken(recharge.TokenAddress)
 	_, tokenExists, err := sv.Get(tokenKey)
 	if err != nil {
 		return nil, &Receipt{
@@ -72,7 +73,7 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 
 	// 4. 检查该充值地址是否已经被使用过
 	// 使用 tweak 作为唯一标识，防止重复上账
-	rechargeRecordKey := fmt.Sprintf("recharge_record_%s_%s", recharge.Base.FromAddress, recharge.Tweak)
+	rechargeRecordKey := keys.KeyRechargeRecord(recharge.Base.FromAddress, recharge.Tweak)
 	_, recordExists, _ := sv.Get(rechargeRecordKey)
 	if recordExists {
 		return nil, &Receipt{
@@ -83,7 +84,7 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	// 5. 读取或创建用户账户
-	accountKey := fmt.Sprintf("account_%s", recharge.Base.FromAddress)
+	accountKey := keys.KeyAccount(recharge.Base.FromAddress)
 	accountData, accountExists, _ := sv.Get(accountKey)
 
 	var account pb.Account
@@ -153,9 +154,11 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   accountKey,
-		Value: updatedAccountData,
-		Del:   false,
+		Key:         accountKey,
+		Value:       updatedAccountData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 9. 保存充值记录，防止重复上账
@@ -168,24 +171,28 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		"amount":            rechargeAmount.String(),
 	}
 	rechargeRecordData, _ := json.Marshal(rechargeRecord)
-	
+
 	ws = append(ws, WriteOp{
-		Key:   rechargeRecordKey,
-		Value: rechargeRecordData,
-		Del:   false,
+		Key:         rechargeRecordKey,
+		Value:       rechargeRecordData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "record",
 	})
 
 	// 10. 保存充值交易历史
-	historyKey := fmt.Sprintf("recharge_history_%s", recharge.Base.TxId)
+	historyKey := keys.KeyRechargeHistory(recharge.Base.TxId)
 	historyData, _ := json.Marshal(recharge)
 	ws = append(ws, WriteOp{
-		Key:   historyKey,
-		Value: historyData,
-		Del:   false,
+		Key:         historyKey,
+		Value:       historyData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "history",
 	})
 
 	// 11. 保存生成的地址映射（用于查询）
-	addressMappingKey := fmt.Sprintf("recharge_address_%s", generatedAddress)
+	addressMappingKey := keys.KeyRechargeAddress(generatedAddress)
 	addressMapping := map[string]string{
 		"user_address":  recharge.Base.FromAddress,
 		"token_address": recharge.TokenAddress,
@@ -193,9 +200,11 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 	addressMappingData, _ := json.Marshal(addressMapping)
 	ws = append(ws, WriteOp{
-		Key:   addressMappingKey,
-		Value: addressMappingData,
-		Del:   false,
+		Key:         addressMappingKey,
+		Value:       addressMappingData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "index",
 	})
 
 	return ws, &Receipt{

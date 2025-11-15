@@ -1,10 +1,12 @@
 package vm_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
 
+	"dex/keys"
 	"dex/pb"
 	"dex/vm"
 )
@@ -63,8 +65,33 @@ func (db *MockDB) ForceFlush() error {
 func TestBasicExecution(t *testing.T) {
 	// 创建数据库和组件
 	db := NewMockDB()
-	db.data["balance_alice_token123"] = []byte("1000")
-	db.data["balance_bob_token123"] = []byte("500")
+
+	// 初始化账户数据（使用新的 key 格式）
+	aliceAccount := &pb.Account{
+		Address: "alice",
+		Balances: map[string]*pb.TokenBalance{
+			"token123": {
+				Balance:                "1000",
+				MinerLockedBalance:     "0",
+				CandidateLockedBalance: "0",
+			},
+		},
+	}
+	aliceData, _ := json.Marshal(aliceAccount)
+	db.data[keys.KeyAccount("alice")] = aliceData
+
+	bobAccount := &pb.Account{
+		Address: "bob",
+		Balances: map[string]*pb.TokenBalance{
+			"token123": {
+				Balance:                "500",
+				MinerLockedBalance:     "0",
+				CandidateLockedBalance: "0",
+			},
+		},
+	}
+	bobData, _ := json.Marshal(bobAccount)
+	db.data[keys.KeyAccount("bob")] = bobData
 
 	// 创建执行器
 	registry := vm.NewHandlerRegistry()
@@ -114,7 +141,11 @@ func TestBasicExecution(t *testing.T) {
 	}
 
 	// 检查数据库没有变化（预执行不应改变数据库）
-	if val, _ := db.Get("balance_alice_token123"); string(val) != "1000" {
+	aliceKey := keys.KeyAccount("alice")
+	val, _ := db.Get(aliceKey)
+	var checkAccount pb.Account
+	json.Unmarshal(val, &checkAccount)
+	if checkAccount.Balances["token123"].Balance != "1000" {
 		t.Fatal("Database should not change during PreExecute")
 	}
 
@@ -139,7 +170,33 @@ func TestBasicExecution(t *testing.T) {
 
 func TestCacheEffectiveness(t *testing.T) {
 	db := NewMockDB()
-	db.data["balance_alice_token123"] = []byte("1000")
+
+	// 初始化账户数据（使用新的 key 格式）
+	aliceAccount := &pb.Account{
+		Address: "alice",
+		Balances: map[string]*pb.TokenBalance{
+			"token123": {
+				Balance:                "1000",
+				MinerLockedBalance:     "0",
+				CandidateLockedBalance: "0",
+			},
+		},
+	}
+	aliceData, _ := json.Marshal(aliceAccount)
+	db.data[keys.KeyAccount("alice")] = aliceData
+
+	bobAccount := &pb.Account{
+		Address: "bob",
+		Balances: map[string]*pb.TokenBalance{
+			"token123": {
+				Balance:                "0",
+				MinerLockedBalance:     "0",
+				CandidateLockedBalance: "0",
+			},
+		},
+	}
+	bobData, _ := json.Marshal(bobAccount)
+	db.data[keys.KeyAccount("bob")] = bobData
 
 	registry := vm.NewHandlerRegistry()
 	vm.RegisterDefaultHandlers(registry)
@@ -237,10 +294,21 @@ func TestConcurrentExecution(t *testing.T) {
 	cache := vm.NewSpecExecLRU(100)
 	executor := vm.NewExecutor(db, registry, cache)
 
-	// 初始化多个账户
+	// 初始化多个账户（使用新的 key 格式）
 	for i := 0; i < 10; i++ {
-		key := fmt.Sprintf("balance_user%d_token123", i)
-		db.data[key] = []byte("1000")
+		userAddr := fmt.Sprintf("user%d", i)
+		account := &pb.Account{
+			Address: userAddr,
+			Balances: map[string]*pb.TokenBalance{
+				"token123": {
+					Balance:                "1000",
+					MinerLockedBalance:     "0",
+					CandidateLockedBalance: "0",
+				},
+			},
+		}
+		accountData, _ := json.Marshal(account)
+		db.data[keys.KeyAccount(userAddr)] = accountData
 	}
 
 	// 并发执行多个区块
@@ -393,10 +461,21 @@ func BenchmarkPreExecute(b *testing.B) {
 	cache := vm.NewSpecExecLRU(1000)
 	executor := vm.NewExecutor(db, registry, cache)
 
-	// 准备数据
+	// 准备数据（使用新的 key 格式）
 	for i := 0; i < 100; i++ {
-		key := fmt.Sprintf("balance_user%d_token123", i)
-		db.data[key] = []byte("10000")
+		userAddr := fmt.Sprintf("user%d", i)
+		account := &pb.Account{
+			Address: userAddr,
+			Balances: map[string]*pb.TokenBalance{
+				"token123": {
+					Balance:                "10000",
+					MinerLockedBalance:     "0",
+					CandidateLockedBalance: "0",
+				},
+			},
+		}
+		accountData, _ := json.Marshal(account)
+		db.data[keys.KeyAccount(userAddr)] = accountData
 	}
 
 	// 创建测试区块

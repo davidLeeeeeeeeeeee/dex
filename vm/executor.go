@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"fmt"
 	"sync"
@@ -110,7 +111,14 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 			if w.Del {
 				sv.Del(w.Key)
 			} else {
-				sv.Set(w.Key, w.Value)
+				// 使用 SetWithMeta 保留元数据
+				if svWithMeta, ok := sv.(interface {
+					SetWithMeta(string, []byte, bool, string)
+				}); ok {
+					svWithMeta.SetWithMeta(w.Key, w.Value, w.SyncStateDB, w.Category)
+				} else {
+					sv.Set(w.Key, w.Value)
+				}
 			}
 		}
 		receipts = append(receipts, rc)
@@ -158,40 +166,102 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 	return x.applyResult(res, b)
 }
 
-// applyResult 应用执行结果到数据库
+// applyResult 应用执行结果到数据库（统一提交入口）
+// 这是唯一的最终化提交点，所有状态变化都在这里处理
 func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
-	// 批量写入状态变更
+	// ========== 第一步：检查幂等性 ==========
+	// 防止同一区块被重复提交
+	if committed, blockHash := x.IsBlockCommitted(b.Height); committed {
+		if blockHash == b.BlockHash {
+			// 已提交过相同的区块，直接返回成功（幂等）
+			return nil
+		}
+		// 不同的区块哈希，说明有冲突
+		return fmt.Errorf("block at height %d already committed with different hash: %s vs %s",
+			b.Height, blockHash, b.BlockHash)
+	}
+
+	// ========== 第二步：应用所有状态变更 ==========
+	// 遍历 Diff 中的所有写操作
+	stateDBUpdates := make([]interface{}, 0) // 用于收集需要同步到 StateDB 的更新
+
 	for _, w := range res.Diff {
+		// 写入到 DB
 		if w.Del {
 			x.DB.EnqueueDel(w.Key)
 		} else {
 			x.DB.EnqueueSet(w.Key, string(w.Value))
 		}
-	}
 
-	// 写入幂等标记：高度提交
-	heightKey := fmt.Sprintf("vm_commit_h_%d", b.Height)
-	x.DB.EnqueueSet(heightKey, b.BlockHash)
-
-	// 写入交易处理状态
-	for _, rc := range res.Receipts {
-		txKey := fmt.Sprintf("vm_applied_tx_%s", rc.TxID)
-		x.DB.EnqueueSet(txKey, rc.Status)
-
-		// 可选：写入完整的Receipt
-		if rc.Error != "" {
-			errKey := fmt.Sprintf("vm_tx_error_%s", rc.TxID)
-			x.DB.EnqueueSet(errKey, rc.Error)
+		// 如果需要同步到 StateDB，记录下来
+		if w.SyncStateDB {
+			stateDBUpdates = append(stateDBUpdates, w)
 		}
 	}
 
-	// 强制刷新到数据库
+	// ========== 第三步：同步到 StateDB ==========
+	// 统一处理所有需要同步到 StateDB 的数据
+	if len(stateDBUpdates) > 0 && x.DB != nil {
+		if err := x.syncToStateDB(b.Height, stateDBUpdates); err != nil {
+			// StateDB 同步失败，记录错误但不中断提交
+			// 因为 Badger 已经写入了，StateDB 是可选的加速层
+			fmt.Printf("[VM] Warning: StateDB sync failed: %v\n", err)
+		}
+	}
+
+	// ========== 第四步：写入交易处理状态 ==========
+	// 记录每个交易的执行状态和错误信息
+	for _, rc := range res.Receipts {
+		// 交易状态
+		statusKey := keys.KeyVMAppliedTx(rc.TxID)
+		x.DB.EnqueueSet(statusKey, rc.Status)
+
+		// 交易错误信息（如果有）
+		if rc.Error != "" {
+			errorKey := keys.KeyVMTxError(rc.TxID)
+			x.DB.EnqueueSet(errorKey, rc.Error)
+		}
+
+		// 记录交易所在的高度
+		heightKey := keys.KeyVMTxHeight(rc.TxID)
+		x.DB.EnqueueSet(heightKey, fmt.Sprintf("%d", b.Height))
+	}
+
+	// ========== 第五步：写入区块提交标记 ==========
+	// 用于幂等性检查
+	commitKey := keys.KeyVMCommitHeight(b.Height)
+	x.DB.EnqueueSet(commitKey, b.BlockHash)
+
+	// 区块高度索引
+	blockHeightKey := keys.KeyVMBlockHeight(b.Height)
+	x.DB.EnqueueSet(blockHeightKey, b.BlockHash)
+
+	// ========== 第六步：原子提交 ==========
+	// 强制刷新到数据库，确保所有写操作原子性提交
 	return x.DB.ForceFlush()
+}
+
+// syncToStateDB 同步状态变化到 StateDB
+func (x *Executor) syncToStateDB(height uint64, updates []interface{}) error {
+	// 检查 DB 是否支持 StateDB 同步
+	if x.DB == nil {
+		return fmt.Errorf("DB manager is nil")
+	}
+
+	// 尝试调用 DB 的 StateDB 同步方法
+	// 这里假设 DBManager 接口有 SyncToStateDB 方法
+	// 如果没有，可以通过类型断言来调用
+	if syncable, ok := x.DB.(interface{ SyncToStateDB(uint64, []interface{}) error }); ok {
+		return syncable.SyncToStateDB(height, updates)
+	}
+
+	// 如果 DB 不支持 StateDB 同步，返回 nil（不是错误）
+	return nil
 }
 
 // IsBlockCommitted 检查区块是否已提交
 func (x *Executor) IsBlockCommitted(height uint64) (bool, string) {
-	key := fmt.Sprintf("vm_commit_h_%d", height)
+	key := keys.KeyVMCommitHeight(height)
 	blockID, err := x.DB.Get(key)
 	if err != nil || blockID == nil {
 		return false, ""
@@ -201,7 +271,7 @@ func (x *Executor) IsBlockCommitted(height uint64) (bool, string) {
 
 // GetTransactionStatus 获取交易状态
 func (x *Executor) GetTransactionStatus(txID string) (string, error) {
-	key := fmt.Sprintf("vm_applied_tx_%s", txID)
+	key := keys.KeyVMAppliedTx(txID)
 	status, err := x.DB.Get(key)
 	if err != nil {
 		return "", err
@@ -214,7 +284,7 @@ func (x *Executor) GetTransactionStatus(txID string) (string, error) {
 
 // GetTransactionError 获取交易错误信息
 func (x *Executor) GetTransactionError(txID string) (string, error) {
-	key := fmt.Sprintf("vm_tx_error_%s", txID)
+	key := keys.KeyVMTxError(txID)
 	errMsg, err := x.DB.Get(key)
 	if err != nil {
 		return "", err

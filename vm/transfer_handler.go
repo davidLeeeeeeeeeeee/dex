@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"encoding/json"
 	"fmt"
@@ -45,7 +46,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	// 2. 检查发送方账户是否被冻结
-	freezeKey := fmt.Sprintf("freeze_%s_%s", transfer.Base.FromAddress, transfer.TokenAddress)
+	freezeKey := keys.KeyFreeze(transfer.Base.FromAddress, transfer.TokenAddress)
 	freezeData, isFrozen, _ := sv.Get(freezeKey)
 	if isFrozen && string(freezeData) == "true" {
 		return nil, &Receipt{
@@ -56,7 +57,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	// 3. 读取发送方账户
-	fromAccountKey := fmt.Sprintf("account_%s", transfer.Base.FromAddress)
+	fromAccountKey := keys.KeyAccount(transfer.Base.FromAddress)
 	fromAccountData, fromExists, err := sv.Get(fromAccountKey)
 	if err != nil || !fromExists {
 		return nil, &Receipt{
@@ -102,7 +103,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	// 5. 读取接收方账户（如果不存在则创建）
-	toAccountKey := fmt.Sprintf("account_%s", transfer.To)
+	toAccountKey := keys.KeyAccount(transfer.To)
 	toAccountData, toExists, _ := sv.Get(toAccountKey)
 
 	var toAccount pb.Account
@@ -162,9 +163,11 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   fromAccountKey,
-		Value: updatedFromData,
-		Del:   false,
+		Key:         fromAccountKey,
+		Value:       updatedFromData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	updatedToData, err := json.Marshal(&toAccount)
@@ -177,18 +180,22 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   toAccountKey,
-		Value: updatedToData,
-		Del:   false,
+		Key:         toAccountKey,
+		Value:       updatedToData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 8. 记录转账历史
-	historyKey := fmt.Sprintf("transfer_history_%s", transfer.Base.TxId)
+	historyKey := keys.KeyTransferHistory(transfer.Base.TxId)
 	historyData, _ := json.Marshal(transfer)
 	ws = append(ws, WriteOp{
-		Key:   historyKey,
-		Value: historyData,
-		Del:   false,
+		Key:         historyKey,
+		Value:       historyData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "history",
 	})
 
 	return ws, &Receipt{

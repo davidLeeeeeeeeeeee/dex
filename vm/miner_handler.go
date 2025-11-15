@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"encoding/json"
 	"fmt"
@@ -62,7 +63,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	}
 
 	// 读取矿工账户
-	accountKey := fmt.Sprintf("account_%s", minerTx.Base.FromAddress)
+	accountKey := keys.KeyAccount(minerTx.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil || !exists {
 		return nil, &Receipt{
@@ -129,18 +130,22 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   accountKey,
-		Value: updatedAccountData,
-		Del:   false,
+		Key:         accountKey,
+		Value:       updatedAccountData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 记录挖矿历史
-	historyKey := fmt.Sprintf("miner_history_%s", minerTx.Base.TxId)
+	historyKey := keys.KeyMinerHistory(minerTx.Base.TxId)
 	historyData, _ := json.Marshal(minerTx)
 	ws = append(ws, WriteOp{
-		Key:   historyKey,
-		Value: historyData,
-		Del:   false,
+		Key:         historyKey,
+		Value:       historyData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "history",
 	})
 
 	return ws, &Receipt{
@@ -153,7 +158,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 // handleStopMining 处理停止挖矿
 func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	// 读取矿工账户
-	accountKey := fmt.Sprintf("account_%s", minerTx.Base.FromAddress)
+	accountKey := keys.KeyAccount(minerTx.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil || !exists {
 		return nil, &Receipt{
@@ -227,18 +232,22 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   accountKey,
-		Value: updatedAccountData,
-		Del:   false,
+		Key:         accountKey,
+		Value:       updatedAccountData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 记录停止挖矿历史
-	historyKey := fmt.Sprintf("miner_history_%s", minerTx.Base.TxId)
+	historyKey := keys.KeyMinerHistory(minerTx.Base.TxId)
 	historyData, _ := json.Marshal(minerTx)
 	ws = append(ws, WriteOp{
-		Key:   historyKey,
-		Value: historyData,
-		Del:   false,
+		Key:         historyKey,
+		Value:       historyData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "history",
 	})
 
 	return ws, &Receipt{

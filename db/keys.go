@@ -1,99 +1,171 @@
 // db/keys.go
+// 为了向后兼容，db 包重新导出 keys 包的函数
+// 新代码应该直接使用 "dex/keys" 包
 package db
 
-import (
-	"fmt"
-	"strings"
-)
+import "dex/keys"
 
 // ===================== 版本控制 =====================
-// 设置全局 Key 版本前缀（例如 "v1" → 产出 "v1_<key>"）。
-// 如需立刻兼容旧数据，暂时将 KeyVersion 设为 "" 即可不加版本前缀。
-const KeyVersion = "v1"
 
-// 把版本号拼到最前面（保持你下划线风格：v1_<...>）
-func withVer(s string) string {
-	if KeyVersion == "" {
-		return s
-	}
-	return KeyVersion + "_" + s
-}
+// KeyVersion 版本前缀（重新导出）
+const KeyVersion = keys.KeyVersion
 
-// 读取回退辅助：把带版本的键去掉版本前缀，便于双读回退。
-// 例：newKey := KeyTx(id); oldKey := StripVersion(newKey)
+// StripVersion 去掉版本前缀（重新导出）
 func StripVersion(prefixed string) string {
-	if KeyVersion == "" {
-		return prefixed
-	}
-	p := KeyVersion + "_"
-	return strings.TrimPrefix(prefixed, p)
+	return keys.StripVersion(prefixed)
 }
 
-// —— 区块 ——
-// 例：blockdata_<blockHash>
+// ===================== 区块相关 =====================
+
 func KeyBlockData(blockHash string) string {
-	return withVer(fmt.Sprintf("blockdata_%s", blockHash))
+	return keys.KeyBlockData(blockHash)
 }
 
-// 例：height_<height>_blocks
 func KeyHeightBlocks(height uint64) string {
-	return withVer(fmt.Sprintf("height_%d_blocks", height))
+	return keys.KeyHeightBlocks(height)
 }
 
-// 例：blockid_<blockHash>
 func KeyBlockIDToHeight(blockHash string) string {
-	return withVer(fmt.Sprintf("blockid_%s", blockHash))
+	return keys.KeyBlockIDToHeight(blockHash)
 }
 
-// 例：latest_block_height
-func KeyLatestHeight() string { return withVer("latest_block_height") }
-
-// —— 交易通用映射 ——
-// 例：anyTx_<txID>（映射到 tx_<txID> 或 order_<txID> 等）
-func KeyAnyTx(txID string) string { return withVer("anyTx_" + txID) }
-
-// —— Pending AnyTx ——
-// 例：pending_anytx_<txID>
-func KeyPendingAnyTx(txID string) string { return withVer("pending_anytx_" + txID) }
-
-// —— 具体交易 ——
-// 例：tx_<txID>
-func KeyTx(txID string) string { return withVer("tx_" + txID) }
-
-// 例：order_<txID>
-func KeyOrderTx(txID string) string { return withVer("order_" + txID) }
-
-// 例：minerTx_<txID>
-func KeyMinerTx(txID string) string { return withVer("minerTx_" + txID) }
-
-// —— 订单价格索引（保持你原来的管道与冒号结构不变）——
-// 例：pair:<pair>|is_filled:<true|false>|price:<67位十进制>|order_id:<txID>
-func KeyOrderPriceIndex(pair string, isFilled bool, priceKey67 string, orderID string) string {
-	return withVer(fmt.Sprintf("pair:%s|is_filled:%t|price:%s|order_id:%s", pair, isFilled, priceKey67, orderID))
+func KeyLatestHeight() string {
+	return keys.KeyLatestHeight()
 }
 
-// —— 账户与索引 ——
-// 例：account_<address>
-func KeyAccount(addr string) string { return withVer("account_" + addr) }
+// ===================== 交易相关 =====================
 
-// 例：indexToAccount_<idx>
-func KeyIndexToAccount(idx uint64) string { return withVer(fmt.Sprintf("indexToAccount_%d", idx)) }
-func NameOfKeyIndexToAccount() string     { return withVer("indexToAccount_") }
+func KeyAnyTx(txID string) string {
+	return keys.KeyAnyTx(txID)
+}
 
-// 例：free_idx_%020d
-// 你原来这个函数返回的是“前缀”，我保持不变：
-func KeyFreeIdx() string { return withVer("free_idx_") }
+func KeyPendingAnyTx(txID string) string {
+	return keys.KeyPendingAnyTx(txID)
+}
 
-// 投票/候选人等你已有的模式（如 stakeIndex_ 前缀里带 address:）保持原状：
-// 例：stakeIndex_<invertedPadded32>__address:<addr>
+func KeyTx(txID string) string {
+	return keys.KeyTx(txID)
+}
+
+func KeyOrderTx(txID string) string {
+	return keys.KeyOrderTx(txID)
+}
+
+func KeyMinerTx(txID string) string {
+	return keys.KeyMinerTx(txID)
+}
+
+// ===================== 账户相关 =====================
+
+func KeyAccount(addr string) string {
+	return keys.KeyAccount(addr)
+}
+
+func KeyIndexToAccount(idx uint64) string {
+	return keys.KeyIndexToAccount(idx)
+}
+
+func NameOfKeyIndexToAccount() string {
+	return keys.NameOfKeyIndexToAccount()
+}
+
+func KeyFreeIdx() string {
+	return keys.KeyFreeIdx()
+}
+
 func KeyStakeIndex(invertedPadded32, addr string) string {
-	return withVer(fmt.Sprintf("stakeIndex_%s_address:%s", invertedPadded32, addr))
+	return keys.KeyStakeIndex(invertedPadded32, addr)
 }
 
-// —— 节点/客户端信息 ——
-// 例：node_<pubKey>
-// 你原函数名没有参数且返回前缀，我保持不变：
-func KeyNode() string { return withVer("node_") }
+// ===================== 订单相关 =====================
 
-// 例：clientinfo_<ip>
-func KeyClientInfo(ip string) string { return withVer("clientinfo_" + ip) }
+func KeyOrder(orderID string) string {
+	return keys.KeyOrder(orderID)
+}
+
+func KeyOrderPriceIndex(pair string, isFilled bool, priceKey67 string, orderID string) string {
+	return keys.KeyOrderPriceIndex(pair, isFilled, priceKey67, orderID)
+}
+
+// ===================== Token 相关 =====================
+
+func KeyToken(tokenAddress string) string {
+	return keys.KeyToken(tokenAddress)
+}
+
+func KeyTokenRegistry() string {
+	return keys.KeyTokenRegistry()
+}
+
+func KeyFreeze(address, tokenAddress string) string {
+	return keys.KeyFreeze(address, tokenAddress)
+}
+
+// ===================== 历史记录相关 =====================
+
+func KeyTransferHistory(txID string) string {
+	return keys.KeyTransferHistory(txID)
+}
+
+func KeyMinerHistory(txID string) string {
+	return keys.KeyMinerHistory(txID)
+}
+
+func KeyCandidateHistory(txID string) string {
+	return keys.KeyCandidateHistory(txID)
+}
+
+func KeyRechargeHistory(txID string) string {
+	return keys.KeyRechargeHistory(txID)
+}
+
+func KeyFreezeHistory(txID string) string {
+	return keys.KeyFreezeHistory(txID)
+}
+
+// ===================== 索引相关 =====================
+
+func KeyCandidateIndex(candidateAddress, userAddress string) string {
+	return keys.KeyCandidateIndex(candidateAddress, userAddress)
+}
+
+func KeyRechargeRecord(address, tweak string) string {
+	return keys.KeyRechargeRecord(address, tweak)
+}
+
+func KeyRechargeAddress(generatedAddress string) string {
+	return keys.KeyRechargeAddress(generatedAddress)
+}
+
+// ===================== VM 执行状态相关 =====================
+
+func KeyVMAppliedTx(txID string) string {
+	return keys.KeyVMAppliedTx(txID)
+}
+
+func KeyVMTxError(txID string) string {
+	return keys.KeyVMTxError(txID)
+}
+
+func KeyVMTxHeight(txID string) string {
+	return keys.KeyVMTxHeight(txID)
+}
+
+func KeyVMCommitHeight(height uint64) string {
+	return keys.KeyVMCommitHeight(height)
+}
+
+func KeyVMBlockHeight(height uint64) string {
+	return keys.KeyVMBlockHeight(height)
+}
+
+// ===================== 节点/客户端信息 =====================
+
+func KeyNode() string {
+	return keys.KeyNode()
+}
+
+func KeyClientInfo(ip string) string {
+	return keys.KeyClientInfo(ip)
+}
+

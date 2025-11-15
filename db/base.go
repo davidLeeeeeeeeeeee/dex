@@ -16,7 +16,13 @@ func NewZeroTokenBalance() *pb.TokenBalance {
 	}
 }
 
-// SaveAnyTx 改为成员函数
+// SaveAnyTx saves an AnyTx to the database
+//
+// ⚠️ INTERNAL API - DO NOT CALL DIRECTLY FROM OUTSIDE DB PACKAGE
+// This method is used internally by db package for legacy compatibility.
+// New code should use VM's unified write path (applyResult) instead.
+//
+// Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveAnyTx(anyTx *pb.AnyTx) error {
 	txID := anyTx.GetTxId()
 	if txID == "" {

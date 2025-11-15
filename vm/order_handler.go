@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"encoding/json"
 	"fmt"
@@ -73,7 +74,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	}
 
 	// 读取账户
-	accountKey := fmt.Sprintf("account_%s", ord.Base.FromAddress)
+	accountKey := keys.KeyAccount(ord.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil || !exists {
 		return nil, &Receipt{
@@ -109,12 +110,14 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	ws := make([]WriteOp, 0)
 
 	// 保存订单
-	orderKey := fmt.Sprintf("order_%s", ord.Base.TxId)
+	orderKey := keys.KeyOrder(ord.Base.TxId)
 	orderData, _ := json.Marshal(ord)
 	ws = append(ws, WriteOp{
-		Key:   orderKey,
-		Value: orderData,
-		Del:   false,
+		Key:         orderKey,
+		Value:       orderData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "order",
 	})
 
 	// 添加订单到账户的订单列表
@@ -134,22 +137,26 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   accountKey,
-		Value: updatedAccountData,
-		Del:   false,
+		Key:         accountKey,
+		Value:       updatedAccountData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 创建价格索引，用于快速查询
 	// key格式: pair:base_quote|price:xxx|is_filled:false|order_id:xxx
-	priceIndexKey := fmt.Sprintf("pair:%s_%s|price:%s|is_filled:%v|order_id:%s",
-		ord.BaseToken, ord.QuoteToken, ord.Price, ord.IsFilled, ord.Base.TxId)
+	pair := fmt.Sprintf("%s_%s", ord.BaseToken, ord.QuoteToken)
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, ord.IsFilled, ord.Price, ord.Base.TxId)
 
 	priceIndex := &pb.OrderPriceIndex{Ok: true}
 	priceIndexData, _ := json.Marshal(priceIndex)
 	ws = append(ws, WriteOp{
-		Key:   priceIndexKey,
-		Value: priceIndexData,
-		Del:   false,
+		Key:         priceIndexKey,
+		Value:       priceIndexData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "index",
 	})
 
 	return ws, &Receipt{
@@ -170,7 +177,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}
 
 	// 读取要撤销的订单
-	targetOrderKey := fmt.Sprintf("order_%s", ord.OpTargetId)
+	targetOrderKey := keys.KeyOrder(ord.OpTargetId)
 	targetOrderData, exists, err := sv.Get(targetOrderKey)
 	if err != nil || !exists {
 		return nil, &Receipt{
@@ -199,7 +206,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}
 
 	// 读取账户
-	accountKey := fmt.Sprintf("account_%s", ord.Base.FromAddress)
+	accountKey := keys.KeyAccount(ord.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil || !exists {
 		return nil, &Receipt{
@@ -222,9 +229,11 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 
 	// 删除订单
 	ws = append(ws, WriteOp{
-		Key:   targetOrderKey,
-		Value: nil,
-		Del:   true,
+		Key:         targetOrderKey,
+		Value:       nil,
+		Del:         true,
+		SyncStateDB: false,
+		Category:    "order",
 	})
 
 	// 从账户的订单列表中移除
@@ -249,19 +258,23 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}
 
 	ws = append(ws, WriteOp{
-		Key:   accountKey,
-		Value: updatedAccountData,
-		Del:   false,
+		Key:         accountKey,
+		Value:       updatedAccountData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
 	})
 
 	// 删除价格索引
-	priceIndexKey := fmt.Sprintf("pair:%s_%s|price:%s|is_filled:%v|order_id:%s",
-		targetOrder.BaseToken, targetOrder.QuoteToken, targetOrder.Price, targetOrder.IsFilled, ord.OpTargetId)
+	pair := fmt.Sprintf("%s_%s", targetOrder.BaseToken, targetOrder.QuoteToken)
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetOrder.IsFilled, targetOrder.Price, ord.OpTargetId)
 
 	ws = append(ws, WriteOp{
-		Key:   priceIndexKey,
-		Value: nil,
-		Del:   true,
+		Key:         priceIndexKey,
+		Value:       nil,
+		Del:         true,
+		SyncStateDB: false,
+		Category:    "index",
 	})
 
 	return ws, &Receipt{

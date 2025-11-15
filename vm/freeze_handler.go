@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"encoding/json"
 	"fmt"
@@ -72,7 +73,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 	}
 
 	// 4. 读取目标账户
-	targetAccountKey := fmt.Sprintf("account_%s", freeze.TargetAddr)
+	targetAccountKey := keys.KeyAccount(freeze.TargetAddr)
 	targetAccountData, targetExists, err := sv.Get(targetAccountKey)
 	if err != nil {
 		return nil, &Receipt{
@@ -102,33 +103,39 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 
 	// 5. 执行冻结/解冻逻辑
 	// 这里使用一个特殊的key来标记账户的某个token是否被冻结
-	freezeKey := fmt.Sprintf("freeze_%s_%s", freeze.TargetAddr, freeze.TokenAddr)
+	freezeKey := keys.KeyFreeze(freeze.TargetAddr, freeze.TokenAddr)
 	
 	ws := make([]WriteOp, 0)
 
 	if freeze.Freeze {
 		// 冻结：设置冻结标记
 		ws = append(ws, WriteOp{
-			Key:   freezeKey,
-			Value: []byte("true"),
-			Del:   false,
+			Key:         freezeKey,
+			Value:       []byte("true"),
+			Del:         false,
+			SyncStateDB: false,
+			Category:    "freeze",
 		})
 	} else {
 		// 解冻：删除冻结标记
 		ws = append(ws, WriteOp{
-			Key:   freezeKey,
-			Value: nil,
-			Del:   true,
+			Key:         freezeKey,
+			Value:       nil,
+			Del:         true,
+			SyncStateDB: false,
+			Category:    "freeze",
 		})
 	}
 
 	// 6. 记录冻结/解冻历史
-	historyKey := fmt.Sprintf("freeze_history_%s", freeze.Base.TxId)
+	historyKey := keys.KeyFreezeHistory(freeze.Base.TxId)
 	historyData, _ := json.Marshal(freeze)
 	ws = append(ws, WriteOp{
-		Key:   historyKey,
-		Value: historyData,
-		Del:   false,
+		Key:         historyKey,
+		Value:       historyData,
+		Del:         false,
+		SyncStateDB: false,
+		Category:    "history",
 	})
 
 	// 7. 返回执行结果

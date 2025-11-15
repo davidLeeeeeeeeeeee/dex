@@ -9,6 +9,14 @@ import (
 )
 
 // ------------- 基础交易 -------------
+
+// SaveTransaction saves a Transaction to the database
+//
+// ⚠️ INTERNAL API - DO NOT CALL DIRECTLY FROM OUTSIDE DB PACKAGE
+// This method is used internally by db package for legacy compatibility.
+// New code should use VM's unified write path (applyResult) instead.
+//
+// Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveTransaction(tx *pb.Transaction) error {
 	//logs.Trace("SaveTransaction %s\n", tx)
 	key := KeyTx(tx.Base.TxId)
@@ -42,6 +50,13 @@ func (mgr *Manager) GetTransaction(txID string) (*pb.Transaction, error) {
 
 // ------------- OrderTx -------------
 
+// SaveOrderTx saves an OrderTx to the database
+//
+// ⚠️ INTERNAL API - DO NOT CALL DIRECTLY FROM OUTSIDE DB PACKAGE
+// This method is used internally by db package for legacy compatibility.
+// New code should use VM's unified write path (applyResult) instead.
+//
+// Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveOrderTx(order *pb.OrderTx) error {
 	// 1. 先拿到 pairKey
 	pairKey := utils.GeneratePairKey(order.BaseToken, order.QuoteToken)
@@ -124,6 +139,13 @@ func (mgr *Manager) GetOrderTx(txID string) (*pb.OrderTx, error) {
 	return order, nil
 }
 
+// SaveMinerTx saves a MinerTx to the database
+//
+// ⚠️ INTERNAL API - DO NOT CALL DIRECTLY FROM OUTSIDE DB PACKAGE
+// This method is used internally by db package for legacy compatibility.
+// New code should use VM's unified write path (applyResult) instead.
+//
+// Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveMinerTx(tx *pb.MinerTx) error {
 	// 0) 先把 MinerTx 本身排入写队列（保持你原来的逻辑）
 	mainKey := KeyMinerTx(tx.Base.TxId)

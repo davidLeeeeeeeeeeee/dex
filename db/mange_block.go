@@ -9,7 +9,13 @@ import (
 	"strconv"
 )
 
-// 将区块存入DB，同时将区块存入内存切片（缓存）
+// SaveBlock saves a block to the database and cache
+//
+// ⚠️ INTERNAL API - DO NOT CALL DIRECTLY FROM OUTSIDE DB PACKAGE
+// This method is used internally by db package for legacy compatibility.
+// New code should use VM's unified write path (applyResult) instead.
+//
+// Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveBlock(block *pb.Block) error {
 	logs.Debug("Saving new block_%d with ID %s", block.Height, block.BlockHash)
 

@@ -388,3 +388,40 @@ func (m *Manager) NextIndex() (uint64, error) {
 	}
 	return id + 1, nil // 让索引依旧从 1 开始
 }
+
+// ========== StateDB 同步接口 ==========
+
+// SyncToStateDB 同步状态变化到 StateDB
+// 这是 VM 的 applyResult 调用的接口，用于将 WriteOp 同步到 StateDB
+func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
+	if m.StateDB == nil {
+		return fmt.Errorf("StateDB is not initialized")
+	}
+
+	// 将 WriteOp 转换为 StateDB 的 KVUpdate
+	kvUpdates := make([]statedb.KVUpdate, 0, len(updates))
+	for _, u := range updates {
+		// 尝试类型断言为 WriteOp
+		if writeOp, ok := u.(interface {
+			GetKey() string
+			GetValue() []byte
+			IsDel() bool
+		}); ok {
+			kvUpdates = append(kvUpdates, statedb.KVUpdate{
+				Key:     writeOp.GetKey(),
+				Value:   writeOp.GetValue(),
+				Deleted: writeOp.IsDel(),
+			})
+		}
+	}
+
+	// 调用 StateDB 的 ApplyAccountUpdate
+	if len(kvUpdates) > 0 {
+		if err := m.StateDB.ApplyAccountUpdate(height, kvUpdates...); err != nil {
+			logs.Error("[DB] Failed to sync to StateDB: %v", err)
+			return err
+		}
+	}
+
+	return nil
+}
