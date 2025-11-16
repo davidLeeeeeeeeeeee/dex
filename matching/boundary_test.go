@@ -9,7 +9,7 @@ import (
 
 // TestPriceBoundary 测试价格的边界情况
 func TestPriceBoundary(t *testing.T) {
-	orderBook := NewOrderBook(nil)
+	orderBook := NewOrderBookWithSink(nil)
 
 	// 几个边界值
 	testPrices := []struct {

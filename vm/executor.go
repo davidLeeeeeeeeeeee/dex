@@ -2,9 +2,15 @@ package vm
 
 import (
 	"dex/keys"
+	"dex/matching"
 	"dex/pb"
+	"dex/utils"
 	"fmt"
+	"strings"
 	"sync"
+
+	"github.com/shopspring/decimal"
+	"google.golang.org/protobuf/proto"
 )
 
 // Executor VM执行器
@@ -69,6 +75,21 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	sv := NewStateView(x.ReadFn, x.ScanFn)
 	receipts := make([]*Receipt, 0, len(b.Body))
 
+	// Step 1: 预扫描区块，收集所有交易对
+	pairs := collectPairsFromBlock(b)
+
+	// Step 2 & 3: 一次性重建所有订单簿
+	pairBooks, err := x.rebuildOrderBooksForPairs(pairs, sv)
+	if err != nil {
+		return &SpecResult{
+			BlockID:  b.BlockHash,
+			ParentID: b.PrevBlockHash,
+			Height:   b.Height,
+			Valid:    false,
+			Reason:   fmt.Sprintf("failed to rebuild order books: %v", err),
+		}, nil
+	}
+
 	// 遍历执行每个交易
 	for idx, tx := range b.Body {
 		// 提取交易类型
@@ -93,6 +114,11 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 				Valid:    false,
 				Reason:   fmt.Sprintf("no handler for tx %d (kind: %s)", idx, kind),
 			}, nil
+		}
+
+		// Step 4: 如果是 OrderTxHandler，注入 pairBooks
+		if orderHandler, ok := h.(*OrderTxHandler); ok {
+			orderHandler.SetOrderBooks(pairBooks)
 		}
 
 		// 创建快照点，用于失败时回滚
@@ -324,4 +350,143 @@ func ValidateBlock(b *pb.Block) error {
 		return fmt.Errorf("non-genesis block should have parent")
 	}
 	return nil
+}
+
+// collectPairsFromBlock 预扫描区块，收集所有需要撮合的交易对
+func collectPairsFromBlock(b *pb.Block) []string {
+	pairSet := make(map[string]struct{})
+
+	for _, anyTx := range b.Body {
+		// 只处理 OrderTx
+		orderTx := anyTx.GetOrderTx()
+		if orderTx == nil {
+			continue
+		}
+
+		// 只处理 ADD 操作
+		if orderTx.Op != pb.OrderOp_ADD {
+			continue
+		}
+
+		// 生成交易对 key
+		pair := utils.GeneratePairKey(orderTx.BaseToken, orderTx.QuoteToken)
+		pairSet[pair] = struct{}{}
+	}
+
+	// 转换为 slice
+	pairs := make([]string, 0, len(pairSet))
+	for pair := range pairSet {
+		pairs = append(pairs, pair)
+	}
+
+	return pairs
+}
+
+// rebuildOrderBooksForPairs 一次性重建所有交易对的订单簿
+// 返回：map[pair]*matching.OrderBook
+func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[string]*matching.OrderBook, error) {
+	if len(pairs) == 0 {
+		return make(map[string]*matching.OrderBook), nil
+	}
+
+	// 一次性从 DB 扫描所有交易对的订单索引
+	rawData, err := x.DB.ScanOrdersByPairs(pairs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan orders: %w", err)
+	}
+
+	pairBooks := make(map[string]*matching.OrderBook)
+
+	// 为每个交易对重建订单簿
+	for _, pair := range pairs {
+		// 创建新的订单簿（暂时不设置 sink）
+		ob := matching.NewOrderBookWithSink(nil)
+
+		// 获取该交易对的所有订单索引
+		indexMap := rawData[pair]
+
+		// 遍历索引，加载订单并添加到订单簿
+		for indexKey := range indexMap {
+			// 从 indexKey 中解析 orderID
+			orderID := extractOrderIDFromIndexKey(indexKey)
+			if orderID == "" {
+				continue
+			}
+
+			// 从 StateView 读取完整订单
+			orderKey := keys.KeyOrder(orderID)
+			orderData, exists, err := sv.Get(orderKey)
+			if err != nil || !exists {
+				continue
+			}
+
+			// 反序列化订单
+			var orderTx pb.OrderTx
+			if err := proto.Unmarshal(orderData, &orderTx); err != nil {
+				continue
+			}
+
+			// 转换为 matching.Order 并添加到订单簿
+			matchOrder, err := convertToMatchingOrder(&orderTx)
+			if err != nil {
+				continue
+			}
+
+			ob.AddOrder(matchOrder)
+		}
+
+		pairBooks[pair] = ob
+	}
+
+	return pairBooks, nil
+}
+
+// extractOrderIDFromIndexKey 从价格索引 key 中提取 orderID
+func extractOrderIDFromIndexKey(indexKey string) string {
+	parts := strings.Split(indexKey, "|order_id:")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+// convertToMatchingOrder 将 pb.OrderTx 转换为 matching.Order
+func convertToMatchingOrder(ord *pb.OrderTx) (*matching.Order, error) {
+	if ord == nil || ord.Base == nil {
+		return nil, fmt.Errorf("invalid order")
+	}
+
+	price, err := decimal.NewFromString(ord.Price)
+	if err != nil {
+		return nil, fmt.Errorf("invalid price: %w", err)
+	}
+
+	totalAmount, err := decimal.NewFromString(ord.Amount)
+	if err != nil {
+		return nil, fmt.Errorf("invalid amount: %w", err)
+	}
+
+	filledBase, err := decimal.NewFromString(ord.FilledBase)
+	if err != nil {
+		filledBase = decimal.Zero
+	}
+
+	// 计算剩余数量
+	remainingAmount := totalAmount.Sub(filledBase)
+	if remainingAmount.LessThanOrEqual(decimal.Zero) {
+		return nil, fmt.Errorf("order already filled")
+	}
+
+	// 确定订单方向（简化版本，TODO: 需要明确的方向字段）
+	side := matching.BUY
+	if ord.BaseToken > ord.QuoteToken {
+		side = matching.SELL
+	}
+
+	return &matching.Order{
+		ID:     ord.Base.TxId,
+		Side:   side,
+		Price:  price,
+		Amount: remainingAmount,
+	}, nil
 }

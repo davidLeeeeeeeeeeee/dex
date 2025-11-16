@@ -8,7 +8,6 @@ import (
 	"dex/utils"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
@@ -16,11 +15,17 @@ import (
 
 // OrderTxHandler 订单交易处理器
 type OrderTxHandler struct {
-	// 可以注入其他依赖，如OrderBookManager等
+	// 区块级别的订单簿缓存（由 Executor 在 PreExecuteBlock 时设置）
+	orderBooks map[string]*matching.OrderBook
 }
 
 func (h *OrderTxHandler) Kind() string {
 	return "order"
+}
+
+// SetOrderBooks 设置区块级别的订单簿缓存
+func (h *OrderTxHandler) SetOrderBooks(books map[string]*matching.OrderBook) {
+	h.orderBooks = books
 }
 
 func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
@@ -111,14 +116,14 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	// 4. 生成交易对key（使用utils.GeneratePairKey确保一致性）
 	pair := utils.GeneratePairKey(ord.BaseToken, ord.QuoteToken)
 
-	// 5. 重建订单簿：从StateView扫描当前交易对的所有未成交订单
-	orderBook, err := h.rebuildOrderBook(sv, pair)
-	if err != nil {
+	// 5. 从缓存中获取订单簿（已在 PreExecuteBlock 中重建）
+	orderBook, ok := h.orderBooks[pair]
+	if !ok {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
-			Error:  fmt.Sprintf("failed to rebuild order book: %v", err),
-		}, err
+			Error:  fmt.Sprintf("order book not found for pair: %s", pair),
+		}, fmt.Errorf("order book not found for pair: %s", pair)
 	}
 
 	// 6. 收集撮合事件
@@ -128,7 +133,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	})
 
 	// 7. 将新订单转换为matching.Order并添加到订单簿
-	newOrder, err := h.convertToMatchingOrder(ord)
+	newOrder, err := convertToMatchingOrder(ord)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
@@ -283,104 +288,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 
 func (h *OrderTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
-}
-
-// rebuildOrderBook 从StateView重建指定交易对的订单簿
-func (h *OrderTxHandler) rebuildOrderBook(sv StateView, pair string) (*matching.OrderBook, error) {
-	// 创建订单簿，使用TradeSink收集事件
-	ob := matching.NewOrderBookWithSink(nil)
-
-	// 扫描所有未成交订单的价格索引
-	prefix := keys.KeyOrderPriceIndexPrefix(pair, false)
-	indexMap, err := sv.Scan(prefix)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan order price index: %w", err)
-	}
-
-	// 从索引key中提取订单ID并加载订单
-	for indexKey := range indexMap {
-		// 索引key格式: v1_pair:<pair>|is_filled:false|price:<67位>|order_id:<txID>
-		// 提取order_id部分
-		orderID := extractOrderIDFromIndexKey(indexKey)
-		if orderID == "" {
-			continue
-		}
-
-		// 加载完整订单
-		orderKey := keys.KeyOrder(orderID)
-		orderData, exists, err := sv.Get(orderKey)
-		if err != nil || !exists {
-			continue // 跳过无法加载的订单
-		}
-
-		var orderTx pb.OrderTx
-		if err := json.Unmarshal(orderData, &orderTx); err != nil {
-			continue
-		}
-
-		// 转换为matching.Order
-		matchOrder, err := h.convertToMatchingOrder(&orderTx)
-		if err != nil {
-			continue
-		}
-
-		// 添加到订单簿（不触发撮合，因为我们只是重建状态）
-		// 注意：这里直接添加，不会触发撮合事件，因为sink是nil
-		_ = ob.AddOrder(matchOrder)
-	}
-
-	return ob, nil
-}
-
-// extractOrderIDFromIndexKey 从价格索引key中提取订单ID
-// 索引key格式: v1_pair:<pair>|is_filled:false|price:<67位>|order_id:<txID>
-func extractOrderIDFromIndexKey(indexKey string) string {
-	parts := strings.Split(indexKey, "|order_id:")
-	if len(parts) != 2 {
-		return ""
-	}
-	return parts[1]
-}
-
-// convertToMatchingOrder 将pb.OrderTx转换为matching.Order
-func (h *OrderTxHandler) convertToMatchingOrder(ord *pb.OrderTx) (*matching.Order, error) {
-	if ord == nil || ord.Base == nil {
-		return nil, fmt.Errorf("invalid order")
-	}
-
-	price, err := decimal.NewFromString(ord.Price)
-	if err != nil {
-		return nil, fmt.Errorf("invalid price: %w", err)
-	}
-
-	amount, err := decimal.NewFromString(ord.Amount)
-	if err != nil {
-		return nil, fmt.Errorf("invalid amount: %w", err)
-	}
-
-	// 计算剩余数量 = 总数量 - 已成交数量
-	filledBase, _ := decimal.NewFromString(ord.FilledBase)
-	remainingAmount := amount.Sub(filledBase)
-	if remainingAmount.LessThan(decimal.Zero) {
-		remainingAmount = decimal.Zero
-	}
-
-	// TODO: 确定订单方向（BUY/SELL）
-	// 目前的设计问题：OrderTx没有明确的买卖方向字段
-	// 临时方案：根据base_token和quote_token的字典序判断
-	// 如果base_token < quote_token，认为是BUY，否则是SELL
-	// 这是一个简化的假设，实际应该有明确的direction字段
-	side := matching.BUY
-	if ord.BaseToken > ord.QuoteToken {
-		side = matching.SELL
-	}
-
-	return &matching.Order{
-		ID:     ord.Base.TxId,
-		Side:   side,
-		Price:  price,
-		Amount: remainingAmount,
-	}, nil
 }
 
 // generateWriteOpsFromTrades 根据撮合事件生成WriteOps

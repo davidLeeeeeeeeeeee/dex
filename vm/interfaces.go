@@ -48,6 +48,8 @@ type DBManager interface {
 	Get(key string) ([]byte, error)
 	// 前缀扫描，返回所有以 prefix 开头的键值对
 	Scan(prefix string) (map[string][]byte, error)
+	// 一次性扫描多个交易对的订单索引
+	ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error)
 }
 
 // （读穿函数）

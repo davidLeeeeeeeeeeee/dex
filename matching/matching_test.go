@@ -16,7 +16,9 @@ func TestOneHundredMillionTx(t *testing.T) {
 	// 1. 初始化撮合引擎
 	// -------------------
 	tradeCh := make(chan TradeUpdate, 1000000) // 或比订单量更大的容量
-	ob := NewOrderBook(tradeCh)
+	ob := NewOrderBookWithSink(func(ev TradeUpdate) {
+		tradeCh <- ev
+	})
 	// 启动一个消费者 goroutine
 	go func() {
 		for range tradeCh {
@@ -68,7 +70,9 @@ func TestOneHundredMillionTx(t *testing.T) {
 func BenchmarkPruneByMarkPrice_65000Orders(b *testing.B) {
 	rand.Seed(time.Now().UnixNano())
 	tradeCh := make(chan TradeUpdate, 1000000) // 或比订单量更大的容量
-	ob := NewOrderBook(tradeCh)
+	ob := NewOrderBookWithSink(func(ev TradeUpdate) {
+		tradeCh <- ev
+	})
 	// 启动一个消费者 goroutine
 	go func() {
 		for range tradeCh {
@@ -118,7 +122,9 @@ func TestOrderBook_Matching(t *testing.T) {
 	tradeCh := make(chan TradeUpdate, 50) // 多给些缓冲
 
 	// 创建 OrderBook，不需要数据库，仅测试内存撮合
-	ob := NewOrderBook(tradeCh)
+	ob := NewOrderBookWithSink(func(ev TradeUpdate) {
+		tradeCh <- ev
+	})
 
 	// ---------------- 1) 添加两个买单 ----------------
 	//    buy1: ID="buy1", 价格=10, 数量=5

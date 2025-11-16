@@ -2,6 +2,7 @@ package db
 
 import (
 	"dex/config"
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	statedb "dex/stateDB"
@@ -188,6 +189,46 @@ func (manager *Manager) Scan(prefix string) (map[string][]byte, error) {
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ScanOrdersByPairs 一次性扫描多个交易对的未成交订单
+// 返回：map[pair]map[indexKey][]byte
+func (manager *Manager) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {
+	result := make(map[string]map[string][]byte)
+
+	// 单个 txn 内完成所有扫描
+	err := manager.Db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+
+		for _, pair := range pairs {
+			// 生成该交易对的未成交订单索引前缀
+			prefix := keys.KeyOrderPriceIndexPrefix(pair, false)
+			p := []byte(prefix)
+
+			pairMap := make(map[string][]byte)
+			it := txn.NewIterator(opts)
+
+			for it.Seek(p); it.ValidForPrefix(p); it.Next() {
+				item := it.Item()
+				k := item.KeyCopy(nil)
+				v, err := item.ValueCopy(nil)
+				if err != nil {
+					it.Close()
+					return err
+				}
+				pairMap[string(k)] = v
+			}
+			it.Close()
+
+			result[pair] = pairMap
+		}
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}

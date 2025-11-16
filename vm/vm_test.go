@@ -76,6 +76,29 @@ func (db *MockDB) Scan(prefix string) (map[string][]byte, error) {
 	return result, nil
 }
 
+func (db *MockDB) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {
+	result := make(map[string]map[string][]byte)
+
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	for _, pair := range pairs {
+		prefix := keys.KeyOrderPriceIndexPrefix(pair, false)
+		pairMap := make(map[string][]byte)
+
+		for k, v := range db.data {
+			if strings.HasPrefix(k, prefix) {
+				valCopy := make([]byte, len(v))
+				copy(valCopy, v)
+				pairMap[k] = valCopy
+			}
+		}
+		result[pair] = pairMap
+	}
+
+	return result, nil
+}
+
 // ========== 测试用例 ==========
 
 func TestBasicExecution(t *testing.T) {

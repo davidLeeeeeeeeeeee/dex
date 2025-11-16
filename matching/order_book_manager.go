@@ -59,8 +59,14 @@ func (obm *OrderBookManager) GetOrderBook(baseToken, quoteToken string) *OrderBo
 	pair := TradingPair{BaseToken: baseToken, QuoteToken: quoteToken}
 	ob, exists := obm.orderBooks[pair]
 	if !exists {
-		// 新建 OrderBook，注意要把 tradeCh 传进去
-		ob = NewOrderBook(obm.tradeCh)
+		// 新建 OrderBook，使用 TradeSink 将事件发送到 tradeCh
+		var sink TradeSink
+		if obm.tradeCh != nil {
+			sink = func(ev TradeUpdate) {
+				obm.tradeCh <- ev
+			}
+		}
+		ob = NewOrderBookWithSink(sink)
 		obm.orderBooks[pair] = ob
 	}
 	return ob

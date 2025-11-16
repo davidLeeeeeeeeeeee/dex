@@ -55,17 +55,6 @@ func NewOrderBookWithSink(sink TradeSink) *OrderBook {
 	}
 }
 
-// NewOrderBook 保持原有签名，使用 channel 作为事件出口，供现有 OrderBookManager 使用。
-func NewOrderBook(tradeCh chan<- TradeUpdate) *OrderBook {
-	var sink TradeSink
-	if tradeCh != nil {
-		sink = func(ev TradeUpdate) {
-			tradeCh <- ev
-		}
-	}
-	return NewOrderBookWithSink(sink)
-}
-
 // SetTradeSink 设置或更新 TradeSink，用于在订单簿创建后动态注入事件处理器
 func (ob *OrderBook) SetTradeSink(sink TradeSink) {
 	ob.onTrade = sink
