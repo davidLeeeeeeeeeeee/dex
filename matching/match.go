@@ -142,7 +142,17 @@ func (ob *OrderBook) match(side OrderSide) {
 				delete(ob.buyMap, bestBuy.Price)
 				continue
 			}
-			// 2) 检查是否跟最优卖价交叉
+			// 2) 清理卖堆中的空价格层级
+			for ob.sellHeap.Len() > 0 {
+				bestSell := (*ob.sellHeap)[0]
+				if len(bestSell.Orders) == 0 {
+					heap.Pop(ob.sellHeap)
+					delete(ob.sellMap, bestSell.Price)
+				} else {
+					break
+				}
+			}
+			// 3) 检查是否跟最优卖价交叉
 			bestSellPrice := ob.getBestSellPrice()
 			if bestSellPrice.IsZero() {
 				// 卖堆没有订单，无法成交
@@ -152,7 +162,7 @@ func (ob *OrderBook) match(side OrderSide) {
 			if bestBuy.Price.Cmp(bestSellPrice) < 0 {
 				break
 			}
-			// 3) 交叉 => 执行撮合
+			// 4) 交叉 => 执行撮合
 			changed = ob.executeTrade(bestBuy, BUY)
 
 		} else {
@@ -165,6 +175,16 @@ func (ob *OrderBook) match(side OrderSide) {
 				heap.Pop(ob.sellHeap)
 				delete(ob.sellMap, bestSell.Price)
 				continue
+			}
+			// 清理买堆中的空价格层级
+			for ob.buyHeap.Len() > 0 {
+				bestBuy := (*ob.buyHeap)[0]
+				if len(bestBuy.Orders) == 0 {
+					heap.Pop(ob.buyHeap)
+					delete(ob.buyMap, bestBuy.Price)
+				} else {
+					break
+				}
 			}
 			bestBuyPrice := ob.getBestBuyPrice()
 			if bestBuyPrice.IsZero() {

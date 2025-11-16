@@ -330,8 +330,18 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		filledBase, _ := decimal.NewFromString(orderTx.FilledBase)
 		filledQuote, _ := decimal.NewFromString(orderTx.FilledQuote)
 
-		filledBase = filledBase.Add(ev.TradeAmt)
-		filledQuote = filledQuote.Add(ev.TradeAmt.Mul(ev.TradePrice))
+		// 根据订单方向更新成交量
+		// ev.TradeAmt 是交易对的 base currency 数量（例如 BTC_USDT 中的 BTC）
+		// ev.TradePrice 是 quote_token/base_token 的价格（例如 USDT/BTC）
+		if orderTx.BaseToken < orderTx.QuoteToken {
+			// 卖单：base_token 是交易对的第一个币种
+			filledBase = filledBase.Add(ev.TradeAmt)
+			filledQuote = filledQuote.Add(ev.TradeAmt.Mul(ev.TradePrice))
+		} else {
+			// 买单：base_token 是交易对的第二个币种
+			filledBase = filledBase.Add(ev.TradeAmt.Mul(ev.TradePrice))
+			filledQuote = filledQuote.Add(ev.TradeAmt)
+		}
 
 		orderTx.FilledBase = filledBase.String()
 		orderTx.FilledQuote = filledQuote.String()
@@ -397,8 +407,145 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		}
 	}
 
-	// TODO: 更新账户余额和持仓
-	// 这里需要根据成交信息更新买卖双方的余额
+	// 更新账户余额
+	// 根据撮合事件更新买卖双方的余额
+	accountBalanceOps, err := h.updateAccountBalances(tradeEvents, orderUpdates, sv)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update account balances: %w", err)
+	}
+	ws = append(ws, accountBalanceOps...)
+
+	return ws, nil
+}
+
+// updateAccountBalances 根据撮合事件更新账户余额
+//
+// 撮合逻辑：
+// - 对于订单 A (base_token=X, quote_token=Y, amount=a, price=p)
+//   - 成交量 tradeAmt（base_token 数量）
+//   - 成交金额 tradeAmt * price（quote_token 数量）
+//   - 订单持有者：减少 base_token，增加 quote_token
+//
+// 例如：
+// - Alice 卖单：base_token=BTC, quote_token=USDT, amount=1, price=50000
+//   - 成交 0.5 BTC
+//   - Alice: BTC -= 0.5, USDT += 0.5 * 50000 = 25000
+// - Bob 买单：base_token=USDT, quote_token=BTC, amount=25000, price=50000
+//   - 成交 25000 USDT
+//   - Bob: USDT -= 25000, BTC += 25000 / 50000 = 0.5
+func (h *OrderTxHandler) updateAccountBalances(
+	tradeEvents []matching.TradeUpdate,
+	orderUpdates map[string]*pb.OrderTx,
+	sv StateView,
+) ([]WriteOp, error) {
+	ws := make([]WriteOp, 0)
+	accountCache := make(map[string]*pb.Account) // address -> Account
+
+	for _, ev := range tradeEvents {
+		// 1. 获取订单信息
+		orderTx, ok := orderUpdates[ev.OrderID]
+		if !ok {
+			continue
+		}
+
+		// 2. 加载或获取缓存的账户
+		address := orderTx.Base.FromAddress
+		account, ok := accountCache[address]
+		if !ok {
+			accountKey := keys.KeyAccount(address)
+			accountData, exists, err := sv.Get(accountKey)
+			if err != nil || !exists {
+				return nil, fmt.Errorf("account not found: %s", address)
+			}
+
+			account = &pb.Account{}
+			if err := json.Unmarshal(accountData, account); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal account %s: %w", address, err)
+			}
+			accountCache[address] = account
+		}
+
+		// 3. 初始化余额（如果不存在）
+		if account.Balances == nil {
+			account.Balances = make(map[string]*pb.TokenBalance)
+		}
+		if account.Balances[orderTx.BaseToken] == nil {
+			account.Balances[orderTx.BaseToken] = &pb.TokenBalance{
+				Balance:                "0",
+				MinerLockedBalance:     "0",
+				CandidateLockedBalance: "0",
+			}
+		}
+		if account.Balances[orderTx.QuoteToken] == nil {
+			account.Balances[orderTx.QuoteToken] = &pb.TokenBalance{
+				Balance:                "0",
+				MinerLockedBalance:     "0",
+				CandidateLockedBalance: "0",
+			}
+		}
+
+		// 4. 计算余额变化
+		// TradeAmt 是撮合引擎返回的成交量，单位是交易对的基础币种（按字母排序后的第一个币种）
+		// 例如对于 BTC_USDT 交易对，TradeAmt 的单位是 BTC
+		//
+		// 对于卖单（base_token=BTC, quote_token=USDT）：
+		//   - 减少 BTC：TradeAmt
+		//   - 增加 USDT：TradeAmt * TradePrice
+		//
+		// 对于买单（base_token=USDT, quote_token=BTC）：
+		//   - 减少 USDT：TradeAmt * TradePrice
+		//   - 增加 BTC：TradeAmt
+		baseBalance, err := decimal.NewFromString(account.Balances[orderTx.BaseToken].Balance)
+		if err != nil {
+			baseBalance = decimal.Zero
+		}
+		quoteBalance, err := decimal.NewFromString(account.Balances[orderTx.QuoteToken].Balance)
+		if err != nil {
+			quoteBalance = decimal.Zero
+		}
+
+		var newBaseBalance, newQuoteBalance decimal.Decimal
+		var baseDecrease, quoteIncrease decimal.Decimal
+
+		if orderTx.BaseToken < orderTx.QuoteToken {
+			// 卖单：base_token 是交易对的第一个币种
+			baseDecrease = ev.TradeAmt
+			quoteIncrease = ev.TradeAmt.Mul(ev.TradePrice)
+		} else {
+			// 买单：base_token 是交易对的第二个币种
+			baseDecrease = ev.TradeAmt.Mul(ev.TradePrice)
+			quoteIncrease = ev.TradeAmt
+		}
+
+		newBaseBalance = baseBalance.Sub(baseDecrease)
+		if newBaseBalance.LessThan(decimal.Zero) {
+			return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
+				orderTx.BaseToken, address, baseBalance, baseDecrease)
+		}
+
+		newQuoteBalance = quoteBalance.Add(quoteIncrease)
+
+		// 更新余额
+		account.Balances[orderTx.BaseToken].Balance = newBaseBalance.String()
+		account.Balances[orderTx.QuoteToken].Balance = newQuoteBalance.String()
+	}
+
+	// 5. 保存所有更新的账户
+	for address, account := range accountCache {
+		accountKey := keys.KeyAccount(address)
+		accountData, err := json.Marshal(account)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal account %s: %w", address, err)
+		}
+
+		ws = append(ws, WriteOp{
+			Key:         accountKey,
+			Value:       accountData,
+			Del:         false,
+			SyncStateDB: true,
+			Category:    "account",
+		})
+	}
 
 	return ws, nil
 }

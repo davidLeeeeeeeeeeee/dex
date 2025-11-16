@@ -430,6 +430,35 @@ func (manager *Manager) Read(key string) (string, error) {
 	return value, nil
 }
 
+// Get 实现 vm.DBManager 接口，返回 []byte
+func (manager *Manager) Get(key string) ([]byte, error) {
+	manager.mu.RLock()
+	db := manager.Db
+	manager.mu.RUnlock()
+
+	if db == nil {
+		return nil, fmt.Errorf("database is not initialized or closed")
+	}
+
+	var value []byte
+	err := db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			return err
+		}
+		val, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		value = val
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
 // 将 db.Transaction 序列化为 [][]byte
 func SerializeAllTransactions(txCopy []*pb.AnyTx) [][]byte {
 
