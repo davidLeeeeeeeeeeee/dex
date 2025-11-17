@@ -113,7 +113,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 			Key:         freezeKey,
 			Value:       []byte("true"),
 			Del:         false,
-			SyncStateDB: false,
+			SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
 			Category:    "freeze",
 		})
 	} else {
@@ -122,7 +122,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 			Key:         freezeKey,
 			Value:       nil,
 			Del:         true,
-			SyncStateDB: false,
+			SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
 			Category:    "freeze",
 		})
 	}

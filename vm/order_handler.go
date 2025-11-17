@@ -234,7 +234,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Key:         targetOrderKey,
 		Value:       nil,
 		Del:         true,
-		SyncStateDB: false,
+		SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
 		Category:    "order",
 	})
 
@@ -363,7 +363,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			Key:         orderKey,
 			Value:       orderData,
 			Del:         false,
-			SyncStateDB: false,
+			SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
 			Category:    "order",
 		})
 
@@ -565,7 +565,7 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		Key:         orderKey,
 		Value:       orderData,
 		Del:         false,
-		SyncStateDB: false,
+		SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
 		Category:    "order",
 	})
 

@@ -2,11 +2,33 @@
 package statedb
 
 import (
-	"bytes"
 	"encoding/binary"
+	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 )
+
+// ---- 辅助方法：判断 key 是否需要同步到 StateDB ----
+// isStatefulKey 判断 key 是否属于需要同步到 StateDB 的状态数据
+// 支持的前缀：account、freeze、order、token、recharge_record、token_registry
+func (s *DB) isStatefulKey(key string) bool {
+	// 定义需要同步到 StateDB 的数据前缀
+	statefulPrefixes := []string{
+		"v1_account_",          // 账户数据
+		"v1_freeze_",           // 冻结标记
+		"v1_order_",            // 订单数据
+		"v1_token_",            // Token 数据（包括 v1_token_registry）
+		"v1_recharge_record_",  // 充值记录
+	}
+
+	for _, prefix := range statefulPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
 
 // ---- 外部调用：管理更新 ----
 // 在 db/manage_account.go 里每次账户变更都调用stateDB.ApplyAccountUpdate(height, key, val)
@@ -40,8 +62,9 @@ func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 		// 构造 WAL 记录
 		var walRecords []WalRecord
 		for _, kv := range kvs {
-			if !bytes.HasPrefix([]byte(kv.Key), []byte(s.conf.AccountNSPrefix)) {
-				continue // 只接管 account 命名空间
+			// ✨ 使用 isStatefulKey 支持多种数据类型
+			if !s.isStatefulKey(kv.Key) {
+				continue // 跳过非状态数据
 			}
 			op := byte(0) // SET
 			if kv.Deleted {
@@ -66,8 +89,9 @@ func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 
 	// 写入内存窗口
 	for _, kv := range kvs {
-		if !bytes.HasPrefix([]byte(kv.Key), []byte(s.conf.AccountNSPrefix)) {
-			continue // 只接管 account 命名空间
+		// ✨ 使用 isStatefulKey 支持多种数据类型
+		if !s.isStatefulKey(kv.Key) {
+			continue // 跳过非状态数据
 		}
 		sh := shardOf(kv.Key, s.conf.ShardHexWidth)
 		s.mem.apply(height, kv.Key, kv.Value, kv.Deleted, sh)
@@ -101,14 +125,14 @@ func (s *DB) FlushAndRotate(epochEnd uint64) error {
 			bucket := s.mem.byShard[shard]
 			var cnt int64
 			for k, e := range bucket {
-				addr := k[len(s.conf.AccountNSPrefix):]
+				// ✨ 直接使用完整的 key，支持多种数据类型
 				if e.del {
-					if err := txn.Delete(kOvl(E, shard, addr)); err != nil && err != badger.ErrKeyNotFound {
+					if err := txn.Delete(kOvl(E, shard, k)); err != nil && err != badger.ErrKeyNotFound {
 						s.mem.muByShard[shard].RUnlock()
 						return err
 					}
 				} else {
-					if err := txn.Set(kOvl(E, shard, addr), e.latest); err != nil {
+					if err := txn.Set(kOvl(E, shard, k), e.latest); err != nil {
 						s.mem.muByShard[shard].RUnlock()
 						return err
 					}

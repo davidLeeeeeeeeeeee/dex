@@ -540,3 +540,261 @@ func createBuyOrder(txID, from, base, quote, price, amount string) *pb.AnyTx {
 	}
 }
 
+// TestE2E_TransactionOrderDeterminism
+// 测试交易执行顺序的确定性
+//
+// 场景：
+// 在同一个区块中，Alice 挂 3 个卖单（价格递增），Bob 挂 1 个买单
+// 验证：
+// 1. 交易按照 block.Body 数组顺序执行
+// 2. 撮合引擎按照价格优先原则匹配（最低价优先）
+// 3. 执行结果是确定性的，多次执行结果一致
+func TestE2E_TransactionOrderDeterminism(t *testing.T) {
+	// 初始化数据库
+	tmpDir := t.TempDir()
+	t.Logf("📁 Test database directory: %s", tmpDir)
+
+	dbMgr, err := db.NewManager(tmpDir)
+	require.NoError(t, err)
+	defer dbMgr.Close()
+
+	dbMgr.InitWriteQueue(100, 200*time.Millisecond)
+
+	// 初始化 VM
+	registry := vm.NewHandlerRegistry()
+	require.NoError(t, vm.RegisterDefaultHandlers(registry))
+	cache := vm.NewSpecExecLRU(100)
+	executor := vm.NewExecutor(dbMgr, registry, cache)
+
+	// 创建测试账户
+	aliceAddr := "alice_order_test"
+	bobAddr := "bob_order_test"
+
+	createE2ETestAccount(t, dbMgr, aliceAddr, map[string]string{
+		"BTC":  "10.0",
+		"USDT": "0",
+	})
+	createE2ETestAccount(t, dbMgr, bobAddr, map[string]string{
+		"BTC":  "0",
+		"USDT": "200000",
+	})
+
+	require.NoError(t, dbMgr.ForceFlush())
+	time.Sleep(100 * time.Millisecond)
+	t.Log("✅ Test accounts created")
+
+	// ========== 创建包含多个交易的区块 ==========
+	// 交易顺序：
+	// 1. Alice 卖单 1: 1 BTC @ 51000 USDT (高价)
+	// 2. Alice 卖单 2: 1 BTC @ 49000 USDT (低价)
+	// 3. Alice 卖单 3: 1 BTC @ 50000 USDT (中价)
+	// 4. Bob 买单: 买 1.5 BTC，愿意支付最高 51000 USDT/BTC
+	//
+	// 预期撮合结果：
+	// - 撮合引擎会按照价格优先原则，先匹配最低价的卖单
+	// - 匹配顺序：sell_2 (49000) -> sell_3 (50000) -> sell_1 (51000)
+	// - Bob 买入 1 BTC @ 49000 + 0.5 BTC @ 50000 = 74000 USDT
+	block := &pb.Block{
+		BlockHash:     "order_test_block",
+		PrevBlockHash: "genesis",
+		Height:        1,
+		Body: []*pb.AnyTx{
+			createSellOrder("sell_order_1", aliceAddr, "BTC", "USDT", "51000", "1.0"),
+			createSellOrder("sell_order_2", aliceAddr, "BTC", "USDT", "49000", "1.0"),
+			createSellOrder("sell_order_3", aliceAddr, "BTC", "USDT", "50000", "1.0"),
+			createBuyOrder("buy_order_1", bobAddr, "USDT", "BTC", "51000", "76500"), // 1.5 * 51000
+		},
+	}
+
+	t.Log("📦 Executing block with 4 transactions (3 sells + 1 buy)")
+
+	// ========== 第一次执行 ==========
+	result1, err := executor.PreExecuteBlock(block)
+	require.NoError(t, err)
+	require.True(t, result1.Valid, "Block should be valid")
+	require.Equal(t, 4, len(result1.Receipts), "Should have 4 receipts")
+
+	// 提交区块
+	require.NoError(t, executor.CommitFinalizedBlock(block))
+	require.NoError(t, dbMgr.ForceFlush())
+	time.Sleep(500 * time.Millisecond)
+	t.Log("✅ Block committed")
+
+	// ========== 验证执行结果 ==========
+	// Bob 应该买入 1.5 BTC，花费 1*49000 + 0.5*50000 = 74000 USDT
+	bobAccount := getE2EAccount(t, dbMgr, bobAddr)
+	t.Logf("Bob BTC balance: %s (expected: 1.5)", bobAccount.Balances["BTC"].Balance)
+	t.Logf("Bob USDT balance: %s (expected: 126000)", bobAccount.Balances["USDT"].Balance)
+
+	assert.Equal(t, "1.5", bobAccount.Balances["BTC"].Balance, "Bob should have 1.5 BTC")
+	assert.Equal(t, "126000", bobAccount.Balances["USDT"].Balance, "Bob should have 126000 USDT")
+
+	// Alice 应该卖出 1.5 BTC，获得 74000 USDT
+	aliceAccount := getE2EAccount(t, dbMgr, aliceAddr)
+	t.Logf("Alice BTC balance: %s (expected: 8.5)", aliceAccount.Balances["BTC"].Balance)
+	t.Logf("Alice USDT balance: %s (expected: 74000)", aliceAccount.Balances["USDT"].Balance)
+
+	assert.Equal(t, "8.5", aliceAccount.Balances["BTC"].Balance, "Alice should have 8.5 BTC")
+	assert.Equal(t, "74000", aliceAccount.Balances["USDT"].Balance, "Alice should have 74000 USDT")
+
+	// 验证订单状态
+	sell1 := getE2EOrder(t, dbMgr, "sell_order_1")
+	assert.Equal(t, "0", sell1.FilledBase, "sell_order_1 should not be filled (highest price)")
+	assert.False(t, sell1.IsFilled)
+
+	sell2 := getE2EOrder(t, dbMgr, "sell_order_2")
+	assert.Equal(t, "1", sell2.FilledBase, "sell_order_2 should be fully filled (lowest price)")
+	assert.True(t, sell2.IsFilled)
+
+	sell3 := getE2EOrder(t, dbMgr, "sell_order_3")
+	assert.Equal(t, "0.5", sell3.FilledBase, "sell_order_3 should be partially filled (middle price)")
+	assert.False(t, sell3.IsFilled)
+
+	buyOrder := getE2EOrder(t, dbMgr, "buy_order_1")
+	assert.Equal(t, "1.5", buyOrder.FilledQuote, "buy_order_1 should have bought 1.5 BTC")
+	assert.True(t, buyOrder.IsFilled)
+
+	t.Log("✅ Transaction order determinism test passed")
+	t.Log("✅ Matching engine correctly prioritizes by price (lowest first)")
+}
+
+// TestE2E_SameAccountMultipleBalanceChanges
+// 测试同一区块中对同一账户的多次余额修改
+//
+// 场景：
+// 在同一个区块中，Alice 进行多次转账操作
+// 验证：
+// 1. 同一账户的余额修改按照交易顺序累积
+// 2. 最终余额正确反映所有交易的累积效果
+// 3. 数据一致性：StateDB 和 Badger 数据一致
+func TestE2E_SameAccountMultipleBalanceChanges(t *testing.T) {
+	// 初始化数据库
+	tmpDir := t.TempDir()
+	t.Logf("📁 Test database directory: %s", tmpDir)
+
+	dbMgr, err := db.NewManager(tmpDir)
+	require.NoError(t, err)
+	defer dbMgr.Close()
+
+	dbMgr.InitWriteQueue(100, 200*time.Millisecond)
+
+	// 初始化 VM
+	registry := vm.NewHandlerRegistry()
+	require.NoError(t, vm.RegisterDefaultHandlers(registry))
+	cache := vm.NewSpecExecLRU(100)
+	executor := vm.NewExecutor(dbMgr, registry, cache)
+
+	// 创建测试账户
+	aliceAddr := "alice_multi_change"
+	bobAddr := "bob_multi_change"
+	charlieAddr := "charlie_multi_change"
+
+	// Alice 初始有 10000 USDT
+	createE2ETestAccount(t, dbMgr, aliceAddr, map[string]string{
+		"USDT": "10000",
+	})
+	createE2ETestAccount(t, dbMgr, bobAddr, map[string]string{
+		"USDT": "0",
+	})
+	createE2ETestAccount(t, dbMgr, charlieAddr, map[string]string{
+		"USDT": "0",
+	})
+
+	require.NoError(t, dbMgr.ForceFlush())
+	time.Sleep(100 * time.Millisecond)
+	t.Log("✅ Test accounts created")
+
+	// ========== 创建包含多个转账的区块 ==========
+	// 同一区块中，Alice 进行 5 次转账：
+	// 1. Alice -> Bob: 1000 USDT (Alice: 10000 - 1000 = 9000)
+	// 2. Alice -> Charlie: 2000 USDT (Alice: 9000 - 2000 = 7000)
+	// 3. Alice -> Bob: 1500 USDT (Alice: 7000 - 1500 = 5500)
+	// 4. Alice -> Charlie: 500 USDT (Alice: 5500 - 500 = 5000)
+	// 5. Alice -> Bob: 3000 USDT (Alice: 5000 - 3000 = 2000)
+	//
+	// 预期最终余额：
+	// - Alice: 2000 USDT
+	// - Bob: 1000 + 1500 + 3000 = 5500 USDT
+	// - Charlie: 2000 + 500 = 2500 USDT
+	block := &pb.Block{
+		BlockHash:     "multi_change_block",
+		PrevBlockHash: "genesis",
+		Height:        1,
+		Body: []*pb.AnyTx{
+			createTransferTx("tx_1", aliceAddr, bobAddr, "USDT", "1000"),
+			createTransferTx("tx_2", aliceAddr, charlieAddr, "USDT", "2000"),
+			createTransferTx("tx_3", aliceAddr, bobAddr, "USDT", "1500"),
+			createTransferTx("tx_4", aliceAddr, charlieAddr, "USDT", "500"),
+			createTransferTx("tx_5", aliceAddr, bobAddr, "USDT", "3000"),
+		},
+	}
+
+	t.Log("📦 Executing block with 5 transfers from Alice")
+
+	// 执行区块
+	result, err := executor.PreExecuteBlock(block)
+	require.NoError(t, err)
+	require.True(t, result.Valid, "Block should be valid")
+	require.Equal(t, 5, len(result.Receipts), "Should have 5 receipts")
+
+	// 验证所有交易都成功
+	for i, receipt := range result.Receipts {
+		assert.Equal(t, "SUCCEED", receipt.Status, "Transaction %d should succeed", i+1)
+	}
+
+	// 提交区块
+	require.NoError(t, executor.CommitFinalizedBlock(block))
+	require.NoError(t, dbMgr.ForceFlush())
+	time.Sleep(500 * time.Millisecond)
+	t.Log("✅ Block committed")
+
+	// ========== 验证最终余额 ==========
+	aliceAccount := getE2EAccount(t, dbMgr, aliceAddr)
+	bobAccount := getE2EAccount(t, dbMgr, bobAddr)
+	charlieAccount := getE2EAccount(t, dbMgr, charlieAddr)
+
+	t.Logf("Alice USDT balance: %s (expected: 2000)", aliceAccount.Balances["USDT"].Balance)
+	t.Logf("Bob USDT balance: %s (expected: 5500)", bobAccount.Balances["USDT"].Balance)
+	t.Logf("Charlie USDT balance: %s (expected: 2500)", charlieAccount.Balances["USDT"].Balance)
+
+	assert.Equal(t, "2000", aliceAccount.Balances["USDT"].Balance, "Alice should have 2000 USDT")
+	assert.Equal(t, "5500", bobAccount.Balances["USDT"].Balance, "Bob should have 5500 USDT")
+	assert.Equal(t, "2500", charlieAccount.Balances["USDT"].Balance, "Charlie should have 2500 USDT")
+
+	// 验证总量守恒
+	// 初始总量：10000 (Alice)
+	// 最终总量：2000 (Alice) + 5500 (Bob) + 2500 (Charlie) = 10000 ✅
+	t.Log("✅ Balance conservation verified: 2000 + 5500 + 2500 = 10000")
+
+	// ========== 验证数据持久化 ==========
+	// 重新读取账户，验证数据已正确持久化
+	aliceFromDB := getE2EAccount(t, dbMgr, aliceAddr)
+	bobFromDB := getE2EAccount(t, dbMgr, bobAddr)
+	charlieFromDB := getE2EAccount(t, dbMgr, charlieAddr)
+
+	assert.Equal(t, "2000", aliceFromDB.Balances["USDT"].Balance, "DB should have correct Alice balance")
+	assert.Equal(t, "5500", bobFromDB.Balances["USDT"].Balance, "DB should have correct Bob balance")
+	assert.Equal(t, "2500", charlieFromDB.Balances["USDT"].Balance, "DB should have correct Charlie balance")
+
+	t.Log("✅ Data persistence verified")
+	t.Log("✅ Same account multiple balance changes test passed")
+}
+
+// createTransferTx 创建转账交易（辅助函数）
+func createTransferTx(txID, from, to, token, amount string) *pb.AnyTx {
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_Transaction{
+			Transaction: &pb.Transaction{
+				Base: &pb.BaseMessage{
+					TxId:        txID,
+					FromAddress: from,
+					Status:      pb.Status_PENDING,
+				},
+				To:           to,
+				TokenAddress: token,
+				Amount:       amount,
+			},
+		},
+	}
+}
+

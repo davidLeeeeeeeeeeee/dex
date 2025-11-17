@@ -176,7 +176,7 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Key:         rechargeRecordKey,
 		Value:       rechargeRecordData,
 		Del:         false,
-		SyncStateDB: false,
+		SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
 		Category:    "record",
 	})
 
