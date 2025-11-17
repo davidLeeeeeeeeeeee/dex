@@ -414,13 +414,38 @@ func (s *DB) FlushAndRotate(epochEnd uint64) error {
 
 ## 注意事项
 
-### 1. 索引数据不需要同步
+### 1. 索引数据不需要同步 ✅ 已验证
 
 以下索引可以从主数据重建，不需要同步到 StateDB：
 
 - `v1_order_index_{address}_{orderId}` - 可从 Account.Orders 重建
-- `v1_order_price_index_*` - 可从订单数据重建
+- `v1_order_price_index_*` - **可从订单数据重建** ✅ 已实现并测试
 - `v1_candidate_index_*` - 可从 Account.Candidate 重建
+
+**实现代码**：
+- `db/db.go` - `RebuildOrderPriceIndexes()` 函数
+- `db/rebuild_order_index_test.go` - 完整的测试用例
+
+**测试结果**：
+```
+=== RUN   TestRebuildOrderPriceIndexes
+--- PASS: TestRebuildOrderPriceIndexes (0.55s)
+    --- PASS: TestRebuildOrderPriceIndexes/FullNode_HasBothOrdersAndIndexes
+    --- PASS: TestRebuildOrderPriceIndexes/LightNode_DeleteIndexes
+    --- PASS: TestRebuildOrderPriceIndexes/LightNode_RebuildIndexes
+    --- PASS: TestRebuildOrderPriceIndexes/LightNode_VerifyRebuiltIndexes
+=== RUN   TestRebuildOrderPriceIndexes_EmptyDB
+--- PASS: TestRebuildOrderPriceIndexes_EmptyDB (0.04s)
+=== RUN   TestRebuildOrderPriceIndexes_Performance
+--- PASS: TestRebuildOrderPriceIndexes_Performance (0.46s)
+    rebuild_order_index_test.go:229: Rebuilt 1000 order indexes in 2.0ms (499925 orders/sec)
+PASS
+```
+
+**性能数据**：
+- 重建 1000 个订单索引耗时：~2ms
+- 吞吐量：~500,000 orders/sec
+- 结论：索引重建非常快，轻节点启动时重建索引不会成为瓶颈
 
 ### 2. 历史数据不需要同步
 

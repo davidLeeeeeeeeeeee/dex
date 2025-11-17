@@ -217,7 +217,9 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 	// 遍历 Diff 中的所有写操作
 	stateDBUpdates := make([]interface{}, 0) // 用于收集需要同步到 StateDB 的更新
 
-	for _, w := range res.Diff {
+	for i := range res.Diff {
+		w := &res.Diff[i] // 使用指针，因为 WriteOp 的方法是指针接收器
+
 		// 写入到 DB
 		if w.Del {
 			x.DB.EnqueueDel(w.Key)

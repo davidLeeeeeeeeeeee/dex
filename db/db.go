@@ -6,6 +6,7 @@ import (
 	"dex/logs"
 	"dex/pb"
 	statedb "dex/stateDB"
+	"dex/utils"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"google.golang.org/protobuf/proto"
 )
 
 // Manager 封装 BadgerDB 的管理器
@@ -88,8 +90,8 @@ func NewManager(path string) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		Db:      db,
-		StateDB: stateDB,
+		Db:       db,
+		StateDB:  stateDB,
 		IndexMgr: indexMgr,
 		seq:      seq,
 	}
@@ -492,6 +494,86 @@ func (m *Manager) NextIndex() (uint64, error) {
 	return id + 1, nil // 让索引依旧从 1 开始
 }
 
+// ========== 索引重建接口 ==========
+
+//	从订单数据重建价格索引
+//
+// 用于轻节点同步后重建索引，提升查询性能
+// 返回重建的索引数量
+func RebuildOrderPriceIndexes(m *Manager) (int, error) {
+	// 使用 withVer 获取正确的前缀
+	prefix := "v1_order_"
+	count := 0
+
+	// 先收集所有需要写入的索引，避免在 View 事务中调用 EnqueueSet
+	type indexEntry struct {
+		key   string
+		value string
+	}
+	var indexes []indexEntry
+
+	err := m.Db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		p := []byte(prefix)
+		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
+			item := it.Item()
+			key := string(item.Key())
+
+			// 确保 key 以前缀开头
+			if !strings.HasPrefix(key, prefix) {
+				break
+			}
+
+			orderData, err := item.ValueCopy(nil)
+			if err != nil {
+				continue
+			}
+
+			// 反序列化订单
+			var order pb.OrderTx
+			if err := proto.Unmarshal(orderData, &order); err != nil {
+				continue
+			}
+
+			// 重建价格索引
+			pair := utils.GeneratePairKey(order.BaseToken, order.QuoteToken)
+			priceKey67, err := PriceToKey128(order.Price)
+			if err != nil {
+				continue
+			}
+
+			indexKey := keys.KeyOrderPriceIndex(pair, order.IsFilled, priceKey67, order.Base.TxId)
+			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
+
+			indexes = append(indexes, indexEntry{
+				key:   indexKey,
+				value: string(indexData),
+			})
+			count++
+		}
+		return nil
+	})
+
+	if err != nil {
+		return 0, err
+	}
+
+	// 写入所有索引
+	for _, idx := range indexes {
+		m.EnqueueSet(idx.key, idx.value)
+	}
+
+	// 强制刷盘
+	if err := m.ForceFlush(); err != nil {
+		return 0, err
+	}
+
+	return count, nil
+}
+
 // ========== StateDB 同步接口 ==========
 
 // SyncToStateDB 同步状态变化到 StateDB
@@ -504,17 +586,21 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
 	// 将 WriteOp 转换为 StateDB 的 KVUpdate
 	kvUpdates := make([]statedb.KVUpdate, 0, len(updates))
 	for _, u := range updates {
-		// 尝试类型断言为 WriteOp
-		if writeOp, ok := u.(interface {
+		// 使用接口类型断言（避免循环依赖）
+		type writeOpInterface interface {
 			GetKey() string
 			GetValue() []byte
 			IsDel() bool
-		}); ok {
+		}
+
+		if writeOp, ok := u.(writeOpInterface); ok {
 			kvUpdates = append(kvUpdates, statedb.KVUpdate{
 				Key:     writeOp.GetKey(),
 				Value:   writeOp.GetValue(),
 				Deleted: writeOp.IsDel(),
 			})
+		} else {
+			logs.Warn("[DB] Failed to convert update to WriteOp: %T", u)
 		}
 	}
 

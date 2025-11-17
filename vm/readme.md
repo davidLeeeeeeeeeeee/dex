@@ -35,7 +35,12 @@ vm/
 
 ### types.go
 定义了VM模块的基础类型：
-- `WriteOp`: 写操作
+- `WriteOp`: 写操作，包含以下字段：
+  - `Key`: 完整的 key（包括命名空间前缀）
+  - `Value`: 序列化后的值
+  - `Del`: 是否删除操作
+  - `SyncStateDB`: **是否同步到 StateDB**（用于账户、订单等关键数据）
+  - `Category`: 数据分类（account, token, order, receipt, meta 等），便于追踪和调试
 - `Receipt`: 执行收据
 - `SpecResult`: 执行结果
 
@@ -47,6 +52,7 @@ vm/
 - `TxHandler`: 交易处理器接口
 - `SpecExecCache`: 缓存接口
 - `DBManager`: 数据库管理器接口
+  - `SyncToStateDB(height uint64, updates []interface{}) error`: **同步状态到 StateDB**（VM 统一提交入口调用）
 
 ### stateview.go
 实现了内存Overlay状态视图：
@@ -69,6 +75,12 @@ LRU缓存实现：
 核心执行器：
 - `PreExecuteBlock`: 预执行（内存）
 - `CommitFinalizedBlock`: 最终提交（数据库）
+- `applyResult`: **统一提交入口**，负责：
+  - 幂等性检查（防止重复提交）
+  - 应用所有 WriteOp 到 Badger
+  - 同步 `SyncStateDB=true` 的数据到 StateDB
+  - 写入交易收据和区块元数据
+  - 原子提交
 - 交易和区块状态查询
 
 ### default_handlers.go
@@ -154,7 +166,25 @@ func (h *MyHandler) DryRun(tx *pb.AnyTx, sv vm.StateView) ([]vm.WriteOp, *vm.Rec
     txID := tx.GetTxId()
     // ... 处理逻辑
 
-    return []vm.WriteOp{...}, &vm.Receipt{
+    // 生成 WriteOp 时需要指定 SyncStateDB 和 Category
+    ws := []vm.WriteOp{
+        {
+            Key:         "account:alice",
+            Value:       accountData,
+            Del:         false,
+            SyncStateDB: true,      // 账户数据需要同步到 StateDB
+            Category:    "account", // 数据分类，便于调试
+        },
+        {
+            Key:         "order:12345",
+            Value:       orderData,
+            Del:         false,
+            SyncStateDB: true,      // 订单数据也需要同步（支持轻节点）
+            Category:    "order",
+        },
+    }
+
+    return ws, &vm.Receipt{
         TxID:   txID,
         Status: "SUCCEED",
     }, nil
@@ -167,23 +197,35 @@ func (h *MyHandler) Apply(tx *pb.AnyTx) error {
 
 ## 执行流程
 
-### 预执行流程
+### 预执行流程（内存 Overlay）
 
 ```
-接收区块 -> 检查缓存 -> 创建StateView -> 遍历交易 -> 执行Handler
+接收区块 -> 检查缓存 -> 创建StateView -> 遍历交易 -> 执行Handler.DryRun()
     |                                           |
     v                                           v
-缓存命中则返回                              收集Diff -> 缓存结果
+缓存命中则返回                        生成 WriteOp[] -> 应用到 StateView
+                                              |
+                                              v
+                                        收集 Diff -> 缓存结果
 ```
 
-### 提交流程
+### 提交流程（统一提交入口）
 
 ```
-接收区块 -> 查找缓存 -> 应用Diff -> 写入数据库
-    |           |
-    v           v
-缓存缺失    重新执行
+接收区块 -> 查找缓存 -> applyResult（统一提交入口）
+    |           |              |
+    v           v              ├─ 1. 幂等性检查
+缓存缺失    重新执行            ├─ 2. 应用所有 WriteOp 到 Badger
+                              ├─ 3. 同步 SyncStateDB=true 的数据到 StateDB
+                              ├─ 4. 写入交易收据和元数据
+                              └─ 5. 原子提交（ForceFlush）
 ```
+
+**关键改进**：
+- ✅ **统一提交路径**：所有状态变更都通过 `applyResult` 提交，避免散布的 `db.Save*` 调用
+- ✅ **双层存储**：Badger（完整数据） + StateDB（账户/订单等关键数据的 Merkle 树）
+- ✅ **幂等性保证**：通过 `KeyVMCommitHeight` 检查，防止重复提交
+- ✅ **原子性保证**：所有写操作在 `ForceFlush` 时原子提交
 
 ## 性能优化建议
 
@@ -220,12 +262,63 @@ go test -bench=.
 go run example/main.go
 ```
 
+## 架构设计
+
+### 双层存储架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         VM Layer                            │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
+│  │   Handler    │ -> │  StateView   │ -> │   WriteOp[]  │  │
+│  │   DryRun()   │    │  (Overlay)   │    │              │  │
+│  └──────────────┘    └──────────────┘    └──────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                              |
+                              v
+                      applyResult (统一提交)
+                              |
+                ┌─────────────┴─────────────┐
+                v                           v
+        ┌──────────────┐          ┌──────────────┐
+        │    Badger    │          │   StateDB    │
+        │ (完整数据)    │          │ (Merkle树)   │
+        │              │          │              │
+        │ - 所有交易    │          │ - 账户状态    │
+        │ - 所有订单    │          │ - 订单状态    │
+        │ - 索引数据    │          │ - Token状态   │
+        │ - 元数据      │          │              │
+        └──────────────┘          └──────────────┘
+```
+
+**设计要点**：
+1. **Badger**：存储所有数据，作为完整的数据源
+2. **StateDB**：只存储关键数据（账户、订单、Token），用于：
+   - 快速生成 Merkle Root（用于共识）
+   - 支持轻节点同步
+   - 状态证明（State Proof）
+3. **WriteOp.SyncStateDB**：控制哪些数据需要同步到 StateDB
+   - `true`：账户、订单、Token 等关键状态
+   - `false`：索引、元数据、临时数据
+
+### 数据分类（Category）
+
+| Category  | 说明           | SyncStateDB | 示例                    |
+|-----------|----------------|-------------|-------------------------|
+| account   | 账户数据       | true        | 余额、投票、锁定        |
+| token     | Token 数据     | true        | 发行信息、总供应量      |
+| order     | 订单数据       | true        | 订单状态、成交信息      |
+| receipt   | 交易收据       | false       | 执行结果、错误信息      |
+| index     | 索引数据       | false       | 价格索引、时间索引      |
+| meta      | 元数据         | false       | 区块高度、提交标记      |
+
 ## 注意事项
 
-1. DBManager接口需要根据实际数据库实现
-2. Block和AnyTx结构可能需要根据项目调整
-3. Handler的具体业务逻辑需要根据需求实现
-4. 生产环境建议增加监控和日志
+1. **所有状态变更必须通过 VM 的 WriteOp 机制**，不要直接调用 `db.Save*` 方法
+2. DBManager 需要实现 `SyncToStateDB` 方法以支持 StateDB 同步
+3. Handler 的 DryRun 方法必须正确设置 `SyncStateDB` 和 `Category` 字段
+4. 生产环境建议增加监控和日志，特别是 StateDB 同步失败的情况
+5. 幂等性依赖 `KeyVMCommitHeight`，不要手动删除这些键
 
 ## 许可证
 
