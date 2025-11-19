@@ -622,16 +622,20 @@ func generateTransactions(node *NodeInstance) {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 
-		txID := 0
+		txCounter := uint64(0)
 		for range ticker.C {
 			// Generate multiple transactions
 			for i := 0; i < 2; i++ {
+				txCounter++
+				// 生成正确格式的十六进制 TxId (0x + 64位十六进制)
+				txID := fmt.Sprintf("0x%016x%016x", time.Now().UnixNano(), txCounter)
+
 				tx := &pb.Transaction{
 					Base: &pb.BaseMessage{
-						TxId:        fmt.Sprintf("%d%d", i, time.Now().UnixNano()),
+						TxId:        txID,
 						FromAddress: node.Address,
 						Status:      pb.Status_PENDING,
-						Nonce:       uint64(i),
+						Nonce:       txCounter,
 					},
 					To:           node.Address,
 					TokenAddress: "FB",
@@ -645,7 +649,6 @@ func generateTransactions(node *NodeInstance) {
 					logs.Trace("Added transaction %s to pool", tx.Base.TxId)
 				}
 			}
-			txID++
 		}
 	}()
 }

@@ -3,8 +3,9 @@ package vm
 import (
 	"dex/keys"
 	"dex/pb"
-	"encoding/json"
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // IssueTokenTxHandler 发币交易处理器
@@ -55,7 +56,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 
 	// 解析账户数据
 	var account pb.Account
-	if err := json.Unmarshal(accountData, &account); err != nil {
+	if err := proto.Unmarshal(accountData, &account); err != nil{
 		return nil, &Receipt{
 			TxID:   issueTx.Base.TxId,
 			Status: "FAILED",
@@ -87,7 +88,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 		CanMint:     issueTx.CanMint,
 	}
 
-	tokenData, err := json.Marshal(token)
+	tokenData, err := proto.Marshal(token)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   issueTx.Base.TxId,
@@ -128,7 +129,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 	}
 
 	// 保存更新后的账户
-	updatedAccountData, err := json.Marshal(&account)
+	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   issueTx.Base.TxId,
@@ -151,7 +152,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 
 	var registry pb.TokenRegistry
 	if registryData != nil {
-		if err := json.Unmarshal(registryData, &registry); err != nil {
+		if err := proto.Unmarshal(registryData, &registry); err != nil {
 			// 如果解析失败，创建新的registry
 			registry.Tokens = make(map[string]*pb.Token)
 		}
@@ -161,7 +162,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 
 	registry.Tokens[tokenAddress] = token
 
-	updatedRegistryData, err := json.Marshal(&registry)
+	updatedRegistryData, err := proto.Marshal(&registry)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   issueTx.Base.TxId,

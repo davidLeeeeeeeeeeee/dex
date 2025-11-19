@@ -3,8 +3,9 @@ package vm
 import (
 	"dex/keys"
 	"dex/pb"
-	"encoding/json"
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // FreezeTxHandler 冻结/解冻Token交易处理器
@@ -55,7 +56,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 
 	// 解析Token数据
 	var token pb.Token
-	if err := json.Unmarshal(tokenData, &token); err != nil {
+	if err := proto.Unmarshal(tokenData, &token); err != nil {
 		return nil, &Receipt{
 			TxID:   freeze.Base.TxId,
 			Status: "FAILED",
@@ -93,7 +94,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 
 	// 解析目标账户
 	var targetAccount pb.Account
-	if err := json.Unmarshal(targetAccountData, &targetAccount); err != nil {
+	if err := proto.Unmarshal(targetAccountData, &targetAccount); err != nil {
 		return nil, &Receipt{
 			TxID:   freeze.Base.TxId,
 			Status: "FAILED",
@@ -129,7 +130,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 
 	// 6. 记录冻结/解冻历史
 	historyKey := keys.KeyFreezeHistory(freeze.Base.TxId)
-	historyData, _ := json.Marshal(freeze)
+	historyData, _ := proto.Marshal(freeze)
 	ws = append(ws, WriteOp{
 		Key:         historyKey,
 		Value:       historyData,

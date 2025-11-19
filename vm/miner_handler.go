@@ -3,9 +3,10 @@ package vm
 import (
 	"dex/keys"
 	"dex/pb"
-	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // MinerTxHandler 矿工交易处理器
@@ -74,7 +75,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	}
 
 	var account pb.Account
-	if err := json.Unmarshal(accountData, &account); err != nil {
+	if err := proto.Unmarshal(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
 			Status: "FAILED",
@@ -120,7 +121,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	account.IsMiner = true
 
 	// 保存更新后的账户
-	updatedAccountData, err := json.Marshal(&account)
+	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
@@ -139,7 +140,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 
 	// 记录挖矿历史
 	historyKey := keys.KeyMinerHistory(minerTx.Base.TxId)
-	historyData, _ := json.Marshal(minerTx)
+	historyData, _ := proto.Marshal(minerTx)
 	ws = append(ws, WriteOp{
 		Key:         historyKey,
 		Value:       historyData,
@@ -169,7 +170,7 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 	}
 
 	var account pb.Account
-	if err := json.Unmarshal(accountData, &account); err != nil {
+	if err := proto.Unmarshal(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
 			Status: "FAILED",
@@ -222,7 +223,7 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 	account.IsMiner = false
 
 	// 保存更新后的账户
-	updatedAccountData, err := json.Marshal(&account)
+	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
@@ -241,7 +242,7 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 
 	// 记录停止挖矿历史
 	historyKey := keys.KeyMinerHistory(minerTx.Base.TxId)
-	historyData, _ := json.Marshal(minerTx)
+	historyData, _ := proto.Marshal(minerTx)
 	ws = append(ws, WriteOp{
 		Key:         historyKey,
 		Value:       historyData,

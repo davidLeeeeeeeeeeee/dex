@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // RechargeTxHandler 上账交易处理器
@@ -89,7 +91,7 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 
 	var account pb.Account
 	if accountExists {
-		if err := json.Unmarshal(accountData, &account); err != nil {
+		if err := proto.Unmarshal(accountData, &account); err != nil {
 			return nil, &Receipt{
 				TxID:   recharge.Base.TxId,
 				Status: "FAILED",
@@ -144,7 +146,7 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	ws := make([]WriteOp, 0)
 
 	// 8. 保存更新后的账户
-	updatedAccountData, err := json.Marshal(&account)
+	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   recharge.Base.TxId,
@@ -182,7 +184,7 @@ func (h *RechargeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 
 	// 10. 保存充值交易历史
 	historyKey := keys.KeyRechargeHistory(recharge.Base.TxId)
-	historyData, _ := json.Marshal(recharge)
+	historyData, _ := proto.Marshal(recharge)
 	ws = append(ws, WriteOp{
 		Key:         historyKey,
 		Value:       historyData,

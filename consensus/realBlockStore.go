@@ -7,6 +7,7 @@ import (
 	"dex/pb"
 	"dex/txpool"
 	"dex/types"
+	"dex/vm"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -16,10 +17,11 @@ import (
 
 // RealBlockStore 使用数据库的真实区块存储实现
 type RealBlockStore struct {
-	mu        sync.RWMutex
-	dbManager *db.Manager
-	pool      *txpool.TxPool
-	adapter   *ConsensusAdapter
+	mu         sync.RWMutex
+	dbManager  *db.Manager
+	pool       *txpool.TxPool
+	adapter    *ConsensusAdapter
+	vmExecutor *vm.Executor // VM执行器，用于预执行和提交区块
 	// 内存缓存
 	blockCache         map[string]*types.Block
 	heightIndex        map[uint64][]*types.Block
@@ -36,9 +38,19 @@ type RealBlockStore struct {
 
 // 创建真实的区块存储
 func NewRealBlockStore(dbManager *db.Manager, maxSnapshots int, pool *txpool.TxPool) interfaces.BlockStore {
+	// 初始化 VM 执行器
+	registry := vm.NewHandlerRegistry()
+	if err := vm.RegisterDefaultHandlers(registry); err != nil {
+		logs.Error("Failed to register VM handlers: %v", err)
+		// 继续执行，但VM功能可能不完整
+	}
+	cache := vm.NewSpecExecLRU(1024)
+	vmExecutor := vm.NewExecutor(dbManager, registry, cache)
+
 	store := &RealBlockStore{
 		dbManager:       dbManager,
 		pool:            pool,
+		vmExecutor:      vmExecutor,
 		blockCache:      make(map[string]*types.Block),
 		heightIndex:     make(map[uint64][]*types.Block),
 		finalizedBlocks: make(map[uint64]*types.Block),
@@ -84,6 +96,30 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 
 	if err := s.validateBlock(block); err != nil {
 		return false, err
+	}
+
+	// VM预执行：在添加区块前先验证其有效性
+	// 获取完整的 pb.Block（包含交易）
+	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
+		// 调用 VM 预执行
+		result, err := s.vmExecutor.PreExecuteBlock(pbBlock)
+		if err != nil {
+			logs.Error("[RealBlockStore] VM PreExecuteBlock failed for block %s: %v", block.ID, err)
+			return false, fmt.Errorf("VM pre-execution failed: %w", err)
+		}
+
+		// 检查预执行结果
+		if !result.Valid {
+			logs.Warn("[RealBlockStore] Block %s failed VM validation: %s", block.ID, result.Reason)
+			return false, fmt.Errorf("block failed VM validation: %s", result.Reason)
+		}
+
+		logs.Debug("[RealBlockStore] Block %s passed VM pre-execution", block.ID)
+	} else {
+		// 如果是创世区块或没有交易的区块，跳过VM验证
+		if block.Height > 0 {
+			logs.Debug("[RealBlockStore] No cached pb.Block for %s, skipping VM pre-execution", block.ID)
+		}
 	}
 
 	// 添加到内存缓存
@@ -276,8 +312,30 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 		}
 		s.heightIndex[height] = newBlocks
 
-		// 最终化区块，包含其交易
-		s.finalizeBlockWithTxs(block)
+		// VM提交：使用VM统一提交机制替代手动保存交易
+		// 获取完整的 pb.Block（包含交易）
+		if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
+			// 调用 VM 提交最终化区块
+			if err := s.vmExecutor.CommitFinalizedBlock(pbBlock); err != nil {
+				logs.Error("[RealBlockStore] VM CommitFinalizedBlock failed for block %s: %v", block.ID, err)
+			} else {
+				logs.Info("[RealBlockStore] VM committed finalized block %s with %d txs at height %d",
+					block.ID, len(pbBlock.Body), height)
+
+				// 从交易池移除已提交的交易
+				for _, tx := range pbBlock.Body {
+					if base := tx.GetBase(); base != nil {
+						s.pool.RemoveAnyTx(base.TxId)
+					}
+				}
+			}
+		} else {
+			// 如果是创世区块或没有交易的区块，使用旧的方式
+			if block.Height > 0 {
+				logs.Debug("[RealBlockStore] No cached pb.Block for %s, using legacy finalization", block.ID)
+			}
+			s.finalizeBlockWithTxs(block)
+		}
 
 		logs.Info("[RealBlockStore] Finalized block %s at height %d", blockID, height)
 	}

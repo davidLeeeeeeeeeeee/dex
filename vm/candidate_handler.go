@@ -3,9 +3,10 @@ package vm
 import (
 	"dex/keys"
 	"dex/pb"
-	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // CandidateTxHandler 委托人投票交易处理器
@@ -74,7 +75,7 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 	}
 
 	var voterAccount pb.Account
-	if err := json.Unmarshal(voterAccountData, &voterAccount); err != nil {
+	if err := proto.Unmarshal(voterAccountData, &voterAccount); err != nil {
 		return nil, &Receipt{
 			TxID:   candidate.Base.TxId,
 			Status: "FAILED",
@@ -94,7 +95,7 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 	}
 
 	var candidateAccount pb.Account
-	if err := json.Unmarshal(candidateAccountData, &candidateAccount); err != nil {
+	if err := proto.Unmarshal(candidateAccountData, &candidateAccount); err != nil {
 		return nil, &Receipt{
 			TxID:   candidate.Base.TxId,
 			Status: "FAILED",
@@ -149,7 +150,7 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 	voterAccount.Candidate = candidate.CandidateAddress
 
 	// 保存投票者账户
-	updatedVoterData, err := json.Marshal(&voterAccount)
+	updatedVoterData, err := proto.Marshal(&voterAccount)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   candidate.Base.TxId,
@@ -175,7 +176,7 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 	candidateAccount.ReceiveVotes = newCandidateVotes.String()
 
 	// 保存候选人账户
-	updatedCandidateData, err := json.Marshal(&candidateAccount)
+	updatedCandidateData, err := proto.Marshal(&candidateAccount)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   candidate.Base.TxId,
@@ -196,7 +197,7 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 	// key格式: candidate:xxx|user:xxx
 	candidateIndexKey := keys.KeyCandidateIndex(candidate.CandidateAddress, candidate.Base.FromAddress)
 	candidateIndex := &pb.CandidateIndex{Ok: true}
-	candidateIndexData, _ := json.Marshal(candidateIndex)
+	candidateIndexData, _ := proto.Marshal(candidateIndex)
 
 	ws = append(ws, WriteOp{
 		Key:         candidateIndexKey,
@@ -208,7 +209,7 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 
 	// 记录投票历史
 	historyKey := keys.KeyCandidateHistory(candidate.Base.TxId)
-	historyData, _ := json.Marshal(candidate)
+	historyData, _ := proto.Marshal(candidate)
 	ws = append(ws, WriteOp{
 		Key:         historyKey,
 		Value:       historyData,
@@ -238,7 +239,7 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 	}
 
 	var voterAccount pb.Account
-	if err := json.Unmarshal(voterAccountData, &voterAccount); err != nil {
+	if err := proto.Unmarshal(voterAccountData, &voterAccount); err != nil {
 		return nil, &Receipt{
 			TxID:   candidate.Base.TxId,
 			Status: "FAILED",
@@ -278,7 +279,7 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 	}
 
 	var candidateAccount pb.Account
-	if err := json.Unmarshal(candidateAccountData, &candidateAccount); err != nil {
+	if err := proto.Unmarshal(candidateAccountData, &candidateAccount); err != nil {
 		return nil, &Receipt{
 			TxID:   candidate.Base.TxId,
 			Status: "FAILED",
@@ -322,7 +323,7 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 	voterAccount.Candidate = ""
 
 	// 保存投票者账户
-	updatedVoterData, err := json.Marshal(&voterAccount)
+	updatedVoterData, err := proto.Marshal(&voterAccount)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   candidate.Base.TxId,
@@ -351,7 +352,7 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 	candidateAccount.ReceiveVotes = newCandidateVotes.String()
 
 	// 保存候选人账户
-	updatedCandidateData, err := json.Marshal(&candidateAccount)
+	updatedCandidateData, err := proto.Marshal(&candidateAccount)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   candidate.Base.TxId,
@@ -380,7 +381,7 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 
 	// 记录取消投票历史
 	historyKey := keys.KeyCandidateHistory(candidate.Base.TxId)
-	historyData, _ := json.Marshal(candidate)
+	historyData, _ := proto.Marshal(candidate)
 	ws = append(ws, WriteOp{
 		Key:         historyKey,
 		Value:       historyData,

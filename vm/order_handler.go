@@ -6,7 +6,6 @@ import (
 	"dex/matching"
 	"dex/pb"
 	"dex/utils"
-	"encoding/json"
 	"fmt"
 
 	"github.com/shopspring/decimal"
@@ -96,7 +95,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	}
 
 	var account pb.Account
-	if err := json.Unmarshal(accountData, &account); err != nil {
+	if err := proto.Unmarshal(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -190,7 +189,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}
 
 	var targetOrder pb.OrderTx
-	if err := json.Unmarshal(targetOrderData, &targetOrder); err != nil {
+	if err := proto.Unmarshal(targetOrderData, &targetOrder); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -219,7 +218,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}
 
 	var account pb.Account
-	if err := json.Unmarshal(accountData, &account); err != nil {
+	if err := proto.Unmarshal(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -250,7 +249,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}
 
 	// 保存更新后的账户
-	updatedAccountData, err := json.Marshal(&account)
+	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
@@ -459,7 +458,7 @@ func (h *OrderTxHandler) updateAccountBalances(
 			}
 
 			account = &pb.Account{}
-			if err := json.Unmarshal(accountData, account); err != nil {
+			if err := proto.Unmarshal(accountData, account); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal account %s: %w", address, err)
 			}
 			accountCache[address] = account
@@ -533,7 +532,7 @@ func (h *OrderTxHandler) updateAccountBalances(
 	// 5. 保存所有更新的账户
 	for address, account := range accountCache {
 		accountKey := keys.KeyAccount(address)
-		accountData, err := json.Marshal(account)
+		accountData, err := proto.Marshal(account)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal account %s: %w", address, err)
 		}
@@ -574,13 +573,13 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 	accountData, exists, err := sv.Get(accountKey)
 	if err == nil && exists {
 		var account pb.Account
-		if err := json.Unmarshal(accountData, &account); err == nil {
+		if err := proto.Unmarshal(accountData, &account); err == nil {
 			if account.Orders == nil {
 				account.Orders = make([]string, 0)
 			}
 			account.Orders = append(account.Orders, ord.Base.TxId)
 
-			updatedAccountData, _ := json.Marshal(&account)
+			updatedAccountData, _ := proto.Marshal(&account)
 			ws = append(ws, WriteOp{
 				Key:         accountKey,
 				Value:       updatedAccountData,

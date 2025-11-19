@@ -3,9 +3,10 @@ package vm
 import (
 	"dex/keys"
 	"dex/pb"
-	"encoding/json"
 	"fmt"
 	"math/big"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // TransferTxHandler 转账交易处理器
@@ -68,7 +69,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	var fromAccount pb.Account
-	if err := json.Unmarshal(fromAccountData, &fromAccount); err != nil {
+	if err := proto.Unmarshal(fromAccountData, &fromAccount); err != nil {
 		return nil, &Receipt{
 			TxID:   transfer.Base.TxId,
 			Status: "FAILED",
@@ -108,7 +109,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 
 	var toAccount pb.Account
 	if toExists {
-		if err := json.Unmarshal(toAccountData, &toAccount); err != nil {
+		if err := proto.Unmarshal(toAccountData, &toAccount); err != nil {
 			return nil, &Receipt{
 				TxID:   transfer.Base.TxId,
 				Status: "FAILED",
@@ -153,7 +154,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	// 7. 保存更新后的账户
 	ws := make([]WriteOp, 0)
 
-	updatedFromData, err := json.Marshal(&fromAccount)
+	updatedFromData, err := proto.Marshal(&fromAccount)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   transfer.Base.TxId,
@@ -170,7 +171,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Category:    "account",
 	})
 
-	updatedToData, err := json.Marshal(&toAccount)
+	updatedToData, err := proto.Marshal(&toAccount)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   transfer.Base.TxId,
@@ -189,7 +190,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 
 	// 8. 记录转账历史
 	historyKey := keys.KeyTransferHistory(transfer.Base.TxId)
-	historyData, _ := json.Marshal(transfer)
+	historyData, _ := proto.Marshal(transfer)
 	ws = append(ws, WriteOp{
 		Key:         historyKey,
 		Value:       historyData,
