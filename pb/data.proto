@@ -1,8 +1,8 @@
 syntax = "proto3";
-// protoc --go_out=. --go_opt=paths=source_relative db/data.proto
+// protoc --go_out=. --go_opt=paths=source_relative data.proto
 package pb;
 
-option go_package = "awesomeProject1/db;db";
+option go_package = "dex/pb;pb";
 
 // --------------------- Token & Registry ---------------------
 message Token {
@@ -66,6 +66,10 @@ message Block {
   bytes short_txs = 8;
   string miner = 9;
   repeated AnyTx body = 10;// 全部交易
+  int32 window = 11; // 时间窗口（替代round）
+  bytes vrf_proof = 12; // VRF证明
+  bytes vrf_output = 13; // VRF输出
+  bytes bls_public_key = 14; // 提案者的BLS公钥（用于VRF验证）
 }
 message RewordInfo {
 

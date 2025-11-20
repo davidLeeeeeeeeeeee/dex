@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"context"
+	"dex/config"
 	"dex/interfaces"
 	"dex/logs"
 	"dex/types"
@@ -10,37 +11,48 @@ import (
 )
 
 type ProposalManager struct {
-	nodeID         types.NodeID
-	node           *Node
-	transport      interfaces.Transport
-	store          interfaces.BlockStore
-	config         *NodeConfig
-	events         interfaces.EventBus
-	proposedBlocks map[string]bool
-	proposalRound  int
-	mu             sync.Mutex
-	proposer       interfaces.BlockProposer // 新增：注入的提案者接口
+	nodeID          types.NodeID
+	node            *Node
+	transport       interfaces.Transport
+	store           interfaces.BlockStore
+	config          *NodeConfig
+	windowConfig    config.WindowConfig        // Window配置
+	events          interfaces.EventBus
+	proposedBlocks  map[string]bool
+	proposalWindow  int                        // 当前window（替代proposalRound）
+	lastBlockTime   time.Time                  // 上次出块时间
+	cachedProposals map[int][]*types.Block     // 缓存的提案，按window分组
+	mu              sync.Mutex
+	proposer        interfaces.BlockProposer   // 注入的提案者接口
 }
 
 // NewProposalManager 创建新的提案管理器（使用默认提案者）
-func NewProposalManager(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *NodeConfig, events interfaces.EventBus) *ProposalManager {
-	return NewProposalManagerWithProposer(nodeID, transport, store, config, events, NewDefaultBlockProposer())
+func NewProposalManager(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, nodeConfig *NodeConfig, events interfaces.EventBus) *ProposalManager {
+	// 获取window配置
+	cfg := config.DefaultConfig()
+	return NewProposalManagerWithProposer(nodeID, transport, store, nodeConfig, events, NewDefaultBlockProposer(), cfg.Window)
 }
 
 // NewProposalManagerWithProposer 创建新的提案管理器（可注入自定义提案者）
-func NewProposalManagerWithProposer(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *NodeConfig, events interfaces.EventBus, proposer interfaces.BlockProposer) *ProposalManager {
+func NewProposalManagerWithProposer(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, nodeConfig *NodeConfig, events interfaces.EventBus, proposer interfaces.BlockProposer, windowConfig config.WindowConfig) *ProposalManager {
 	return &ProposalManager{
-		nodeID:         nodeID,
-		transport:      transport,
-		store:          store,
-		config:         config,
-		events:         events,
-		proposedBlocks: make(map[string]bool),
-		proposer:       proposer,
+		nodeID:          nodeID,
+		transport:       transport,
+		store:           store,
+		config:          nodeConfig,
+		windowConfig:    windowConfig,
+		events:          events,
+		proposedBlocks:  make(map[string]bool),
+		proposer:        proposer,
+		lastBlockTime:   time.Now(), // 初始化为当前时间
+		cachedProposals: make(map[int][]*types.Block),
 	}
 }
 
 func (pm *ProposalManager) Start(ctx context.Context) {
+	// 订阅区块最终化事件
+	pm.events.Subscribe(types.EventBlockFinalized, pm.handleBlockFinalized)
+
 	go func() {
 		ticker := time.NewTicker(pm.config.ProposalInterval)
 		defer ticker.Stop()
@@ -56,30 +68,45 @@ func (pm *ProposalManager) Start(ctx context.Context) {
 	}()
 }
 
+// handleBlockFinalized 处理区块最终化事件
+func (pm *ProposalManager) handleBlockFinalized(event interfaces.Event) {
+	if block, ok := event.Data().(*types.Block); ok {
+		pm.UpdateLastBlockTime(time.Now())
+		logs.Debug("[ProposalManager] Block %s finalized, updated last block time", block.ID)
+	}
+}
+
 func (pm *ProposalManager) proposeBlock() {
 	pm.mu.Lock()
-	pm.proposalRound++
-	currentRound := pm.proposalRound
+
+	// 计算当前window
+	currentWindow := pm.calculateCurrentWindow()
+	pm.proposalWindow = currentWindow
+	lastBlockTime := pm.lastBlockTime
+
 	pm.mu.Unlock()
+
+	// 先检查缓存中是否有可以处理的提案
+	pm.processCachedProposals(currentWindow)
 
 	lastAcceptedID, lastHeight := pm.store.GetLastAccepted()
 	targetHeight := lastHeight + 1
 
 	currentBlocks := len(pm.store.GetByHeight(targetHeight))
 
-	// 修改点：传入 currentHeight (lastHeight) 和 proposeHeight (targetHeight) 参数
-	if !pm.proposer.ShouldPropose(pm.nodeID, currentRound, currentBlocks, int(lastHeight), int(targetHeight)) {
+	// 判断是否应该在当前window提出区块
+	if !pm.proposer.ShouldPropose(pm.nodeID, currentWindow, currentBlocks, int(lastHeight), int(targetHeight), lastBlockTime) {
 		return
 	}
 
-	block, err := pm.proposer.ProposeBlock(lastAcceptedID, targetHeight, pm.nodeID, currentRound)
+	block, err := pm.proposer.ProposeBlock(lastAcceptedID, targetHeight, pm.nodeID, currentWindow)
 	if err != nil {
 		Logf("[Node %d] Failed to propose block: %v\n", pm.nodeID, err)
 		return
 	}
 	if block == nil {
-		logs.Debug("[ProposalManager] no block proposed (pending txs=0?) at height=%d round=%d",
-			targetHeight, currentRound)
+		logs.Debug("[ProposalManager] no block proposed (pending txs=0?) at height=%d window=%d",
+			targetHeight, currentWindow)
 		return
 	}
 
@@ -102,7 +129,7 @@ func (pm *ProposalManager) proposeBlock() {
 		pm.node.stats.Mu.Unlock()
 	}
 
-	Logf("[Node %d] Proposing %s on parent %s\n", pm.nodeID, block, lastAcceptedID)
+	Logf("[Node %d] Proposing %s on parent %s (window %d)\n", pm.nodeID, block, lastAcceptedID, currentWindow)
 
 	pm.events.PublishAsync(types.BaseEvent{
 		EventType: types.EventNewBlock,
@@ -122,4 +149,80 @@ func (pm *ProposalManager) SetProposer(proposer interfaces.BlockProposer) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.proposer = proposer
+}
+
+// calculateCurrentWindow 根据上次出块时间计算当前window
+// 使用配置中的window阶段定义
+func (pm *ProposalManager) calculateCurrentWindow() int {
+	if !pm.windowConfig.Enabled || len(pm.windowConfig.Stages) == 0 {
+		return 0 // 如果未启用或没有配置，返回window 0
+	}
+
+	elapsed := time.Since(pm.lastBlockTime)
+	var cumulativeDuration time.Duration
+
+	// 遍历配置的阶段，找到当前所属的window
+	for i, stage := range pm.windowConfig.Stages {
+		if stage.Duration == 0 {
+			// Duration为0表示最后一个无限阶段
+			return i
+		}
+		cumulativeDuration += stage.Duration
+		if elapsed < cumulativeDuration {
+			return i
+		}
+	}
+
+	// 如果超过所有阶段，返回最后一个window
+	return len(pm.windowConfig.Stages) - 1
+}
+
+// processCachedProposals 处理缓存中符合当前window的提案
+func (pm *ProposalManager) processCachedProposals(currentWindow int) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	// 处理所有小于等于当前window的缓存提案
+	for window := 0; window <= currentWindow; window++ {
+		if proposals, exists := pm.cachedProposals[window]; exists {
+			for _, block := range proposals {
+				// 尝试添加到区块存储
+				isNew, err := pm.store.Add(block)
+				if err == nil && isNew {
+					logs.Info("[ProposalManager] Processed cached proposal %s from window %d", block.ID, window)
+
+					// 发布事件
+					pm.events.PublishAsync(types.BaseEvent{
+						EventType: types.EventNewBlock,
+						EventData: block,
+					})
+				}
+			}
+			// 清除已处理的缓存
+			delete(pm.cachedProposals, window)
+		}
+	}
+}
+
+// CacheProposal 缓存一个提案（当收到的提案window大于当前window时）
+func (pm *ProposalManager) CacheProposal(block *types.Block) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	currentWindow := pm.calculateCurrentWindow()
+
+	// 只缓存未来window的提案
+	if block.Window > currentWindow {
+		pm.cachedProposals[block.Window] = append(pm.cachedProposals[block.Window], block)
+		logs.Debug("[ProposalManager] Cached proposal %s for future window %d (current: %d)",
+			block.ID, block.Window, currentWindow)
+	}
+}
+
+// UpdateLastBlockTime 更新上次出块时间（当区块被最终化时调用）
+func (pm *ProposalManager) UpdateLastBlockTime(t time.Time) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.lastBlockTime = t
+	logs.Debug("[ProposalManager] Updated last block time to %v", t)
 }

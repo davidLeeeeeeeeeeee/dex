@@ -66,6 +66,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 	proposalManager.node = node
 
 	messageHandler.SetManagers(queryManager, gossipManager, syncManager, snapshotManager)
+	messageHandler.SetProposalManager(proposalManager)
 
 	node.messageHandler = messageHandler
 	node.queryManager = queryManager

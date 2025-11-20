@@ -2,7 +2,9 @@ package interfaces
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"dex/types"
+	"time"
 )
 
 type BlockStore interface {
@@ -37,6 +39,37 @@ type Event interface {
 }
 
 // ============================================
+// VRF接口定义
+// ============================================
+
+// VRFResult VRF计算结果
+type VRFResult struct {
+	Output []byte // VRF输出，用于计算出块概率
+	Proof  []byte // VRF证明，用于验证
+}
+
+// VRFProvider VRF提供者接口
+type VRFProvider interface {
+	// GenerateVRF 生成VRF证明和输出
+	// privateKey: 矿工私钥
+	// height: 区块高度
+	// window: 时间窗口
+	// parentBlockHash: 父区块哈希
+	// nodeID: 节点ID
+	GenerateVRF(privateKey *ecdsa.PrivateKey, height uint64, window int, parentBlockHash string, nodeID types.NodeID) (*VRFResult, error)
+
+	// VerifyVRF 验证VRF证明
+	// publicKey: 矿工公钥
+	// height: 区块高度
+	// window: 时间窗口
+	// parentBlockHash: 父区块哈希
+	// nodeID: 节点ID
+	// proof: VRF证明
+	// output: VRF输出
+	VerifyVRF(publicKey *ecdsa.PublicKey, height uint64, window int, parentBlockHash string, nodeID types.NodeID, proof []byte, output []byte) error
+}
+
+// ============================================
 // 区块提案接口定义
 // ============================================
 
@@ -46,14 +79,17 @@ type BlockProposer interface {
 	// parentID: 父区块ID
 	// height: 区块高度
 	// proposer: 提案者ID
-	// round: 提案轮次
-	ProposeBlock(parentID string, height uint64, proposer types.NodeID, round int) (*types.Block, error)
+	// window: 时间窗口（替代原来的round）
+	ProposeBlock(parentID string, height uint64, proposer types.NodeID, window int) (*types.Block, error)
 
-	// ShouldPropose 决定是否应该在当前轮次提出区块
+	// ShouldPropose 决定是否应该在当前时间窗口提出区块
 	// nodeID: 节点ID
-	// round: 当前轮次
+	// window: 当前时间窗口
 	// currentBlocks: 当前高度已存在的区块数量
-	ShouldPropose(nodeID types.NodeID, round int, currentBlocks int, currentHeight int, proposeHeight int) bool
+	// currentHeight: 当前高度
+	// proposeHeight: 提案高度
+	// lastBlockTime: 上次出块时间
+	ShouldPropose(nodeID types.NodeID, window int, currentBlocks int, currentHeight int, proposeHeight int, lastBlockTime time.Time) bool
 }
 
 // ============================================

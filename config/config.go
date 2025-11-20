@@ -14,6 +14,7 @@ type Config struct {
 	TxPool   TxPoolConfig
 	Sender   SenderConfig
 	Auth     AuthConfig
+	Window   WindowConfig // 新增：Window配置
 }
 
 // ServerConfig HTTP/3服务器配置
@@ -135,6 +136,18 @@ type MinerConfig struct {
 	BLSSignCacheSize int // 100
 }
 
+// WindowStage 时间窗口阶段配置
+type WindowStage struct {
+	Duration    time.Duration // 阶段持续时间
+	Probability float64       // 出块概率（0.0-1.0）
+}
+
+// WindowConfig 时间窗口配置
+type WindowConfig struct {
+	Enabled bool          // 是否启用Window机制
+	Stages  []WindowStage // 各个阶段的配置
+}
+
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
@@ -200,6 +213,15 @@ func DefaultConfig() *Config {
 		Auth: AuthConfig{
 			AuthEnabled:     false,
 			ServerChallenge: "server_challenge_123456",
+		},
+		Window: WindowConfig{
+			Enabled: true,
+			Stages: []WindowStage{
+				{Duration: 5 * time.Second, Probability: 0.05},   // Window 0: 0-5s, 5%概率
+				{Duration: 5 * time.Second, Probability: 0.15},   // Window 1: 5-10s, 15%概率
+				{Duration: 10 * time.Second, Probability: 0.30},  // Window 2: 10-20s, 30%概率
+				{Duration: 0, Probability: 0.50},                 // Window 3: 20s+, 50%概率（Duration=0表示无限）
+			},
 		},
 	}
 }

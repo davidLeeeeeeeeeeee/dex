@@ -33,12 +33,15 @@ func (a *ConsensusAdapter) DBBlockToConsensus(dbBlock *pb.Block) (*types.Block, 
 		return nil, fmt.Errorf("nil db block")
 	}
 	return &types.Block{
-		ID:       dbBlock.BlockHash,
-		Height:   dbBlock.Height,
-		ParentID: dbBlock.PrevBlockHash,
-		Data:     fmt.Sprintf("TxCount: %d, TxsHash: %s", len(dbBlock.Body), dbBlock.TxsHash),
-		Proposer: dbBlock.Miner, // 直接就是地址
-		Round:    a.parseRoundFromBlockHash(dbBlock.BlockHash),
+		ID:           dbBlock.BlockHash,
+		Height:       dbBlock.Height,
+		ParentID:     dbBlock.PrevBlockHash,
+		Data:         fmt.Sprintf("TxCount: %d, TxsHash: %s", len(dbBlock.Body), dbBlock.TxsHash),
+		Proposer:     dbBlock.Miner, // 直接就是地址
+		Window:       int(dbBlock.Window),
+		VRFProof:     dbBlock.VrfProof,
+		VRFOutput:    dbBlock.VrfOutput,
+		BLSPublicKey: dbBlock.BlsPublicKey,
 	}, nil
 }
 
@@ -51,6 +54,10 @@ func (a *ConsensusAdapter) ConsensusBlockToDB(block *types.Block, txs []*pb.AnyT
 		Miner:         block.Proposer, // 直接存地址
 		Body:          txs,
 		TxsHash:       a.extractTxsHashFromData(block.Data),
+		Window:        int32(block.Window),
+		VrfProof:      block.VRFProof,
+		VrfOutput:     block.VRFOutput,
+		BlsPublicKey:  block.BLSPublicKey,
 	}
 }
 
@@ -191,11 +198,11 @@ func (a *ConsensusAdapter) parseMinerToNodeID(miner string) types.NodeID {
 	return types.NodeID(strconv.Itoa(nodeID))
 }
 
-func (a *ConsensusAdapter) parseRoundFromBlockHash(blockHash string) int {
-	// 从 block-<height>-<node>-r<round>-<hash> 格式解析
-	var height, node, round int
-	fmt.Sscanf(blockHash, "block-%d-%d-r%d", &height, &node, &round)
-	return round
+func (a *ConsensusAdapter) parseWindowFromBlockHash(blockHash string) int {
+	// 从 block-<height>-<node>-w<window>-<hash> 格式解析
+	var height, node, window int
+	fmt.Sscanf(blockHash, "block-%d-%d-w%d", &height, &node, &window)
+	return window
 }
 
 func (a *ConsensusAdapter) extractTxsHashFromData(data string) string {

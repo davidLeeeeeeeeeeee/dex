@@ -14,18 +14,19 @@ import (
 // ============================================
 
 type MessageHandler struct {
-	nodeID          types.NodeID
-	node            *Node
-	isByzantine     bool
-	transport       interfaces.Transport
-	store           interfaces.BlockStore
-	engine          interfaces.ConsensusEngine
-	queryManager    *QueryManager
-	gossipManager   *GossipManager
-	syncManager     *SyncManager
-	snapshotManager *SnapshotManager
-	events          interfaces.EventBus
-	config          *ConsensusConfig
+	nodeID           types.NodeID
+	node             *Node
+	isByzantine      bool
+	transport        interfaces.Transport
+	store            interfaces.BlockStore
+	engine           interfaces.ConsensusEngine
+	queryManager     *QueryManager
+	gossipManager    *GossipManager
+	syncManager      *SyncManager
+	snapshotManager  *SnapshotManager
+	events           interfaces.EventBus
+	config           *ConsensusConfig
+	proposalManager  *ProposalManager // 用于访问window计算和缓存
 	// 存储待回复的PullQuery
 	pendingQueries   map[uint32]types.Message
 	pendingQueriesMu sync.RWMutex
@@ -51,6 +52,10 @@ func (h *MessageHandler) SetManagers(qm *QueryManager, gm *GossipManager, sm *Sy
 	h.gossipManager = gm
 	h.syncManager = sm
 	h.snapshotManager = snapMgr
+}
+
+func (h *MessageHandler) SetProposalManager(pm *ProposalManager) {
+	h.proposalManager = pm
 }
 
 func (h *MessageHandler) HandleMsg(msg types.Message) {
@@ -149,13 +154,30 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 	}
 
 	if msg.Block != nil {
+		// 检查区块的window是否符合当前时间
+		if h.proposalManager != nil {
+			h.proposalManager.mu.Lock()
+			currentWindow := h.proposalManager.calculateCurrentWindow()
+			h.proposalManager.mu.Unlock()
+
+			// 如果区块的window大于当前window，缓存它
+			if msg.Block.Window > currentWindow {
+				logs.Debug("[Node %d] Received block %s for future window %d (current: %d), caching",
+					h.nodeID, msg.Block.ID, msg.Block.Window, currentWindow)
+				h.proposalManager.CacheProposal(msg.Block)
+				// 暂不回复chits，等到达对应window时再处理
+				return
+			}
+		}
+
 		isNew, err := h.store.Add(msg.Block)
 		if err != nil {
 			return
 		}
 
 		if isNew {
-			logs.Debug("[Node %d] Received new block %s via PushQuery\n", h.nodeID, msg.Block.ID)
+			logs.Debug("[Node %d] Received new block %s via PushQuery (window %d)\n",
+				h.nodeID, msg.Block.ID, msg.Block.Window)
 			h.events.PublishAsync(types.BaseEvent{
 				EventType: types.EventNewBlock,
 				EventData: msg.Block,
@@ -220,6 +242,22 @@ func (h *MessageHandler) handleGet(msg types.Message) {
 
 func (h *MessageHandler) handlePut(msg types.Message) {
 	if msg.Block != nil {
+		// 检查区块的window是否符合当前时间
+		if h.proposalManager != nil {
+			h.proposalManager.mu.Lock()
+			currentWindow := h.proposalManager.calculateCurrentWindow()
+			h.proposalManager.mu.Unlock()
+
+			// 如果区块的window大于当前window，缓存它
+			if msg.Block.Window > currentWindow {
+				logs.Debug("[Node %d] Received block %s via Put for future window %d (current: %d), caching",
+					h.nodeID, msg.Block.ID, msg.Block.Window, currentWindow)
+				h.proposalManager.CacheProposal(msg.Block)
+				// 暂不添加到store，等到达对应window时再处理
+				return
+			}
+		}
+
 		isNew, err := h.store.Add(msg.Block)
 		if err != nil {
 			return

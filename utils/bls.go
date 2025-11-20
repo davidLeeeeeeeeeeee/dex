@@ -122,3 +122,19 @@ func AggregateBLS(sigs [][]byte) ([]byte, error) {
 	}
 	return aggSig, nil // 示例返回值
 }
+
+// SerializeBLSPublicKey 序列化BLS公钥为字节数组
+func SerializeBLSPublicKey(pub kyber.Point) ([]byte, error) {
+	return pub.MarshalBinary()
+}
+
+// DeserializeBLSPublicKey 从字节数组反序列化BLS公钥
+func DeserializeBLSPublicKey(data []byte) (kyber.Point, error) {
+	suite := bn256.NewSuite()
+	pub := suite.G2().Point()
+	err := pub.UnmarshalBinary(data)
+	if err != nil {
+		return nil, err
+	}
+	return pub, nil
+}

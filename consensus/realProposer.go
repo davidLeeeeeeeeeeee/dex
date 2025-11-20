@@ -11,6 +11,7 @@ import (
 	"dex/utils"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // RealBlockProposer 真实的区块提案者实现，从TxPool获取交易并生成区块
@@ -19,6 +20,8 @@ type RealBlockProposer struct {
 	maxTxsPerBlock     int
 	pool               *txpool.TxPool
 	dbManager          *db.Manager
+	vrfProvider        *utils.VRFProvider
+	windowConfig       config.WindowConfig
 }
 
 // NewRealBlockProposer 创建真实的区块提案者
@@ -29,11 +32,13 @@ func NewRealBlockProposer(dbManager *db.Manager, pool *txpool.TxPool) interfaces
 		maxTxsPerBlock:     cfg.TxPool.MaxTxsPerBlock,
 		pool:               pool, // 使用注入的实例
 		dbManager:          dbManager,
+		vrfProvider:        utils.NewVRFProvider(),
+		windowConfig:       cfg.Window,
 	}
 }
 
 // 生成包含实际交易的区块
-func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, round int) (*types.Block, error) {
+func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, window int) (*types.Block, error) {
 	// 1. 从TxPool获取待打包的交易
 	pendingTxs := p.pool.GetPendingTxs()
 	if len(pendingTxs) == 0 {
@@ -54,24 +59,52 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 		sortedTxs = pendingTxs
 	}
 
-	// 3. 生成短交易哈希列表（用于Snowman共识传输）
-	shortTxs := p.pool.ConcatFirst8Bytes(sortedTxs)
-
-	// 4. 生成区块ID（结合高度、提案者、轮次和交易哈希）
-	blockID := fmt.Sprintf("block-%d-%s-r%d-%s", height, proposer, round, txsHash[:8])
-
-	// 5. 构造实际的区块
-	block := &types.Block{
-		ID:       blockID,
-		Height:   height,
-		ParentID: parentID,
-		Data: fmt.Sprintf("Height %d, Proposer %s, Round %d, TxCount %d",
-			height, proposer, round, len(sortedTxs)),
-		Proposer: string(proposer),
-		Round:    round,
+	// 3. 生成VRF证明和BLS公钥
+	keyMgr := utils.GetKeyManager()
+	vrfOutput, vrfProof, err := p.vrfProvider.GenerateVRF(
+		keyMgr.PrivateKeyECDSA,
+		height,
+		window,
+		parentID,
+		proposer,
+	)
+	if err != nil {
+		logs.Error("[RealBlockProposer] Failed to generate VRF: %v", err)
+		return nil, err
 	}
 
-	// 6. 将区块数据保存到数据库（包含交易信息）
+	// 获取BLS公钥用于验证
+	blsPublicKey, err := utils.GetBLSPublicKey(keyMgr.PrivateKeyECDSA)
+	if err != nil {
+		logs.Error("[RealBlockProposer] Failed to get BLS public key: %v", err)
+		return nil, err
+	}
+	blsPublicKeyBytes, err := utils.SerializeBLSPublicKey(blsPublicKey)
+	if err != nil {
+		logs.Error("[RealBlockProposer] Failed to serialize BLS public key: %v", err)
+		return nil, err
+	}
+
+	// 4. 生成短交易哈希列表（用于Snowman共识传输）
+	shortTxs := p.pool.ConcatFirst8Bytes(sortedTxs)
+
+	// 5. 生成区块ID（结合高度、提案者、window和交易哈希）
+	blockID := fmt.Sprintf("block-%d-%s-w%d-%s", height, proposer, window, txsHash[:8])
+
+	// 6. 构造实际的区块
+	block := &types.Block{
+		ID:           blockID,
+		Height:       height,
+		ParentID:     parentID,
+		Data:         fmt.Sprintf("Height %d, Proposer %s, Window %d, TxCount %d", height, proposer, window, len(sortedTxs)),
+		Proposer:     string(proposer),
+		Window:       window,
+		VRFProof:     vrfProof,
+		VRFOutput:    vrfOutput,
+		BLSPublicKey: blsPublicKeyBytes,
+	}
+
+	// 7. 将区块数据保存到数据库（包含交易信息）
 	dbBlock := &pb.Block{
 		Height:        height,
 		TxsHash:       txsHash,
@@ -80,22 +113,25 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 		Miner:         fmt.Sprintf(db.KeyNode()+"%s", proposer),
 		Body:          sortedTxs,
 		ShortTxs:      shortTxs,
+		Window:        int32(window),
+		VrfProof:      vrfProof,
+		VrfOutput:     vrfOutput,
+		BlsPublicKey:  blsPublicKeyBytes,
 	}
 
 	// 临时存储到内存，等区块最终化后再持久化
 	p.cacheBlock(blockID, dbBlock)
 
-	logs.Info("[RealBlockProposer] Proposer:%s Proposed block %s with %d txs at height %d", proposer,
-		blockID, len(sortedTxs), height)
+	logs.Info("[RealBlockProposer] Proposer:%s Proposed block %s with %d txs at height %d window %d",
+		proposer, blockID, len(sortedTxs), height, window)
 
 	return block, nil
 }
 
-// 决定是否应该在当前轮次提出区块
-func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, round int, currentBlocks int, currentHeight int, proposeHeight int) bool {
+// 决定是否应该在当前时间窗口提出区块
+func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, currentBlocks int, currentHeight int, proposeHeight int, lastBlockTime time.Time) bool {
 	// 新增的高度检查逻辑：当前高度必须是要提议高度减1
 	if currentHeight != proposeHeight-1 {
-		// 当前高度不是 proposeHeight-1，不允许提议
 		logs.Debug("[RealBlockProposer] Height check failed: currentHeight=%d, proposeHeight=%d",
 			currentHeight, proposeHeight)
 		return false
@@ -112,11 +148,52 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, round int, curren
 		return false
 	}
 
-	// 使用轮次和节点ID的组合来决定是否提案
-	// 这里可以加入更复杂的逻辑，比如基于stake的概率
-	proposalProbability := 5 // 5%的概率
+	// 检查window配置是否启用
+	if !p.windowConfig.Enabled || len(p.windowConfig.Stages) == 0 {
+		// 如果未启用window机制，使用简单的随机概率
+		return int(nodeID.Last2Mod100())%100 < 5
+	}
 
-	return int(nodeID.Last2Mod100()+round)%100 < proposalProbability
+	// 确保window索引有效
+	if window < 0 || window >= len(p.windowConfig.Stages) {
+		logs.Debug("[RealBlockProposer] Invalid window %d", window)
+		return false
+	}
+
+	// 获取当前window的出块概率阈值
+	threshold := p.windowConfig.Stages[window].Probability
+
+	// 生成VRF并计算是否应该出块
+	keyMgr := utils.GetKeyManager()
+	if keyMgr.PrivateKeyECDSA == nil {
+		logs.Error("[RealBlockProposer] Private key not initialized")
+		return false
+	}
+
+	// 使用上一个区块的ID作为父区块哈希（这里简化处理）
+	parentID := fmt.Sprintf("parent-%d", currentHeight)
+
+	vrfOutput, _, err := p.vrfProvider.GenerateVRF(
+		keyMgr.PrivateKeyECDSA,
+		uint64(proposeHeight),
+		window,
+		parentID,
+		nodeID,
+	)
+	if err != nil {
+		logs.Error("[RealBlockProposer] Failed to generate VRF for proposal check: %v", err)
+		return false
+	}
+
+	// 根据VRF输出和阈值判断是否应该出块
+	shouldPropose := utils.CalculateBlockProbability(vrfOutput, threshold)
+
+	if shouldPropose {
+		logs.Debug("[RealBlockProposer] Node %s should propose at window %d (probability %.2f%%)",
+			nodeID, window, threshold*100)
+	}
+
+	return shouldPropose
 }
 
 // computeSimpleTxsHash 计算简单的交易哈希（备用方案）

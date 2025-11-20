@@ -41,6 +41,11 @@ func InitConsensusManager(
 	realStore := NewRealBlockStore(dbManager, config.Snapshot.MaxSnapshots, txPool)
 	node := NewNode(nodeID, transport, realStore, false, config)
 
+	// 设置EventBus到RealBlockStore
+	if rs, ok := realStore.(*RealBlockStore); ok {
+		rs.SetEventBus(node.events)
+	}
+
 	// 重新创建 engine，使用 realStore
 	node.engine = NewSnowmanEngine(nodeID, realStore, &config.Consensus, node.events)
 

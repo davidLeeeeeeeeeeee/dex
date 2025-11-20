@@ -4,6 +4,7 @@ import (
 	"dex/interfaces"
 	"dex/types"
 	"fmt"
+	"time"
 )
 
 // DefaultBlockProposer 默认的区块提案者实现（保持原有逻辑）
@@ -19,20 +20,22 @@ func NewDefaultBlockProposer() interfaces.BlockProposer {
 	}
 }
 
-func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, round int) (*types.Block, error) {
-	blockID := fmt.Sprintf("block-%d-%d-r%d", height, proposer, round)
+func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, window int) (*types.Block, error) {
+	blockID := fmt.Sprintf("block-%d-%d-w%d", height, proposer, window)
 	block := &types.Block{
-		ID:       blockID,
-		Height:   height,
-		ParentID: parentID,
-		Data:     fmt.Sprintf("Height %d, Proposer %d, Round %d", height, proposer, round),
-		Proposer: string(proposer),
-		Round:    round,
+		ID:        blockID,
+		Height:    height,
+		ParentID:  parentID,
+		Data:      fmt.Sprintf("Height %d, Proposer %d, Window %d", height, proposer, window),
+		Proposer:  string(proposer),
+		Window:    window,
+		VRFProof:  nil, // 模拟模式不生成VRF
+		VRFOutput: nil,
 	}
 	return block, nil
 }
 
-func (p *DefaultBlockProposer) ShouldPropose(nodeID types.NodeID, round int, currentBlocks int, currentHeight int, proposeHeight int) bool {
+func (p *DefaultBlockProposer) ShouldPropose(nodeID types.NodeID, window int, currentBlocks int, currentHeight int, proposeHeight int, lastBlockTime time.Time) bool {
 	// 新增的高度检查逻辑：当前高度必须是要提议高度减1
 	if currentHeight != proposeHeight-1 {
 		// 当前高度不是 proposeHeight-1，不允许提议
@@ -44,11 +47,11 @@ func (p *DefaultBlockProposer) ShouldPropose(nodeID types.NodeID, round int, cur
 		return false
 	}
 
-	// 使用原有的随机选择逻辑
+	// 使用原有的随机选择逻辑（基于window而不是round）
 	denom := p.proposalDenom
 	if denom <= 0 {
 		denom = 1
 	}
 
-	return int(nodeID.Last2Mod100()+round)%denom == 0
+	return int(nodeID.Last2Mod100()+window)%denom == 0
 }

@@ -7,6 +7,7 @@ import (
 	"dex/pb"
 	"dex/txpool"
 	"dex/types"
+	"dex/utils"
 	"dex/vm"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ type RealBlockStore struct {
 	pool       *txpool.TxPool
 	adapter    *ConsensusAdapter
 	vmExecutor *vm.Executor // VM执行器，用于预执行和提交区块
+	events     interfaces.EventBus // 事件总线
 	// 内存缓存
 	blockCache         map[string]*types.Block
 	heightIndex        map[uint64][]*types.Block
@@ -83,6 +85,13 @@ func NewRealBlockStore(dbManager *db.Manager, maxSnapshots int, pool *txpool.TxP
 	store.loadFromDB()
 
 	return store
+}
+
+// SetEventBus 设置事件总线（在初始化后调用）
+func (s *RealBlockStore) SetEventBus(events interfaces.EventBus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = events
 }
 
 // Add 添加新区块
@@ -338,6 +347,14 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 		}
 
 		logs.Info("[RealBlockStore] Finalized block %s at height %d", blockID, height)
+
+		// 发布区块最终化事件
+		if s.events != nil {
+			s.events.PublishAsync(types.BaseEvent{
+				EventType: types.EventBlockFinalized,
+				EventData: block,
+			})
+		}
 	}
 }
 
@@ -473,6 +490,56 @@ func (s *RealBlockStore) validateBlock(block *types.Block) error {
 	if block.Height > 0 && block.ParentID == "" {
 		return fmt.Errorf("non-genesis block must have parent")
 	}
+
+	// VRF验证（跳过创世区块）
+	if block.Height > 0 && len(block.VRFProof) > 0 {
+		if err := s.validateVRF(block); err != nil {
+			return fmt.Errorf("VRF validation failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// validateVRF 验证区块的VRF证明
+func (s *RealBlockStore) validateVRF(block *types.Block) error {
+	// 检查区块是否包含VRF证明
+	if len(block.VRFProof) == 0 || len(block.VRFOutput) == 0 {
+		logs.Debug("[RealBlockStore] Block %s has no VRF proof, skipping validation", block.ID)
+		return nil // 旧区块可能没有VRF，跳过验证
+	}
+
+	// 检查区块是否包含BLS公钥
+	if len(block.BLSPublicKey) == 0 {
+		logs.Warn("[RealBlockStore] Block %s has VRF proof but no BLS public key", block.ID)
+		return fmt.Errorf("missing BLS public key for VRF verification")
+	}
+
+	// 反序列化BLS公钥
+	blsPublicKey, err := utils.DeserializeBLSPublicKey(block.BLSPublicKey)
+	if err != nil {
+		logs.Warn("[RealBlockStore] Failed to deserialize BLS public key for block %s: %v", block.ID, err)
+		return fmt.Errorf("invalid BLS public key: %w", err)
+	}
+
+	// 使用BLS公钥验证VRF证明
+	vrfProvider := utils.NewVRFProvider()
+	err = vrfProvider.VerifyVRFWithBLSPublicKey(
+		blsPublicKey,
+		block.Height,
+		block.Window,
+		block.ParentID,
+		types.NodeID(block.Proposer),
+		block.VRFProof,
+		block.VRFOutput,
+	)
+
+	if err != nil {
+		logs.Warn("[RealBlockStore] VRF verification failed for block %s: %v", block.ID, err)
+		return err
+	}
+
+	logs.Debug("[RealBlockStore] VRF verification passed for block %s", block.ID)
 	return nil
 }
 
