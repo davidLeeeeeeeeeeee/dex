@@ -16,14 +16,14 @@ type ProposalManager struct {
 	transport       interfaces.Transport
 	store           interfaces.BlockStore
 	config          *NodeConfig
-	windowConfig    config.WindowConfig        // Window配置
+	windowConfig    config.WindowConfig // Window配置
 	events          interfaces.EventBus
 	proposedBlocks  map[string]bool
-	proposalWindow  int                        // 当前window（替代proposalRound）
-	lastBlockTime   time.Time                  // 上次出块时间
-	cachedProposals map[int][]*types.Block     // 缓存的提案，按window分组
+	proposalWindow  int                    // 当前window（替代proposalRound）
+	lastBlockTime   time.Time              // 上次出块时间
+	cachedProposals map[int][]*types.Block // 缓存的提案，按window分组
 	mu              sync.Mutex
-	proposer        interfaces.BlockProposer   // 注入的提案者接口
+	proposer        interfaces.BlockProposer // 注入的提案者接口
 }
 
 // NewProposalManager 创建新的提案管理器（使用默认提案者）
@@ -33,7 +33,7 @@ func NewProposalManager(nodeID types.NodeID, transport interfaces.Transport, sto
 	return NewProposalManagerWithProposer(nodeID, transport, store, nodeConfig, events, NewDefaultBlockProposer(), cfg.Window)
 }
 
-// NewProposalManagerWithProposer 创建新的提案管理器（可注入自定义提案者）
+// 创建新的提案管理器（可注入自定义提案者）
 func NewProposalManagerWithProposer(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, nodeConfig *NodeConfig, events interfaces.EventBus, proposer interfaces.BlockProposer, windowConfig config.WindowConfig) *ProposalManager {
 	return &ProposalManager{
 		nodeID:          nodeID,
@@ -177,7 +177,7 @@ func (pm *ProposalManager) calculateCurrentWindow() int {
 	return len(pm.windowConfig.Stages) - 1
 }
 
-// processCachedProposals 处理缓存中符合当前window的提案
+// 处理缓存中符合当前window的提案
 func (pm *ProposalManager) processCachedProposals(currentWindow int) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()

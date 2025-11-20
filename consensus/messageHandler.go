@@ -222,6 +222,13 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 		PreferredIDHeight: queryHeight,
 		AcceptedID:        accepted, AcceptedHeight: acceptedHeight,
 	})
+
+	// 增加 ChitsResponded 计数器
+	if h.node != nil {
+		h.node.stats.Mu.Lock()
+		h.node.stats.ChitsResponded++
+		h.node.stats.Mu.Unlock()
+	}
 }
 
 func (h *MessageHandler) handleGet(msg types.Message) {

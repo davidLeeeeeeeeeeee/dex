@@ -22,7 +22,7 @@ type RealBlockStore struct {
 	dbManager  *db.Manager
 	pool       *txpool.TxPool
 	adapter    *ConsensusAdapter
-	vmExecutor *vm.Executor // VM执行器，用于预执行和提交区块
+	vmExecutor *vm.Executor        // VM执行器，用于预执行和提交区块
 	events     interfaces.EventBus // 事件总线
 	// 内存缓存
 	blockCache         map[string]*types.Block
@@ -492,7 +492,7 @@ func (s *RealBlockStore) validateBlock(block *types.Block) error {
 	}
 
 	// VRF验证（跳过创世区块）
-	if block.Height > 0 && len(block.VRFProof) > 0 {
+	if block.Height > 0 {
 		if err := s.validateVRF(block); err != nil {
 			return fmt.Errorf("VRF validation failed: %w", err)
 		}
@@ -501,7 +501,7 @@ func (s *RealBlockStore) validateBlock(block *types.Block) error {
 	return nil
 }
 
-// validateVRF 验证区块的VRF证明
+// 验证区块的VRF证明
 func (s *RealBlockStore) validateVRF(block *types.Block) error {
 	// 检查区块是否包含VRF证明
 	if len(block.VRFProof) == 0 || len(block.VRFOutput) == 0 {

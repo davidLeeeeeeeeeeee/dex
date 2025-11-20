@@ -48,7 +48,7 @@ type NodeInstance struct {
 	Cancel           context.CancelFunc
 	TxPool           *txpool.TxPool
 	SenderManager    *sender.SenderManager
-	HandlerManager   *handlers.HandlerManager // 新增
+	HandlerManager   *handlers.HandlerManager
 }
 
 // TestValidator 简单的交易验证器
