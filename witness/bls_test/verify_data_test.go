@@ -1,7 +1,7 @@
 package main
 
 import (
-	"awesomeProject1/logs"
+	"dex/logs"
 	"encoding/json"
 	"fmt"
 	"os"

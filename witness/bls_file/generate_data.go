@@ -1,8 +1,8 @@
 package main
 
 import (
-	"awesomeProject1/logs"
 	"crypto/rand"
+	"dex/logs"
 	"encoding/json"
 	"fmt"
 	"os"
