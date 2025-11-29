@@ -65,8 +65,11 @@ stateDiagram-v2
     SlashingChallenger --> Finalized
 
     Arbitration --> ArbitrationTimeout: 超时 (24h)
-    ArbitrationTimeout --> ExpandArbitrationScope: 扩大仲裁范围 (80~50% ↓)
+    ArbitrationTimeout --> ExpandArbitrationScope: 扩大仲裁范围x2 (80~50% ↓)
     ExpandArbitrationScope --> Arbitration: 新仲裁团介入
+    
+    ExpandArbitrationScope --> Shelved: 全体见证者仍无共识 (>50%)
+    Shelved --> Arbitration: 见证者集合更新 (Retry)
 
     Finalized --> Success: 资产上账
     Success --> [*]
@@ -101,6 +104,9 @@ stateDiagram-v2
      *   期间不参与新交易验证，但需对历史行为负责。
  *   **提现**: 锁定期满且无罚没，资金退回。
  *   **状态流转**: `[Active] --(申请解质押)--> [Unstaking] --(锁定期满)--> [Exited]`
+ *   **退出限制**:
+     *   **前提条件**: 见证者手中无**搁置的仲裁 (Shelved Arbitrations)** 或 **未完成的见证任务**。
+     *   若有未决事项，必须处理完毕或等待系统处理后方可退出。
  
  ### 3. 挑战与罚没 (Slashing)
  *   **触发条件**: 恶意签名、长期不在线。
@@ -114,6 +120,10 @@ stateDiagram-v2
              *   初始范围: **>80%**
              *   扩大范围 (Level 1, 2...): **逐步降低** (e.g. 70%, 60%)
              *   最终范围 (全体见证者): **>50%**
+            *   **搁置与重试 (Shelving & Retry)**:
+                *   若扩展到全体见证者仍无法达成共识 (>50%)，仲裁将被**搁置 (Shelved)**（始终有部分见证者没有发表意见）。
+                *   **重试机制**: 见证者集合定时更新时，下一轮更新将会对搁置仲裁进行一轮新的投票。
+                *   直到达成共识为止。
  *   **结果**:
      *   挑战成功: 罚没见证者（部分销毁，部分奖给挑战者）。
      *   挑战失败: 罚没挑战者。
