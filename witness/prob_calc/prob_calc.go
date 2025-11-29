@@ -5,35 +5,64 @@ import (
 	"math"
 )
 
-func main() {
-	// 定义初始参数
-	totalBalls := 100.0 // 总球数
-	ballsA := 20.0      // A球数量
-	drawCount := 10     // 抽取的数量
-
-	// 初始化概率为 1
-	probability := 1.0
-
-	// 模拟逐步抽球过程（不放回）
-	// i 代表已经抽出的球的数量
-	for i := 0; i < drawCount; i++ {
-		// 当前池子中剩余的 A 球数量 = ballsA - i
-		// 当前池子中剩余的总球数量 = totalBalls - i
-
-		currentA := ballsA - float64(i)
-		currentTotal := totalBalls - float64(i)
-
-		// 计算当前这一步抽中 A 的概率，并乘到总概率中
-		probability *= (currentA / currentTotal)
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
+	return b
+}
 
-	// 格式化输出结果
-	fmt.Println("--- 计算结果 ---")
-	fmt.Printf("总球数: %.0f, A球数: %.0f, 抽取: %d\n", totalBalls, ballsA, drawCount)
-	fmt.Printf("全是 A 的概率 (科学计数法): %e\n", probability)
-	fmt.Printf("全是 A 的概率 (小数形式): %.10f\n", probability)
+// ln(C(n,k)) = ln(n!) - ln(k!) - ln((n-k)!)
+func logChoose(n, k int) float64 {
+	if k < 0 || k > n {
+		return math.Inf(-1)
+	}
+	lnN, _ := math.Lgamma(float64(n + 1))
+	lnK, _ := math.Lgamma(float64(k + 1))
+	lnNK, _ := math.Lgamma(float64(n - k + 1))
+	return lnN - lnK - lnNK
+}
 
-	// 为了对比，计算一下如果是有放回抽样 (0.2^10)
-	roughly := math.Pow(0.2, 10)
-	fmt.Printf("对比：有放回抽样概率: %e\n", roughly)
+func logAddExp(a, b float64) float64 {
+	if math.IsInf(a, -1) {
+		return b
+	}
+	if math.IsInf(b, -1) {
+		return a
+	}
+	if a < b {
+		a, b = b, a
+	}
+	return a + math.Log1p(math.Exp(b-a))
+}
+
+// P(X >= k0), X ~ Hypergeom(N, K, n)
+func hypergeomTail(N, K, n, k0 int) (p float64, logP float64) {
+	logDen := logChoose(N, n)
+	logSum := math.Inf(-1)
+
+	maxK := min(n, K)
+	for k := k0; k <= maxK; k++ {
+		if n-k > N-K { // B 不够时跳过
+			continue
+		}
+		logTerm := logChoose(K, k) + logChoose(N-K, n-k) - logDen
+		logSum = logAddExp(logSum, logTerm)
+	}
+	return math.Exp(logSum), logSum
+}
+
+func main() {
+	N := 10000
+	K := 2000
+	n := 200
+
+	thresholdPercent := 30                     // 至少50%
+	k0 := (n*thresholdPercent + 100 - 1) / 100 // ceil(n*p/100)
+
+	p, logP := hypergeomTail(N, K, n, k0)
+
+	fmt.Printf("N=%d, K=%d, n=%d, 至少%d%% => X >= %d\n", N, K, n, thresholdPercent, k0)
+	fmt.Printf("P(X >= %d) ≈ %.12f  (≈ %e)\n", k0, p, p)
+	fmt.Printf("log10(P) ≈ %.6f\n", logP/math.Ln10)
 }

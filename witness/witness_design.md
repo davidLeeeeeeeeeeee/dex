@@ -54,15 +54,19 @@ stateDiagram-v2
         Waiting --> Finalized: 公示期结束无挑战
     }
 
-    ChallengeInitiated --> Arbitration: 仲裁 (全体见证者)
+    ChallengeInitiated --> Arbitration: 仲裁 
     
-    Arbitration --> ChallengeSuccess: 挑战成功
+    Arbitration --> ChallengeSuccess: 挑战成功 (>80~50%)
     ChallengeSuccess --> SlashingWitness: 罚没见证者
     SlashingWitness --> Failed
 
-    Arbitration --> ChallengeFail: 挑战失败
+    Arbitration --> ChallengeFail: 挑战失败 (>80~50%)
     ChallengeFail --> SlashingChallenger: 罚没挑战者
     SlashingChallenger --> Finalized
+
+    Arbitration --> ArbitrationTimeout: 超时 (24h)
+    ArbitrationTimeout --> ExpandArbitrationScope: 扩大仲裁范围 (80~50% ↓)
+    ExpandArbitrationScope --> Arbitration: 新仲裁团介入
 
     Finalized --> Success: 资产上账
     Success --> [*]
@@ -102,6 +106,14 @@ stateDiagram-v2
  *   **触发条件**: 恶意签名、长期不在线。
  *   **挑战期**: 共识后进入公示期，任何人可质押资金发起挑战。
  *   **裁决**: 更多见证者/高权益节点仲裁。
+ *   **仲裁超时与扩大范围**:
+     *   **超时机制**: 若仲裁团在规定时间（如 24小时）内未达成明确结论。
+     *   **扩大范围与动态阈值**: 
+         *   自动触发扩大仲裁范围机制，邀请更多见证者加入。
+         *   **阈值递减**: 随着范围扩大，达成共识所需的阈值依次降低。
+             *   初始范围: **>80%**
+             *   扩大范围 (Level 1, 2...): **逐步降低** (e.g. 70%, 60%)
+             *   最终范围 (全体见证者): **>50%**
  *   **结果**:
      *   挑战成功: 罚没见证者（部分销毁，部分奖给挑战者）。
      *   挑战失败: 罚没挑战者。
