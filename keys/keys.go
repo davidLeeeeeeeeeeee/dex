@@ -258,3 +258,112 @@ func KeyClientInfo(ip string) string {
 	return withVer("clientinfo_" + ip)
 }
 
+// ===================== Witness 见证者相关 =====================
+
+// KeyWitnessInfo 见证者信息
+// 例：v1_witness_<address>
+func KeyWitnessInfo(address string) string {
+	return withVer("witness_" + address)
+}
+
+// KeyWitnessInfoPrefix 见证者信息前缀
+// 例：v1_witness_
+func KeyWitnessInfoPrefix() string {
+	return withVer("witness_")
+}
+
+// KeyRechargeRequest 入账请求
+// 例：v1_recharge_request_<requestID>
+func KeyRechargeRequest(requestID string) string {
+	return withVer("recharge_request_" + requestID)
+}
+
+// KeyRechargeRequestPrefix 入账请求前缀
+// 例：v1_recharge_request_
+func KeyRechargeRequestPrefix() string {
+	return withVer("recharge_request_")
+}
+
+// KeyRechargeRequestByNativeTx 原生链交易到入账请求的映射
+// 例：v1_recharge_native_<chain>_<txHash>
+func KeyRechargeRequestByNativeTx(chain, txHash string) string {
+	return withVer(fmt.Sprintf("recharge_native_%s_%s", chain, txHash))
+}
+
+// KeyChallengeRecord 挑战记录
+// 例：v1_challenge_<challengeID>
+func KeyChallengeRecord(challengeID string) string {
+	return withVer("challenge_" + challengeID)
+}
+
+// KeyChallengeRecordPrefix 挑战记录前缀
+// 例：v1_challenge_
+func KeyChallengeRecordPrefix() string {
+	return withVer("challenge_")
+}
+
+// KeyWitnessVote 见证投票
+// 例：v1_witness_vote_<requestID>_<witnessAddress>
+func KeyWitnessVote(requestID, witnessAddress string) string {
+	return withVer(fmt.Sprintf("witness_vote_%s_%s", requestID, witnessAddress))
+}
+
+// KeyWitnessVotePrefix 见证投票前缀（按请求ID）
+// 例：v1_witness_vote_<requestID>_
+func KeyWitnessVotePrefix(requestID string) string {
+	return withVer(fmt.Sprintf("witness_vote_%s_", requestID))
+}
+
+// KeyArbitrationVote 仲裁投票
+// 例：v1_arbitration_vote_<challengeID>_<arbitratorAddress>
+func KeyArbitrationVote(challengeID, arbitratorAddress string) string {
+	return withVer(fmt.Sprintf("arbitration_vote_%s_%s", challengeID, arbitratorAddress))
+}
+
+// KeyArbitrationVotePrefix 仲裁投票前缀（按挑战ID）
+// 例：v1_arbitration_vote_<challengeID>_
+func KeyArbitrationVotePrefix(challengeID string) string {
+	return withVer(fmt.Sprintf("arbitration_vote_%s_", challengeID))
+}
+
+// KeyWitnessStakeIndex 见证者质押索引（按质押金额倒序）
+// 例：v1_witness_stake_<invertedPadded32>_<address>
+func KeyWitnessStakeIndex(invertedPadded32, address string) string {
+	return withVer(fmt.Sprintf("witness_stake_%s_%s", invertedPadded32, address))
+}
+
+// KeyWitnessStakeIndexPrefix 见证者质押索引前缀
+// 例：v1_witness_stake_
+func KeyWitnessStakeIndexPrefix() string {
+	return withVer("witness_stake_")
+}
+
+// KeyWitnessConfig 见证者配置
+// 例：v1_witness_config
+func KeyWitnessConfig() string {
+	return withVer("witness_config")
+}
+
+// KeyWitnessRewardPool 见证者奖励池
+// 例：v1_witness_reward_pool
+func KeyWitnessRewardPool() string {
+	return withVer("witness_reward_pool")
+}
+
+// KeyWitnessHistory 见证历史记录
+// 例：v1_witness_history_<txID>
+func KeyWitnessHistory(txID string) string {
+	return withVer("witness_history_" + txID)
+}
+
+// KeyShelvedRequest 搁置的请求
+// 例：v1_shelved_request_<requestID>
+func KeyShelvedRequest(requestID string) string {
+	return withVer("shelved_request_" + requestID)
+}
+
+// KeyShelvedRequestPrefix 搁置请求前缀
+// 例：v1_shelved_request_
+func KeyShelvedRequestPrefix() string {
+	return withVer("shelved_request_")
+}
