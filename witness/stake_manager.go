@@ -41,6 +41,13 @@ func (sm *StakeManager) LoadWitness(info *pb.WitnessInfo) {
 	sm.witnesses[info.Address] = info
 }
 
+// Reset 重置内存状态
+func (sm *StakeManager) Reset() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.witnesses = make(map[string]*pb.WitnessInfo)
+}
+
 // GetWitness 获取见证者信息
 func (sm *StakeManager) GetWitness(address string) (*pb.WitnessInfo, error) {
 	sm.mu.RLock()
@@ -359,6 +366,34 @@ func (sm *StakeManager) UpdateWitnessStats(address string, voteType pb.WitnessVo
 	return nil
 }
 
+// DistributeReward 分配奖励
+func (sm *StakeManager) DistributeReward(witnesses []string, amount decimal.Decimal) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if len(witnesses) == 0 {
+		return nil
+	}
+
+	// 计算每人分得的奖励
+	perWitnessAmount := amount.Div(decimal.NewFromInt(int64(len(witnesses))))
+
+	for _, addr := range witnesses {
+		info, exists := sm.witnesses[addr]
+		if !exists {
+			continue
+		}
+
+		// 更新待领取奖励
+		currentPending, _ := decimal.NewFromString(info.PendingReward)
+		info.PendingReward = currentPending.Add(perWitnessAmount).String()
+
+		sm.witnesses[addr] = info
+	}
+
+	return nil
+}
+
 // Events 返回事件通道
 func (sm *StakeManager) Events() <-chan *Event {
 	return sm.eventChan
@@ -371,4 +406,3 @@ func (sm *StakeManager) emitEvent(event *Event) {
 	default:
 	}
 }
-

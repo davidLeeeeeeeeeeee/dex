@@ -157,17 +157,46 @@ func HashTx(tx proto.Message) (string, error) {
 				content.OrderTx.Base.TxId = ""
 				content.OrderTx.Base.Signature = ""
 			}
-		case *pb.AnyTx_AddressTx:
-			if content.AddressTx.Base != nil {
-				content.AddressTx.Base.TxId = ""
-				content.AddressTx.Base.Signature = ""
-			}
 		case *pb.AnyTx_CandidateTx:
 			if content.CandidateTx.Base != nil {
 				content.CandidateTx.Base.TxId = ""
 				content.CandidateTx.Base.Signature = ""
 			}
-
+		case *pb.AnyTx_MinerTx:
+			if content.MinerTx.Base != nil {
+				content.MinerTx.Base.TxId = ""
+				content.MinerTx.Base.Signature = ""
+			}
+		case *pb.AnyTx_WitnessStakeTx:
+			if content.WitnessStakeTx.Base != nil {
+				content.WitnessStakeTx.Base.TxId = ""
+				content.WitnessStakeTx.Base.Signature = ""
+			}
+		case *pb.AnyTx_WitnessRequestTx:
+			if content.WitnessRequestTx.Base != nil {
+				content.WitnessRequestTx.Base.TxId = ""
+				content.WitnessRequestTx.Base.Signature = ""
+			}
+		case *pb.AnyTx_WitnessVoteTx:
+			if content.WitnessVoteTx.Base != nil {
+				content.WitnessVoteTx.Base.TxId = ""
+				content.WitnessVoteTx.Base.Signature = ""
+			}
+		case *pb.AnyTx_WitnessChallengeTx:
+			if content.WitnessChallengeTx.Base != nil {
+				content.WitnessChallengeTx.Base.TxId = ""
+				content.WitnessChallengeTx.Base.Signature = ""
+			}
+		case *pb.AnyTx_ArbitrationVoteTx:
+			if content.ArbitrationVoteTx.Base != nil {
+				content.ArbitrationVoteTx.Base.TxId = ""
+				content.ArbitrationVoteTx.Base.Signature = ""
+			}
+		case *pb.AnyTx_WitnessClaimRewardTx:
+			if content.WitnessClaimRewardTx.Base != nil {
+				content.WitnessClaimRewardTx.Base.TxId = ""
+				content.WitnessClaimRewardTx.Base.Signature = ""
+			}
 		default:
 			return "", fmt.Errorf("不支持的 AnyTx 内部类型")
 		}

@@ -11,10 +11,22 @@ func (m *AnyTx) GetBase() *BaseMessage {
 		return tx.Transaction.GetBase()
 	case *AnyTx_OrderTx:
 		return tx.OrderTx.GetBase()
-	case *AnyTx_AddressTx:
-		return tx.AddressTx.GetBase()
 	case *AnyTx_CandidateTx:
 		return tx.CandidateTx.GetBase()
+	case *AnyTx_MinerTx:
+		return tx.MinerTx.GetBase()
+	case *AnyTx_WitnessStakeTx:
+		return tx.WitnessStakeTx.GetBase()
+	case *AnyTx_WitnessRequestTx:
+		return tx.WitnessRequestTx.GetBase()
+	case *AnyTx_WitnessVoteTx:
+		return tx.WitnessVoteTx.GetBase()
+	case *AnyTx_WitnessChallengeTx:
+		return tx.WitnessChallengeTx.GetBase()
+	case *AnyTx_ArbitrationVoteTx:
+		return tx.ArbitrationVoteTx.GetBase()
+	case *AnyTx_WitnessClaimRewardTx:
+		return tx.WitnessClaimRewardTx.GetBase()
 	default:
 		return nil
 	}

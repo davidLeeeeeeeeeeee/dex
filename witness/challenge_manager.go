@@ -42,6 +42,30 @@ func NewChallengeManager(config *Config) *ChallengeManager {
 	}
 }
 
+// Reset 重置内存状态
+func (cm *ChallengeManager) Reset() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.challenges = make(map[string]*pb.ChallengeRecord)
+	cm.requestChallenges = make(map[string]string)
+	cm.arbitrationVotes = make(map[string]map[string]*pb.WitnessVote)
+}
+
+// LoadChallenge 加载挑战记录到内存
+func (cm *ChallengeManager) LoadChallenge(record *pb.ChallengeRecord) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.challenges[record.ChallengeId] = record
+	cm.requestChallenges[record.RequestId] = record.ChallengeId
+	// 恢复仲裁投票
+	if cm.arbitrationVotes[record.ChallengeId] == nil {
+		cm.arbitrationVotes[record.ChallengeId] = make(map[string]*pb.WitnessVote)
+	}
+	for _, vote := range record.ArbitrationVotes {
+		cm.arbitrationVotes[record.ChallengeId][vote.WitnessAddress] = vote
+	}
+}
+
 // ValidateChallenge 验证挑战
 func (cm *ChallengeManager) ValidateChallenge(
 	requestID string,

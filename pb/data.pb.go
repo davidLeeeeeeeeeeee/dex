@@ -3297,6 +3297,7 @@ type RechargeRequest struct {
 	FailCount         uint32                 `protobuf:"varint,16,opt,name=fail_count,json=failCount,proto3" json:"fail_count,omitempty"`                        // 拒绝票数
 	AbstainCount      uint32                 `protobuf:"varint,17,opt,name=abstain_count,json=abstainCount,proto3" json:"abstain_count,omitempty"`               // 弃票数
 	ChallengeId       string                 `protobuf:"bytes,18,opt,name=challenge_id,json=challengeId,proto3" json:"challenge_id,omitempty"`                   // 挑战ID（如果被挑战）
+	RechargeFee       string                 `protobuf:"bytes,19,opt,name=recharge_fee,json=rechargeFee,proto3" json:"recharge_fee,omitempty"`                   // 额外付给见证者的费用
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -3453,6 +3454,13 @@ func (x *RechargeRequest) GetAbstainCount() uint32 {
 func (x *RechargeRequest) GetChallengeId() string {
 	if x != nil {
 		return x.ChallengeId
+	}
+	return ""
+}
+
+func (x *RechargeRequest) GetRechargeFee() string {
+	if x != nil {
+		return x.RechargeFee
 	}
 	return ""
 }
@@ -4175,7 +4183,7 @@ const file_pb_data_proto_rawDesc = "" +
 	"\ttimestamp\x18\x05 \x01(\x04R\ttimestamp\"Y\n" +
 	"\rWitnessVoteTx\x12#\n" +
 	"\x04base\x18\x01 \x01(\v2\x0f.pb.BaseMessageR\x04base\x12#\n" +
-	"\x04vote\x18\x02 \x01(\v2\x0f.pb.WitnessVoteR\x04vote\"\xaa\x05\n" +
+	"\x04vote\x18\x02 \x01(\v2\x0f.pb.WitnessVoteR\x04vote\"\xcd\x05\n" +
 	"\x0fRechargeRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12!\n" +
@@ -4198,7 +4206,8 @@ const file_pb_data_proto_rawDesc = "" +
 	"\n" +
 	"fail_count\x18\x10 \x01(\rR\tfailCount\x12#\n" +
 	"\rabstain_count\x18\x11 \x01(\rR\fabstainCount\x12!\n" +
-	"\fchallenge_id\x18\x12 \x01(\tR\vchallengeId\"\xaf\x01\n" +
+	"\fchallenge_id\x18\x12 \x01(\tR\vchallengeId\x12!\n" +
+	"\frecharge_fee\x18\x13 \x01(\tR\vrechargeFee\"\xaf\x01\n" +
 	"\x12WitnessChallengeTx\x12#\n" +
 	"\x04base\x18\x01 \x01(\v2\x0f.pb.BaseMessageR\x04base\x12\x1d\n" +
 	"\n" +

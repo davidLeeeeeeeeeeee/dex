@@ -389,6 +389,7 @@ message RechargeRequest {
   uint32 fail_count = 16;          // 拒绝票数
   uint32 abstain_count = 17;       // 弃票数
   string challenge_id = 18;        // 挑战ID（如果被挑战）
+  string recharge_fee = 19;        // 额外付给见证者的费用
 }
 
 // 挑战交易

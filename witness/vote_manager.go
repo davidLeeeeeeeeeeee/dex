@@ -36,6 +36,14 @@ func NewVoteManager(config *Config) *VoteManager {
 	}
 }
 
+// Reset 重置内存状态
+func (vm *VoteManager) Reset() {
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	vm.votes = make(map[string]map[string]*pb.WitnessVote)
+	vm.selectedWitnesses = make(map[string]map[string]bool)
+}
+
 // SetSelectedWitnesses 设置请求的选中见证者
 func (vm *VoteManager) SetSelectedWitnesses(requestID string, witnesses []string) {
 	vm.mu.Lock()

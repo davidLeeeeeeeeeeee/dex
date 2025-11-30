@@ -1,5 +1,6 @@
 // witness/service.go
-// 见证者服务 - 整合所有组件，提供统一的服务接口
+// 见证者服务 - 纯内存计算模块，用于辅助 VM Handler 进行见证者选择、共识计算等
+// 注意：所有状态持久化都通过 VM Handler 的 WriteOp 机制完成，本模块不直接操作数据库
 package witness
 
 import (
@@ -12,7 +13,13 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// Service 见证者服务
+// Service 见证者服务（纯内存计算模块）
+// 职责：
+// 1. 见证者选择算法
+// 2. 共识计算
+// 3. 公示期/仲裁期检查
+// 4. 事件通知
+// 注意：不负责状态持久化，所有写操作由 VM Handler 通过 WriteOp 完成
 type Service struct {
 	mu     sync.RWMutex
 	config *Config
@@ -23,11 +30,8 @@ type Service struct {
 	stakeManager     *StakeManager
 	challengeManager *ChallengeManager
 
-	// 入账请求缓存
+	// 内存缓存（用于辅助计算，不作为持久化来源）
 	requests map[string]*pb.RechargeRequest // requestID -> request
-
-	// 数据库接口
-	db DBInterface
 
 	// 当前区块高度
 	currentHeight uint64
@@ -40,19 +44,9 @@ type Service struct {
 	cancel context.CancelFunc
 }
 
-// DBInterface 数据库接口（解耦）
-type DBInterface interface {
-	GetWitnessInfo(address string) (*pb.WitnessInfo, error)
-	SaveWitnessInfo(info *pb.WitnessInfo) error
-	GetRechargeRequest(requestID string) (*pb.RechargeRequest, error)
-	SaveRechargeRequest(request *pb.RechargeRequest) error
-	GetChallengeRecord(challengeID string) (*pb.ChallengeRecord, error)
-	SaveChallengeRecord(record *pb.ChallengeRecord) error
-	GetActiveWitnesses() ([]*pb.WitnessInfo, error)
-}
-
-// NewService 创建见证者服务
-func NewService(config *Config, db DBInterface) *Service {
+// NewService 创建见证者服务（纯内存计算模块）
+// 注意：不再接受 db 参数，所有持久化由 VM Handler 负责
+func NewService(config *Config) *Service {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -66,7 +60,6 @@ func NewService(config *Config, db DBInterface) *Service {
 		stakeManager:     NewStakeManager(config),
 		challengeManager: NewChallengeManager(config),
 		requests:         make(map[string]*pb.RechargeRequest),
-		db:               db,
 		eventChan:        make(chan *Event, 100),
 		ctx:              ctx,
 		cancel:           cancel,
@@ -75,16 +68,6 @@ func NewService(config *Config, db DBInterface) *Service {
 
 // Start 启动服务
 func (s *Service) Start() error {
-	// 加载活跃见证者
-	if s.db != nil {
-		witnesses, err := s.db.GetActiveWitnesses()
-		if err == nil {
-			for _, w := range witnesses {
-				s.stakeManager.LoadWitness(w)
-			}
-		}
-	}
-
 	// 启动事件处理
 	go s.eventLoop()
 
@@ -98,9 +81,18 @@ func (s *Service) Stop() {
 
 // SetCurrentHeight 设置当前区块高度
 func (s *Service) SetCurrentHeight(height uint64) {
+	// 注意：这里不能加锁，因为 checkChallengePeriod 会加锁
+	// 但 s.currentHeight 的更新需要保护，或者 checkChallengePeriod 内部处理
+	// 更好的方式是将 SetCurrentHeight 仅更新高度，然后异步触发检查，或者在外部调用检查
+	// 为了简单起见，我们先更新高度，然后在一个独立的 goroutine 或不加锁的情况下调用检查
+	// 但由于 checkChallengePeriod 需要访问 s.requests (受 mu 保护)，所以它必须加锁
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.currentHeight = height
+	s.mu.Unlock()
+
+	// 触发周期性检查
+	s.checkChallengePeriod()
 }
 
 // GetCurrentHeight 获取当前区块高度
@@ -112,47 +104,35 @@ func (s *Service) GetCurrentHeight() uint64 {
 
 // ==================== 质押相关 ====================
 
-// ProcessStake 处理质押
+// ProcessStake 处理质押（内存计算，不持久化）
+// 注意：实际持久化由 VM WitnessStakeTxHandler 通过 WriteOp 完成
 func (s *Service) ProcessStake(address string, amount decimal.Decimal) (*pb.WitnessInfo, error) {
 	// 验证
 	if err := s.stakeManager.ValidateStake(address, amount); err != nil {
 		return nil, err
 	}
 
-	// 处理质押
+	// 处理质押（仅更新内存状态）
 	info, err := s.stakeManager.ProcessStake(address, amount, s.GetCurrentHeight())
 	if err != nil {
 		return nil, err
 	}
 
-	// 持久化
-	if s.db != nil {
-		if err := s.db.SaveWitnessInfo(info); err != nil {
-			return nil, fmt.Errorf("failed to save witness info: %w", err)
-		}
-	}
-
 	return info, nil
 }
 
-// ProcessUnstake 处理解质押
+// ProcessUnstake 处理解质押（内存计算，不持久化）
+// 注意：实际持久化由 VM WitnessStakeTxHandler 通过 WriteOp 完成
 func (s *Service) ProcessUnstake(address string) (*pb.WitnessInfo, error) {
 	// 验证
 	if err := s.stakeManager.ValidateUnstake(address); err != nil {
 		return nil, err
 	}
 
-	// 处理解质押
+	// 处理解质押（仅更新内存状态）
 	info, err := s.stakeManager.ProcessUnstake(address, s.GetCurrentHeight())
 	if err != nil {
 		return nil, err
-	}
-
-	// 持久化
-	if s.db != nil {
-		if err := s.db.SaveWitnessInfo(info); err != nil {
-			return nil, fmt.Errorf("failed to save witness info: %w", err)
-		}
 	}
 
 	return info, nil
@@ -200,6 +180,7 @@ func (s *Service) CreateRechargeRequest(tx *pb.WitnessRequestTx) (*pb.RechargeRe
 		DeadlineHeight:    height + s.config.VotingPeriodBlocks,
 		Round:             0,
 		SelectedWitnesses: witnesses,
+		RechargeFee:       tx.RechargeFee,
 	}
 
 	// 设置投票管理器
@@ -210,15 +191,8 @@ func (s *Service) CreateRechargeRequest(tx *pb.WitnessRequestTx) (*pb.RechargeRe
 		_ = s.stakeManager.AddPendingTask(w, requestID)
 	}
 
-	// 保存到缓存
+	// 保存到内存缓存（用于后续共识计算）
 	s.requests[requestID] = request
-
-	// 持久化
-	if s.db != nil {
-		if err := s.db.SaveRechargeRequest(request); err != nil {
-			return nil, fmt.Errorf("failed to save request: %w", err)
-		}
-	}
 
 	// 发送事件
 	s.emitEvent(&Event{
@@ -269,19 +243,14 @@ func (s *Service) ProcessVote(vote *pb.WitnessVote) error {
 		request.AbstainCount++
 	}
 
-	// 保存投票到请求
+	// 保存投票到请求（内存缓存）
 	request.Votes = append(request.Votes, vote)
 
-	// 更新见证者统计
+	// 更新见证者统计（内存）
 	_ = s.stakeManager.UpdateWitnessStats(vote.WitnessAddress, vote.VoteType)
 
 	// 检查共识
 	s.checkAndProcessConsensus(request)
-
-	// 持久化
-	if s.db != nil {
-		_ = s.db.SaveRechargeRequest(request)
-	}
 
 	return nil
 }
@@ -437,6 +406,106 @@ func (s *Service) handleConflict(request *pb.RechargeRequest) {
 	request.ChallengeId = challengeID
 }
 
+// checkChallengePeriod 检查公示期是否结束
+func (s *Service) checkChallengePeriod() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, request := range s.requests {
+		if request.Status != pb.RechargeRequestStatus_RECHARGE_CHALLENGE_PERIOD {
+			continue
+		}
+
+		// 检查是否过期
+		if s.currentHeight > request.DeadlineHeight {
+			// 公示期结束且无挑战，自动完成
+			request.Status = pb.RechargeRequestStatus_RECHARGE_FINALIZED
+			request.FinalizeHeight = s.currentHeight
+
+			// 分配奖励给投 PASS 的见证者
+			honestWitnesses := s.voteManager.GetPassVotes(request.RequestId)
+			witnessAddrs := make([]string, 0, len(honestWitnesses))
+			for _, v := range honestWitnesses {
+				witnessAddrs = append(witnessAddrs, v.WitnessAddress)
+			}
+
+			fee, _ := decimal.NewFromString(request.RechargeFee)
+			if fee.IsPositive() {
+				_ = s.stakeManager.DistributeReward(witnessAddrs, fee)
+			}
+
+			s.emitEvent(&Event{
+				Type:      EventRechargeFinalized,
+				RequestID: request.RequestId,
+				Data:      request,
+				Height:    s.currentHeight,
+			})
+		}
+	}
+}
+
+// handleChallengeResolved 处理挑战解决
+func (s *Service) handleChallengeResolved(record *pb.ChallengeRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	request, exists := s.requests[record.RequestId]
+	if !exists {
+		return
+	}
+
+	if record.ChallengeSuccess {
+		// 挑战成功 -> 入账失败
+		request.Status = pb.RechargeRequestStatus_RECHARGE_REJECTED
+
+		// 诚实者是投 FAIL 的人
+		// 注意：这里需要从原始投票中获取投 FAIL 的人，而不是仲裁投票
+		// 但原始投票数据可能在 VoteManager 中，或者直接从 Request 中获取
+		honestWitnesses := make([]string, 0)
+		for _, v := range request.Votes {
+			if v.VoteType == pb.WitnessVoteType_VOTE_FAIL {
+				honestWitnesses = append(honestWitnesses, v.WitnessAddress)
+			}
+		}
+
+		fee, _ := decimal.NewFromString(request.RechargeFee)
+		if fee.IsPositive() {
+			_ = s.stakeManager.DistributeReward(honestWitnesses, fee)
+		}
+
+		s.emitEvent(&Event{
+			Type:      EventRechargeRejected,
+			RequestID: request.RequestId,
+			Data:      request,
+			Height:    s.currentHeight,
+		})
+	} else {
+		// 挑战失败 -> 入账成功
+		request.Status = pb.RechargeRequestStatus_RECHARGE_FINALIZED
+		request.FinalizeHeight = s.currentHeight
+
+		// 诚实者是投 PASS 的人
+		honestWitnesses := make([]string, 0)
+		for _, v := range request.Votes {
+			if v.VoteType == pb.WitnessVoteType_VOTE_PASS {
+				honestWitnesses = append(honestWitnesses, v.WitnessAddress)
+			}
+		}
+
+		fee, _ := decimal.NewFromString(request.RechargeFee)
+		if fee.IsPositive() {
+			_ = s.stakeManager.DistributeReward(honestWitnesses, fee)
+		}
+
+		s.emitEvent(&Event{
+			Type:      EventRechargeFinalized,
+			RequestID: request.RequestId,
+			Data:      request,
+			Height:    s.currentHeight,
+		})
+	}
+}
+
 // Events 返回事件通道
 func (s *Service) Events() <-chan *Event {
 	return s.eventChan
@@ -453,6 +522,11 @@ func (s *Service) eventLoop() {
 		case event := <-s.voteManager.Events():
 			s.eventChan <- event
 		case event := <-s.challengeManager.Events():
+			if event.Type == EventChallengeResolved {
+				if record, ok := event.Data.(*pb.ChallengeRecord); ok {
+					s.handleChallengeResolved(record)
+				}
+			}
 			s.eventChan <- event
 		}
 	}
@@ -484,8 +558,42 @@ func (s *Service) GetWitnessInfo(address string) (*pb.WitnessInfo, error) {
 	return s.stakeManager.GetWitness(address)
 }
 
+// Reset 重置内存状态（用于回滚场景）
+// 注意：由于不再持有 db 引用，需要外部传入数据来重置状态
+func (s *Service) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 清空内存缓存
+	s.requests = make(map[string]*pb.RechargeRequest)
+	s.stakeManager.Reset()
+	s.voteManager.Reset()
+	s.challengeManager.Reset()
+}
+
+// LoadWitness 加载见证者信息到内存（供 VM 初始化时调用）
+func (s *Service) LoadWitness(info *pb.WitnessInfo) {
+	s.stakeManager.LoadWitness(info)
+}
+
+// LoadRequest 加载入账请求到内存（供 VM 初始化时调用）
+func (s *Service) LoadRequest(request *pb.RechargeRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.requests[request.RequestId] = request
+	s.voteManager.SetSelectedWitnesses(request.RequestId, request.SelectedWitnesses)
+	for _, v := range request.Votes {
+		_ = s.voteManager.AddVote(v)
+	}
+}
+
+// LoadChallenge 加载挑战记录到内存（供 VM 初始化时调用）
+func (s *Service) LoadChallenge(record *pb.ChallengeRecord) {
+	s.challengeManager.LoadChallenge(record)
+}
+
 // GetActiveWitnesses 获取活跃见证者列表
 func (s *Service) GetActiveWitnesses() []*pb.WitnessInfo {
 	return s.stakeManager.GetActiveWitnesses()
 }
-

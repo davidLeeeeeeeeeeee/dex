@@ -75,12 +75,23 @@ func DefaultKindFn(tx *pb.AnyTx) (string, error) {
 		return "transfer", nil
 	case *pb.AnyTx_OrderTx:
 		return "order", nil
-	case *pb.AnyTx_AddressTx:
-		return "recharge", nil
 	case *pb.AnyTx_CandidateTx:
 		return "candidate", nil
 	case *pb.AnyTx_MinerTx:
 		return "miner", nil
+	// Witness 相关交易类型
+	case *pb.AnyTx_WitnessStakeTx:
+		return "witness_stake", nil
+	case *pb.AnyTx_WitnessRequestTx:
+		return "witness_request", nil
+	case *pb.AnyTx_WitnessVoteTx:
+		return "witness_vote", nil
+	case *pb.AnyTx_WitnessChallengeTx:
+		return "witness_challenge", nil
+	case *pb.AnyTx_ArbitrationVoteTx:
+		return "arbitration_vote", nil
+	case *pb.AnyTx_WitnessClaimRewardTx:
+		return "witness_claim_reward", nil
 	default:
 		return "", fmt.Errorf("unknown tx type: %v", tx.GetTxId())
 	}
