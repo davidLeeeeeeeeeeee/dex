@@ -117,15 +117,7 @@ message OrderTx {//下单tx
   bool is_filled = 10; // 是否已经完全成交标签
 }
 
-message RechargeTx {//上账TX,用户自己在本地根据公钥+tweak生成充值地址。充值完成后广播RechargeTx
-  BaseMessage base = 1;
-  string token_address = 2;//对应本链的哪个资产
-  //这个字段在打包区块的时候生成，用户直接通过区块链浏览器查询即可
-  string generated_address = 3;//生成的聚合地址，如果是btc就直接用，如果是其他链就对应其合约内的所有者字段
-  string tweak = 4;//在钱包端，生成地址的时候记录下来，
-  string recharge_fee = 5;
-  // RechargeTx的hash和原生链txid一一对应，不需要担心重复上账问题。
-}
+
 
 message CandidateTx {//委托人tx
   BaseMessage base = 1;
@@ -147,16 +139,15 @@ message AnyTx {
     FreezeTx freeze_tx = 2;
     Transaction transaction = 3;
     OrderTx order_tx = 4;
-    RechargeTx address_tx = 5;
-    CandidateTx candidate_tx = 6;
-    MinerTx miner_tx = 8;
+    CandidateTx candidate_tx = 5;
+    MinerTx miner_tx = 6;
     // Witness 相关交易
-    WitnessStakeTx witness_stake_tx = 9;       // 见证者质押/解质押
-    WitnessRequestTx witness_request_tx = 10;  // 入账见证请求
-    WitnessVoteTx witness_vote_tx = 11;        // 见证投票
-    WitnessChallengeTx witness_challenge_tx = 12; // 挑战
-    ArbitrationVoteTx arbitration_vote_tx = 13;   // 仲裁投票
-    WitnessClaimRewardTx witness_claim_reward_tx = 14; // 领取奖励
+    WitnessStakeTx witness_stake_tx = 7;       // 见证者质押/解质押
+    WitnessRequestTx witness_request_tx = 8;  // 入账见证请求
+    WitnessVoteTx witness_vote_tx = 9;        // 见证投票
+    WitnessChallengeTx witness_challenge_tx = 10; // 挑战
+    ArbitrationVoteTx arbitration_vote_tx = 11;   // 仲裁投票
+    WitnessClaimRewardTx witness_claim_reward_tx = 12; // 领取奖励
   }
 }
 // --------------------- 订单 & 状态相关 ---------------------
@@ -359,6 +350,7 @@ message WitnessRequestTx {
   string amount = 5;               // 入账金额
   string receiver_address = 6;     // 接收地址（本链）
   string memo = 7;                 // 备注（可包含收款地址验证信息）
+  string recharge_fee = 8;//额外付给见证者的费用，不管是否充值成功都会支付。
 }
 
 // 见证者投票
