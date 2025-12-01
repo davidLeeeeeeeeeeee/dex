@@ -240,9 +240,3 @@ func (s *Selector) VerifyWitnessSelection(
 func (s *Selector) GetWitnessCountForRound(round uint32) uint32 {
 	return s.calculateWitnessCount(round)
 }
-
-// GetMaxRounds 获取最大轮次
-func (s *Selector) GetMaxRounds() uint32 {
-	return s.config.MaxRounds
-}
-

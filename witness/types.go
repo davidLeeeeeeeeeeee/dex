@@ -43,10 +43,11 @@ type Config struct {
 	AbstainThreshold   uint32 // 弃票阈值百分比（默认20）
 
 	// 时间参数（区块数）
-	VotingPeriodBlocks     uint64 // 投票期
-	ChallengePeriodBlocks  uint64 // 公示期
+	VotingPeriodBlocks      uint64 // 投票期
+	ChallengePeriodBlocks   uint64 // 公示期
 	ArbitrationPeriodBlocks uint64 // 仲裁期
-	UnstakeLockBlocks      uint64 // 解质押锁定期
+	UnstakeLockBlocks       uint64 // 解质押锁定期
+	RetryIntervalBlocks     uint64 // 重试间隔（区块数）
 
 	// 金额参数
 	MinStakeAmount       string // 最小质押金额
@@ -55,7 +56,6 @@ type Config struct {
 	// 见证者选择参数
 	InitialWitnessCount uint32 // 初始见证者数量
 	ExpandMultiplier    uint32 // 扩大范围倍数
-	MaxRounds           uint32 // 最大轮次
 
 	// 奖励参数
 	WitnessRewardRatio float64 // 见证者奖励比例
@@ -68,15 +68,15 @@ func DefaultConfig() *Config {
 	return &Config{
 		ConsensusThreshold:      80,
 		AbstainThreshold:        20,
-		VotingPeriodBlocks:      100,   // 约5分钟（假设3秒一个区块）
-		ChallengePeriodBlocks:   600,   // 约30分钟
-		ArbitrationPeriodBlocks: 28800, // 约24小时
-		UnstakeLockBlocks:       201600, // 约7天
+		VotingPeriodBlocks:      100,                      // 约5分钟（假设3秒一个区块）
+		ChallengePeriodBlocks:   600,                      // 约30分钟
+		ArbitrationPeriodBlocks: 28800,                    // 约24小时
+		UnstakeLockBlocks:       201600,                   // 约7天
+		RetryIntervalBlocks:     20,                       // 约1分钟
 		MinStakeAmount:          "1000000000000000000000", // 1000 Token (18位小数)
 		ChallengeStakeAmount:    "100000000000000000000",  // 100 Token
 		InitialWitnessCount:     10,
 		ExpandMultiplier:        2,
-		MaxRounds:               5,
 		WitnessRewardRatio:      0.5,
 		SlashRatio:              1.0,
 		ChallengerReward:        0.2,
@@ -173,12 +173,12 @@ func IsSupportedChain(chainID string) bool {
 
 // VoteStats 投票统计
 type VoteStats struct {
-	Total      uint32  // 总票数
-	Pass       uint32  // 通过票
-	Fail       uint32  // 拒绝票
-	Abstain    uint32  // 弃票
-	PassRatio  float64 // 通过率
-	FailRatio  float64 // 拒绝率
+	Total        uint32  // 总票数
+	Pass         uint32  // 通过票
+	Fail         uint32  // 拒绝票
+	Abstain      uint32  // 弃票
+	PassRatio    float64 // 通过率
+	FailRatio    float64 // 拒绝率
 	AbstainRatio float64 // 弃票率
 }
 
@@ -202,11 +202,11 @@ func CalculateVoteStats(pass, fail, abstain, total uint32) *VoteStats {
 type ConsensusResult int
 
 const (
-	ConsensusNone       ConsensusResult = iota // 未达成共识
-	ConsensusPass                              // 共识通过
-	ConsensusFail                              // 共识拒绝
-	ConsensusExpand                            // 需要扩大范围
-	ConsensusConflict                          // 矛盾结果（自动挑战）
+	ConsensusNone     ConsensusResult = iota // 未达成共识
+	ConsensusPass                            // 共识通过
+	ConsensusFail                            // 共识拒绝
+	ConsensusExpand                          // 需要扩大范围
+	ConsensusConflict                        // 矛盾结果（自动挑战）
 )
 
 // DetermineConsensus 判断共识结果
@@ -245,23 +245,23 @@ func DetermineConsensus(stats *VoteStats, threshold uint32, isDeadline bool) Con
 type EventType string
 
 const (
-	EventWitnessStaked       EventType = "witness_staked"
-	EventWitnessUnstaking    EventType = "witness_unstaking"
-	EventWitnessExited       EventType = "witness_exited"
-	EventWitnessSlashed      EventType = "witness_slashed"
-	EventRechargeRequested   EventType = "recharge_requested"
-	EventVoteReceived        EventType = "vote_received"
-	EventConsensusReached    EventType = "consensus_reached"
-	EventConsensusFailed     EventType = "consensus_failed"
-	EventScopeExpanded       EventType = "scope_expanded"
+	EventWitnessStaked        EventType = "witness_staked"
+	EventWitnessUnstaking     EventType = "witness_unstaking"
+	EventWitnessExited        EventType = "witness_exited"
+	EventWitnessSlashed       EventType = "witness_slashed"
+	EventRechargeRequested    EventType = "recharge_requested"
+	EventVoteReceived         EventType = "vote_received"
+	EventConsensusReached     EventType = "consensus_reached"
+	EventConsensusFailed      EventType = "consensus_failed"
+	EventScopeExpanded        EventType = "scope_expanded"
 	EventChallengePeriodStart EventType = "challenge_period_start"
-	EventChallengeInitiated  EventType = "challenge_initiated"
-	EventArbitrationStart    EventType = "arbitration_start"
-	EventArbitrationVote     EventType = "arbitration_vote"
-	EventChallengeResolved   EventType = "challenge_resolved"
-	EventRechargeFinalized   EventType = "recharge_finalized"
-	EventRechargeRejected    EventType = "recharge_rejected"
-	EventRechargeShelved     EventType = "recharge_shelved"
+	EventChallengeInitiated   EventType = "challenge_initiated"
+	EventArbitrationStart     EventType = "arbitration_start"
+	EventArbitrationVote      EventType = "arbitration_vote"
+	EventChallengeResolved    EventType = "challenge_resolved"
+	EventRechargeFinalized    EventType = "recharge_finalized"
+	EventRechargeRejected     EventType = "recharge_rejected"
+	EventRechargeShelved      EventType = "recharge_shelved"
 )
 
 // Event 事件
@@ -272,4 +272,3 @@ type Event struct {
 	Height    uint64
 	Timestamp int64
 }
-
