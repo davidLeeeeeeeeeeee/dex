@@ -5,6 +5,7 @@ import (
 	"dex/matching"
 	"dex/pb"
 	"dex/utils"
+	"dex/witness"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,17 +16,23 @@ import (
 
 // Executor VM执行器
 type Executor struct {
-	mu     sync.RWMutex
-	DB     DBManager
-	Reg    *HandlerRegistry
-	Cache  SpecExecCache
-	KFn    KindFn
-	ReadFn ReadThroughFn
-	ScanFn ScanFn
+	mu             sync.RWMutex
+	DB             DBManager
+	Reg            *HandlerRegistry
+	Cache          SpecExecCache
+	KFn            KindFn
+	ReadFn         ReadThroughFn
+	ScanFn         ScanFn
+	WitnessService *witness.Service // 见证者服务（纯内存计算模块）
 }
 
 // 创建新的执行器
 func NewExecutor(db DBManager, reg *HandlerRegistry, cache SpecExecCache) *Executor {
+	return NewExecutorWithWitness(db, reg, cache, nil)
+}
+
+// NewExecutorWithWitness 创建带见证者服务的执行器
+func NewExecutorWithWitness(db DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessConfig *witness.Config) *Executor {
 	if reg == nil {
 		reg = NewHandlerRegistry()
 	}
@@ -33,11 +40,16 @@ func NewExecutor(db DBManager, reg *HandlerRegistry, cache SpecExecCache) *Execu
 		cache = NewSpecExecLRU(1024)
 	}
 
+	// 创建见证者服务
+	witnessSvc := witness.NewService(witnessConfig)
+	_ = witnessSvc.Start()
+
 	executor := &Executor{
-		DB:    db,
-		Reg:   reg,
-		Cache: cache,
-		KFn:   DefaultKindFn,
+		DB:             db,
+		Reg:            reg,
+		Cache:          cache,
+		KFn:            DefaultKindFn,
+		WitnessService: witnessSvc,
 	}
 
 	// 设置ReadFn
@@ -51,6 +63,20 @@ func NewExecutor(db DBManager, reg *HandlerRegistry, cache SpecExecCache) *Execu
 	}
 
 	return executor
+}
+
+// SetWitnessService 设置见证者服务（用于测试或自定义配置）
+func (x *Executor) SetWitnessService(svc *witness.Service) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	x.WitnessService = svc
+}
+
+// GetWitnessService 获取见证者服务
+func (x *Executor) GetWitnessService() *witness.Service {
+	x.mu.RLock()
+	defer x.mu.RUnlock()
+	return x.WitnessService
 }
 
 // SetKindFn 设置Kind提取函数
@@ -119,6 +145,11 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 		// Step 4: 如果是 OrderTxHandler，注入 pairBooks
 		if orderHandler, ok := h.(*OrderTxHandler); ok {
 			orderHandler.SetOrderBooks(pairBooks)
+		}
+
+		// Step 5: 如果是 WitnessServiceAware handler，注入 WitnessService
+		if witnessAware, ok := h.(WitnessServiceAware); ok && x.WitnessService != nil {
+			witnessAware.SetWitnessService(x.WitnessService)
 		}
 
 		// 创建快照点，用于失败时回滚

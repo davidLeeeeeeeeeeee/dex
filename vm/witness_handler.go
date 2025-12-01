@@ -5,16 +5,31 @@ package vm
 import (
 	"dex/keys"
 	"dex/pb"
+	"dex/witness"
 	"fmt"
 	"math/big"
 
+	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
 )
+
+// WitnessServiceAware 见证者服务感知接口
+// 实现此接口的 handler 可以接收 WitnessService 的引用
+type WitnessServiceAware interface {
+	SetWitnessService(svc *witness.Service)
+}
 
 // ==================== WitnessStakeTxHandler ====================
 
 // WitnessStakeTxHandler 见证者质押/解质押交易处理器
-type WitnessStakeTxHandler struct{}
+type WitnessStakeTxHandler struct {
+	witnessSvc *witness.Service
+}
+
+// SetWitnessService 设置见证者服务
+func (h *WitnessStakeTxHandler) SetWitnessService(svc *witness.Service) {
+	h.witnessSvc = svc
+}
 
 func (h *WitnessStakeTxHandler) Kind() string {
 	return "witness_stake"
@@ -78,6 +93,14 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 	}
 
 	if stake.Op == pb.OrderOp_ADD {
+		// 使用 WitnessService 进行验证（如果可用）
+		if h.witnessSvc != nil {
+			amountDec, _ := decimal.NewFromString(stake.Amount)
+			if _, err := h.witnessSvc.ProcessStake(address, amountDec); err != nil {
+				return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: err.Error()}, err
+			}
+		}
+
 		balance, _ := new(big.Int).SetString(fbBalance.Balance, 10)
 		if balance == nil {
 			balance = big.NewInt(0)
@@ -101,6 +124,13 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		witnessInfo.StakeAmount = new(big.Int).Add(currentStake, amount).String()
 		witnessInfo.Status = pb.WitnessStatus_WITNESS_ACTIVE
 	} else {
+		// 使用 WitnessService 进行验证（如果可用）
+		if h.witnessSvc != nil {
+			if _, err := h.witnessSvc.ProcessUnstake(address); err != nil {
+				return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: err.Error()}, err
+			}
+		}
+
 		if witnessInfo.Status != pb.WitnessStatus_WITNESS_ACTIVE {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "witness is not active"}, fmt.Errorf("witness is not active")
 		}
@@ -127,6 +157,11 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 	historyData, _ := proto.Marshal(stake)
 	ws = append(ws, WriteOp{Key: historyKey, Value: historyData, Del: false, SyncStateDB: false, Category: "history"})
 
+	// 同步到 WitnessService 内存状态
+	if h.witnessSvc != nil {
+		h.witnessSvc.LoadWitness(&witnessInfo)
+	}
+
 	return ws, &Receipt{TxID: stake.Base.TxId, Status: "SUCCEED", WriteCount: len(ws)}, nil
 }
 
@@ -137,7 +172,14 @@ func (h *WitnessStakeTxHandler) Apply(tx *pb.AnyTx) error {
 // ==================== WitnessRequestTxHandler ====================
 
 // WitnessRequestTxHandler 入账见证请求处理器
-type WitnessRequestTxHandler struct{}
+type WitnessRequestTxHandler struct {
+	witnessSvc *witness.Service
+}
+
+// SetWitnessService 设置见证者服务
+func (h *WitnessRequestTxHandler) SetWitnessService(svc *witness.Service) {
+	h.witnessSvc = svc
+}
 
 func (h *WitnessRequestTxHandler) Kind() string {
 	return "witness_request"
@@ -175,16 +217,29 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "token not found"}, fmt.Errorf("token not found")
 	}
 
-	rechargeRequest := &pb.RechargeRequest{
-		RequestId:        requestID,
-		NativeChain:      request.NativeChain,
-		NativeTxHash:     request.NativeTxHash,
-		TokenAddress:     request.TokenAddress,
-		Amount:           request.Amount,
-		ReceiverAddress:  request.ReceiverAddress,
-		RequesterAddress: request.Base.FromAddress,
-		Status:           pb.RechargeRequestStatus_RECHARGE_PENDING,
-		CreateHeight:     request.Base.ExecutedHeight,
+	var rechargeRequest *pb.RechargeRequest
+
+	// 使用 WitnessService 创建请求（包含见证者选择）
+	if h.witnessSvc != nil {
+		var err error
+		rechargeRequest, err = h.witnessSvc.CreateRechargeRequest(request)
+		if err != nil {
+			return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: err.Error()}, err
+		}
+	} else {
+		// 降级模式：不使用 WitnessService
+		rechargeRequest = &pb.RechargeRequest{
+			RequestId:        requestID,
+			NativeChain:      request.NativeChain,
+			NativeTxHash:     request.NativeTxHash,
+			TokenAddress:     request.TokenAddress,
+			Amount:           request.Amount,
+			ReceiverAddress:  request.ReceiverAddress,
+			RequesterAddress: request.Base.FromAddress,
+			Status:           pb.RechargeRequestStatus_RECHARGE_PENDING,
+			CreateHeight:     request.Base.ExecutedHeight,
+			RechargeFee:      request.RechargeFee,
+		}
 	}
 
 	requestData, err := proto.Marshal(rechargeRequest)
@@ -204,7 +259,14 @@ func (h *WitnessRequestTxHandler) Apply(tx *pb.AnyTx) error {
 // ==================== WitnessVoteTxHandler ====================
 
 // WitnessVoteTxHandler 见证投票处理器
-type WitnessVoteTxHandler struct{}
+type WitnessVoteTxHandler struct {
+	witnessSvc *witness.Service
+}
+
+// SetWitnessService 设置见证者服务
+func (h *WitnessVoteTxHandler) SetWitnessService(svc *witness.Service) {
+	h.witnessSvc = svc
+}
 
 func (h *WitnessVoteTxHandler) Kind() string {
 	return "witness_vote"
@@ -242,6 +304,13 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "duplicate vote"}, fmt.Errorf("duplicate vote")
 	}
 
+	// 使用 WitnessService 处理投票（如果可用）
+	if h.witnessSvc != nil {
+		if err := h.witnessSvc.ProcessVote(vote.Vote); err != nil {
+			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, err
+		}
+	}
+
 	voteData, err := proto.Marshal(vote.Vote)
 	if err != nil {
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "failed to marshal vote"}, err
@@ -274,7 +343,14 @@ func (h *WitnessVoteTxHandler) Apply(tx *pb.AnyTx) error {
 // ==================== WitnessChallengeTxHandler ====================
 
 // WitnessChallengeTxHandler 挑战交易处理器
-type WitnessChallengeTxHandler struct{}
+type WitnessChallengeTxHandler struct {
+	witnessSvc *witness.Service
+}
+
+// SetWitnessService 设置见证者服务
+func (h *WitnessChallengeTxHandler) SetWitnessService(svc *witness.Service) {
+	h.witnessSvc = svc
+}
 
 func (h *WitnessChallengeTxHandler) Kind() string {
 	return "witness_challenge"
@@ -391,7 +467,14 @@ func (h *WitnessChallengeTxHandler) Apply(tx *pb.AnyTx) error {
 // ==================== ArbitrationVoteTxHandler ====================
 
 // ArbitrationVoteTxHandler 仲裁投票处理器
-type ArbitrationVoteTxHandler struct{}
+type ArbitrationVoteTxHandler struct {
+	witnessSvc *witness.Service
+}
+
+// SetWitnessService 设置见证者服务
+func (h *ArbitrationVoteTxHandler) SetWitnessService(svc *witness.Service) {
+	h.witnessSvc = svc
+}
 
 func (h *ArbitrationVoteTxHandler) Kind() string {
 	return "arbitration_vote"
@@ -459,7 +542,14 @@ func (h *ArbitrationVoteTxHandler) Apply(tx *pb.AnyTx) error {
 // ==================== WitnessClaimRewardTxHandler ====================
 
 // WitnessClaimRewardTxHandler 领取奖励处理器
-type WitnessClaimRewardTxHandler struct{}
+type WitnessClaimRewardTxHandler struct {
+	witnessSvc *witness.Service
+}
+
+// SetWitnessService 设置见证者服务
+func (h *WitnessClaimRewardTxHandler) SetWitnessService(svc *witness.Service) {
+	h.witnessSvc = svc
+}
 
 func (h *WitnessClaimRewardTxHandler) Kind() string {
 	return "witness_claim_reward"
