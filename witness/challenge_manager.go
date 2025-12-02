@@ -119,6 +119,7 @@ func (cm *ChallengeManager) CreateChallenge(
 		Arbitrators:        arbitrators,
 		ConsensusThreshold: GetConsensusThreshold(0),
 		Finalized:          false,
+		Status:             pb.ChallengeStatus_CHALLENGE_ACTIVE,
 	}
 
 	// 保存到缓存
@@ -301,6 +302,7 @@ func (cm *ChallengeManager) FinalizeChallenge(
 
 	record.ChallengeSuccess = success
 	record.Finalized = true
+	record.Status = pb.ChallengeStatus_CHALLENGE_FINALIZED
 	cm.challenges[challengeID] = record
 
 	// 发送事件
@@ -324,8 +326,8 @@ func (cm *ChallengeManager) ShelveChallenge(challengeID string, height uint64) e
 		return ErrChallengeNotFound
 	}
 
-	// 标记为搁置状态（通过特殊的轮次值表示）
-	record.ArbitrationRound = 0xFFFFFFFF // 特殊值表示搁置
+	// 标记为搁置状态
+	record.Status = pb.ChallengeStatus_CHALLENGE_SHELVED
 
 	cm.challenges[challengeID] = record
 
@@ -339,7 +341,7 @@ func (cm *ChallengeManager) GetShelvedChallenges() []*pb.ChallengeRecord {
 
 	result := make([]*pb.ChallengeRecord, 0)
 	for _, record := range cm.challenges {
-		if record.ArbitrationRound == 0xFFFFFFFF && !record.Finalized {
+		if record.Status == pb.ChallengeStatus_CHALLENGE_SHELVED && !record.Finalized {
 			result = append(result, record)
 		}
 	}
@@ -360,7 +362,8 @@ func (cm *ChallengeManager) RetryChallenge(
 		return ErrChallengeNotFound
 	}
 
-	// 重置轮次
+	// 重置状态为活跃
+	record.Status = pb.ChallengeStatus_CHALLENGE_ACTIVE
 	record.ArbitrationRound = 0
 	record.Arbitrators = newArbitrators
 	record.ConsensusThreshold = GetConsensusThreshold(0)

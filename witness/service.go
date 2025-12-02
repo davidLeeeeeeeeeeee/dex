@@ -283,12 +283,6 @@ func (s *Service) retryShelvedChallenges() {
 
 		newArbitrators, err := s.selector.SelectArbitrators(
 			challenge.ChallengeId,
-			0, // 重置轮次？或者继续？如果重置，可能选到之前的人。
-			// 如果之前的人没达成共识，选他们没用。
-			// 应该是继续扩大，或者在全员参与的情况下，等待新成员加入。
-			// 如果是全员参与仍无共识（Shelved），那么只有当有新成员加入时才有意义。
-			// 所以我们应该检查是否有新成员。
-			// 简单起见，我们尝试 SelectArbitrators，如果能选出人（说明有新人或之前没选上的人），就重试。
 			challenge.ArbitrationRound+1, // 继续增加轮次
 			candidates,
 			excludeList,
@@ -879,4 +873,46 @@ func (s *Service) LoadChallenge(record *pb.ChallengeRecord) {
 // GetActiveWitnesses 获取活跃见证者列表
 func (s *Service) GetActiveWitnesses() []*pb.WitnessInfo {
 	return s.stakeManager.GetActiveWitnesses()
+}
+
+// ==================== 挑战管理代理方法 ====================
+
+// CreateChallenge 创建挑战（代理到 ChallengeManager）
+func (s *Service) CreateChallenge(
+	challengeID string,
+	requestID string,
+	challengerAddr string,
+	stakeAmount string,
+	reason string,
+	height uint64,
+	arbitrators []string,
+) (*pb.ChallengeRecord, error) {
+	return s.challengeManager.CreateChallenge(
+		challengeID, requestID, challengerAddr, stakeAmount, reason, height, arbitrators,
+	)
+}
+
+// GetChallenge 获取挑战记录（代理到 ChallengeManager）
+func (s *Service) GetChallenge(challengeID string) (*pb.ChallengeRecord, error) {
+	return s.challengeManager.GetChallenge(challengeID)
+}
+
+// ShelveChallenge 搁置挑战（代理到 ChallengeManager）
+func (s *Service) ShelveChallenge(challengeID string, height uint64) error {
+	return s.challengeManager.ShelveChallenge(challengeID, height)
+}
+
+// GetShelvedChallenges 获取所有搁置的挑战（代理到 ChallengeManager）
+func (s *Service) GetShelvedChallenges() []*pb.ChallengeRecord {
+	return s.challengeManager.GetShelvedChallenges()
+}
+
+// RetryChallenge 重试搁置的挑战（代理到 ChallengeManager）
+func (s *Service) RetryChallenge(challengeID string, newArbitrators []string, height uint64) error {
+	return s.challengeManager.RetryChallenge(challengeID, newArbitrators, height)
+}
+
+// FinalizeChallenge 完成挑战（代理到 ChallengeManager）
+func (s *Service) FinalizeChallenge(challengeID string, success bool, height uint64) (*pb.ChallengeRecord, error) {
+	return s.challengeManager.FinalizeChallenge(challengeID, success, height)
 }

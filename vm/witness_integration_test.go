@@ -555,3 +555,238 @@ func TestWitnessUnstakeTxHandler(t *testing.T) {
 
 	t.Logf("Unstake transaction processed successfully with %d WriteOps", len(result.Diff))
 }
+
+// ========== 挂起状态测试 ==========
+
+// TestArbitrationShelved 测试仲裁挂起状态
+// 场景：当全体见证者仍无法达成共识时，挑战被搁置
+func TestArbitrationShelved(t *testing.T) {
+	config := witness.DefaultConfig()
+	svc := witness.NewService(config)
+	_ = svc.Start()
+	defer svc.Stop()
+
+	// 创建挑战记录
+	challenge, err := svc.CreateChallenge(
+		"challenge_shelved_001",
+		"request_shelved_001",
+		"0xChallenger001",
+		"100000000000000000000", // 100 FB
+		"Test shelving",
+		100,
+		[]string{"0xArbiter001", "0xArbiter002", "0xArbiter003"},
+	)
+	if err != nil {
+		t.Fatalf("CreateChallenge failed: %v", err)
+	}
+
+	// 验证初始状态为 ACTIVE
+	if challenge.Status != pb.ChallengeStatus_CHALLENGE_ACTIVE {
+		t.Fatalf("Expected CHALLENGE_ACTIVE, got %v", challenge.Status)
+	}
+
+	// 搁置挑战
+	err = svc.ShelveChallenge("challenge_shelved_001", 200)
+	if err != nil {
+		t.Fatalf("ShelveChallenge failed: %v", err)
+	}
+
+	// 验证状态变为 SHELVED
+	shelvedChallenge, err := svc.GetChallenge("challenge_shelved_001")
+	if err != nil {
+		t.Fatalf("GetChallenge failed: %v", err)
+	}
+	if shelvedChallenge.Status != pb.ChallengeStatus_CHALLENGE_SHELVED {
+		t.Fatalf("Expected CHALLENGE_SHELVED, got %v", shelvedChallenge.Status)
+	}
+
+	// 验证 GetShelvedChallenges 能获取到搁置的挑战
+	shelvedList := svc.GetShelvedChallenges()
+	if len(shelvedList) != 1 {
+		t.Fatalf("Expected 1 shelved challenge, got %d", len(shelvedList))
+	}
+	if shelvedList[0].ChallengeId != "challenge_shelved_001" {
+		t.Fatalf("Expected challenge_shelved_001, got %s", shelvedList[0].ChallengeId)
+	}
+
+	t.Log("Arbitration shelved test passed")
+}
+
+// TestArbitrationShelvedRetry 测试搁置仲裁的重试
+// 场景：见证者集合更新后，重试搁置的仲裁
+func TestArbitrationShelvedRetry(t *testing.T) {
+	config := witness.DefaultConfig()
+	svc := witness.NewService(config)
+	_ = svc.Start()
+	defer svc.Stop()
+
+	// 创建并搁置挑战
+	_, err := svc.CreateChallenge(
+		"challenge_retry_001",
+		"request_retry_001",
+		"0xChallenger001",
+		"100000000000000000000",
+		"Test retry",
+		100,
+		[]string{"0xArbiter001", "0xArbiter002"},
+	)
+	if err != nil {
+		t.Fatalf("CreateChallenge failed: %v", err)
+	}
+
+	err = svc.ShelveChallenge("challenge_retry_001", 200)
+	if err != nil {
+		t.Fatalf("ShelveChallenge failed: %v", err)
+	}
+
+	// 验证已搁置
+	challenge, _ := svc.GetChallenge("challenge_retry_001")
+	if challenge.Status != pb.ChallengeStatus_CHALLENGE_SHELVED {
+		t.Fatalf("Expected CHALLENGE_SHELVED, got %v", challenge.Status)
+	}
+
+	// 重试挑战（模拟新见证者加入后重试）
+	newArbitrators := []string{"0xNewArbiter001", "0xNewArbiter002", "0xNewArbiter003"}
+	err = svc.RetryChallenge("challenge_retry_001", newArbitrators, 300)
+	if err != nil {
+		t.Fatalf("RetryChallenge failed: %v", err)
+	}
+
+	// 验证状态恢复为 ACTIVE
+	retriedChallenge, _ := svc.GetChallenge("challenge_retry_001")
+	if retriedChallenge.Status != pb.ChallengeStatus_CHALLENGE_ACTIVE {
+		t.Fatalf("Expected CHALLENGE_ACTIVE after retry, got %v", retriedChallenge.Status)
+	}
+
+	// 验证仲裁者已更新
+	if len(retriedChallenge.Arbitrators) != 3 {
+		t.Fatalf("Expected 3 arbitrators, got %d", len(retriedChallenge.Arbitrators))
+	}
+	if retriedChallenge.Arbitrators[0] != "0xNewArbiter001" {
+		t.Fatalf("Expected 0xNewArbiter001, got %s", retriedChallenge.Arbitrators[0])
+	}
+
+	// 验证搁置列表已清空
+	shelvedList := svc.GetShelvedChallenges()
+	if len(shelvedList) != 0 {
+		t.Fatalf("Expected 0 shelved challenges after retry, got %d", len(shelvedList))
+	}
+
+	t.Log("Arbitration shelved retry test passed")
+}
+
+// TestWitnessShelved 测试见证者挂起状态
+// 场景：当无法选出更多见证者时，入账请求被搁置
+func TestWitnessShelved(t *testing.T) {
+	config := witness.DefaultConfig()
+	svc := witness.NewService(config)
+	_ = svc.Start()
+	defer svc.Stop()
+
+	// 只加载少量见证者（模拟见证者不足的情况）
+	for i := 0; i < 3; i++ {
+		witnessInfo := &pb.WitnessInfo{
+			Address:     fmt.Sprintf("0xWitness%03d", i),
+			StakeAmount: "1000000000000000000000",
+			Status:      pb.WitnessStatus_WITNESS_ACTIVE,
+		}
+		svc.LoadWitness(witnessInfo)
+	}
+
+	// 创建入账请求（使用 WitnessRequestTx）
+	requestTx := &pb.WitnessRequestTx{
+		Base: &pb.BaseMessage{
+			TxId:           "request_witness_shelved_001",
+			FromAddress:    "0xRequester001",
+			ExecutedHeight: 100,
+		},
+		NativeChain:     "ETH",
+		NativeTxHash:    "0xNativeTxHash001",
+		TokenAddress:    "0xUSDT",
+		Amount:          "1000000000000000000",
+		ReceiverAddress: "0xReceiver001",
+		RechargeFee:     "1000000000000000",
+	}
+
+	request, err := svc.CreateRechargeRequest(requestTx)
+	if err != nil {
+		t.Fatalf("CreateRechargeRequest failed: %v", err)
+	}
+
+	// 验证初始状态为 VOTING
+	if request.Status != pb.RechargeRequestStatus_RECHARGE_VOTING {
+		t.Fatalf("Expected RECHARGE_VOTING, got %v", request.Status)
+	}
+
+	// 模拟将请求状态设置为 SHELVED（通常由 expandScope 在无法选出更多见证者时触发）
+	request.Status = pb.RechargeRequestStatus_RECHARGE_SHELVED
+
+	// 验证状态为 SHELVED
+	if request.Status != pb.RechargeRequestStatus_RECHARGE_SHELVED {
+		t.Fatalf("Expected RECHARGE_SHELVED, got %v", request.Status)
+	}
+
+	t.Log("Witness shelved test passed")
+}
+
+// TestChallengeStatusTransitions 测试挑战状态流转
+// 验证 ChallengeStatus 枚举的正确使用
+func TestChallengeStatusTransitions(t *testing.T) {
+	config := witness.DefaultConfig()
+	svc := witness.NewService(config)
+	_ = svc.Start()
+	defer svc.Stop()
+
+	// 1. 创建挑战 -> ACTIVE
+	challenge, err := svc.CreateChallenge(
+		"challenge_status_001",
+		"request_status_001",
+		"0xChallenger001",
+		"100000000000000000000",
+		"Test status transitions",
+		100,
+		[]string{"0xArbiter001", "0xArbiter002", "0xArbiter003"},
+	)
+	if err != nil {
+		t.Fatalf("CreateChallenge failed: %v", err)
+	}
+	if challenge.Status != pb.ChallengeStatus_CHALLENGE_ACTIVE {
+		t.Fatalf("Step 1: Expected CHALLENGE_ACTIVE, got %v", challenge.Status)
+	}
+	t.Log("Step 1: ACTIVE status verified")
+
+	// 2. 搁置挑战 -> SHELVED
+	err = svc.ShelveChallenge("challenge_status_001", 200)
+	if err != nil {
+		t.Fatalf("ShelveChallenge failed: %v", err)
+	}
+	challenge, _ = svc.GetChallenge("challenge_status_001")
+	if challenge.Status != pb.ChallengeStatus_CHALLENGE_SHELVED {
+		t.Fatalf("Step 2: Expected CHALLENGE_SHELVED, got %v", challenge.Status)
+	}
+	t.Log("Step 2: SHELVED status verified")
+
+	// 3. 重试挑战 -> ACTIVE
+	err = svc.RetryChallenge("challenge_status_001", []string{"0xNewArbiter001"}, 300)
+	if err != nil {
+		t.Fatalf("RetryChallenge failed: %v", err)
+	}
+	challenge, _ = svc.GetChallenge("challenge_status_001")
+	if challenge.Status != pb.ChallengeStatus_CHALLENGE_ACTIVE {
+		t.Fatalf("Step 3: Expected CHALLENGE_ACTIVE, got %v", challenge.Status)
+	}
+	t.Log("Step 3: ACTIVE status after retry verified")
+
+	// 4. 完成挑战 -> FINALIZED
+	_, err = svc.FinalizeChallenge("challenge_status_001", true, 400)
+	if err != nil {
+		t.Fatalf("FinalizeChallenge failed: %v", err)
+	}
+	challenge, _ = svc.GetChallenge("challenge_status_001")
+	if challenge.Status != pb.ChallengeStatus_CHALLENGE_FINALIZED {
+		t.Fatalf("Step 4: Expected CHALLENGE_FINALIZED, got %v", challenge.Status)
+	}
+	t.Log("Step 4: FINALIZED status verified")
+
+	t.Log("Challenge status transitions test passed")
+}

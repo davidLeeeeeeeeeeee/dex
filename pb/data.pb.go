@@ -296,6 +296,56 @@ func (RechargeRequestStatus) EnumDescriptor() ([]byte, []int) {
 	return file_pb_data_proto_rawDescGZIP(), []int{4}
 }
 
+// 挑战/仲裁状态
+type ChallengeStatus int32
+
+const (
+	ChallengeStatus_CHALLENGE_ACTIVE    ChallengeStatus = 0 // 仲裁进行中
+	ChallengeStatus_CHALLENGE_SHELVED   ChallengeStatus = 1 // 已搁置（等待重试）
+	ChallengeStatus_CHALLENGE_FINALIZED ChallengeStatus = 2 // 已完成
+)
+
+// Enum value maps for ChallengeStatus.
+var (
+	ChallengeStatus_name = map[int32]string{
+		0: "CHALLENGE_ACTIVE",
+		1: "CHALLENGE_SHELVED",
+		2: "CHALLENGE_FINALIZED",
+	}
+	ChallengeStatus_value = map[string]int32{
+		"CHALLENGE_ACTIVE":    0,
+		"CHALLENGE_SHELVED":   1,
+		"CHALLENGE_FINALIZED": 2,
+	}
+)
+
+func (x ChallengeStatus) Enum() *ChallengeStatus {
+	p := new(ChallengeStatus)
+	*p = x
+	return p
+}
+
+func (x ChallengeStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ChallengeStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_data_proto_enumTypes[5].Descriptor()
+}
+
+func (ChallengeStatus) Type() protoreflect.EnumType {
+	return &file_pb_data_proto_enumTypes[5]
+}
+
+func (x ChallengeStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ChallengeStatus.Descriptor instead.
+func (ChallengeStatus) EnumDescriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{5}
+}
+
 // --------------------- Token & Registry ---------------------
 type Token struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -3560,6 +3610,7 @@ type ChallengeRecord struct {
 	ChallengeSuccess   bool                   `protobuf:"varint,13,opt,name=challenge_success,json=challengeSuccess,proto3" json:"challenge_success,omitempty"`       // 挑战是否成功
 	Finalized          bool                   `protobuf:"varint,14,opt,name=finalized,proto3" json:"finalized,omitempty"`                                             // 是否已完成
 	ConsensusThreshold uint32                 `protobuf:"varint,15,opt,name=consensus_threshold,json=consensusThreshold,proto3" json:"consensus_threshold,omitempty"` // 当前共识阈值（80->70->60->50）
+	Status             ChallengeStatus        `protobuf:"varint,16,opt,name=status,proto3,enum=pb.ChallengeStatus" json:"status,omitempty"`                           // 挑战状态
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -3697,6 +3748,13 @@ func (x *ChallengeRecord) GetConsensusThreshold() uint32 {
 		return x.ConsensusThreshold
 	}
 	return 0
+}
+
+func (x *ChallengeRecord) GetStatus() ChallengeStatus {
+	if x != nil {
+		return x.Status
+	}
+	return ChallengeStatus_CHALLENGE_ACTIVE
 }
 
 // 仲裁投票交易
@@ -4214,7 +4272,7 @@ const file_pb_data_proto_rawDesc = "" +
 	"request_id\x18\x02 \x01(\tR\trequestId\x12!\n" +
 	"\fstake_amount\x18\x03 \x01(\tR\vstakeAmount\x12\x16\n" +
 	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x1a\n" +
-	"\bevidence\x18\x05 \x01(\tR\bevidence\"\xd2\x04\n" +
+	"\bevidence\x18\x05 \x01(\tR\bevidence\"\xff\x04\n" +
 	"\x0fChallengeRecord\x12!\n" +
 	"\fchallenge_id\x18\x01 \x01(\tR\vchallengeId\x12\x1d\n" +
 	"\n" +
@@ -4234,7 +4292,8 @@ const file_pb_data_proto_rawDesc = "" +
 	"fail_count\x18\f \x01(\rR\tfailCount\x12+\n" +
 	"\x11challenge_success\x18\r \x01(\bR\x10challengeSuccess\x12\x1c\n" +
 	"\tfinalized\x18\x0e \x01(\bR\tfinalized\x12/\n" +
-	"\x13consensus_threshold\x18\x0f \x01(\rR\x12consensusThreshold\"\x80\x01\n" +
+	"\x13consensus_threshold\x18\x0f \x01(\rR\x12consensusThreshold\x12+\n" +
+	"\x06status\x18\x10 \x01(\x0e2\x13.pb.ChallengeStatusR\x06status\"\x80\x01\n" +
 	"\x11ArbitrationVoteTx\x12#\n" +
 	"\x04base\x18\x01 \x01(\v2\x0f.pb.BaseMessageR\x04base\x12!\n" +
 	"\fchallenge_id\x18\x02 \x01(\tR\vchallengeId\x12#\n" +
@@ -4284,7 +4343,11 @@ const file_pb_data_proto_rawDesc = "" +
 	"\x14RECHARGE_ARBITRATION\x10\x06\x12\x16\n" +
 	"\x12RECHARGE_FINALIZED\x10\a\x12\x15\n" +
 	"\x11RECHARGE_REJECTED\x10\b\x12\x14\n" +
-	"\x10RECHARGE_SHELVED\x10\tB\vZ\tdex/pb;pbb\x06proto3"
+	"\x10RECHARGE_SHELVED\x10\t*W\n" +
+	"\x0fChallengeStatus\x12\x14\n" +
+	"\x10CHALLENGE_ACTIVE\x10\x00\x12\x15\n" +
+	"\x11CHALLENGE_SHELVED\x10\x01\x12\x17\n" +
+	"\x13CHALLENGE_FINALIZED\x10\x02B\vZ\tdex/pb;pbb\x06proto3"
 
 var (
 	file_pb_data_proto_rawDescOnce sync.Once
@@ -4298,7 +4361,7 @@ func file_pb_data_proto_rawDescGZIP() []byte {
 	return file_pb_data_proto_rawDescData
 }
 
-var file_pb_data_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_pb_data_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
 var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
 var file_pb_data_proto_goTypes = []any{
 	(OrderOp)(0),                     // 0: pb.OrderOp
@@ -4306,105 +4369,107 @@ var file_pb_data_proto_goTypes = []any{
 	(WitnessStatus)(0),               // 2: pb.WitnessStatus
 	(WitnessVoteType)(0),             // 3: pb.WitnessVoteType
 	(RechargeRequestStatus)(0),       // 4: pb.RechargeRequestStatus
-	(*Token)(nil),                    // 5: pb.Token
-	(*TokenRegistry)(nil),            // 6: pb.TokenRegistry
-	(*BaseMessage)(nil),              // 7: pb.BaseMessage
-	(*Account)(nil),                  // 8: pb.Account
-	(*TokenBalance)(nil),             // 9: pb.TokenBalance
-	(*Block)(nil),                    // 10: pb.Block
-	(*RewordInfo)(nil),               // 11: pb.RewordInfo
-	(*OrderPriceIndex)(nil),          // 12: pb.OrderPriceIndex
-	(*CandidateIndex)(nil),           // 13: pb.CandidateIndex
-	(*IssueTokenTx)(nil),             // 14: pb.IssueTokenTx
-	(*FreezeTx)(nil),                 // 15: pb.FreezeTx
-	(*Transaction)(nil),              // 16: pb.Transaction
-	(*OrderTx)(nil),                  // 17: pb.OrderTx
-	(*CandidateTx)(nil),              // 18: pb.CandidateTx
-	(*MinerTx)(nil),                  // 19: pb.MinerTx
-	(*AnyTx)(nil),                    // 20: pb.AnyTx
-	(*NodeInfo)(nil),                 // 21: pb.NodeInfo
-	(*NodeList)(nil),                 // 22: pb.NodeList
-	(*ClientInfo)(nil),               // 23: pb.ClientInfo
-	(*HandshakeRequest)(nil),         // 24: pb.HandshakeRequest
-	(*HandshakeResponse)(nil),        // 25: pb.HandshakeResponse
-	(*StatusRequest)(nil),            // 26: pb.StatusRequest
-	(*StatusResponse)(nil),           // 27: pb.StatusResponse
-	(*GetData)(nil),                  // 28: pb.GetData
-	(*GetBlockRequest)(nil),          // 29: pb.GetBlockRequest
-	(*GetBlockResponse)(nil),         // 30: pb.GetBlockResponse
-	(*BatchGetShortTxRequest)(nil),   // 31: pb.BatchGetShortTxRequest
-	(*BatchGetShortTxResponse)(nil),  // 32: pb.BatchGetShortTxResponse
-	(*CheckPointInfo)(nil),           // 33: pb.CheckPointInfo
-	(*GetConsensusStateRequest)(nil), // 34: pb.GetConsensusStateRequest
-	(*PushQuery)(nil),                // 35: pb.PushQuery
-	(*PullQuery)(nil),                // 36: pb.PullQuery
-	(*Chits)(nil),                    // 37: pb.Chits
-	(*HeightResponse)(nil),           // 38: pb.HeightResponse
-	(*GetBlockByIDRequest)(nil),      // 39: pb.GetBlockByIDRequest
-	(*WitnessInfo)(nil),              // 40: pb.WitnessInfo
-	(*WitnessStakeTx)(nil),           // 41: pb.WitnessStakeTx
-	(*WitnessRequestTx)(nil),         // 42: pb.WitnessRequestTx
-	(*WitnessVote)(nil),              // 43: pb.WitnessVote
-	(*WitnessVoteTx)(nil),            // 44: pb.WitnessVoteTx
-	(*RechargeRequest)(nil),          // 45: pb.RechargeRequest
-	(*WitnessChallengeTx)(nil),       // 46: pb.WitnessChallengeTx
-	(*ChallengeRecord)(nil),          // 47: pb.ChallengeRecord
-	(*ArbitrationVoteTx)(nil),        // 48: pb.ArbitrationVoteTx
-	(*WitnessClaimRewardTx)(nil),     // 49: pb.WitnessClaimRewardTx
-	(*WitnessConfig)(nil),            // 50: pb.WitnessConfig
-	nil,                              // 51: pb.TokenRegistry.TokensEntry
-	nil,                              // 52: pb.Account.BalancesEntry
+	(ChallengeStatus)(0),             // 5: pb.ChallengeStatus
+	(*Token)(nil),                    // 6: pb.Token
+	(*TokenRegistry)(nil),            // 7: pb.TokenRegistry
+	(*BaseMessage)(nil),              // 8: pb.BaseMessage
+	(*Account)(nil),                  // 9: pb.Account
+	(*TokenBalance)(nil),             // 10: pb.TokenBalance
+	(*Block)(nil),                    // 11: pb.Block
+	(*RewordInfo)(nil),               // 12: pb.RewordInfo
+	(*OrderPriceIndex)(nil),          // 13: pb.OrderPriceIndex
+	(*CandidateIndex)(nil),           // 14: pb.CandidateIndex
+	(*IssueTokenTx)(nil),             // 15: pb.IssueTokenTx
+	(*FreezeTx)(nil),                 // 16: pb.FreezeTx
+	(*Transaction)(nil),              // 17: pb.Transaction
+	(*OrderTx)(nil),                  // 18: pb.OrderTx
+	(*CandidateTx)(nil),              // 19: pb.CandidateTx
+	(*MinerTx)(nil),                  // 20: pb.MinerTx
+	(*AnyTx)(nil),                    // 21: pb.AnyTx
+	(*NodeInfo)(nil),                 // 22: pb.NodeInfo
+	(*NodeList)(nil),                 // 23: pb.NodeList
+	(*ClientInfo)(nil),               // 24: pb.ClientInfo
+	(*HandshakeRequest)(nil),         // 25: pb.HandshakeRequest
+	(*HandshakeResponse)(nil),        // 26: pb.HandshakeResponse
+	(*StatusRequest)(nil),            // 27: pb.StatusRequest
+	(*StatusResponse)(nil),           // 28: pb.StatusResponse
+	(*GetData)(nil),                  // 29: pb.GetData
+	(*GetBlockRequest)(nil),          // 30: pb.GetBlockRequest
+	(*GetBlockResponse)(nil),         // 31: pb.GetBlockResponse
+	(*BatchGetShortTxRequest)(nil),   // 32: pb.BatchGetShortTxRequest
+	(*BatchGetShortTxResponse)(nil),  // 33: pb.BatchGetShortTxResponse
+	(*CheckPointInfo)(nil),           // 34: pb.CheckPointInfo
+	(*GetConsensusStateRequest)(nil), // 35: pb.GetConsensusStateRequest
+	(*PushQuery)(nil),                // 36: pb.PushQuery
+	(*PullQuery)(nil),                // 37: pb.PullQuery
+	(*Chits)(nil),                    // 38: pb.Chits
+	(*HeightResponse)(nil),           // 39: pb.HeightResponse
+	(*GetBlockByIDRequest)(nil),      // 40: pb.GetBlockByIDRequest
+	(*WitnessInfo)(nil),              // 41: pb.WitnessInfo
+	(*WitnessStakeTx)(nil),           // 42: pb.WitnessStakeTx
+	(*WitnessRequestTx)(nil),         // 43: pb.WitnessRequestTx
+	(*WitnessVote)(nil),              // 44: pb.WitnessVote
+	(*WitnessVoteTx)(nil),            // 45: pb.WitnessVoteTx
+	(*RechargeRequest)(nil),          // 46: pb.RechargeRequest
+	(*WitnessChallengeTx)(nil),       // 47: pb.WitnessChallengeTx
+	(*ChallengeRecord)(nil),          // 48: pb.ChallengeRecord
+	(*ArbitrationVoteTx)(nil),        // 49: pb.ArbitrationVoteTx
+	(*WitnessClaimRewardTx)(nil),     // 50: pb.WitnessClaimRewardTx
+	(*WitnessConfig)(nil),            // 51: pb.WitnessConfig
+	nil,                              // 52: pb.TokenRegistry.TokensEntry
+	nil,                              // 53: pb.Account.BalancesEntry
 }
 var file_pb_data_proto_depIdxs = []int32{
-	51, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
+	52, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
 	1,  // 1: pb.BaseMessage.status:type_name -> pb.Status
-	52, // 2: pb.Account.balances:type_name -> pb.Account.BalancesEntry
-	20, // 3: pb.Block.body:type_name -> pb.AnyTx
-	7,  // 4: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
-	7,  // 5: pb.FreezeTx.base:type_name -> pb.BaseMessage
-	7,  // 6: pb.Transaction.base:type_name -> pb.BaseMessage
-	7,  // 7: pb.OrderTx.base:type_name -> pb.BaseMessage
+	53, // 2: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	21, // 3: pb.Block.body:type_name -> pb.AnyTx
+	8,  // 4: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
+	8,  // 5: pb.FreezeTx.base:type_name -> pb.BaseMessage
+	8,  // 6: pb.Transaction.base:type_name -> pb.BaseMessage
+	8,  // 7: pb.OrderTx.base:type_name -> pb.BaseMessage
 	0,  // 8: pb.OrderTx.op:type_name -> pb.OrderOp
-	7,  // 9: pb.CandidateTx.base:type_name -> pb.BaseMessage
+	8,  // 9: pb.CandidateTx.base:type_name -> pb.BaseMessage
 	0,  // 10: pb.CandidateTx.op:type_name -> pb.OrderOp
-	7,  // 11: pb.MinerTx.base:type_name -> pb.BaseMessage
+	8,  // 11: pb.MinerTx.base:type_name -> pb.BaseMessage
 	0,  // 12: pb.MinerTx.op:type_name -> pb.OrderOp
-	14, // 13: pb.AnyTx.issue_token_tx:type_name -> pb.IssueTokenTx
-	15, // 14: pb.AnyTx.freeze_tx:type_name -> pb.FreezeTx
-	16, // 15: pb.AnyTx.transaction:type_name -> pb.Transaction
-	17, // 16: pb.AnyTx.order_tx:type_name -> pb.OrderTx
-	18, // 17: pb.AnyTx.candidate_tx:type_name -> pb.CandidateTx
-	19, // 18: pb.AnyTx.miner_tx:type_name -> pb.MinerTx
-	41, // 19: pb.AnyTx.witness_stake_tx:type_name -> pb.WitnessStakeTx
-	42, // 20: pb.AnyTx.witness_request_tx:type_name -> pb.WitnessRequestTx
-	44, // 21: pb.AnyTx.witness_vote_tx:type_name -> pb.WitnessVoteTx
-	46, // 22: pb.AnyTx.witness_challenge_tx:type_name -> pb.WitnessChallengeTx
-	48, // 23: pb.AnyTx.arbitration_vote_tx:type_name -> pb.ArbitrationVoteTx
-	49, // 24: pb.AnyTx.witness_claim_reward_tx:type_name -> pb.WitnessClaimRewardTx
-	21, // 25: pb.NodeList.nodes:type_name -> pb.NodeInfo
-	10, // 26: pb.GetBlockResponse.block:type_name -> pb.Block
-	20, // 27: pb.BatchGetShortTxResponse.transactions:type_name -> pb.AnyTx
+	15, // 13: pb.AnyTx.issue_token_tx:type_name -> pb.IssueTokenTx
+	16, // 14: pb.AnyTx.freeze_tx:type_name -> pb.FreezeTx
+	17, // 15: pb.AnyTx.transaction:type_name -> pb.Transaction
+	18, // 16: pb.AnyTx.order_tx:type_name -> pb.OrderTx
+	19, // 17: pb.AnyTx.candidate_tx:type_name -> pb.CandidateTx
+	20, // 18: pb.AnyTx.miner_tx:type_name -> pb.MinerTx
+	42, // 19: pb.AnyTx.witness_stake_tx:type_name -> pb.WitnessStakeTx
+	43, // 20: pb.AnyTx.witness_request_tx:type_name -> pb.WitnessRequestTx
+	45, // 21: pb.AnyTx.witness_vote_tx:type_name -> pb.WitnessVoteTx
+	47, // 22: pb.AnyTx.witness_challenge_tx:type_name -> pb.WitnessChallengeTx
+	49, // 23: pb.AnyTx.arbitration_vote_tx:type_name -> pb.ArbitrationVoteTx
+	50, // 24: pb.AnyTx.witness_claim_reward_tx:type_name -> pb.WitnessClaimRewardTx
+	22, // 25: pb.NodeList.nodes:type_name -> pb.NodeInfo
+	11, // 26: pb.GetBlockResponse.block:type_name -> pb.Block
+	21, // 27: pb.BatchGetShortTxResponse.transactions:type_name -> pb.AnyTx
 	2,  // 28: pb.WitnessInfo.status:type_name -> pb.WitnessStatus
-	7,  // 29: pb.WitnessStakeTx.base:type_name -> pb.BaseMessage
+	8,  // 29: pb.WitnessStakeTx.base:type_name -> pb.BaseMessage
 	0,  // 30: pb.WitnessStakeTx.op:type_name -> pb.OrderOp
-	7,  // 31: pb.WitnessRequestTx.base:type_name -> pb.BaseMessage
+	8,  // 31: pb.WitnessRequestTx.base:type_name -> pb.BaseMessage
 	3,  // 32: pb.WitnessVote.vote_type:type_name -> pb.WitnessVoteType
-	7,  // 33: pb.WitnessVoteTx.base:type_name -> pb.BaseMessage
-	43, // 34: pb.WitnessVoteTx.vote:type_name -> pb.WitnessVote
+	8,  // 33: pb.WitnessVoteTx.base:type_name -> pb.BaseMessage
+	44, // 34: pb.WitnessVoteTx.vote:type_name -> pb.WitnessVote
 	4,  // 35: pb.RechargeRequest.status:type_name -> pb.RechargeRequestStatus
-	43, // 36: pb.RechargeRequest.votes:type_name -> pb.WitnessVote
-	7,  // 37: pb.WitnessChallengeTx.base:type_name -> pb.BaseMessage
-	43, // 38: pb.ChallengeRecord.arbitration_votes:type_name -> pb.WitnessVote
-	7,  // 39: pb.ArbitrationVoteTx.base:type_name -> pb.BaseMessage
-	43, // 40: pb.ArbitrationVoteTx.vote:type_name -> pb.WitnessVote
-	7,  // 41: pb.WitnessClaimRewardTx.base:type_name -> pb.BaseMessage
-	5,  // 42: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
-	9,  // 43: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
-	44, // [44:44] is the sub-list for method output_type
-	44, // [44:44] is the sub-list for method input_type
-	44, // [44:44] is the sub-list for extension type_name
-	44, // [44:44] is the sub-list for extension extendee
-	0,  // [0:44] is the sub-list for field type_name
+	44, // 36: pb.RechargeRequest.votes:type_name -> pb.WitnessVote
+	8,  // 37: pb.WitnessChallengeTx.base:type_name -> pb.BaseMessage
+	44, // 38: pb.ChallengeRecord.arbitration_votes:type_name -> pb.WitnessVote
+	5,  // 39: pb.ChallengeRecord.status:type_name -> pb.ChallengeStatus
+	8,  // 40: pb.ArbitrationVoteTx.base:type_name -> pb.BaseMessage
+	44, // 41: pb.ArbitrationVoteTx.vote:type_name -> pb.WitnessVote
+	8,  // 42: pb.WitnessClaimRewardTx.base:type_name -> pb.BaseMessage
+	6,  // 43: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
+	10, // 44: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
+	45, // [45:45] is the sub-list for method output_type
+	45, // [45:45] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_pb_data_proto_init() }
@@ -4431,7 +4496,7 @@ func file_pb_data_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_data_proto_rawDesc), len(file_pb_data_proto_rawDesc)),
-			NumEnums:      5,
+			NumEnums:      6,
 			NumMessages:   48,
 			NumExtensions: 0,
 			NumServices:   0,

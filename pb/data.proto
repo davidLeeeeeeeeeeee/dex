@@ -401,6 +401,13 @@ message WitnessChallengeTx {
   string evidence = 5;             // 证据（如原生链交易数据）
 }
 
+// 挑战/仲裁状态
+enum ChallengeStatus {
+  CHALLENGE_ACTIVE = 0;            // 仲裁进行中
+  CHALLENGE_SHELVED = 1;           // 已搁置（等待重试）
+  CHALLENGE_FINALIZED = 2;         // 已完成
+}
+
 // 挑战记录
 message ChallengeRecord {
   string challenge_id = 1;         // 挑战ID
@@ -418,6 +425,7 @@ message ChallengeRecord {
   bool challenge_success = 13;     // 挑战是否成功
   bool finalized = 14;             // 是否已完成
   uint32 consensus_threshold = 15; // 当前共识阈值（80->70->60->50）
+  ChallengeStatus status = 16;     // 挑战状态
 }
 
 // 仲裁投票交易
