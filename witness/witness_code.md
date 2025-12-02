@@ -38,6 +38,7 @@ stateDiagram-v2
     RECHARGE_VOTING --> RECHARGE_REJECTED: ConsensusFail (直接拒绝)
     RECHARGE_VOTING --> RECHARGE_VOTING: ConsensusExpand (扩大范围，轮次+1)
     RECHARGE_VOTING --> RECHARGE_CHALLENGED: ConsensusConflict (自动触发挑战)
+    RECHARGE_VOTING --> RECHARGE_SHELVED: 无更多见证者 (挂起)
 
     state RECHARGE_CHALLENGE_PERIOD {
         [*] --> Waiting
