@@ -55,9 +55,9 @@ func hypergeomTail(N, K, n, k0 int) (p float64, logP float64) {
 func main() {
 	N := 10000
 	K := 2000
-	n := 200
+	n := 1000
 
-	thresholdPercent := 30                     // 至少50%
+	thresholdPercent := 20                     // 至少50%
 	k0 := (n*thresholdPercent + 100 - 1) / 100 // ceil(n*p/100)
 
 	p, logP := hypergeomTail(N, K, n, k0)

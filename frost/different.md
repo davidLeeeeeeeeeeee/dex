@@ -1,7 +1,5 @@
-当然可以！
-下面我将给你一个 **.md 文件内容**，里面包含 **用 Mermaid 画出的 FROST 与 ROAST 的核心架构对比图** + **流程图** + **总结结构图**。
-你可以直接复制到你的仓库或任何 Markdown 编辑器中。
 
+原文https://www.btcstudy.org/2022/11/04/robust-asynchronous-schnorr-threshold-signature-tabconf-2022/
 ---
 
 # Frost vs Roast — 本质区别说明（Mermaid 可视化）
@@ -166,11 +164,3 @@ flowchart LR
 ```
 
 ---
-
-如果你需要，我也可以 **继续扩展**：
-
-* 再加一个「你正在做的 Witness / Validator / Cross-chain 系统应使用哪种方案」的图
-* 或者加一个「ROAST 如何与 Snowman / VRF proposer / witness 模块结合」图
-* 或者加详细的「多轮 FROST 会话选择算法」的 Mermaid 图
-
-告诉我你的使用场景，我可以继续补充！
