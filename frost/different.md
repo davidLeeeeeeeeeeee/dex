@@ -2,7 +2,7 @@
 原文https://www.btcstudy.org/2022/11/04/robust-asynchronous-schnorr-threshold-signature-tabconf-2022/
 ---
 
-# Frost vs Roast — 本质区别说明（Mermaid 可视化）
+# Frost vs Roast — 本质区别说明
 
 ## 📌 1. 设计定位对比
 
