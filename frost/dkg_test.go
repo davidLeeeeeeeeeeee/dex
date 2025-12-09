@@ -225,7 +225,9 @@ func Test_3_4_tweak(t *testing.T) {
 	}
 }
 
-func Test_ThresholdSignRawTX(t *testing.T) {
+// Test_GenerateThresholdKeys 生成各参与者的私钥份额和聚合 Taproot 地址
+// 运行后可将输出的私钥份额用于 Test_ThresholdSignRawTX
+func Test_GenerateThresholdKeys(t *testing.T) {
 	curve := NewSecp2561Group()
 	N := curve.Order()
 	thr, nPart := 3, 5 // t = 3  n = 5
@@ -281,69 +283,140 @@ func Test_ThresholdSignRawTX(t *testing.T) {
 	}
 
 	// ★★ tweak后的私钥/公钥与 Taproot 地址 ★★
-	{
-		// 1) 打印 tweaked 私钥（十六进制）
-		fmt.Printf("\n[tweak] Q0' (私钥): %s\n", Q0t.Text(16))
+	fmt.Println("\n========== 门限密钥生成结果 ==========")
 
-		// 2) 打印 tweaked 公钥 (x, y)
-		fmt.Printf("[tweak] Q'   (公钥): (%s, %s)\n", Qtx.Text(16), Qty.Text(16))
+	// 1) 打印 tweaked 私钥（十六进制）
+	fmt.Printf("\n[tweak] Q0' (聚合私钥): %s\n", Q0t.Text(16))
 
-		// 3) 序列化为 *btcec.PrivateKey，再转 WIF
-		privTweaked, _ := btcec.PrivKeyFromBytes(Q0t.FillBytes(make([]byte, 32)))
-		wifT, _ := btcutil.NewWIF(privTweaked, &chaincfg.TestNet3Params, true)
-		fmt.Println("[tweak] 私钥 (WIF):", wifT.String())
+	// 2) 打印 tweaked 公钥 (x, y)
+	fmt.Printf("[tweak] Q'   (聚合公钥): (%s, %s)\n", Qtx.Text(16), Qty.Text(16))
 
-		// 4) 用 tweaked 私钥生成 Taproot 地址
-		addrPriv, _ := btcutil.NewAddressTaproot(
-			schnorr.SerializePubKey(privTweaked.PubKey()),
-			&chaincfg.TestNet3Params,
-		)
-		fmt.Println("[tweak] 私钥→地址：", addrPriv.EncodeAddress())
+	// 3) 序列化为 *btcec.PrivateKey，再转 WIF
+	privTweaked, _ := btcec.PrivKeyFromBytes(Q0t.FillBytes(make([]byte, 32)))
+	wifT, _ := btcutil.NewWIF(privTweaked, &chaincfg.TestNet3Params, true)
+	fmt.Println("[tweak] 聚合私钥 (WIF):", wifT.String())
 
-		// 5) 用 tweaked 公钥生成 Taproot 地址
-		pubTweaked := btcec.NewPublicKey(
-			bigIntToFieldVal(Qtx),
-			bigIntToFieldVal(Qty),
-		)
-		addrPub, _ := btcutil.NewAddressTaproot(
-			schnorr.SerializePubKey(pubTweaked),
-			&chaincfg.TestNet3Params,
-		)
-		fmt.Println("[tweak] 公钥→地址：", addrPub.EncodeAddress())
+	// 4) 用 tweaked 私钥生成 Taproot 地址
+	addrPriv, _ := btcutil.NewAddressTaproot(
+		schnorr.SerializePubKey(privTweaked.PubKey()),
+		&chaincfg.TestNet3Params,
+	)
+	fmt.Println("[tweak] Taproot 地址：", addrPriv.EncodeAddress())
 
-		// 6) 双重校验（理论上两条地址必须一致）
-		if addrPub.EncodeAddress() != addrPriv.EncodeAddress() {
-			t.Fatalf("公钥/私钥 tweak 地址不一致")
-		}
-		// 7) ★★ 打印每个参与者 tweak‑后的 s_j ★★
-		fmt.Println("\n[tweak] 各参与者私钥份额 s_j' (已加 tweak 并偶‑Y):")
-		for i, share := range sj {
-			fmt.Printf("  参与者 %d : %s\n", i+1, share.Text(16))
-		}
+	// 5) 用 tweaked 公钥生成 Taproot 地址（校验）
+	pubTweaked := btcec.NewPublicKey(
+		bigIntToFieldVal(Qtx),
+		bigIntToFieldVal(Qty),
+	)
+	addrPub, _ := btcutil.NewAddressTaproot(
+		schnorr.SerializePubKey(pubTweaked),
+		&chaincfg.TestNet3Params,
+	)
+
+	// 6) 双重校验（理论上两条地址必须一致）
+	if addrPub.EncodeAddress() != addrPriv.EncodeAddress() {
+		t.Fatalf("公钥/私钥 tweak 地址不一致")
 	}
 
-	// ---------- 4. 构造交易 ----------
-	// 创建一个简单的交易（参考 frost/sign/main.go）
+	// 7) ★★ 打印每个参与者 tweak‑后的 s_j ★★
+	fmt.Println("\n[tweak] 各参与者私钥份额 s_j' (已加 tweak 并偶‑Y):")
+	for i, share := range sj {
+		fmt.Printf("  参与者 %d : %s\n", i+1, share.Text(16))
+	}
+
+	// 8) 打印聚合公钥 X 坐标（用于签名验证）
+	fmt.Printf("\n[tweak] 聚合公钥 X (用于签名): %s\n", Qtx.Text(16))
+
+	fmt.Println("\n========================================")
+	fmt.Println("请将上述私钥份额和公钥 X 坐标复制到 Test_ThresholdSignRawTX 中使用")
+	fmt.Println("========================================")
+
+	t.Logf("门限密钥生成成功: %d-of-%d, 地址: %s", thr, nPart, addrPriv.EncodeAddress())
+}
+
+// Test_ThresholdSignRawTX 使用预设的私钥份额和 UTXO 生成门限签名 Raw TX
+// 私钥份额来自 Test_GenerateThresholdKeys 的输出
+func Test_ThresholdSignRawTX(t *testing.T) {
+	curve := NewSecp2561Group()
+	thr := 3 // 门限值
+
+	// ========== 配置区：请根据 Test_GenerateThresholdKeys 输出填写 ==========
+
+	// 聚合公钥 X 坐标（用于签名验证）
+	QtxHex := "19ea65f3443b5e5253326a0234803ffd2a1cd5dd2f0b0a6c10dc2fd449f05f0f" // 示例值，请替换
+
+	// 各参与者的私钥份额（已 tweak 并偶-Y）
+	// 格式: map[参与者ID] = 私钥份额(hex)
+	participantShares := map[int]string{
+		1: "406125103d66fc2f17d15c9ba1e72866dc2d4b162a506bd1246fdc61d7dd3041", // 示例值
+		2: "d4c1013eb479010e89c147a58553fe623105fdbb902b240a6e18bfb04b0819ef", // 示例值
+		3: "9ec069c8ecd99a4db99350c283896b10814426889757ee66d8f657cfd7f11762", // 示例值
+		4: "9e5f5eaee688c7eca74777f29c876e708796a263ef1f6b2224db034d4ece69db", // 示例值
+		5: "d39ddff0a18689eb52ddbd35d04e088243fd714d97819a3c51c6c228afa0115a", // 示例值
+	}
+
+	// 选择参与签名的参与者（需要 >= thr 个）
+	chosenParticipants := []int{1, 2, 4}
+
+	// UTXO 配置
+	prevTxHashStr := "b61c72b21030e0306478b3fb8c01827ee15e108a4652a6f994ba9a382861cf9a" // 前序交易哈希
+	prevOutIndex := uint32(0)                                                           // 输出索引
+	prevOutAmount := int64(500000)                                                      // UTXO 金额 (satoshis)
+
+	// 输出配置
+	outputAddr := "tb1pr84xtu6y8d09y5ejdgprfqpll54pe4wa9u9s5mqsmshagj0stu8sxha5ss" // 接收地址
+	outputAmount := int64(499500)                                                  // 输出金额 (satoshis)
+
+	// ========== 配置区结束 ==========
+
+	// ---------- 1. 解析配置 ----------
+	Qtx, ok := new(big.Int).SetString(QtxHex, 16)
+	if !ok {
+		t.Fatalf("解析聚合公钥 X 失败")
+	}
+
+	// 解析选中参与者的私钥份额
+	idsSel := make([]*big.Int, thr)
+	sjSel := make([]*big.Int, thr)
+	for i, pid := range chosenParticipants {
+		idsSel[i] = big.NewInt(int64(pid))
+		shareHex, exists := participantShares[pid]
+		if !exists {
+			t.Fatalf("参与者 %d 的私钥份额不存在", pid)
+		}
+		share, ok := new(big.Int).SetString(shareHex, 16)
+		if !ok {
+			t.Fatalf("解析参与者 %d 的私钥份额失败", pid)
+		}
+		sjSel[i] = share
+	}
+
+	// ---------- 2. 构造交易 ----------
 	tx := wire.NewMsgTx(wire.TxVersion)
 
 	// 添加输入 (UTXO)
-	prevTxHash, _ := chainhash.NewHashFromStr("affe2f9b98477a73d6b85ece77c331b3750a279a96ea3a5f8cb3f0fac24870af")
-	outPoint := wire.NewOutPoint(prevTxHash, 0)
+	prevTxHash, err := chainhash.NewHashFromStr(prevTxHashStr)
+	if err != nil {
+		t.Fatalf("解析前序交易哈希失败: %v", err)
+	}
+	outPoint := wire.NewOutPoint(prevTxHash, prevOutIndex)
 	txIn := wire.NewTxIn(outPoint, nil, nil)
 	tx.AddTxIn(txIn)
 
 	// 添加输出
-	addr, _ := btcutil.DecodeAddress("tb1qd5d2z3j4k8xvmn7p6q9r8s2t4u5v6w7x8y9z0a", &chaincfg.TestNet3Params)
-	pkScript, _ := txscript.PayToAddrScript(addr)
-	txOut := wire.NewTxOut(7500, pkScript) // 7500 sats
+	addr, err := btcutil.DecodeAddress(outputAddr, &chaincfg.TestNet3Params)
+	if err != nil {
+		t.Fatalf("解析输出地址失败: %v", err)
+	}
+	pkScript, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		t.Fatalf("生成输出脚本失败: %v", err)
+	}
+	txOut := wire.NewTxOut(outputAmount, pkScript)
 	tx.AddTxOut(txOut)
 
-	// ---------- 5. 计算签名哈希 ----------
-	// 创建 UTXO fetcher
-	fetcher := txscript.NewCannedPrevOutputFetcher(
-		pkScript, 7750, // 原UTXO金额
-	)
-
+	// ---------- 3. 计算签名哈希 ----------
+	fetcher := txscript.NewCannedPrevOutputFetcher(pkScript, prevOutAmount)
 	sigHashes := txscript.NewTxSigHashes(tx, fetcher)
 	sigHash, err := txscript.CalcTaprootSignatureHash(
 		sigHashes,
@@ -356,17 +429,11 @@ func Test_ThresholdSignRawTX(t *testing.T) {
 		t.Fatalf("计算签名哈希失败: %v", err)
 	}
 
-	// ---------- 6. 门限签名：挑选3个参与者 ----------
-	choose := []int{1, 2, 4}
-	idsSel := make([]*big.Int, thr)
-	sjSel := make([]*big.Int, thr)
+	// ---------- 4. 门限签名 ----------
+	fmt.Println("\n========== 门限签名过程 ==========")
+	fmt.Printf("参与者: %v\n", chosenParticipants)
+	fmt.Printf("签名哈希: %s\n", hex.EncodeToString(sigHash))
 
-	for i, idx := range choose {
-		idsSel[i] = ids[idx]
-		sjSel[i] = sj[idx]
-	}
-
-	// ---------- 7. 使用ThresholdSign生成门限签名 ----------
 	sigBytes, err := ThresholdSign(
 		curve,
 		idsSel,
@@ -379,20 +446,21 @@ func Test_ThresholdSignRawTX(t *testing.T) {
 		t.Fatalf("门限签名失败: %v", err)
 	}
 
-	// ---------- 8. 添加witness到交易 ----------
+	// ---------- 5. 添加witness到交易 ----------
 	tx.TxIn[0].Witness = wire.TxWitness{sigBytes}
 
-	// ---------- 9. 输出Raw TX ----------
+	// ---------- 6. 输出Raw TX ----------
 	var buf bytes.Buffer
 	if err := tx.Serialize(&buf); err != nil {
 		t.Fatalf("序列化交易失败: %v", err)
 	}
 
 	rawTx := hex.EncodeToString(buf.Bytes())
-	fmt.Printf("\n=== 门限签名生成的Raw TX ===\n")
+	fmt.Println("\n========== 门限签名生成的 Raw TX ==========")
 	fmt.Printf("Raw TX: %s\n", rawTx)
 	fmt.Printf("TX Size: %d bytes\n", len(buf.Bytes()))
 	fmt.Printf("Signature: %s\n", hex.EncodeToString(sigBytes))
+	fmt.Println("============================================")
 
 	t.Logf("门限签名Raw TX生成成功，长度: %d bytes", len(buf.Bytes()))
 }
