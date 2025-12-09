@@ -32,7 +32,7 @@
 5、 BTC的utxos管理设计好。（检查其他链还需要针对转账设计什么数据结构或模式）
 
 ### TODO
-1、测试网测试frost/dkg_test.go中Test_ThresholdSignRawTX的签名是否可以用。
+1、 确定第一版哪些链。
 
 
 ### QA
