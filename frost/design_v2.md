@@ -1,7 +1,7 @@
 
 # FROST 模块设计文档（v1）
 
-> 目标：把 FROST 做成**独立于共识**的“跨链资产执行引擎”，严格按**已达成共识的队列**执行两类流程：  
+> 目标：把 FROST 做成**独立于共识**的"跨链资产执行引擎"，严格按**已达成共识的队列**执行两类流程：  
 > 1) 提现（Withdraw Queue）  
 > 2) 权力交接/密钥轮换（Power Transition / Key Rotation Queue）  
 >
@@ -13,6 +13,8 @@
 > - Gas/手续费配置文件（按年均 300% 写死，后续版本治理/升级更新）  
 > - 提现调度 FIFO（先入账的资金先被提现）  
 > - 共识暂停时，FROST 仍持续执行**已确认**的提现/交接（状态回写可延后）
+> - 提现/迁移相关的三方链交易：**FROST/整个工程不负责广播与确认**；Runtime 只负责构建模板、完成门限签名，并把"签名产物/交易包"落链（可查询/可审计）；广播由用户/运营方手动完成。
+> - 允许 ROAST 对同一 `tx_template_hash` 产生**多份合法签名产物**；系统接受并追加记录这些产物，但**不把签名 bytes 写入 StateDB 的 Merkle Root**（只做 receipt/history 记录或 tx payload 记录），同时保证不会导致双花（同一 withdraw_id 绑定同一模板/同一输入集合）。
 
 ---
 
@@ -138,7 +140,7 @@ frost/
     transition_trigger.go
     transition_finalize.go
     funds_ledger.go
-  chain/                    # 链适配器（构建 tx / 广播 / 查询确认）
+  chain/                    # 链适配器（构建模板 / 封装 SignedPackage / 解析与校验）
     adapter.go
     btc/
     evm/                    # ETH/BNB 共享
@@ -192,7 +194,6 @@ frost/
 * status：状态机字段（见下）
 * session_id：当前正在使用的签名会话 id（可空）
 * signed_tx_ref：签名产物（hash 或 raw 的存储引用）
-* broadcast_txid / confirmed_height：外链结果
 
 #### 4.3.2 FundsLedger（链上）
 
@@ -219,9 +220,12 @@ v1 建议最少包含：
 * old_committee_ref / new_committee_ref（或 seed+规则）
 * dkg_status：NotStarted / Running / KeyReady / Failed
 * new_group_pubkey
-* migration_status：Preparing / Signing / Broadcast / Confirmed / Active
+* migration_status：Preparing / Signing / Signed / Active / Failed
+* migration_sig_count：（可选）已落链的签名产物数量（不含 bytes）
 * affected_chains：需要更新的链列表（BTC/合约链）
-* pause_withdraw_policy：是否暂停/降速（建议仅在“切换生效窗口”短暂停）
+* pause_withdraw_policy：是否暂停/降速（建议仅在"切换生效窗口"短暂停）
+
+> 迁移产物（raw tx / call data / signatures）用 `FrostTransitionSignedTx`（首份）+ `FrostTransitionSigAppendTx`（追加）落 receipt/history（SyncStateDB=false）。
 
 ---
 
@@ -232,21 +236,21 @@ v1 建议最少包含：
 ```mermaid
 stateDiagram-v2
   [*] --> 排队中: 提现请求已确认
-  排队中 --> 资金预留: 资金预留 + 交易模板哈希设置
-  资金预留 --> 签名中: 分配会话ID
-  签名中 --> 已签名: 记录聚合签名
-  已签名 --> 已广播: 记录广播交易ID
-  已广播 --> 已确认: 外部链确认
-  已广播 --> 失败: 超时/被拒绝
-  签名中 --> 排队中: 会话超时 -> 重新排队相同模板
+  排队中 --> 资金预留: 资金预留 + tx_template_hash 固定
+  资金预留 --> 签名中: 分配 session_id
+  签名中 --> 已签名: 首份签名产物落链（SignedTx）
+  已签名 --> 已签名: 追加签名产物（SigAppendTx，可多次）
+
+  签名中 --> 排队中: 会话超时/失败 -> 重试（模板/inputs 不变）
   失败 --> 排队中: 允许重试策略
-  已确认 --> [*]
+  排队中 --> 失败: 资金不足/模板构建失败等
+  已签名 --> [*]
 ```
 
-> 关键点：
+> 说明（保留你原来的"模板绑定"思想，但适配 13）：
 >
-> * `RESERVED` 必须把“会被签名的唯一模板（tx_template_hash）”固定下来，避免多签发不同交易。
-> * `SIGNING` 只允许同一时间一个 session；超时后回到 QUEUED 但 **模板不变**（v1），避免不同 nonce/inputs 产生多笔有效交易。
+> * `RESERVED` 仍必须把"唯一模板（tx_template_hash）+ 唯一资金输入集合"固定下来，避免签出不同交易。
+> * `ROAST` 允许对 **同一模板** 产出多份签名产物；这些产物只追加到 history/receipt，不影响状态机根。
 
 ### 5.2 Runtime 执行步骤
 
@@ -257,13 +261,15 @@ stateDiagram-v2
    * 若 `QUEUED`：尝试创建 `RESERVED`（通过提交 tx，让 VM 执行 reserve）
    * 若 `RESERVED`：尝试进入 `SIGNING`（提交 tx 记录 session_id）
    * 若 `SIGNING`：参与 ROAST 会话（coordinator 或 participant）
-   * 若 `SIGNED`：链适配器广播 raw tx
-   * 若 `BROADCAST`：链适配器轮询/订阅确认，确认后提交 finalize tx
+   * 若 `SIGNED`：
+     * 通过 ChainAdapter 把聚合签名"封装成可广播的交易包/参数包"（SignedPackage）
+     * 提交 `FrostWithdrawSignedTx`（首份产物）或 `FrostWithdrawSigAppendTx`（追加产物）
+     * **停止推进（不负责广播/确认）**：由用户/运营方自行广播到目标链
 
-> “共识暂停时”处理：
+> "共识暂停时"处理：
 >
-> * Runtime 仍可继续签名与广播（本地记录进度到 SessionStore）。
-> * 回写链上状态（SIGNED/BROADCAST/CONFIRMED）需要共识恢复后再提交 tx；恢复后 Scanner 会自动对齐并补齐回写。
+> * Runtime 仍可继续签名与生成 SignedPackage（本地记录进度到 SessionStore）。
+> * 回写链上状态（SIGNED / SigAppend）需要共识恢复后再提交 tx；恢复后 Scanner 会自动对齐并补齐回写。
 
 ### 5.3 ROAST 会话（签名）
 
@@ -315,28 +321,28 @@ stateDiagram-v2
   [*] --> 检测到变化: 矿工集合变化 >= 阈值
   检测到变化 --> DKG运行中: 启动DKG会话
   DKG运行中 --> 密钥就绪: 生成新的群公钥
-  密钥就绪 --> 迁移签名中: 签名更新/迁移交易
-  迁移签名中 --> 迁移广播中: 广播更新交易
-  迁移广播中 --> 迁移已确认: 各链确认完成
-  迁移已确认 --> 激活: 新密钥生效
+  密钥就绪 --> 迁移签名中: 构建迁移/更新交易模板并签名
+  迁移签名中 --> 迁移已签名: 迁移签名产物落链（可追加多份）
+  迁移已签名 --> 激活: 运营方/治理提交 ActivateTx（切换 active epoch）
+
   DKG运行中 --> 检测到变化: 失败 -> 重试策略
   迁移签名中 --> 密钥就绪: 超时 -> 切换协调者/子集
 ```
 
 ### 6.3 执行策略
 
-* **合约链（ETH/BNB/TRX/SOL）**：建议统一用“托管合约/程序”管理资产与 signer pubkey：
+* **合约链（ETH/BNB/TRX/SOL）**：建议统一用"托管合约/程序"管理资产与 signer pubkey：
 
   * 合约保存当前 `group_pubkey`
   * 提现时合约验证门限签名（或验证聚合签名对应 pubkey）
   * 轮换时调用 `updatePubkey(new_pubkey)`，由旧 key 产生门限签名授权执行
-  * 轮换本身不需要依赖链外实时数据（离线构造、广播即可）
+  * 离线构造 + 门限签名产物落链，**由运营方广播** `updatePubkey(new_pubkey)`
 
 * **BTC**：两种 v1 方案（任选一种先落地）：
 
-  1. **迁移 UTXO**：将旧聚合地址的 UTXO 转到新地址（需要构建并广播交易）
+  1. **迁移 UTXO**：将旧聚合地址的 UTXO 转到新地址（需要构建并签名交易；**广播由用户/运营方手动完成**）
   2. **不迁移，只更新签名者**（不适用于 BTC 原生地址）
-     v1 更现实：采用 (1)，并可配合“归集策略 + 分批迁移”。
+     v1 更现实：采用 (1)，并可配合"归集策略 + 分批迁移"。
 
 ### 6.4 与提现并行的策略
 
@@ -476,10 +482,11 @@ type FrostEnvelope struct {
   * `FrostWithdrawRequestTx`：创建 QUEUED + FIFO index
   * `FrostWithdrawReserveTx`：选择 UTXO/lot，写入 tx_template_hash，进入 RESERVED
   * `FrostWithdrawStartSignTx`：写入 session_id，进入 SIGNING
-  * `FrostWithdrawSignedTx`：记录聚合签名产物，进入 SIGNED
-  * `FrostWithdrawBroadcastTx`：记录外链 txid，进入 BROADCAST
-  * `FrostWithdrawConfirmTx`：记录确认，进入 CONFIRMED，释放 reserved/locked
+  * `FrostWithdrawSignedTx`：记录"首份"签名产物引用/摘要，进入 SIGNED
+  * `FrostWithdrawSigAppendTx`：追加一份签名产物到 history/receipt（不改 StateDB root）
   * `FrostTransitionTriggerTx / FinalizeTx`：推进 transition 状态机
+  * `FrostTransitionSignedTx`：记录迁移签名产物（首份）
+  * `FrostTransitionSigAppendTx`：追加迁移签名产物到 history/receipt
 
 > VM TxHandlers 的职责：**验证 + 写入状态机**。
 > 签名协作、链上广播、轮询确认——全部在 Runtime 做（可重试、可恢复、不会破坏 VM 确定性）。
@@ -490,6 +497,12 @@ type FrostEnvelope struct {
 * **本地会话（SessionStore）**：nonce、commit、已见消息、超时计时、重启恢复信息
 
   * 重要：nonce 必须持久化后才发送 commitment，避免重启后不小心复用
+
+### 8.5 签名产物的落链方式（不进 StateDB Root）
+
+为满足"签名结果上链但不纳入状态机 hash root"的需求：
+- 状态机（WithdrawRequest/TransitionState）只写入：status、tx_template_hash、session_id、(可选)primary_sig_ref/sig_count 等**小字段**（SyncStateDB=true）
+- 具体签名 bytes / raw tx / 调用参数包：写入 **receipt/history 类数据**（WriteOp.SyncStateDB=false），仅供审计与 RPC 查询，不参与 StateDB Merkle Root 计算
 
 ---
 
@@ -620,6 +633,7 @@ sequenceDiagram
   participant RT as Frost Runtime
   participant CO as Coordinator
   participant S as Signers(t-of-N)
+  participant OP as Operator/User（手动广播）
   participant CH as Target Chain
 
   VM-->>RT: withdraw QUEUED (finalized)
@@ -636,14 +650,11 @@ sequenceDiagram
 
   RT->>VM: submit SignedTx(signature_ref)
   VM-->>RT: state SIGNED
-  RT->>CH: broadcast signed tx
-  CH-->>RT: txid / pending
-  RT->>VM: submit BroadcastTx(txid)
-  VM-->>RT: state BROADCAST
-  CH-->>RT: confirmed
-  RT->>VM: submit ConfirmTx
-  VM-->>RT: state CONFIRMED (release locks)
+  OP-->>VM: 查询/下载 SignedPackage（RPC/Indexer）
+  OP->>CH: broadcast SignedPackage（手动）
 ```
+
+> 注：FROST 只保证"模板绑定 + 签名产物可审计可取用"，不追踪外链确认。
 
 ---
 
