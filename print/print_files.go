@@ -66,7 +66,11 @@ func printGoFiles(dir string, outFile *os.File) {
 				printFile(path, outFile, false)
 				continue
 			}
-
+			// 处理 .md 文件，直接打印
+			if strings.HasSuffix(f.Name(), ".md") {
+				printFile(path, outFile, false)
+				continue
+			}
 			// 处理 .go 文件（排除 .pb.go 文件）
 			if strings.HasSuffix(f.Name(), ".go") && !strings.HasSuffix(f.Name(), ".pb.go") {
 				// 根据开关决定是否跳过 _test.go 文件
