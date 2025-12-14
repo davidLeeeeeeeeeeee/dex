@@ -28,7 +28,38 @@ flowchart TB
     Adapters --> TRX[TRX Adapter]
     Adapters --> BNB[BNB Adapter]
 ```
+## 2.2 调度图
 
+```mermaid
+flowchart LR
+  subgraph VM[VM / On-chain State]
+    H1[WithdrawRequestTxHandler]
+    H2[PowerTransitionTxHandler]
+    H3[WithdrawFinalizeTxHandler]
+    S[(StateDB/DB Keys)]
+  end
+
+  subgraph FR[Frost Runtime per node]
+    M[Manager]
+    SC[Task Scanner]
+    SM[Session Manager]
+    CO[ROAST Coordinator]
+    PA[Participants]
+    CA[Chain Adapter]
+  end
+
+  subgraph NET[Network]
+    T[interfaces.Transport / MsgFrost]
+  end
+
+  VM -->|finalized state| S
+  S -->|scan pending tasks| SC --> SM
+  SM --> CO --> T --> PA --> SM
+  SM --> CA -->|broadcast tx| CA
+  M -->|submit finalize tx| VM
+
+  EB[EventBus: block.finalized] -->|wakeup| SC
+```
 ## 3. 核心组件
 
 ### 3.1 参与者管理器 (Participant Manager)
