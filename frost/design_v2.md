@@ -206,7 +206,7 @@ frost/
 | Withdraw FIFO Index | `v1_frost_withdraw_q_<seq>`         | seq->withdraw_id，用于 FIFO 扫描                 |
 | Transition State    | `v1_frost_transition_<epoch>`       | 轮换/交接会话与状态                                  |
 
-### 4.3 核心结构（建议 Proto / Go struct）
+### 4.3 核心结构（ Proto ）
 
 #### 4.3.1 WithdrawRequest（链上）
 
@@ -214,13 +214,12 @@ frost/
 * chain/asset：目标链与资产类型
 * to / amount：提现目标地址与数量
 * fee_policy：固定或上限（v1 固定取 config）
+* tx_context：提现交易签名内容，由VM填写
 * status：状态机字段（见下）
 * session_id：当前正在使用的签名会话 id（可空）
 * signed_tx_ref：签名产物（hash 或 raw 的存储引用）
 
 #### 4.3.2 FundsLedger（链上）
-
-v1 建议最少包含：
 
 * Account/Contract chains（ETH/BNB/TRX/SOL）：
 
@@ -244,9 +243,9 @@ v1 建议最少包含：
 * dkg_status：NotStarted / Running / KeyReady / Failed
 * new_group_pubkey
 * migration_status：Preparing / Signing / Signed / Active / Failed
-* migration_sig_count：（可选）已落链的签名产物数量（不含 bytes）
+* migration_sig_count：已落链的签名产物数量（不含 bytes）
 * affected_chains：需要更新的链列表（BTC/合约链）
-* pause_withdraw_policy：是否暂停/降速（建议仅在"切换生效窗口"短暂停）
+* pause_withdraw_policy：是否暂停/降速（仅在"切换生效窗口"短暂停）
 
 > 迁移产物（raw tx / call data / signatures）用 `FrostTransitionSignedTx`（首份）+ `FrostTransitionSigAppendTx`（追加）落 receipt/history（SyncStateDB=false）。
 
@@ -331,7 +330,7 @@ stateDiagram-v2
 
 * Top10000 集合变化达到阈值：
 
-  * v1 推荐：`changed_count >= 2000`（即 20% 变更）
+  * `changed_count >= 2000`（即 20% 变更）
   * 与 requirements 中“2000 变化触发”一致
 * 或按治理参数：`change_ratio >= transitionTriggerRatio`
 
@@ -354,7 +353,7 @@ stateDiagram-v2
 
 ### 6.3 执行策略
 
-* **合约链（ETH/BNB/TRX/SOL）**：建议统一用"托管合约/程序"管理资产与 signer pubkey：
+* **合约链（ETH/BNB/TRX/SOL）**：统一用"托管合约/程序"管理资产与 signer pubkey：
 
   * 合约保存当前 `group_pubkey`
   * 提现时合约验证门限签名（或验证聚合签名对应 pubkey）
@@ -377,9 +376,7 @@ stateDiagram-v2
   * 若提现使用旧 key，必须保证旧 key 仍有效；若涉及合约更新，则提现合约验证会在切换后拒绝旧 key，因此需在切换窗口协调：
 
     * 策略 A：切换前停止新提现进入 SIGNING（只让已 SIGNING 的完成）
-    * 策略 B：允许，但提现签名绑定 epoch，合约同时支持 old+new 双 key 的过渡期（更复杂，v2）
 
-v1 推荐策略 A：短暂停顿（秒~分钟级）即可。
 
 ---
 
@@ -395,7 +392,7 @@ v1 推荐策略 A：短暂停顿（秒~分钟级）即可。
 
 ### 7.2 合约链（ETH/BNB/TRX/SOL）
 
-**强烈建议 v1 用“合约/程序层去重”**：
+**用“合约/程序层去重”**：
 
 * 被签名的消息包含：
   `withdraw_id || chain_id || asset || to || amount || fee_cap || deadline || epoch_id`
@@ -495,7 +492,7 @@ type FrostEnvelope struct {
 }
 ```
 
-建议新增：`MsgType = MsgFrost`，payload 为 `FrostEnvelope`。
+新增：`MsgType = MsgFrost`，payload 为 `FrostEnvelope`。
 
 ### 8.3 VM 集成：只用 TxHandlers（不在 VM 内跑签名）
 
