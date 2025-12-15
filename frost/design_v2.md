@@ -23,7 +23,6 @@
 - **On-chain State**：由 VM 执行、随区块最终化提交的状态（全网一致、可验证）。
 - **Runtime**：每个节点本地运行的 frost 服务（非共识、可重启、可容错）。
 - **Signer Set (Top10000)**：当前高度下可参与签名的前 10000 名 miner（来自状态机/数据库可查询）。
-- **Active Committee (N)**：从 Top10000 中确定的“活跃签名委员会”（例如 1000 人子集，用于降低 ROAST 通信开销）。
 - **Threshold (t)**：门限签名阈值（建议默认 `t = ceil(N * 0.8)`，可配置）。
 - **Coordinator / Aggregator（聚合者）**：会话中负责收集承诺值/部分签名并输出聚合签名的角色；需要可切换。
 - **Session**：一次签名或一次 DKG/轮换的会话，包含 session_id、参与者集合、消息摘要等。
@@ -280,7 +279,7 @@ stateDiagram-v2
 
 #### 5.3.2 ROAST 包装（鲁棒性）
 
-* 聚合者从 Active Committee 中选择子集 `S`（大小 >= t）
+* 聚合者从  singers中选择子集 `S`（大小 >= t）
 * 对子集发起 FROST，收集承诺/部分签名
 * 若子集失败或超时：换子集继续，直到收齐 t 份有效 share
 * 若聚合者超时或作恶：切换聚合者（见 5.3.3）
@@ -432,13 +431,12 @@ type FinalityNotifier interface {
 type P2P interface {
     Send(to NodeID, msg *FrostEnvelope) error
     Broadcast(peers []NodeID, msg *FrostEnvelope) error
-    SamplePeers(n int, role string) []NodeID  // 可选：从 active committee 采样
+    SamplePeers(n int, role string) []NodeID  
 }
 
-// 当前高度下 signer set（Top10000 + Active committee）提供者
+// 当前高度下 signer set（Top10000）提供者
 type SignerSetProvider interface {
     Top10000(height uint64) ([]SignerInfo, error)
-    ActiveCommittee(epoch uint64) (committee []SignerInfo, threshold int, err error)
     CurrentEpoch(height uint64) uint64
 }
 
@@ -568,13 +566,6 @@ type FrostEnvelope struct {
 ```
 
 ---
-
-## 11. 复杂度与性能（v1 的可行性）
-
-* Top10000 直接做 ROAST 会话通信成本极高。
-* v1 必须采用 **Active Committee 子集**：例如 N=1000，t=800（80%）。
-* ROAST 复杂度接近 `O(k * N)`（k 为重试轮数），比 `O(N^2)` 可控很多。
-* 轮换（DKG）更重：建议把 DKG 也限定在 Active Committee 内（或专门的 Rotation Committee）。
 
 ---
 
