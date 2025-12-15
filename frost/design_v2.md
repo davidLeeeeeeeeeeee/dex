@@ -42,7 +42,7 @@ FROST 的输入来自 On-chain State（已最终化的 tx/队列），Runtime �
 不引入独立的“ConsensusObserver / FrostVMHandler / FrostNetworkAdapter”平行体系。
 
 3) **安全的 Anti-Double-Spend / Anti-Double-Sign**  
-- BTC：UTXO 选择与锁定、模板固定、支持 CPFP（可选）  
+- BTC：UTXO 选择与锁定、模板固定  
 - 合约链：合约层使用 withdraw_id 去重；账户链 nonce/序列由“链上/合约”保证唯一
 
 4) **ROAST 鲁棒性**  
@@ -151,8 +151,6 @@ frost/
     transition_signed.go    # FrostTransitionSignedTx：记录迁移签名产物
     transition_sig_append.go # FrostTransitionSigAppendTx：追加迁移签名产物
     funds_ledger.go         # 资金账本操作（lot/utxo/reserve）
-    keys.go                 # 链上状态 Key 前缀定义（见 4.2）
-    types.go                # 链上状态结构体定义（见 4.3）
   chain/                    # 链适配器（构建模板 / 封装 SignedPackage / 解析与校验）
     adapter.go              # ChainAdapter 接口定义 + ChainAdapterFactory
     btc/
@@ -238,10 +236,9 @@ frost/
 
 #### 4.3.3 TransitionState（链上）
 
-* epoch_id / trigger_height
-* old_committee_ref / new_committee_ref（或 seed+规则）
+* epoch_id / trigger_height 这次轮换的唯一编号（一般单调递增）；触发轮换的链上高度
 * dkg_status：NotStarted / Running / KeyReady / Failed
-* new_group_pubkey
+* old_group_pubkey / new_group_pubkey
 * migration_status：Preparing / Signing / Signed / Active / Failed
 * migration_sig_count：已落链的签名产物数量（不含 bytes）
 * affected_chains：需要更新的链列表（BTC/合约链）
@@ -488,7 +485,7 @@ type FrostEnvelope struct {
     Epoch       uint64
     Round       uint32
     Payload     []byte   // protobuf / json
-    Sig         []byte   // 可选：消息签名（防伪造/重放）
+    Sig         []byte   // 消息签名（防伪造/重放）
 }
 ```
 
@@ -520,7 +517,7 @@ type FrostEnvelope struct {
 ### 8.5 签名产物的落链方式（不进 StateDB Root）
 
 为满足"签名结果上链但不纳入状态机 hash root"的需求：
-- 状态机（WithdrawRequest/TransitionState）只写入：status、tx_template_hash、session_id、(可选)primary_sig_ref/sig_count 等**小字段**（SyncStateDB=true）
+- 状态机（WithdrawRequest/TransitionState）只写入：status、tx_template_hash、session_id、primary_sig_ref/sig_count 等**小字段**（SyncStateDB=true）
 - 具体签名 bytes / raw tx / 调用参数包：写入 **receipt/history 类数据**（WriteOp.SyncStateDB=false），仅供审计与 RPC 查询，不参与 StateDB Merkle Root 计算
 
 ---
@@ -539,7 +536,7 @@ type FrostEnvelope struct {
 * `ListWithdraws(from_seq, limit)`：FIFO 扫描队列
 * `GetTransitionStatus(epoch)`：轮换进度、链更新结果
 * `GetTxSignInfo(withdraw_id)`：聚合签名结果（或其 hash + 存储引用）
-* `GetAllWithdrawSignInfo(height1, height2)`：按高度范围汇总（可选）
+* `GetAllWithdrawSignInfo(height1, height2)`：按高度范围汇总
 
 ### 9.2 运维/调试类
 
@@ -552,7 +549,7 @@ type FrostEnvelope struct {
 
 ## 10. 配置文件（v1）
 
-建议 `frost/config/default.json`：
+`frost/config/default.json`：
 
 ```json
 {
@@ -609,31 +606,6 @@ type FrostEnvelope struct {
 4. **聚合者作恶**
 
 * 超时切换聚合者（确定性序列）
-* 可选：参与者把 share 同时发给下一候选聚合者（v2 优化）
-
----
-
-## 13. 实现计划（建议）
-
-1. **先打通 VM 状态机（最关键）**
-
-* withdraw queue + fifo index
-* funds ledger（lot/utxo + lock/reserve）
-* transition state
-
-2. **实现 Runtime Scanner + SessionStore（可恢复）**
-
-* 不做真实签名也能推进状态：reserve/start_sign/signed/broadcast/confirm 的骨架流程
-
-3. **接入 P2P MsgFrost + FROST core**
-
-* 先做最小可用：固定子集一次成功
-* 再加 ROAST 重试与聚合者切换
-
-4. **接入链适配器（优先 BTC + EVM）**
-
-* BTC：utxo 管理 + taproot schnorr
-* EVM：托管合约验证聚合签名 + withdraw_id 去重
 
 ---
 
@@ -667,21 +639,6 @@ sequenceDiagram
 ```
 
 > 注：FROST 只保证"模板绑定 + 签名产物可审计可取用"，不追踪外链确认。
-
----
-
-## 15. 附：与现有 frost 代码的迁移说明
-
-你当前 `frost/` 里已有：
-
-* curve adapter（secp256k1 / bn256）
-* schnorr/threshold sign / challenge func（BIP340 / keccak）
-* DKG 基础工具
-
-迁移建议：
-
-* 这些代码整体移动到 `frost/core/*`，保持纯净（不引入 db/transport）
-* Runtime/VM handler 从零按本设计补齐
 
 ---
 
