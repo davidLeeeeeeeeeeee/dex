@@ -23,7 +23,7 @@
 - **On-chain State**：由 VM 执行、随区块最终化提交的状态（全网一致、可验证）。
 - **Runtime**：每个节点本地运行的 frost 服务（非共识、可重启、可容错）。
 - **Signer Set (Top10000)**：当前高度下可参与签名的前 10000 名 miner（来自状态机/数据库可查询）。
-- **Threshold (t)**：门限签名阈值（建议默认 `t = ceil(N * 0.8)`，可配置）。
+- **Threshold (t)**：门限签名阈值（默认 `t = ceil(N * 0.8)`，可配置）。
 - **Coordinator / Aggregator（聚合者）**：会话中负责收集承诺值/部分签名并输出聚合签名的角色；需要可切换。
 - **Session**：一次签名或一次 DKG/轮换的会话，包含 session_id、参与者集合、消息摘要等。
 - **Chain Adapter**：链适配器（BTC UTXO vs 合约链/账户模型链）。
@@ -113,7 +113,7 @@ flowchart TB
 
 ## 3. 模块边界与目录建议
 
-> 你当前 `frost/` 里已有 DKG/曲线适配/签名实验代码（package 名叫 dkg）。建议逐步迁移到 core 子目录，保持“纯算法不依赖网络/DB”。
+> 你当前 `frost/` 里已有 DKG/曲线适配/签名实验代码（package 名叫 dkg）。需要迁移到 core 子目录，保持“纯算法不依赖网络/DB”。
 
 建议目录：
 
@@ -192,9 +192,9 @@ frost/
 关键做法：
 **所有“可能影响资产安全/唯一性”的决策都必须落在链上状态中**（例如：withdraw_id、交易模板 hash、UTXO 锁、合约 withdraw_id 去重标记等）。
 
-### 4.2 Key 前缀（建议）
+### 4.2 Key 前缀
 
-> 具体前缀按你工程 keys.go 的风格统一加版本号即可。这里用 `v1_frost_` 举例。
+> 具体由keys\keys.go管理。这里用 `v1_frost_` 举例。
 
 | 数据                  | Key 示例                              | 说明                                          |
 | ------------------- | ----------------------------------- | ------------------------------------------- |
@@ -210,11 +210,10 @@ frost/
 
 #### 4.3.1 WithdrawRequest（链上）
 
-* withdraw_id：全网唯一（建议：`hash(txid || output_index)` 或 VM 自增序列）
+* withdraw_id：提现tx的id
 * chain/asset：目标链与资产类型
-* to / amount：提现目标
+* to / amount：提现目标地址与数量
 * fee_policy：固定或上限（v1 固定取 config）
-* tx_template_hash：提现交易模板摘要（BTC: inputs/outputs；合约链: message hash）
 * status：状态机字段（见下）
 * session_id：当前正在使用的签名会话 id（可空）
 * signed_tx_ref：签名产物（hash 或 raw 的存储引用）
