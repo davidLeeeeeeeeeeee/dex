@@ -91,11 +91,14 @@ flowchart TB
   SC --> TM
 
   WM <--> RO
-  TM <--> DKG
+  TM <--> RO
   RO <--> PA
   PA --> CORE
   WM --> CA
   TM --> CA
+
+  WM -->|"调用签名"| CORE
+  TM -->|"调用DKG/签名"| CORE
 
   WM -->|"submit tx 回写结果"| VM
   TM -->|"submit tx 回写结果"| VM
@@ -122,34 +125,56 @@ frost/
     roast/                  # ROAST wrapper（重试/子集选择策略）
     dkg/                    # DKG/Key rotation
   runtime/                  # 每节点运行服务（可重启、可恢复）
-    manager.go
-    scanner.go
-    withdraw_worker.go
-    transition_worker.go
+    deps.go                 # 依赖注入接口（ChainStateReader/TxSubmitter/P2P 等，见 8.1）
+    manager.go              # Runtime 主入口与生命周期管理
+    scanner.go              # 扫描链上队列任务
+    withdraw_worker.go      # 提现流程执行器
+    transition_worker.go    # 权力交接流程执行器
+    coordinator.go          # ROAST Coordinator（聚合者角色）
+    participant.go          # Participant Engine（签名参与者角色）
     session/
-      store.go              # 本地会话持久化（nonce、commit、share…）
-      types.go
+      store.go              # 本地会话持久化（nonce、commit、share…，见 8.4）
+      types.go              # Session 相关类型定义
+      recovery.go           # 会话恢复逻辑（重启后恢复进行中的会话）
     net/
-      msg.go                # MsgFrost envelope + handlers
-  vmhandler/                # VM TxHandlers：写入/推进链上状态机
-    register.go
-    withdraw_request.go
-    withdraw_progress.go
-    withdraw_finalize.go
-    transition_trigger.go
-    transition_finalize.go
-    funds_ledger.go
+      msg.go                # MsgFrost envelope 定义（见 8.2）
+      handlers.go           # P2P 消息处理器（NonceCommit/SigShare/Abort 等）
+  vmhandler/                # VM TxHandlers：写入/推进链上状态机（见 8.3）
+    register.go             # Handler 注册入口
+    withdraw_request.go     # FrostWithdrawRequestTx：创建 QUEUED
+    withdraw_reserve.go     # FrostWithdrawReserveTx：选择 UTXO/lot，进入 RESERVED
+    withdraw_start_sign.go  # FrostWithdrawStartSignTx：进入 SIGNING
+    withdraw_signed.go      # FrostWithdrawSignedTx：记录首份签名产物，进入 SIGNED
+    withdraw_sig_append.go  # FrostWithdrawSigAppendTx：追加签名产物（见 8.5）
+    transition_trigger.go   # FrostTransitionTriggerTx：触发轮换
+    transition_finalize.go  # FrostTransitionFinalizeTx：完成轮换激活
+    transition_signed.go    # FrostTransitionSignedTx：记录迁移签名产物
+    transition_sig_append.go # FrostTransitionSigAppendTx：追加迁移签名产物
+    funds_ledger.go         # 资金账本操作（lot/utxo/reserve）
+    keys.go                 # 链上状态 Key 前缀定义（见 4.2）
+    types.go                # 链上状态结构体定义（见 4.3）
   chain/                    # 链适配器（构建模板 / 封装 SignedPackage / 解析与校验）
-    adapter.go
+    adapter.go              # ChainAdapter 接口定义 + ChainAdapterFactory
     btc/
+      adapter.go            # BTC 适配器实现
+      utxo.go               # UTXO 选择与管理
+      template.go           # 交易模板构建
     evm/                    # ETH/BNB 共享
+      adapter.go            # EVM 适配器实现
+      contract.go           # 托管合约交互
     tron/
+      adapter.go            # TRON 适配器实现
     solana/
-  api/                      # 对外 RPC/HTTP（只读查询 + 运维）
-    http.go
-    types.go
+      adapter.go            # Solana 适配器实现
+  api/                      # 对外 RPC/HTTP（只读查询 + 运维，见 9）
+    http.go                 # HTTP 服务入口
+    routes.go               # 路由注册
+    query_handlers.go       # 查询类接口实现（GetWithdrawStatus 等）
+    admin_handlers.go       # 运维类接口实现（GetHealth/ForceRescan 等）
+    types.go                # API 请求/响应类型定义
   config/
-    default.json
+    default.json            # 默认配置文件（见 10）
+    config.go               # 配置加载与解析
 ```
 
 ---
