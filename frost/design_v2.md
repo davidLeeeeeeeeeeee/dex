@@ -76,7 +76,7 @@ flowchart TB
     SS["Session Store（本地持久化）"]
     RO["ROAST Coordinator（可切换）"]
     PA["Participant Engine（签名参与者）"]
-    CA["Chain Adapters（BTC/EVM/SOL/TRX/BNB）"]
+    CA["Chain Adapters（模板/封装包；不负责广播/确认）"]
   end
 
   subgraph CORE["Frost Core（纯算法）"]
@@ -232,6 +232,22 @@ frost/
   * `change_utxo_policy`（用于后续 CPFP/归集）
 
 > 说明：你要求“先上账的资金先被提现”，BTC 天然可用“UTXO age 升序选取”；账户链用 `deposit_lots` 实现真正 FIFO。
+
+##### 资金语义：SIGNED 即视为“已支出”（本链口径）
+
+为满足你想要的 A) **SIGNED = 已支出**（用户不广播由用户承担）的语义：
+
+- `FrostWithdrawReserveTx`（进入 RESERVED）：
+  - **账户/合约链**：从 `available_balance` 挪到 `reserved_balance`；同时在 `deposit_lots` 上做 FIFO 扣减与“预留占用”标记（防并发/防重复分配）。
+  - **BTC**：从 `utxos[]` 里按 FIFO/age 选择 inputs，并写入 `locked_utxos[utxo]=withdraw_id`（防并发），同时把模板 hash 固定到 WithdrawRequest。
+
+- `FrostWithdrawSignedTx`（进入 SIGNED）：
+  - **本链立即记账为“已支出”**：预留资金不再回退，也不再被后续提现使用。
+  - **账户/合约链**：将对应 `reserved_balance` 记为 `spent`（可以通过累积字段或在 receipt/history 中记录，不强制进入 StateDB root）。
+  - **BTC**：对应的 `locked_utxos` 永不释放（或迁移到 `spent_utxos`/`consumed_utxos` 结构，视实现便利），确保这些 UTXO 永不再用于新提现。
+
+> 注：外链资金实际何时转出取决于用户/运营方何时广播 SignedPackage；该结果**不影响**本链“已支出”口径。
+
 
 #### 4.3.3 TransitionState（链上）
 
@@ -454,6 +470,29 @@ type SignerSetProvider interface {
     CurrentEpoch(height uint64) uint64
 }
 
+// 链适配器（纯构造/校验/封装；不做 RPC/广播/确认查询）
+type ChainAdapter interface {
+    // BuildWithdrawTemplate 构建提现交易模板（必须纯函数：同输入同输出）
+    BuildWithdrawTemplate(req *pb.FrostWithdrawRequest, ledger *pb.FundsLedger) (*pb.TxTemplate, error)
+
+    // TemplateHash 计算模板哈希（用于链上绑定/参与者校验）
+    TemplateHash(tpl *pb.TxTemplate) ([]byte, error)
+
+    // TxIDFromTemplate 可选：从 raw 模板计算“预期 txid”（用于查询/审计展示）
+    TxIDFromTemplate(tpl *pb.TxTemplate) (string, error)
+
+    // WrapSigned 将聚合签名与模板封装成可广播的 SignedPackage（raw tx / calldata / params）
+    WrapSigned(tpl *pb.TxTemplate, aggSig []byte) (*pb.SignedPackage, error)
+
+    // ValidateSignedPackage 可选：对 SignedPackage 做最小一致性校验（hash/长度/域分隔等）
+    ValidateSignedPackage(pkg *pb.SignedPackage, expectTplHash []byte) error
+
+    // DeriveAddress 由群公钥派生托管地址（BTC P2TR / 合约地址 / program address 等）
+    DeriveAddress(groupPubKey []byte) (string, error)
+
+    ValidateAddress(addr string) error
+}
+
 // 链适配器工厂
 type ChainAdapterFactory interface {
     Adapter(chain string) (ChainAdapter, error)
@@ -500,7 +539,9 @@ type FrostEnvelope struct {
   * `FrostTransitionSigAppendTx`：追加迁移签名产物到 history/receipt
 
 > VM TxHandlers 的职责：**验证 + 写入状态机**。
-> 签名协作、链上广播、轮询确认——全部在 Runtime 做（可重试、可恢复、不会破坏 VM 确定性）。
+> 签名协作与会话恢复在 Runtime 做（可重试、可恢复、不会破坏 VM 确定性）。
+> **广播/确认不在本工程范围内**：Runtime 只负责产出签名并将 `SignedPackage` 落链；是否广播/是否确认由用户/运营方承担。
+> （补充：Runtime 可以直接写本地 `SessionStore`；但任何链上状态变更都只能通过 VM TxHandlers 并经共识最终化。）
 
 ### 8.4 数据库存储：链上状态 vs 本地会话
 
@@ -525,7 +566,7 @@ type FrostEnvelope struct {
 
 * `GetFrostConfig()`：当前 frost 配置快照
 * `GetGroupPubKey(epoch)`：当前/历史聚合公钥
-* `GetWithdrawStatus(withdraw_id)`：状态机、session_id、外链 txid、失败原因
+* `GetWithdrawStatus(withdraw_id)`：状态机、session_id、`tx_template_hash`、`raw_txid`（可离线从模板计算）、`signed_package_ref`、失败原因
 * `ListWithdraws(from_seq, limit)`：FIFO 扫描队列
 * `GetTransitionStatus(epoch)`：轮换进度、链更新结果
 * `GetTxSignInfo(withdraw_id)`：聚合签名结果
@@ -536,7 +577,7 @@ type FrostEnvelope struct {
 * `GetHealth()`：DB/StateReader/ChainAdapters/P2P/Scanner 状态
 * `GetSession(session_id)`：本地会话详情（当前聚合者 index、收到多少份、谁超时）
 * `ForceRescan()`：触发 scanner 立即跑一轮（仅本地）
-* `Metrics()`：签名耗时分布、失败原因统计、外链确认时延等
+* `Metrics()`：签名耗时分布、聚合者切换次数、子集重试次数、失败原因统计（不做外链确认统计）
 
 ---
 
