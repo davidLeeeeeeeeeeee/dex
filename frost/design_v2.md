@@ -194,15 +194,14 @@ frost/
 
 > 具体由keys\keys.go管理。这里用 `v1_frost_` 举例。
 
-| 数据                  | Key 示例                              | 说明                                          |
-| ------------------- | ----------------------------------- | ------------------------------------------- |
+| 数据                  | Key 示例                              | 说明                                         |
+| ------------------- | ----------------------------------- | ------------------------------------------ |
 | 配置快照                | `v1_frost_cfg`                      | committeeN、thresholdRatio、timeouts、链配置hash等 |
-| Top10000 集合         | `v1_frost_top10000_<heightOrEpoch>` | 公钥/NodeID 列表或其 merkle root（视你现有存储）          |
-| 活跃委员会               | `v1_frost_committee_<epoch>`        | 由 top10000 + seed 派生，必要时也可落链缓存              |
-| Funds Ledger        | `v1_frost_funds_<chain>_<asset>`    | 余额、lot 队列、UTXO set（BTC）等                    |
-| Withdraw Queue      | `v1_frost_withdraw_<withdraw_id>`   | 提现请求与状态                                     |
-| Withdraw FIFO Index | `v1_frost_withdraw_q_<seq>`         | seq->withdraw_id，用于 FIFO 扫描                 |
-| Transition State    | `v1_frost_transition_<epoch>`       | 轮换/交接会话与状态                                  |
+| Top10000 集合         | `v1_frost_top10000_<heightOrEpoch>` | 公钥/NodeID 列表                       |
+| Funds Ledger        | `v1_frost_funds_<chain>_<asset>`    | 余额、lot 队列、UTXO set（BTC）等                   |
+| Withdraw Queue      | `v1_frost_withdraw_<withdraw_id>`   | 提现请求与状态                                    |
+| Withdraw FIFO Index | `v1_frost_withdraw_q_<seq>`         | seq->withdraw_id，用于 FIFO 扫描                |
+| Transition State    | `v1_frost_transition_<epoch>`       | 轮换/交接会话与状态                                 |
 
 ### 4.3 核心结构（ Proto ）
 
@@ -310,7 +309,7 @@ stateDiagram-v2
 
 * `seed = H(session_id || epoch_id || "frost_agg")`
 * `agg_candidates = Permute(active_committee, seed)`
-* 当前聚合者 index = `floor((now - session_start)/agg_timeout)`（或基于“观察到的链上状态推进高度”）
+* 当前聚合者 index = `floor((now - session_start)/agg_timeout)`
 * 参与者只接受“当前 index 的聚合者”的请求；超时后自然接受下一个聚合者
 
 > 好处：
@@ -327,9 +326,7 @@ stateDiagram-v2
 
 * Top10000 集合变化达到阈值：
 
-  * `changed_count >= 2000`（即 20% 变更）
-  * 与 requirements 中“2000 变化触发”一致
-* 或按治理参数：`change_ratio >= transitionTriggerRatio`
+* 按治理参数：`change_ratio >= transitionTriggerRatio`
 
 > 注：requirements 中“2000 个已改变（80%）”表述不一致。v1 以“2000/10000=20% 触发”作为工程可落地解释；若你最终要“80% 才触发”，只需把 ratio 配成 0.8。
 
@@ -353,15 +350,14 @@ stateDiagram-v2
 * **合约链（ETH/BNB/TRX/SOL）**：统一用"托管合约/程序"管理资产与 signer pubkey：
 
   * 合约保存当前 `group_pubkey`
-  * 提现时合约验证门限签名（或验证聚合签名对应 pubkey）
+  * 提现时合约验证门限签名
   * 轮换时调用 `updatePubkey(new_pubkey)`，由旧 key 产生门限签名授权执行
   * 离线构造 + 门限签名产物落链，**由运营方广播** `updatePubkey(new_pubkey)`
 
-* **BTC**：两种 v1 方案（任选一种先落地）：
+* **BTC**：方案：
 
-  1. **迁移 UTXO**：将旧聚合地址的 UTXO 转到新地址（需要构建并签名交易；**广播由用户/运营方手动完成**）
-  2. **不迁移，只更新签名者**（不适用于 BTC 原生地址）
-     v1 更现实：采用 (1)，并可配合"归集策略 + 分批迁移"。
+  **迁移 UTXO**：将旧聚合地址的 UTXO 转到新地址（需要构建并签名交易；**广播由用户/运营方手动完成**）
+
 
 ### 6.4 与提现并行的策略
 
@@ -470,8 +466,7 @@ type ChainAdapterFactory interface {
 > * `P2P` 可直接使用你现有 `Transport`，新增 `MsgFrost` 消息类型即可。
 > * `SignerSetProvider` 的实现可以：
 >
->   * 从 VM/状态机存的 miner 数据读（推荐）
->   * 或从共识层已落盘的 validator set 读（但接口仍保持“只读”）
+>   * 从共识层已落盘的 validator set 读（但接口仍保持“只读”）
 
 ### 8.2 P2P 消息：统一 Envelope（避免散乱）
 
@@ -529,13 +524,11 @@ type FrostEnvelope struct {
 ### 9.1 查询类
 
 * `GetFrostConfig()`：当前 frost 配置快照
-* `GetTopSigners(height)`：Top10000 signer 列表（或其摘要 + 分页）
-* `GetActiveCommittee(epoch)`：N、t、committee 列表、聚合公钥
 * `GetGroupPubKey(epoch)`：当前/历史聚合公钥
 * `GetWithdrawStatus(withdraw_id)`：状态机、session_id、外链 txid、失败原因
 * `ListWithdraws(from_seq, limit)`：FIFO 扫描队列
 * `GetTransitionStatus(epoch)`：轮换进度、链更新结果
-* `GetTxSignInfo(withdraw_id)`：聚合签名结果（或其 hash + 存储引用）
+* `GetTxSignInfo(withdraw_id)`：聚合签名结果
 * `GetAllWithdrawSignInfo(height1, height2)`：按高度范围汇总
 
 ### 9.2 运维/调试类
@@ -555,9 +548,8 @@ type FrostEnvelope struct {
 {
   "committee": {
     "topN": 10000,
-    "activeN": 1000,
     "thresholdRatio": 0.8,
-    "epochBlocks": 200
+    "epochBlocks": 200000 //每隔epochBlocks检查一次是否变化量达到阈值，需要更换委员会
   },
   "timeouts": {
     "nonceCommitMs": 2000,
