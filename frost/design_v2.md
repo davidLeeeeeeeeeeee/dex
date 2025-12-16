@@ -280,11 +280,17 @@ stateDiagram-v2
 ```
 
 > 说明：
+> 
 > 1、共识产出withdrawTx。
+> 
 > 2、frost针对withdrawTx生成唯一模板。
+> 
 > 3、frost计算出协调者，由协调者发起Roast流程。
+> 
 > 4、协调者提交withdraw_signedTx 。
+> 
 > 5、若Roast发送切换重试产生了多笔合法withdraw_signedTx，共识只做弱校验接受并追加签名到数据库。
+> 
 > * `RESERVED` 仍必须把"唯一模板（tx_template_hash）+ 唯一资金输入集合"固定下来，避免签出不同交易。
 > * `ROAST` 允许对 **同一模板** 产出多份签名产物；这些产物只追加到 history/receipt，不影响状态机根。
 
