@@ -145,11 +145,9 @@ frost/
     withdraw_reserve.go     # FrostWithdrawReserveTx：选择 UTXO/lot，进入 RESERVED
     withdraw_start_sign.go  # FrostWithdrawStartSignTx：进入 SIGNING
     withdraw_signed.go      # FrostWithdrawSignedTx：记录首份签名产物，进入 SIGNED
-    withdraw_sig_append.go  # FrostWithdrawSigAppendTx：追加签名产物（见 8.5）
     transition_trigger.go   # FrostTransitionTriggerTx：触发轮换
     transition_finalize.go  # FrostTransitionFinalizeTx：完成轮换激活
     transition_signed.go    # FrostTransitionSignedTx：记录迁移签名产物
-    transition_sig_append.go # FrostTransitionSigAppendTx：追加迁移签名产物
     funds_ledger.go         # 资金账本操作（lot/utxo/reserve）
   chain/                    # 链适配器（构建模板 / 封装 SignedPackage / 解析与校验）
     adapter.go              # ChainAdapter 接口定义 + ChainAdapterFactory
@@ -281,8 +279,12 @@ stateDiagram-v2
   已签名 --> [*]
 ```
 
-> 说明（保留你原来的"模板绑定"思想，但适配 13）：
->
+> 说明：
+> 1、共识产出withdrawTx。
+> 2、frost针对withdrawTx生成唯一模板。
+> 3、frost计算出协调者，由协调者发起Roast流程。
+> 4、协调者提交withdraw_signedTx 。
+> 5、若Roast发送切换重试产生了多笔合法withdraw_signedTx，共识只做弱校验接受并追加签名到数据库。
 > * `RESERVED` 仍必须把"唯一模板（tx_template_hash）+ 唯一资金输入集合"固定下来，避免签出不同交易。
 > * `ROAST` 允许对 **同一模板** 产出多份签名产物；这些产物只追加到 history/receipt，不影响状态机根。
 
@@ -549,12 +551,6 @@ type FrostEnvelope struct {
 * **本地会话（SessionStore）**：nonce、commit、已见消息、超时计时、重启恢复信息
 
   * 重要：nonce 必须持久化后才发送 commitment，避免重启后不小心复用
-
-### 8.5 签名产物的落链方式（不进 StateDB Root）
-
-为满足"签名结果上链但不纳入状态机 hash root"的需求：
-- 状态机（WithdrawRequest/TransitionState）只写入：status、tx_template_hash、session_id、primary_sig_ref/sig_count 等**小字段**（SyncStateDB=true）
-- 具体签名 bytes / raw tx / 调用参数包：写入 **receipt/history 类数据**（WriteOp.SyncStateDB=false），仅供审计与 RPC 查询，不参与 StateDB Merkle Root 计算
 
 ---
 
