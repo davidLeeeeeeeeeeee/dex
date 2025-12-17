@@ -14,7 +14,7 @@
 > - 提现调度 FIFO（先入账的资金先被提现）  
 > - 共识暂停时，FROST 仍持续执行**已确认**的提现/交接（状态回写可延后）
 > - 提现/迁移相关的三方链交易：**FROST/整个工程不负责广播与确认**；Runtime 只负责构建模板、完成门限签名，并把"签名产物/交易包"落链（可查询/可审计）；广播由用户/运营方手动完成。
-> - 允许 ROAST 对同一 `tx_template_hash` 产生**多份合法签名产物**；系统接受并追加记录这些产物，但**不把签名 bytes 写入 StateDB 的 Merkle Root**（只做 receipt/history 记录或 tx payload 记录），同时保证不会导致双花（同一 withdraw_id 绑定同一模板/同一输入集合）。
+> - 允许 ROAST 对同一 `tx_template_hash` 产生**多份合法签名产物**；系统通过tx接受并追加记录这些产物，同时保证不会导致双花（同一 withdraw_id 绑定同一模板/同一输入集合）。
 
 ---
 
@@ -128,6 +128,7 @@ frost/
     deps.go                 # 依赖注入接口（ChainStateReader/TxSubmitter/P2P 等，见 8.1）
     manager.go              # Runtime 主入口与生命周期管理
     scanner.go              # 扫描链上队列任务
+    job_planner.go          # Job 规划器：收集最近区块的 WithdrawRequest 生成 SigningJob；轮换时生成 MigrationJob
     withdraw_worker.go      # 提现流程执行器
     transition_worker.go    # 权力交接流程执行器
     coordinator.go          # ROAST Coordinator（聚合者角色）
@@ -142,14 +143,8 @@ frost/
   vmhandler/                # VM TxHandlers：写入/推进链上状态机（Job 化，见 5/6/8.3）
     register.go             # Handler 注册入口
     withdraw_request.go     # FrostWithdrawRequestTx：创建 QUEUED + FIFO index
-    withdraw_plan.go        # FrostWithdrawPlanTx：生成 SigningJob（模板+template_hash+资金/UTXO 锁定）
     withdraw_signed.go      # FrostWithdrawSignedTx：写入 SignedPackageRef，并把 job+withdraw 置为 SIGNED（终态，资金视为已支出）
-
-    transition_trigger.go   # FrostTransitionTriggerTx：触发轮换
-    transition_plan.go      # FrostTransitionPlanTx：为受影响链生成 MigrationJob（模板+template_hash）
     transition_signed.go    # FrostTransitionSignedTx：写入迁移 SignedPackageRef
-    transition_finalize.go  # FrostTransitionFinalizeTx：显式激活新 key（不依赖外链确认）
-
     funds_ledger.go         # 资金账本 helper（lot/utxo/lock），供 plan handler 调用
   chain/                    # 链适配器（构建模板 / 封装 SignedPackage / 解析与校验）
     adapter.go              # ChainAdapter 接口定义 + ChainAdapterFactory
@@ -294,7 +289,73 @@ BTC 专用字段（放入 `plan_ref` ）：
 
 ### 5.2 状态机（链上）：Withdraw 与 Job 分离
 
-#### 5.2.1 WithdrawRequest 状态机
+#### 5.2.1 综合流程图
+
+```mermaid
+flowchart TB
+  subgraph User["用户/业务层"]
+    U1[发起提现请求]
+  end
+
+  subgraph VM["链上 VM"]
+    V1[WithdrawRequestTx Handler]
+    V2[WithdrawSignedTx Handler]
+    WR["WithdrawRequest[]\n{status=QUEUED, seq=N,N+1,N+2...}"]
+    SJ["SigningJob\n{status=SIGNING}"]
+    WRS["WithdrawRequest[]\n{status=SIGNED, job_id}"]
+    SJS["SigningJob\n{status=SIGNED}"]
+  end
+
+  subgraph Consensus["共识层"]
+    C1[打包交易到区块]
+    C2[区块确认]
+  end
+
+  subgraph Runtime["Runtime 层"]
+    R1[Scanner: 扫描 FIFO 队列]
+    R2[JobPlanner: 收集 QUEUED withdraws]
+    R3[JobPlanner: 生成 SigningJob + 锁定资金/UTXO]
+    R4[ROAST: 签名会话 -> SignedPackage]
+    R5[提交 WithdrawSignedTx]
+  end
+
+  %% 流程连接
+  U1 -->|WithdrawRequestTx| C1
+  C1 --> C2
+  C2 --> V1
+  V1 --> WR
+
+  WR -.->|FIFO 队列| R1
+  R1 --> R2
+  R2 --> R3
+  R3 --> SJ
+  R3 -->|锁定| WR
+
+  SJ -.->|job_id + template_hash| R4
+  R4 --> R5
+
+  R5 -->|WithdrawSignedTx| C1
+  C2 --> V2
+  V2 --> SJS
+  V2 --> WRS
+```
+
+#### 5.2.2 流程说明
+
+| 步骤 | 组件 | 动作 | 状态变化 |
+|------|------|------|----------|
+| 1 | 用户 | 发起 `WithdrawRequestTx` | - |
+| 2 | 共识层 | 打包交易到区块并确认 | - |
+| 3 | VM | Handler 创建 WithdrawRequest | `[*] → QUEUED`，分配 FIFO seq |
+| 4 | Runtime Scanner | 扫描链上 FIFO 队列 | - |
+| 5 | Runtime JobPlanner | 收集连续前缀的 QUEUED withdraws | - |
+| 6 | Runtime JobPlanner | 生成 SigningJob + 锁定资金/UTXO | Job: `[*] → SIGNING` |
+| 7 | Runtime ROAST | 签名会话 → SignedPackage | - |
+| 8 | Runtime | 提交 `WithdrawSignedTx` | - |
+| 9 | 共识层 | 打包交易到区块并确认 | - |
+| 10 | VM | Handler 写入 SignedPackageRef | Job: `SIGNING → SIGNED`<br>Withdraws: `QUEUED → SIGNED` |
+
+#### 5.2.3 WithdrawRequest 状态机
 
 ```mermaid
 stateDiagram-v2
@@ -303,17 +364,16 @@ stateDiagram-v2
   SIGNED --> [*]
 ```
 
-#### 5.2.2 SigningJob 状态机
+#### 5.2.4 SigningJob 状态机
 
 ```mermaid
 stateDiagram-v2
-  [*] --> SIGNING: WithdrawPlanTx 创建 job + 锁资金/UTXO + 固定 template_hash
+  [*] --> SIGNING: Runtime 收集 WithdrawRequest 并创建 job + 锁资金/UTXO + 固定 template_hash
   SIGNING --> SIGNED: WithdrawSignedTx 写入 SignedPackageRef
   SIGNED --> [*]
 ```
 
-> 本链**不需要**链上记录 “SIGNING 中/会话进度”；会话信息放在 Runtime 的 `SessionStore`（可重启恢复）。
-
+> 本链**不需要**链上记录 "SIGNING 中/会话进度"；会话信息放在 Runtime 的 `SessionStore`（可重启恢复）。
 ---
 
 ### 5.3 模板规划（Template Planning）：如何把 FIFO 队列打成最少的 Job
@@ -324,19 +384,19 @@ stateDiagram-v2
 2) **尽可能少的签名工作量**：优先减少 `job 数`；在 BTC 中进一步减少 `inputs 数`（因为 inputs 数≈签名任务数）。  
 3) **跨链可扩展**：把“能否 batch、batch 上限”下沉到链策略/配置。
 
-#### 5.3.1 链上 PlanTx 的验证规则（必须简单、可复验）
+#### 5.3.1 Runtime Job 规划规则
 
-`WithdrawPlanTx` 提交者（任意 miner/运营方）给出一个候选 job，VM 只做**不变量校验**：
+Runtime 的 `job_planner` 模块负责收集最近区块（当前区块或最近 100 个区块）中的 `FrostWithdrawRequestTx`，统一生成 SigningJob：
 
+- 扫描链上 FIFO 队列，收集所有 `status=QUEUED` 的 withdraw
 - `withdraw_ids[]` 必须是当前 FIFO 队列的 **连续前缀**（从 `head_seq` 开始连续）
-- 每个 withdraw 当前必须是 `QUEUED`
-- `job.template_hash` 必须等于 `ChainAdapter.BuildTemplate(...)->TemplateHash(...)`
-- `plan_ref` 里的资金占用必须合法：
+- `job.template_hash` 由 `ChainAdapter.BuildTemplate(...)->TemplateHash(...)` 生成
+- 资金占用必须合法：
   - BTC：选中的 UTXO 当前未锁定，且总额覆盖 `sum(outputs)+fee+min_change`（或允许 “no-change eat fee”）
   - 账户/合约链：从 `available_balance/lot` 预留，不能超额
-- 通过后：资金/UTXO 进入锁定
+- 生成 SigningJob 后：资金/UTXO 进入锁定，job 进入 SIGNING 状态
 
-> 这里不强求 “唯一确定的最优规划”，但强制 “不能破坏 FIFO 与资金安全”。  
+> 这里不强求 “唯一确定的最优规划”，但强制 “不能破坏 FIFO 与资金安全”。
 
 #### 5.3.2 BTC 规划算法（支持 多 inputs 与 多 outputs）
 
@@ -444,7 +504,7 @@ BTC 的 `SignedPackage` 至少包含：
 
 轮换同样采用 “Job 交付签名包、外链执行交给运营方” 的模式：
 
-- 本链负责：检测触发条件 → DKG 得到新 group pubkey → 为每条受影响链生成 `MigrationJob` → 产出并上链 `SignedPackage`
+- 本链负责：检测触发条件 → DKG 得到新 group pubkey → Runtime 为每条受影响链生成 `MigrationJob` → 产出并上链 `SignedPackage`
 - 运营方负责：拿签名包去执行外链 `updatePubkey(...)` / BTC 迁移交易广播
 - 本链 **Active** 的切换由 `TransitionFinalizeTx` 明确触发（不需要 Frost 轮询外链）
 
@@ -482,7 +542,7 @@ stateDiagram-v2
   [*] --> DETECTED: miner set change >= threshold
   DETECTED --> DKG_RUNNING: 启动 DKG 会话
   DKG_RUNNING --> KEY_READY: new_group_pubkey 产生并落链
-  KEY_READY --> MIGRATION_SIGNING: 为每条链生成 MigrationJob（模板+hash）
+  KEY_READY --> MIGRATION_SIGNING: Runtime 为每条链生成 MigrationJob（模板+hash）
   MIGRATION_SIGNING --> MIGRATION_SIGNED: SignedPackages 全部落链
   MIGRATION_SIGNED --> ACTIVE: TransitionFinalizeTx 显式激活新 key
   DKG_RUNNING --> DETECTED: 失败 -> 重试/换协调者策略
@@ -494,7 +554,7 @@ stateDiagram-v2
 
 #### 6.4.1 合约链（ETH/BNB/TRX/SOL）
 
-为每条链生成一个或多个 `MigrationJob`：
+Runtime 为每条链生成一个或多个 `MigrationJob`：
 
 - `template`：`updatePubkey(new_pubkey, epoch_id, ...)`（建议合约支持 batch/nonce 防重放）
 - `template_hash`：对 calldata/params 做 hash（包含 epoch_id、chain_id、合约地址等域分隔）
@@ -544,10 +604,10 @@ v1 建议把“唯一性/去重”交给合约/程序层（强约束），从而
 
 ### 7.3 BTC（UTXO）
 
-BTC 的安全关键点在于：**inputs/outputs/fee/locktime/sequence/sighash 必须在链上 Plan 阶段固定**，并且 UTXO 必须被锁定，避免并发重复分配。
+BTC 的安全关键点在于：**inputs/outputs/fee/locktime/sequence/sighash 必须在 Job 规划阶段固定**，并且 UTXO 必须被锁定，避免并发重复分配。
 
 - 链上 FundsLedger 维护 UTXO 集与锁：`lock(utxo)->job_id`
-- `WithdrawPlanTx` 固定：
+- Runtime `job_planner` 在生成 SigningJob 时固定：
   - 选取 `inputs[]`（可能多笔 UTXO）
   - 固定 `outputs[]`（可多地址、多输出，支持“一个 input 覆盖多笔小额提现”）
   - 固定 fee/feerate、locktime/sequence、sighash_type
@@ -640,14 +700,9 @@ type FrostEnvelope struct {
 * `frost/vmhandler/register.go`：把以下 tx kind 注册到 VM 的 HandlerRegistry
 
   * `FrostWithdrawRequestTx`：创建 `WithdrawRequest{status=QUEUED}` + FIFO index
-  * `FrostWithdrawPlanTx`：生成 `SigningJob{status=SIGNING}`（模板+`template_hash`+资金/UTXO 锁定）
   * `FrostWithdrawSignedTx`：写入 `SignedPackageRef/Bytes`，把 job 与其覆盖的 withdraw 全部置为 `SIGNED`（终态，资金视为已支出）
 
-
-  * `FrostTransitionTriggerTx`：触发轮换（进入 DKG_RUNNING/KEY_READY 等）
-  * `FrostTransitionPlanTx`：为受影响链生成 `MigrationJob{status=SIGNING}`（模板+`template_hash`）
   * `FrostTransitionSignedTx`：记录迁移 `SignedPackageRef/Bytes`，并将对应 MigrationJob 置为 SIGNED
-  * `FrostTransitionFinalizeTx`：显式激活新 key（不依赖外链确认）
 
 > VM TxHandlers 的职责：**验证 + 写入状态机（共识态）**。  
 > Runtime 的职责：**离链 ROAST/FROST 签名协作 + 会话恢复**，只对链上 job 的 `template_hash` 签名；并通过 `SignedTx` 把签名产物公布到链上。  
@@ -660,11 +715,6 @@ type FrostEnvelope struct {
 
   * 重要：nonce 必须持久化后才发送 commitment，避免重启后不小心复用
 
-### 8.5 签名产物的落链方式（不进 StateDB Root）
-
-为满足"签名结果上链但不纳入状态机 hash root"的需求：
-- 状态机（WithdrawRequest/TransitionState）只写入：status、tx_template_hash、session_id、primary_sig_ref/sig_count 等**小字段**（SyncStateDB=true）
-- 具体签名 bytes / raw tx / 调用参数包：写入 **receipt/history 类数据**（WriteOp.SyncStateDB=false），仅供审计与 RPC 查询，不参与 StateDB Merkle Root 计算
 
 ---
 
@@ -758,7 +808,7 @@ type FrostEnvelope struct {
 sequenceDiagram
   participant VM as VM(On-chain)
   participant RT as Frost Runtime
-  participant PL as Planner(Template Planning)
+  participant PL as JobPlanner(Runtime)
   participant CO as Coordinator(ROAST)
   participant S as Signers(t-of-N)
   participant OP as Operator/User（手动广播）
@@ -766,11 +816,9 @@ sequenceDiagram
 
   Note over VM,RT: 多笔 WithdrawRequest 已按 FIFO 入队（QUEUED）
 
-  RT->>PL: 读取队首连续 withdraw + FundsLedger
-  PL-->>RT: 生成候选 SigningJob（inputs/outputs/template_hash）
-
-  RT->>VM: submit WithdrawPlanTx(job, locks, template_hash)
-  VM-->>RT: job SIGNING(job_id, template_hash)
+  RT->>PL: 收集最近区块的 WithdrawRequest + 读取 FundsLedger
+  PL-->>RT: 生成 SigningJob（inputs/outputs/template_hash）+ 锁定资金/UTXO
+  Note over RT: job 进入 SIGNING 状态
 
   RT->>CO: Start RoastSession(job_id, tasks=K inputs)
   CO->>S: Round1 NonceCommit(job_id, task_ids[])
