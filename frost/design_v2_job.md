@@ -144,7 +144,6 @@ frost/
     withdraw_request.go     # FrostWithdrawRequestTx：创建 QUEUED + FIFO index
     withdraw_plan.go        # FrostWithdrawPlanTx：生成 SigningJob（模板+template_hash+资金/UTXO 锁定）
     withdraw_signed.go      # FrostWithdrawSignedTx：写入 SignedPackageRef，并把 job+withdraw 置为 SIGNED（终态，资金视为已支出）
-    withdraw_abort.go       # （可选）FrostWithdrawAbortTx：job 长期失败时解锁并回滚 withdraw 到 QUEUED
 
     transition_trigger.go   # FrostTransitionTriggerTx：触发轮换
     transition_plan.go      # FrostTransitionPlanTx：为受影响链生成 MigrationJob（模板+template_hash）
@@ -274,15 +273,15 @@ frost/
 
 通用字段：
 
-- `job_id`：全网唯一（建议 `H(chain || first_seq || template_hash || epoch)`）
+- `job_id`：全网唯一（ `H(chain || first_seq || template_hash || epoch)`）
 - `chain`：btc/eth/trx/sol/bnb...
 - `key_epoch`：使用哪个 epoch 的 `group_pubkey` 进行签名（避免轮换期间歧义）
 - `withdraw_ids[]`：被该 job 覆盖的 withdraw 列表（必须是 FIFO 队首连续前缀）
 - `template_hash`：模板摘要（签名绑定的唯一输入）
 - `plan_ref`：资金占用/UTXO 锁定引用（见 5.3）
-- `status`：`SIGNING | SIGNED | ABORTED`
+- `status`：`SIGNING | SIGNED`
 
-BTC 专用字段（建议放入 `plan_ref` 或 job body）：
+BTC 专用字段（放入 `plan_ref` ）：
 
 - `inputs[]`：UTXO 列表（可能多笔）
 - `outputs[]`：withdraw 输出列表（可多地址、多输出；支持“一个 input 覆盖多笔小额提现”）
@@ -310,9 +309,7 @@ stateDiagram-v2
 stateDiagram-v2
   [*] --> SIGNING: WithdrawPlanTx 创建 job + 锁资金/UTXO + 固定 template_hash
   SIGNING --> SIGNED: WithdrawSignedTx 写入 SignedPackageRef
-  SIGNING --> ABORTED: WithdrawAbortTx（可选）解锁并回滚 withdraw 到 QUEUED
   SIGNED --> [*]
-  ABORTED --> [*]
 ```
 
 > 本链**不需要**链上记录 “SIGNING 中/会话进度”；会话信息放在 Runtime 的 `SessionStore`（可重启恢复）。
@@ -472,7 +469,7 @@ BTC 的 `SignedPackage` 至少包含：
 - `job_id / epoch_id / chain`
 - `key_epoch = epoch_id`（使用新 key 或旧 key 取决于迁移动作；一般迁移授权用旧 key，更新后提现用新 key）
 - `template_hash`
-- `status：SIGNING | SIGNED | ABORTED`
+- `status：SIGNING | SIGNED`
 - `signed_package_ref`（Signed 后写入）
 
 > 迁移 job 的本质与提现 job 相同：都是“模板 + ROAST + SignedPackage”，只是业务含义不同。
@@ -529,7 +526,7 @@ stateDiagram-v2
 
 所有参与者在产生 `R_i` 或 `z_i` 前必须验证：
 
-- `job_id` 存在且链上状态为 `SIGNING`（未 ABORTED/未 SIGNED）
+- `job_id` 存在且链上状态为 `SIGNING`（未 SIGNED）
 - `template_hash` 与链上 `SigningJob.template_hash` 一致（签名只对该模板生效）
 - `key_epoch` 与链上一致（避免轮换期间签错 key）
 - 对 BTC：每个 input/task 的 `msg = sighash(input_index, tx_template)` 必须由模板唯一决定（不得被协调者篡改）
@@ -645,7 +642,7 @@ type FrostEnvelope struct {
   * `FrostWithdrawRequestTx`：创建 `WithdrawRequest{status=QUEUED}` + FIFO index
   * `FrostWithdrawPlanTx`：生成 `SigningJob{status=SIGNING}`（模板+`template_hash`+资金/UTXO 锁定）
   * `FrostWithdrawSignedTx`：写入 `SignedPackageRef/Bytes`，把 job 与其覆盖的 withdraw 全部置为 `SIGNED`（终态，资金视为已支出）
-  * `FrostWithdrawAbortTx`：（可选）job 长期失败时回滚：job=ABORTED、释放锁定、withdraw 回到 QUEUED
+
 
   * `FrostTransitionTriggerTx`：触发轮换（进入 DKG_RUNNING/KEY_READY 等）
   * `FrostTransitionPlanTx`：为受影响链生成 `MigrationJob{status=SIGNING}`（模板+`template_hash`）
