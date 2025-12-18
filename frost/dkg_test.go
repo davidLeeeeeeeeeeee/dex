@@ -69,18 +69,23 @@ func Test_3_4_tweak(t *testing.T) {
 	thr, nPart := 3, 5 // t = 3  n = 5
 
 	// ---------- 1. DKG：生成各参与者份额 s_j ----------
+	
+	//真实 DKG 私钥分发过程应该是：
+	// 每个参与者在自己的机器上生成多项式
+	// 通过加密通道向其他参与者发送份额
+	// 每个参与者只知道自己的 s_j，不知道别人的
 	parts := make([]*Polynomial, nPart)
 	for i := range parts {
-		parts[i] = NewPolynomial(thr, curve)
+		parts[i] = NewPolynomial(thr, curve)// 单机生成所有多项式
 	}
-
+	// 单机生成所有多项式
 	ids := make([]*big.Int, nPart) // 1..n
 	sj := make([]*big.Int, nPart)
 	for j := 0; j < nPart; j++ {
 		ids[j] = big.NewInt(int64(j + 1))
 		sum := big.NewInt(0)
 		for _, p := range parts {
-			sum.Add(sum, p.Evaluate(ids[j], curve))
+			sum.Add(sum, p.Evaluate(ids[j], curve))// 单机生成所有多项式
 		}
 		sj[j] = new(big.Int).Mod(sum, N)
 	}
