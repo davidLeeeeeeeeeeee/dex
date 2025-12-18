@@ -503,7 +503,7 @@ BTC 的 `SignedPackage` 至少包含：
 ## 6. Power Transition Pipeline（权力交接 / 密钥轮换，Job 模式）
 
 轮换同样采用 “Job 交付签名包、外链执行交给运营方” 的模式：
-
+- 初衷：每隔epochBlocks区块检查一次是否达到阈值，达到了即可开始切换流程。
 - 本链负责：检测触发条件 → DKG 得到新 group pubkey → Runtime 为每条受影响链生成 `MigrationJob` → 产出并上链 `SignedPackage`
 - 运营方负责：拿签名包去执行外链 `updatePubkey(...)` / BTC 迁移交易广播
 - 本链 **Active** 的切换由 `TransitionFinalizeTx` 明确触发（不需要 Frost 轮询外链）

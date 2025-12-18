@@ -63,13 +63,12 @@ func Test_CompareWithBtcecSchnorr(t *testing.T) {
 		t.Errorf("s/z 不一致：内部 %s，外部 %s", z.Text(16), sExt.Text(16))
 	}
 }
-
 func Test_3_4_tweak(t *testing.T) {
 	curve := NewSecp2561Group()
 	N := curve.Order()
 	thr, nPart := 3, 5 // t = 3  n = 5
 
-	// ---------- 1. DKG：生成 s_j ----------
+	// ---------- 1. DKG：生成各参与者份额 s_j ----------
 	parts := make([]*Polynomial, nPart)
 	for i := range parts {
 		parts[i] = NewPolynomial(thr, curve)
@@ -83,62 +82,51 @@ func Test_3_4_tweak(t *testing.T) {
 		for _, p := range parts {
 			sum.Add(sum, p.Evaluate(ids[j], curve))
 		}
-		sj[j] = sum.Mod(sum, N)
+		sj[j] = new(big.Int).Mod(sum, N)
 	}
 
-	// ---------- 2. 聚合私钥 Q0 （偶‑Y 制度） ----------
-	Q0 := big.NewInt(0)
-	for _, p := range parts {
-		Q0.Add(Q0, p.Coefficients[0])
+	// ---------- 2. 只聚合“聚合公钥”Q（不合成聚合私钥） ----------
+	// 在真实 DKG 中：每个 dealer 广播 A_i0 = a_i0 * G（常数项承诺点），然后大家把这些点相加得到 Q。
+	// 这里用 parts[i].Coefficients[0] * G 来“模拟”A_i0。
+	Qx, Qy := curve.ScalarBaseMult(parts[0].Coefficients[0]).XY()
+	for i := 1; i < nPart; i++ {
+		Ai0 := curve.ScalarBaseMult(parts[i].Coefficients[0]) // 模拟 dealer 广播的 constant commitment
+		Qx, Qy = curve.Add(Point{X: Qx, Y: Qy}, Ai0).XY()
 	}
-	Q0.Mod(Q0, N)
-	Qx, Qy := curve.ScalarBaseMult(Q0).XY()
+
+	// BIP340 x-only key：强制 Q.y 为偶数；若为奇数，则全体份额取反（s_j <- -s_j mod n），公钥取负
 	if Qy.Bit(0) == 1 {
+		Qy = new(big.Int).Sub(curve.Modulus(), Qy)
 		for j := range sj {
-			sj[j].Sub(N, sj[j])
+			sj[j] = new(big.Int).Sub(N, sj[j])
+			sj[j].Mod(sj[j], N)
 		}
-		Q0.Sub(N, Q0)
-		Qy.Sub(curve.Modulus(), Qy)
 	}
 
-	// ---------- 3. TapTweak ----------
-	tweak := tapTweakScalar(Qx, "TapTweak")
-	Q0t := new(big.Int).Add(Q0, tweak)
-	Q0t.Mod(Q0t, N)
+	// ---------- 3. TapTweak：Q' = Q + tweak*G，同时 s_j' = s_j + tweak ----------
+	tweak := tapTweakScalar(Qx, "TapTweak") // t = H_taptweak(x(Q)||merkleRoot?) mod n
+
 	for j := range sj {
-		sj[j].Add(sj[j], tweak)
+		sj[j] = new(big.Int).Add(sj[j], tweak)
 		sj[j].Mod(sj[j], N)
 	}
 
-	Qtx, Qty := curve.ScalarBaseMult(Q0t).XY()
+	tG := curve.ScalarBaseMult(tweak)
+	Qtx, Qty := curve.Add(Point{X: Qx, Y: Qy}, tG).XY()
+
+	// tweaked key 也做一次偶-Y规范化：若 Q'.y 为奇数，则全体份额再取反，并把 Q' 取负
 	if Qty.Bit(0) == 1 {
-		Q0t.Sub(N, Q0t)
-		Qty.Sub(curve.Modulus(), Qty)
+		Qty = new(big.Int).Sub(curve.Modulus(), Qty)
 		for j := range sj {
-			sj[j].Sub(N, sj[j])
+			sj[j] = new(big.Int).Sub(N, sj[j])
+			sj[j].Mod(sj[j], N)
 		}
 	}
-	// ★★ tweak后的私钥/公钥与 Taproot 地址 ★★
+
+	// ★★ 只用 tweaked 公钥生成 Taproot 地址（分布式环境就应该这么做） ★★
 	{
-		// 1) 打印 tweaked 私钥（十六进制）
-		fmt.Printf("\n[tweak] Q0' (私钥): %s\n", Q0t.Text(16))
+		fmt.Printf("\n[tweak] Q'   (聚合公钥): (%s, %s)\n", Qtx.Text(16), Qty.Text(16))
 
-		// 2) 打印 tweaked 公钥 (x, y)
-		fmt.Printf("[tweak] Q'   (公钥): (%s, %s)\n", Qtx.Text(16), Qty.Text(16))
-
-		// 3) 序列化为 *btcec.PrivateKey，再转 WIF
-		privTweaked, _ := btcec.PrivKeyFromBytes(Q0t.FillBytes(make([]byte, 32)))
-		wifT, _ := btcutil.NewWIF(privTweaked, &chaincfg.TestNet3Params, true)
-		fmt.Println("[tweak] 私钥 (WIF):", wifT.String())
-
-		// 4) 用 tweaked 私钥生成 Taproot 地址
-		addrPriv, _ := btcutil.NewAddressTaproot(
-			schnorr.SerializePubKey(privTweaked.PubKey()),
-			&chaincfg.TestNet3Params,
-		)
-		fmt.Println("[tweak] 私钥→地址：", addrPriv.EncodeAddress())
-
-		// 5) 用 tweaked 公钥生成 Taproot 地址
 		pubTweaked := btcec.NewPublicKey(
 			bigIntToFieldVal(Qtx),
 			bigIntToFieldVal(Qty),
@@ -147,29 +135,18 @@ func Test_3_4_tweak(t *testing.T) {
 			schnorr.SerializePubKey(pubTweaked),
 			&chaincfg.TestNet3Params,
 		)
-		fmt.Println("[tweak] 公钥→地址：", addrPub.EncodeAddress())
+		fmt.Println("[tweak] 公钥→Taproot地址：", addrPub.EncodeAddress())
 
-		// 6) 双重校验（理论上两条地址必须一致）
-		if addrPub.EncodeAddress() != addrPriv.EncodeAddress() {
-			t.Fatalf("公钥/私钥 tweak 地址不一致")
-		}
-		// 7) ★★ 打印每个参与者 tweak‑后的 s_j ★★
-		fmt.Println("\n[tweak] 各参与者私钥份额 s_j' (已加 tweak 并偶‑Y):")
+		fmt.Println("\n[tweak] 各参与者私钥份额 s_j' (已加 tweak 并偶-Y):")
 		for i, share := range sj {
 			fmt.Printf("  参与者 %d : %s\n", i+1, share.Text(16))
 		}
 	}
-	// ---------- 4. 单签（对照） ----------
+
+	// ---------- 4. 门限签名（对 tweaked key 做 key-path schnorr） ----------
 	msg := sha256.Sum256([]byte("Hello, threshold sig"))
-	RxDir, RyDir, zDir, kDir := SchnorrSign(curve, Q0t, msg[:])
 
-	// ---------- 5. Round‑1：挑 3 个参与者 ----------
-	choose := []int{1, 2, 4}
-	if devMode {
-		forceK = kDir
-		defer func() { forceK = nil }()
-	}
-
+	choose := []int{1, 2, 4} // 注意：这里是数组下标 -> 实际参与者 ID 是 ids[idx]
 	idsSel := make([]*big.Int, thr)
 	kSel := make([]*big.Int, thr)
 	RxSel := make([]*big.Int, thr)
@@ -183,7 +160,7 @@ func Test_3_4_tweak(t *testing.T) {
 		sSel[i] = sj[idx]
 	}
 
-	// ---------- 6. 收集承诺点 R，看奇偶，广播RxSum ----------
+	// ---------- 5. 聚合 R，强制 R.y 为偶数 ----------
 	RxSum, RySum := RxSel[0], RySel[0]
 	for i := 1; i < thr; i++ {
 		RSum := Point{X: RxSum, Y: RySum}
@@ -191,37 +168,33 @@ func Test_3_4_tweak(t *testing.T) {
 		RxSum, RySum = curve.Add(RSum, RSel).XY()
 	}
 
-	if RySum.Bit(0) == 1 { // 若总 R.y 为奇 → 全体取反
+	if RySum.Bit(0) == 1 {
 		for i := 0; i < thr; i++ {
-			kSel[i].Sub(N, kSel[i])                 // k_i ← n-k_i
-			RySel[i].Sub(curve.Modulus(), RySel[i]) // R_i ← -R_i
+			kSel[i].Sub(N, kSel[i])
+			kSel[i].Mod(kSel[i], N)
+			RySel[i].Sub(curve.Modulus(), RySel[i])
 		}
-		RySum.Sub(curve.Modulus(), RySum) // R_sum.y 变偶
+		RySum.Sub(curve.Modulus(), RySum)
 	}
 
-	// ---------- 7. 计算 λ_i, e, z_i ----------
+	// ---------- 6. 计算 λ_i, e, z_i ----------
 	λ := ComputeLagrangeCoefficients(idsSel, N)
-	// Qtx：聚合公钥的x坐标
 	e := bip340Challenge(RxSum, Qtx, msg[:], curve)
 
 	zSel := make([]*big.Int, thr)
 	for i := 0; i < thr; i++ {
-		zSel[i] = ThresholdSchnorrFinalize(curve,
-			kSel[i], λ[i], e, sSel[i])
+		zSel[i] = ThresholdSchnorrFinalize(curve, kSel[i], λ[i], e, sSel[i])
 	}
 
-	// ---------- 8. 协调者收集z_i聚合 ----------
+	// ---------- 7. 聚合签名 ----------
 	Rax, Ray, zAgg := AggregateThresholdSignature(
 		curve, idsSel, RxSel, RySel, zSel,
 		Qtx, msg[:],
 	)
 
-	// ---------- 9. 验证 ----------
+	// ---------- 8. 验证 ----------
 	if !SchnorrVerify(curve, Qtx, Qty, Rax, Ray, zAgg, msg[:]) {
 		t.Fatalf("阈值聚合签名验证失败")
-	}
-	if !SchnorrVerify(curve, Qtx, Qty, RxDir, RyDir, zDir, msg[:]) {
-		t.Fatalf("完整私钥签名验证失败")
 	}
 }
 
@@ -359,13 +332,13 @@ func Test_ThresholdSignRawTX(t *testing.T) {
 	chosenParticipants := []int{1, 2, 4}
 
 	// UTXO 配置
-	prevTxHashStr := "b61c72b21030e0306478b3fb8c01827ee15e108a4652a6f994ba9a382861cf9a" // 前序交易哈希
+	prevTxHashStr := "8549a5ef3ed6dd54c3f597470194726186f34c7e03bc7c87caea9de0b5dc6488" // 前序交易哈希
 	prevOutIndex := uint32(0)                                                           // 输出索引
-	prevOutAmount := int64(500000)                                                      // UTXO 金额 (satoshis)
+	prevOutAmount := int64(499500)                                                      // UTXO 金额 (satoshis)
 
 	// 输出配置
 	outputAddr := "tb1pr84xtu6y8d09y5ejdgprfqpll54pe4wa9u9s5mqsmshagj0stu8sxha5ss" // 接收地址
-	outputAmount := int64(499500)                                                  // 输出金额 (satoshis)
+	outputAmount := int64(499000)                                                  // 输出金额 (satoshis)
 
 	// ========== 配置区结束 ==========
 
@@ -430,18 +403,105 @@ func Test_ThresholdSignRawTX(t *testing.T) {
 	}
 
 	// ---------- 4. 门限签名 ----------
-	fmt.Println("\n========== 门限签名过程 ==========")
-	fmt.Printf("参与者: %v\n", chosenParticipants)
-	fmt.Printf("签名哈希: %s\n", hex.EncodeToString(sigHash))
+	// ---------- 4. 门限签名（模拟真实分布式：协调者不持有 share，只聚合 R_i / z_i） ----------
+	sigBytes, err := func() ([]byte, error) {
+		N := curve.Order()
+		P := curve.Modulus()
 
-	sigBytes, err := ThresholdSign(
-		curve,
-		idsSel,
-		sjSel,
-		sigHash,
-		Qtx,
-		bip340Challenge, // 使用BIP-340 challenge函数
-	)
+		// --------------------
+		// Signer 本地状态（share / k 不出本地）
+		// --------------------
+		type localSigner struct {
+			id    *big.Int
+			share *big.Int
+
+			k  *big.Int
+			Rx *big.Int
+			Ry *big.Int
+		}
+
+		signers := make([]*localSigner, thr)
+		for i := 0; i < thr; i++ {
+			signers[i] = &localSigner{
+				id:    idsSel[i],
+				share: sjSel[i],
+			}
+		}
+
+		// --------------------
+		// Round1: 每个 signer 本地产生 (k_i, R_i) -> 只把 R_i 发给协调者
+		// --------------------
+		RxParts := make([]*big.Int, thr)
+		RyParts := make([]*big.Int, thr)
+
+		for i := 0; i < thr; i++ {
+			ki, Rxi, Ryi := ThresholdSchnorrPartialSign(curve, signers[i].share, nil, nil, sigHash)
+			signers[i].k, signers[i].Rx, signers[i].Ry = ki, Rxi, Ryi
+
+			RxParts[i] = Rxi
+			RyParts[i] = Ryi
+		}
+
+		// --------------------
+		// Coordinator: 聚合 R = Σ R_i
+		// --------------------
+		RxSum := new(big.Int).Set(RxParts[0])
+		RySum := new(big.Int).Set(RyParts[0])
+		for i := 1; i < thr; i++ {
+			R := Point{X: RxSum, Y: RySum}
+			Ri := Point{X: RxParts[i], Y: RyParts[i]}
+			RxSum, RySum = curve.Add(R, Ri).XY()
+		}
+
+		// --------------------
+		// Coordinator: 若 R_sum.y 为奇数 -> 广播 "flip" 给所有 signer
+		// signer 执行：k_i <- N-k_i,  R_i <- -R_i （只需翻 y；x 不变）
+		// --------------------
+		if RySum.Bit(0) == 1 {
+			for i := 0; i < thr; i++ {
+				// k_i = N - k_i
+				signers[i].k.Sub(N, signers[i].k)
+				signers[i].k.Mod(signers[i].k, N)
+
+				// R_i = -R_i  =>  y = P - y (mod P)
+				signers[i].Ry.Sub(P, signers[i].Ry)
+				signers[i].Ry.Mod(signers[i].Ry, P)
+
+				RyParts[i] = signers[i].Ry
+			}
+
+			// R_sum.y 也翻到偶数（x 不变）
+			RySum.Sub(P, RySum)
+			RySum.Mod(RySum, P)
+		}
+
+		// --------------------
+		// Coordinator: 计算 λ_i 与 e，并广播给 signer
+		// --------------------
+		lambdas := ComputeLagrangeCoefficients(idsSel, N)
+		e := bip340Challenge(RxSum, Qtx, sigHash, curve)
+
+		// --------------------
+		// Round2: 每个 signer 本地计算 z_i -> 回传给协调者
+		// --------------------
+		zParts := make([]*big.Int, thr)
+		for i := 0; i < thr; i++ {
+			zParts[i] = ThresholdSchnorrFinalize(curve, signers[i].k, lambdas[i], e, signers[i].share)
+		}
+
+		// --------------------
+		// Coordinator: 聚合 (R, z)
+		// --------------------
+		Rax, _, zAgg := AggregateThresholdSignature(curve, idsSel, RxParts, RyParts, zParts, Qtx, sigHash)
+
+		// --------------------
+		// 序列化为 BIP340: sig = R.x(32) || z(32)
+		// --------------------
+		sig := make([]byte, 64)
+		Rax.FillBytes(sig[:32])
+		zAgg.FillBytes(sig[32:])
+		return sig, nil
+	}()
 	if err != nil {
 		t.Fatalf("门限签名失败: %v", err)
 	}
