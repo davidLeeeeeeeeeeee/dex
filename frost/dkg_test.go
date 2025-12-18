@@ -85,7 +85,7 @@ func Test_3_4_tweak(t *testing.T) {
 		sj[j] = new(big.Int).Mod(sum, N)
 	}
 
-	// ---------- 2. 只聚合“聚合公钥”Q（不合成聚合私钥） ----------
+	// ---------- 2. 只聚合“聚合公钥”Q（Qx, Qy）（不合成聚合私钥） ----------
 	// 在真实 DKG 中：每个 dealer 广播 A_i0 = a_i0 * G（常数项承诺点），然后大家把这些点相加得到 Q。
 	// 这里用 parts[i].Coefficients[0] * G 来“模拟”A_i0。
 	Qx, Qy := curve.ScalarBaseMult(parts[0].Coefficients[0]).XY()
