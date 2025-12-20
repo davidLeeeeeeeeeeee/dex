@@ -1,5 +1,6 @@
 
 原文https://www.btcstudy.org/2022/11/04/robust-asynchronous-schnorr-threshold-signature-tabconf-2022/
+https://www.btcstudy.org/2021/12/09/schnorr-applications-frost/
 ---
 
 # Frost vs Roast — 本质区别说明
