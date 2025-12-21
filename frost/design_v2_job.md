@@ -147,7 +147,7 @@ frost/
     withdraw_signed.go      # FrostWithdrawSignedTx：写入 SignedPackageRef，并把 job+withdraw 置为 SIGNED（终态，资金视为已支出）
     dkg_commit.go           # FrostDkgCommitTx：登记 DKG 承诺点（commitments）
     dkg_complaint.go        # FrostDkgComplaintTx：链上裁决（份额无效/作恶举证）
-    dkg_finalize.go         # FrostDkgFinalizeTx：确认新 group pubkey（KeyReady）
+    dkg_finalize.go         # FrostDkgFinalizeTx：确认新 group pubkey（KeyReady，需验证通过）
     transition_signed.go    # FrostTransitionSignedTx：写入迁移 SignedPackageRef
     transition_finalize.go  # FrostTransitionFinalizeTx：显式激活新 key（Active）
     funds_ledger.go         # 资金账本 helper（lot/utxo/lock），供 plan handler 调用
@@ -291,27 +291,28 @@ frost/
     * `dkg_status ∈ {Sharing, Resolving}` 且未超过 `dkg_dispute_deadline`
     * VM 用链上已登记的 `commitment_points[]` 验证 `share`；无效则 `dealer_id -> DISQUALIFIED`（可选：罚没/剔除），否则可选惩罚恶意投诉者
 
+* `FrostDkgValidationSignedTx`（示例签名产物回写）
+  * `epoch_id`
+  * `validation_msg_hash`
+  * `signed_package_ref`（或 `signed_package_bytes`）
+  * 约束：
+    * `dkg_status == Resolving` 且已过 `dkg_dispute_deadline`
+    * `validation_status ∈ {NotStarted, Signing}`
+    * `validation_msg_hash == H("frost_dkg_validation" || epoch_id || new_group_pubkey)`
+  * 作用：记录示例签名结果并将 `validation_status` 置为 `Passed`（VM 不强制验签，链下可复验）
+
 * `FrostDkgFinalizeTx`（确认 DKG 结果）
   * `epoch_id`
   * （可选）`new_group_pubkey`（若携带，VM 必须重算并校验一致）
   * 约束：
     * `dkg_status == Resolving` 且已过 `dkg_dispute_deadline`
+    * `validation_status == Passed`
     * `qualified_count >= dkg_threshold_t`
     * VM 重算 `new_group_pubkey == Σ a_i0(qualified_dealers)`（不一致则拒绝）
   * 发起者与冲突处理：
     * **permissionless**：任何节点/参与者均可提交
     * **幂等**：仅第一笔有效 tx 将状态推进到 `KeyReady`，之后同 epoch 的 finalize 因 `dkg_status` 不匹配而无效
     * 推荐做法：仅携带 `epoch_id`，由 VM 依据链上 commitments 确定性计算 `new_group_pubkey`
-
-* `FrostDkgValidationSignedTx`（示例签名产物回写）
-  * `epoch_id`
-  * `validation_msg_hash`
-  * `signed_package_ref`（或 `signed_package_bytes`）
-  * 约束：
-    * `dkg_status == KeyReady`
-    * `validation_status ∈ {NotStarted, Signing}`
-    * `validation_msg_hash == H("frost_dkg_validation" || epoch_id || new_group_pubkey)`
-  * 作用：记录示例签名结果并将 `validation_status` 置为 `Passed`（VM 不强制验签，链下可复验）
 
 * `FrostTransitionSignedTx`（迁移签名产物回写）
   * `epoch_id / job_id / chain`
@@ -584,7 +585,7 @@ BTC 的 `SignedPackage` 至少包含：
 轮换同样采用 “Job 交付签名包、外链执行交给运营方” 的模式：
 - 初衷：每隔epochBlocks区块检查一次是否达到阈值，达到了即可开始切换流程。
 - 每一次权力交接都要有 DKG：**所有参与者必须提交 `FrostDkgCommitTx` 登记承诺点**，用于私发碎片校验；出现作恶/无效碎片时可用 `FrostDkgComplaintTx` **链上裁决**。
-- 本链负责：检测触发条件 → DKG（Commit/Share/裁决/Finalize）得到新 `group_pubkey` → Runtime 为每条受影响链生成 `MigrationJob` → 产出并上链 `SignedPackage`
+- 本链负责：检测触发条件 → DKG（Commit/Share/裁决）→ 示例签名验证 → `FrostDkgFinalizeTx` 确认新 `group_pubkey` → Runtime 为每条受影响链生成 `MigrationJob` → 产出并上链 `SignedPackage`
 - 运营方负责：拿签名包去执行外链 `updatePubkey(...)` / BTC 迁移交易广播
 - 本链 **Active** 的切换由 `FrostTransitionFinalizeTx` 明确触发（不需要 Frost 轮询外链）
 
@@ -642,10 +643,10 @@ stateDiagram-v2
   DETECTED --> DKG_COMMITTING: 开放 FrostDkgCommitTx 登记承诺点
   DKG_COMMITTING --> DKG_SHARING: commitments 达标/超时
   DKG_SHARING --> DKG_RESOLVING: 私发碎片校验 + ComplaintTx 裁决窗口
-  DKG_RESOLVING --> KEY_READY: FrostDkgFinalizeTx 落链
-  KEY_READY --> VALIDATION_SIGNING: TransitionWorker 组织示例签名
-  VALIDATION_SIGNING --> MIGRATION_SIGNING: 验证通过（FrostDkgValidationSignedTx）
+  DKG_RESOLVING --> VALIDATION_SIGNING: 裁决窗口结束后组织示例签名
+  VALIDATION_SIGNING --> KEY_READY: 验证通过（FrostDkgValidationSignedTx）-> FrostDkgFinalizeTx
   VALIDATION_SIGNING --> DKG_COMMITTING: 验证失败/超时 -> 重新 DKG
+  KEY_READY --> MIGRATION_SIGNING: Runtime 为每条链生成 MigrationJob（模板+hash）
   MIGRATION_SIGNING --> MIGRATION_SIGNED: SignedPackages 全部落链
   MIGRATION_SIGNED --> ACTIVE: FrostTransitionFinalizeTx 显式激活新 key
   DKG_COMMITTING --> DETECTED: 超时/Qualified 不足 -> 重试策略
@@ -653,7 +654,7 @@ stateDiagram-v2
 
 > 说明：这里的 “MIGRATION_SIGNED” 表示“迁移签名包齐全”，**不表示外链已执行成功**。
 
-#### 6.3.1 DKG 关键时序（Commit/私发碎片/裁决）
+#### 6.3.1 DKG 关键时序（Commit/私发碎片/裁决/验证）
 
 ```mermaid
 sequenceDiagram
@@ -676,27 +677,36 @@ sequenceDiagram
     CH-->>R: 裁决：dealer DISQUALIFIED（惩罚）
   end
 
-  Note over CH: dkg_status=Resolving 结束后
-  TW->>CH: FrostDkgFinalizeTx(epoch, new_group_pubkey)
-  CH-->>TW: dkg_status=KeyReady
+  Note over CH: dkg_status=Resolving 且裁决窗口结束后
+  Note over TW: 组织示例签名 msg=H("frost_dkg_validation" || epoch_id || new_group_pubkey)
+  TW->>TW: ROAST 示例签名 -> SignedPackage
+
+  alt 验证通过
+    TW->>CH: FrostDkgValidationSignedTx(epoch, validation_msg_hash, signed_package_ref)
+    CH-->>TW: validation_status=Passed
+    TW->>CH: FrostDkgFinalizeTx(epoch, new_group_pubkey)
+    CH-->>TW: dkg_status=KeyReady
+  else 验证失败/超时
+    Note over CH,TW: 重新进入 DKG_COMMITTING（new dkg_session_id, commitments 清空）
+  end
 ```
 
 说明：
 
 - **Dealer**：本轮 DKG 的参与者（`new_committee_ref` 内成员）。负责生成多项式、提交承诺点，并向其他参与者私发碎片。
 - **Receiver**：接收私发碎片的参与者（同样是 `new_committee_ref` 成员）。负责用链上承诺点验证收到的碎片。
-- **TransitionWorker**：Runtime 中推进轮换流程的执行者（可由确定性规则选出），负责在裁决窗口结束后提交 finalize，并在 `KeyReady` 后组织验证签名，失败则触发重新 DKG。
+- **TransitionWorker**：Runtime 中推进轮换流程的执行者（可由确定性规则选出），负责在裁决窗口结束后组织验证签名，验证通过后再提交 finalize；失败则触发重新 DKG。
 
 涉及的 Tx 目的：
 
 - `FrostDkgCommitTx`：把 dealer 的承诺点上链，供 receiver 校验私发碎片，也作为链上裁决的公开依据。
 - `FrostDkgComplaintTx`：当 receiver 发现碎片无效时提交举证，VM 用承诺点验证并裁决（剔除/惩罚作恶 dealer）。
-- `FrostDkgFinalizeTx`：裁决窗口结束后触发 KeyReady，VM 依据链上承诺点确定性计算/校验 `new_group_pubkey`。
+- `FrostDkgValidationSignedTx`：记录示例签名结果，作为 finalize 前置条件，用于验证新 key 与参与者协作的稳定性。
+- `FrostDkgFinalizeTx`：验证签名通过后触发 KeyReady，VM 依据链上承诺点确定性计算/校验 `new_group_pubkey`。
 
-#### 6.3.2 DKG 验证签名（稳定性检查）
+验证签名要点：
 
-TransitionWorker 在 `KeyReady` 后组织一次示例签名，用于验证新 key 与参与者协作的稳定性：
-
+- 验证时机：裁决窗口结束后、finalize 之前；VM 依据 commitments 重算 `new_group_pubkey` 校验 `validation_msg_hash`
 - 验证消息：`msg = H("frost_dkg_validation" || epoch_id || new_group_pubkey)`（单 task、无外链副作用）
 - 通过 ROAST 产出 `SignedPackage`，提交 `FrostDkgValidationSignedTx` 写链并置 `validation_status=Passed`
 - 若会话超时/收集不足导致验证失败，触发重新 DKG（生成新的 `dkg_session_id`，清空上一轮 commitments），状态回到 `DKG_COMMITTING`
@@ -855,8 +865,8 @@ type FrostEnvelope struct {
 
   * `FrostDkgCommitTx`：登记本轮 DKG 承诺点（commitments）
   * `FrostDkgComplaintTx`：无效碎片举证与链上裁决（剔除/惩罚）
-  * `FrostDkgFinalizeTx`：确认 DKG 输出 `new_group_pubkey`（KeyReady）
   * `FrostDkgValidationSignedTx`：记录示例签名结果（稳定性验证）
+  * `FrostDkgFinalizeTx`：验证通过后确认 DKG 输出 `new_group_pubkey`（KeyReady）
 
   * `FrostTransitionSignedTx`：记录迁移 `SignedPackageRef/Bytes`，并将对应 MigrationJob 置为 SIGNED
   * `FrostTransitionFinalizeTx`：显式激活新 key（Active）
