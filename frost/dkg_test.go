@@ -2,6 +2,7 @@ package dkg
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -62,6 +63,44 @@ func Test_CompareWithBtcecSchnorr(t *testing.T) {
 	if z.Cmp(sExt) != 0 {
 		t.Errorf("s/z 不一致：内部 %s，外部 %s", z.Text(16), sExt.Text(16))
 	}
+}
+
+//估算承诺点的数据空间占用
+func Test_CommitmentSize_T100(t *testing.T) {
+	const tVal = 10000
+	commitments := make([]*btcec.PublicKey, 0, tVal)
+	for i := 0; i < tVal; i++ {
+		var seed [32]byte
+		if _, err := rand.Read(seed[:]); err != nil {
+			t.Fatalf("rand.Read failed: %v", err)
+		}
+		priv, _ := btcec.PrivKeyFromBytes(seed[:])
+		commitments = append(commitments, priv.PubKey())
+	}
+
+	var compressedTotal int
+	var xOnlyTotal int
+	for _, pk := range commitments {
+		serCompressed := pk.SerializeCompressed()
+		if len(serCompressed) != 33 {
+			t.Fatalf("compressed pubkey size mismatch: got %d, want 33", len(serCompressed))
+		}
+		compressedTotal += len(serCompressed)
+
+		serXOnly := schnorr.SerializePubKey(pk)
+		if len(serXOnly) != 32 {
+			t.Fatalf("x-only pubkey size mismatch: got %d, want 32", len(serXOnly))
+		}
+		xOnlyTotal += len(serXOnly)
+	}
+
+	t.Logf("t=%d compressed=%d bytes (~%.2f KiB) x-only=%d bytes (~%.2f KiB)",
+		tVal,
+		compressedTotal,
+		float64(compressedTotal)/1024.0,
+		xOnlyTotal,
+		float64(xOnlyTotal)/1024.0,
+	)
 }
 func Test_3_4_tweak(t *testing.T) {
 	curve := NewSecp2561Group()

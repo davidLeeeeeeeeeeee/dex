@@ -26,6 +26,7 @@
 - **Threshold (t)**：门限签名阈值（默认 `t = ceil(N * 0.8)`，可配置）。
 - **Coordinator / Aggregator（聚合者）**：会话中负责收集承诺值/部分签名并输出聚合签名的角色；需要可切换。
 - **Session**：一次签名或一次 DKG/轮换的会话，包含 session_id、参与者集合、消息摘要等。
+- **DKG Commitments（承诺点）**：参与者在 DKG 中登记到链上的承诺点集合（用于私发碎片验证与链上裁决）。
 - **Chain Adapter**：链适配器（BTC UTXO vs 合约链/账户模型链）。
 
 ---
@@ -144,7 +145,11 @@ frost/
     register.go             # Handler 注册入口
     withdraw_request.go     # FrostWithdrawRequestTx：创建 QUEUED + FIFO index
     withdraw_signed.go      # FrostWithdrawSignedTx：写入 SignedPackageRef，并把 job+withdraw 置为 SIGNED（终态，资金视为已支出）
+    dkg_commit.go           # FrostDkgCommitTx：登记 DKG 承诺点（commitments）
+    dkg_complaint.go        # FrostDkgComplaintTx：链上裁决（份额无效/作恶举证）
+    dkg_finalize.go         # FrostDkgFinalizeTx：确认新 group pubkey（KeyReady）
     transition_signed.go    # FrostTransitionSignedTx：写入迁移 SignedPackageRef
+    transition_finalize.go  # FrostTransitionFinalizeTx：显式激活新 key（Active）
     funds_ledger.go         # 资金账本 helper（lot/utxo/lock），供 plan handler 调用
   chain/                    # 链适配器（构建模板 / 封装 SignedPackage / 解析与校验）
     adapter.go              # ChainAdapter 接口定义 + ChainAdapterFactory
@@ -197,6 +202,7 @@ frost/
 | Withdraw Queue      | `v1_frost_withdraw_<withdraw_id>`   | 提现请求与状态                                    |
 | Withdraw FIFO Index | `v1_frost_withdraw_q_<seq>`         | seq->withdraw_id，用于 FIFO 扫描                |
 | Transition State    | `v1_frost_transition_<epoch>`       | 轮换/交接会话与状态                                 |
+| DKG Commitment      | `v1_frost_dkg_commit_<epoch>_<miner>` | 参与者承诺点登记（用于私发碎片验证/链上裁决）              |
 
 ### 4.3 核心结构（ Proto ）
 
@@ -231,9 +237,20 @@ frost/
 #### 4.3.3 TransitionState（链上）
 
 * epoch_id / trigger_height 这次轮换的唯一编号（一般单调递增）；触发轮换的链上高度
-* dkg_status：NotStarted / Running / KeyReady / Failed
-* old_group_pubkey / new_group_pubkey
-* migration_status：Preparing / Signing / Signed / Active / Failed
+* old_committee_ref / new_committee_ref
+* dkg_status：NotStarted / Committing / Sharing / Resolving / KeyReady / Failed
+* dkg_session_id：`H(epoch_id || new_committee_ref || "dkg")`
+* dkg_threshold_t / dkg_n：本次 DKG 的参数（可与签名阈值一致）
+* dkg_commit_deadline / dkg_dispute_deadline（height）：commit / 裁决窗口
+* dkg_commitments：`map<miner_id, DkgCommitmentMeta>`（或用独立 KV：`v1_frost_dkg_commit_<epoch>_<miner>`）
+  * `commitment_points[]`（承诺点集合）或其 hash/ref
+  * `a_i0`（常数项承诺点，用于聚合 `new_group_pubkey`）
+  * `status：COMMITTED | DISQUALIFIED`
+* old_group_pubkey / new_group_pubkey（KeyReady 后落链）
+* validation_status：NotStarted / Signing / Passed / Failed
+* validation_msg_hash：`H("frost_dkg_validation" || epoch_id || new_group_pubkey)`
+* validation_signed_ref：示例签名产物引用（Passed 后写入）
+* activation_status：Preparing / Signing / SignedPackagesReady / Active / Failed
 * migration_sig_count：已落链的签名产物数量（不含 bytes）
 * affected_chains：需要更新的链列表（BTC/合约链）
 * pause_withdraw_policy：是否暂停/降速（仅在"切换生效窗口"短暂停）
@@ -241,6 +258,68 @@ frost/
 > 迁移产物（raw tx / call data / signatures）可通过重复提交 `FrostTransitionSignedTx`（同 epoch 多份 SignedPackage）落 receipt/history（SyncStateDB=false）。
 
 ---
+
+### 4.4 On-chain Tx（共识输入 / 结构定义）
+
+#### 4.4.1 提现类
+
+* `FrostWithdrawRequestTx`（用户发起）
+  * `chain / asset / to / amount`
+  * （可选）`memo / user_ref`
+
+* `FrostWithdrawSignedTx`（Runtime 回写）
+  * `job_id`
+  * `signed_package_ref`（或 `signed_package_bytes`）
+
+#### 4.4.2 轮换/DKG 类
+
+* `FrostDkgCommitTx`（每个参与者必须提交）
+  * `epoch_id`
+  * `commitment_points[]`：承诺点集合（例如 Feldman VSS 的 `A_{ik}=a_{ik}·G, k=0..t-1`）
+  * `a_i0`：常数项承诺点（可冗余携带，便于 VM 增量计算 `new_group_pubkey`）
+  * 约束：
+    * tx sender 必须属于 `new_committee_ref`
+    * `dkg_status == Committing`
+    * 同一 `epoch_id` 每个 sender 只能登记一次（或只允许覆盖为完全相同的 commitments）
+
+* `FrostDkgComplaintTx`（链上裁决 / 举证）
+  * `epoch_id`
+  * `dealer_id`：被投诉的 dealer
+  * `receiver_id`：接收该碎片的参与者（通常等于 tx sender）
+  * `share`：dealer 私发的碎片 `f_dealer(x_receiver)`（标量）
+  * 约束：
+    * `dkg_status ∈ {Sharing, Resolving}` 且未超过 `dkg_dispute_deadline`
+    * VM 用链上已登记的 `commitment_points[]` 验证 `share`；无效则 `dealer_id -> DISQUALIFIED`（可选：罚没/剔除），否则可选惩罚恶意投诉者
+
+* `FrostDkgFinalizeTx`（确认 DKG 结果）
+  * `epoch_id`
+  * （可选）`new_group_pubkey`（若携带，VM 必须重算并校验一致）
+  * 约束：
+    * `dkg_status == Resolving` 且已过 `dkg_dispute_deadline`
+    * `qualified_count >= dkg_threshold_t`
+    * VM 重算 `new_group_pubkey == Σ a_i0(qualified_dealers)`（不一致则拒绝）
+  * 发起者与冲突处理：
+    * **permissionless**：任何节点/参与者均可提交
+    * **幂等**：仅第一笔有效 tx 将状态推进到 `KeyReady`，之后同 epoch 的 finalize 因 `dkg_status` 不匹配而无效
+    * 推荐做法：仅携带 `epoch_id`，由 VM 依据链上 commitments 确定性计算 `new_group_pubkey`
+
+* `FrostDkgValidationSignedTx`（示例签名产物回写）
+  * `epoch_id`
+  * `validation_msg_hash`
+  * `signed_package_ref`（或 `signed_package_bytes`）
+  * 约束：
+    * `dkg_status == KeyReady`
+    * `validation_status ∈ {NotStarted, Signing}`
+    * `validation_msg_hash == H("frost_dkg_validation" || epoch_id || new_group_pubkey)`
+  * 作用：记录示例签名结果并将 `validation_status` 置为 `Passed`（VM 不强制验签，链下可复验）
+
+* `FrostTransitionSignedTx`（迁移签名产物回写）
+  * `epoch_id / job_id / chain`
+  * `signed_package_ref`（或 `signed_package_bytes`）
+
+* `FrostTransitionFinalizeTx`（显式激活新 key）
+  * `epoch_id`
+  * 约束：`activation_status == SignedPackagesReady`（迁移签名包齐全），且 `dkg_status == KeyReady`
 
 ## 5. Withdraw Pipeline（提现流程，Job 模式）
 
@@ -504,9 +583,10 @@ BTC 的 `SignedPackage` 至少包含：
 
 轮换同样采用 “Job 交付签名包、外链执行交给运营方” 的模式：
 - 初衷：每隔epochBlocks区块检查一次是否达到阈值，达到了即可开始切换流程。
-- 本链负责：检测触发条件 → DKG 得到新 group pubkey → Runtime 为每条受影响链生成 `MigrationJob` → 产出并上链 `SignedPackage`
+- 每一次权力交接都要有 DKG：**所有参与者必须提交 `FrostDkgCommitTx` 登记承诺点**，用于私发碎片校验；出现作恶/无效碎片时可用 `FrostDkgComplaintTx` **链上裁决**。
+- 本链负责：检测触发条件 → DKG（Commit/Share/裁决/Finalize）得到新 `group_pubkey` → Runtime 为每条受影响链生成 `MigrationJob` → 产出并上链 `SignedPackage`
 - 运营方负责：拿签名包去执行外链 `updatePubkey(...)` / BTC 迁移交易广播
-- 本链 **Active** 的切换由 `TransitionFinalizeTx` 明确触发（不需要 Frost 轮询外链）
+- 本链 **Active** 的切换由 `FrostTransitionFinalizeTx` 明确触发（不需要 Frost 轮询外链）
 
 ### 6.1 触发条件（链上）
 
@@ -519,10 +599,19 @@ BTC 的 `SignedPackage` 至少包含：
 
 - `epoch_id / trigger_height`
 - `old_committee_ref / new_committee_ref`
-- `dkg_status：NotStarted / Running / KeyReady / Failed`
-- `new_group_pubkey`
+- `dkg_status：NotStarted / Committing / Sharing / Resolving / KeyReady / Failed`
+- `dkg_session_id`
+- `dkg_threshold_t / dkg_n`
+- `dkg_commit_deadline / dkg_dispute_deadline（height）`
+- `dkg_commit_count / dkg_qualified_count`
+- `new_group_pubkey`（KeyReady 后落链）
+- `validation_status：NotStarted / Signing / Passed / Failed`
+- `validation_msg_hash`
+- `validation_signed_ref`
 - `migration_jobs[]`：该 epoch 下的 `MigrationJob` 列表（按链/分片）
-- `activation_status：Preparing / SignedPackagesReady / Active`
+- `activation_status：Preparing / Signing / SignedPackagesReady / Active / Failed`
+
+> 约定：`dkg_commit_deadline = trigger_height + cfg.transition.dkgCommitWindowBlocks`，`dkg_dispute_deadline = dkg_commit_deadline + cfg.transition.dkgDisputeWindowBlocks`。
 
 #### 6.2.2 MigrationJob（链上）
 
@@ -535,20 +624,82 @@ BTC 的 `SignedPackage` 至少包含：
 > 迁移 job 的本质与提现 job 相同：都是“模板 + ROAST + SignedPackage”，只是业务含义不同。
 > 同样是按一个job一个时刻900区块只有一个协调者。超时切换协调者。
 
+#### 6.2.3 DkgCommitment（链上）
+
+按参与者拆分存储，避免把所有 commitments 塞进一个 `TransitionState`：
+
+- `epoch_id / dealer_id`
+- `commitment_points[]`：承诺点集合（用于份额验证）
+- `a_i0`：常数项承诺点（用于聚合 `new_group_pubkey`）
+- `status：COMMITTED | DISQUALIFIED`
+- `commit_txid / height`
+
 ### 6.3 状态机（链上）
 
 ```mermaid
 stateDiagram-v2
   [*] --> DETECTED: miner set change >= threshold
-  DETECTED --> DKG_RUNNING: 启动 DKG 会话
-  DKG_RUNNING --> KEY_READY: new_group_pubkey 产生并落链
-  KEY_READY --> MIGRATION_SIGNING: Runtime 为每条链生成 MigrationJob（模板+hash）
+  DETECTED --> DKG_COMMITTING: 开放 FrostDkgCommitTx 登记承诺点
+  DKG_COMMITTING --> DKG_SHARING: commitments 达标/超时
+  DKG_SHARING --> DKG_RESOLVING: 私发碎片校验 + ComplaintTx 裁决窗口
+  DKG_RESOLVING --> KEY_READY: FrostDkgFinalizeTx 落链
+  KEY_READY --> VALIDATION_SIGNING: TransitionWorker 组织示例签名
+  VALIDATION_SIGNING --> MIGRATION_SIGNING: 验证通过（FrostDkgValidationSignedTx）
+  VALIDATION_SIGNING --> DKG_COMMITTING: 验证失败/超时 -> 重新 DKG
   MIGRATION_SIGNING --> MIGRATION_SIGNED: SignedPackages 全部落链
-  MIGRATION_SIGNED --> ACTIVE: TransitionFinalizeTx 显式激活新 key
-  DKG_RUNNING --> DETECTED: 失败 -> 重试/换协调者策略
+  MIGRATION_SIGNED --> ACTIVE: FrostTransitionFinalizeTx 显式激活新 key
+  DKG_COMMITTING --> DETECTED: 超时/Qualified 不足 -> 重试策略
 ```
 
 > 说明：这里的 “MIGRATION_SIGNED” 表示“迁移签名包齐全”，**不表示外链已执行成功**。
+
+#### 6.3.1 DKG 关键时序（Commit/私发碎片/裁决）
+
+```mermaid
+sequenceDiagram
+  participant CH as VM(On-chain)
+  participant D as Dealer(i)
+  participant R as Receiver(j)
+  participant TW as TransitionWorker(Runtime)
+
+  Note over CH: dkg_status=Committing
+  D->>CH: FrostDkgCommitTx(epoch, commitment_points[])
+  CH-->>D: 记录 commitment + a_i0
+
+  Note over D,R: dkg_status=Sharing（链下）
+  D-->>R: 私发 share=f_i(x_j)
+  R->>CH: 读取 dealer 的 commitment_points
+  R->>R: 本地验证 share
+
+  alt share 无效
+    R->>CH: FrostDkgComplaintTx(epoch, dealer_id, share)
+    CH-->>R: 裁决：dealer DISQUALIFIED（惩罚）
+  end
+
+  Note over CH: dkg_status=Resolving 结束后
+  TW->>CH: FrostDkgFinalizeTx(epoch, new_group_pubkey)
+  CH-->>TW: dkg_status=KeyReady
+```
+
+说明：
+
+- **Dealer**：本轮 DKG 的参与者（`new_committee_ref` 内成员）。负责生成多项式、提交承诺点，并向其他参与者私发碎片。
+- **Receiver**：接收私发碎片的参与者（同样是 `new_committee_ref` 成员）。负责用链上承诺点验证收到的碎片。
+- **TransitionWorker**：Runtime 中推进轮换流程的执行者（可由确定性规则选出），负责在裁决窗口结束后提交 finalize，并在 `KeyReady` 后组织验证签名，失败则触发重新 DKG。
+
+涉及的 Tx 目的：
+
+- `FrostDkgCommitTx`：把 dealer 的承诺点上链，供 receiver 校验私发碎片，也作为链上裁决的公开依据。
+- `FrostDkgComplaintTx`：当 receiver 发现碎片无效时提交举证，VM 用承诺点验证并裁决（剔除/惩罚作恶 dealer）。
+- `FrostDkgFinalizeTx`：裁决窗口结束后触发 KeyReady，VM 依据链上承诺点确定性计算/校验 `new_group_pubkey`。
+
+#### 6.3.2 DKG 验证签名（稳定性检查）
+
+TransitionWorker 在 `KeyReady` 后组织一次示例签名，用于验证新 key 与参与者协作的稳定性：
+
+- 验证消息：`msg = H("frost_dkg_validation" || epoch_id || new_group_pubkey)`（单 task、无外链副作用）
+- 通过 ROAST 产出 `SignedPackage`，提交 `FrostDkgValidationSignedTx` 写链并置 `validation_status=Passed`
+- 若会话超时/收集不足导致验证失败，触发重新 DKG（生成新的 `dkg_session_id`，清空上一轮 commitments），状态回到 `DKG_COMMITTING`
 
 ### 6.4 迁移 Job 规划与签名
 
@@ -575,9 +726,9 @@ Runtime 为每条链生成一个或多个 `MigrationJob`：
 - 所有 Withdraw SigningJob 必须携带 `key_epoch`
 - 在 `ACTIVE` 切换之前：
   - 新创建的 withdraw job 使用旧 `key_epoch`
-- `TransitionFinalizeTx` 生效后：
+- `FrostTransitionFinalizeTx` 生效后：
   - 新创建的 withdraw job 使用新 `key_epoch`
-- 由于本链不追踪外链执行，建议运营流程上：**先确保迁移 SignedPackage 已产出并可执行**（MIGRATION_SIGNED），再由运营方执行外链更新，并在适当时间提交 `TransitionFinalizeTx`。
+- 由于本链不追踪外链执行，建议运营流程上：**先确保迁移 SignedPackage 已产出并可执行**（MIGRATION_SIGNED），再由运营方执行外链更新，并在适当时间提交 `FrostTransitionFinalizeTx`。
 
 ---
 ## 7. Nonce / UTXO 安全设计（Job 模式，避免多签发）
@@ -702,7 +853,13 @@ type FrostEnvelope struct {
   * `FrostWithdrawRequestTx`：创建 `WithdrawRequest{status=QUEUED}` + FIFO index
   * `FrostWithdrawSignedTx`：写入 `SignedPackageRef/Bytes`，把 job 与其覆盖的 withdraw 全部置为 `SIGNED`（终态，资金视为已支出）
 
+  * `FrostDkgCommitTx`：登记本轮 DKG 承诺点（commitments）
+  * `FrostDkgComplaintTx`：无效碎片举证与链上裁决（剔除/惩罚）
+  * `FrostDkgFinalizeTx`：确认 DKG 输出 `new_group_pubkey`（KeyReady）
+  * `FrostDkgValidationSignedTx`：记录示例签名结果（稳定性验证）
+
   * `FrostTransitionSignedTx`：记录迁移 `SignedPackageRef/Bytes`，并将对应 MigrationJob 置为 SIGNED
+  * `FrostTransitionFinalizeTx`：显式激活新 key（Active）
 
 > VM TxHandlers 的职责：**验证 + 写入状态机（共识态）**。  
 > Runtime 的职责：**离链 ROAST/FROST 签名协作 + 会话恢复**，只对链上 job 的 `template_hash` 签名；并通过 `SignedTx` 把签名产物公布到链上。  
@@ -711,7 +868,7 @@ type FrostEnvelope struct {
 ### 8.4 数据库存储：链上状态 vs 本地会话
 
 * **链上状态（StateDB）**：Withdraw/Transition/FundsLedger/Top10000/committee 等
-* **本地会话（SessionStore）**：nonce、commit、已见消息、超时计时、重启恢复信息
+* **本地会话（SessionStore）**：nonce、commit、已见消息、超时计时、重启恢复信息（包含 DKG 的 commitments/私发 shares/已裁决结果缓存等）
 
   * 重要：nonce 必须持久化后才发送 commitment，避免重启后不小心复用
 
@@ -729,6 +886,8 @@ type FrostEnvelope struct {
 * `GetWithdrawStatus(withdraw_id)`：状态机、job_id、template_hash、raw_txid（可离线从模板计算）、signed_package_ref、失败原因
 * `ListWithdraws(from_seq, limit)`：FIFO 扫描队列
 * `GetTransitionStatus(epoch)`：轮换进度、链更新结果
+* `GetDkgCommitment(epoch, dealer_id)`：查询某参与者的 DKG 承诺点（commitments）与状态（COMMITTED/DISQUALIFIED）
+* `ListDkgComplaints(epoch, from, limit)`：（可选）查询链上裁决记录
 * `GetTxSignInfo(withdraw_id)`：聚合签名结果
 * `GetAllWithdrawSignInfo(height1, height2)`：按高度范围汇总
 
@@ -764,7 +923,9 @@ type FrostEnvelope struct {
   },
   "transition": {
     "triggerChangeRatio": 0.2,
-    "pauseWithdrawDuringSwitch": true
+    "pauseWithdrawDuringSwitch": true,
+    "dkgCommitWindowBlocks": 2000,
+    "dkgDisputeWindowBlocks": 2000
   },
   "chains": {
     "btc": { "feeSatsPerVByte": 25 },
@@ -799,6 +960,12 @@ type FrostEnvelope struct {
 4. **聚合者作恶**
 
 * 超时切换聚合者（确定性序列）
+
+5. **DKG 私发碎片与链上裁决**
+
+* 份额（share）必须能用链上已登记的 `commitment_points[]` 做本地验证；未登记 commitments 的 dealer 直接忽略
+* 投诉 tx 的举证数据（share）一旦上链即公开：v1 接受该权衡；如需保密可在后续版本引入加密分享 + 可验证解密证明
+* 需要防垃圾投诉：对失败投诉可选惩罚/抵押金；对被裁决作恶的 dealer 可选剔除/罚没
 
 ---
 
