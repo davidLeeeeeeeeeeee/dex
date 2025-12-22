@@ -63,11 +63,21 @@ FROST 分三层：**共识状态层（VM） / 运行时层（Runtime） / 密码
 
 ```mermaid
 flowchart TB
-  subgraph VM["VM / On-chain State（全网一致）"]
-    QW["Withdraw Queue & Status"]
-    QT["Transition Queue & Status"]
-    MS["Top10000 Miner Set / Epoch Info"]
-    FD["Funds Ledger（入账/UTXO/lot）"]
+  subgraph VM["VM / 链上状态（全网一致）"]
+    VCFG["配置快照\nv1_frost_cfg（阈值/超时/链配置）"]
+    VSET["委员会/epoch 信息\nTop10000 / committee / key_epoch"]
+    VTX["TxHandlers/状态机\n（提现/轮换/DKG）"]
+    VFL["资金账本\n入账/余额/UTXO/锁/已消耗"]
+    VWD["提现队列与作业\nWithdrawRequest / SigningJob"]
+    VTR["轮换与DKG状态\nTransitionState / commitments / 迁移作业 / 验证"]
+    VRH["签名产物登记\nSignedPackage（回执/历史，可审计可下载）"]
+
+    VCFG --> VTX
+    VSET --> VTX
+    VTX --> VFL
+    VTX --> VWD
+    VTX --> VTR
+    VTX --> VRH
   end
 
   subgraph RT["Frost Runtime（每节点服务）"]
