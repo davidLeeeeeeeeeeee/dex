@@ -83,7 +83,7 @@ flowchart TB
   subgraph RT["Frost Runtime（每节点服务）"]
     SC["Scanner（扫描任务）"]
     WM["Withdraw Worker"]
-    TM["Transition Worker"]
+    TM["Power Transition Worker"]
     SS["Session Store（本地持久化）"]
     RO["ROAST Coordinator（可切换）"]
     PA["Participant Engine（签名参与者）"]
@@ -751,43 +751,70 @@ Runtime 为每条链生成一个或多个 `MigrationJob`：
 - 由于本链不追踪外链执行，建议运营流程上：**先确保迁移 SignedPackage 已产出并可执行**（MIGRATION_SIGNED），再由运营方执行外链更新，并在适当时间提交 `FrostTransitionFinalizeTx`。
 
 ---
-## 7. Nonce / UTXO 安全设计（Job 模式，避免多签发）
+## 7. ROAST（通用签名会话流程）
 
-### 7.1 总原则：签名必须绑定“唯一模板 + 唯一 Job”
+ROAST 是本设计里所有“需要门限签名”的统一会话层：**两轮 FROST + 子集重试 + 协调者切换**。
+在 v1 中 ROAST 会被三处复用：
 
-所有参与者在产生 `R_i` 或 `z_i` 前必须验证：
+- 提现：`SigningJob -> FrostWithdrawSignedTx`
+- 轮换迁移：`MigrationJob -> FrostTransitionSignedTx`
+- DKG 验证签名：`validation_msg_hash -> FrostDkgValidationSignedTx`
 
-- `job_id` 存在且链上状态为 `SIGNING`（未 SIGNED）
-- `template_hash` 与链上 `SigningJob.template_hash` 一致（签名只对该模板生效）
-- `key_epoch` 与链上一致（避免轮换期间签错 key）
-- 对 BTC：每个 input/task 的 `msg = sighash(input_index, tx_template)` 必须由模板唯一决定（不得被协调者篡改）
+### 7.1 会话输入（链上可验证）
 
-> 简单记法：**签什么（msg）必须能从链上 job 纯计算出来**，参与者绝不对“链下临时拼的模板”签名。
+ROAST 会话必须只对“链上已确认且可纯计算”的消息签名：
 
-### 7.2 合约链（ETH/BNB/TRX/SOL）
+- `session_id`：建议直接使用 `job_id`；DKG 验证签名使用 `epoch_id + validation_msg_hash`
+- `committee / threshold(t)`：来自链上委员会/Top10000 快照
+- `key_epoch`：绑定使用哪个 epoch 的 `group_pubkey`
+- `msg`：
+  - 合约链/账户链：从 `template_hash` 确定性导出
+  - BTC：从 `tx_template` 确定性导出 `K=len(inputs)` 个 `sighash(input_index)`（task 向量化）
+  - DKG 验证：`msg = H("frost_dkg_validation" || epoch_id || new_group_pubkey)`（单 task）
 
-v1 建议把“唯一性/去重”交给合约/程序层（强约束），从而允许一个 job 覆盖多笔提现：
+### 7.2 两轮消息（Commit -> Share）
 
-- 被签名的消息建议包含（域分隔）：
-  `job_id || chain_id || contract/program || method || withdraw_ids[] || to[] || amount[] || fee_cap || deadline || key_epoch`
-- 合约/程序维护 `used_withdraw_id` 或 `used_job_id`（二选一即可），确保同一提现不会被重复执行
-- 即便出现重复广播/重放，链上执行也会失败（revert），不会重复转出
+- Round1：参与者为每个 task 生成 nonce（本地落盘）并发送 commitment `R_i`
+- Round2：协调者广播 `R_agg`/challenge，参与者返回 sig share `z_i`
+- 协调者聚合得到最终签名（BTC 为 `sig[0..K-1]`）并封装 `SignedPackage`
 
-### 7.3 BTC（UTXO）
+### 7.3 子集重试（ROAST 的核心价值）
 
-BTC 的安全关键点在于：**inputs/outputs/fee/locktime/sequence/sighash 必须在 Job 规划阶段固定**，并且 UTXO 必须被锁定，避免并发重复分配。
+当部分节点掉线/作恶导致收集不到 `t` 份 share 时：
 
-- 链上 FundsLedger 维护 UTXO 集与锁：`lock(utxo)->job_id`
-- Runtime `job_planner` 在生成 SigningJob 时固定：
-  - 选取 `inputs[]`（可能多笔 UTXO）
-  - 固定 `outputs[]`（可多地址、多输出，支持“一个 input 覆盖多笔小额提现”）
-  - 固定 fee/feerate、locktime/sequence、sighash_type
-  - 生成 `tx_template` 并写入 `template_hash`
-- 签名阶段（ROAST）：
-  - 只允许对该模板的 `K=len(inputs)` 个 task 产生签名（每个 input 一个 sighash/message）
-  - Nonce 必须按 task 独立生成并本地持久化，绝不跨 task 复用
+- 协调者可以选择新的子集继续收集（同一 `session_id`、同一 `msg`）
+- 对 BTC：允许 `K` 个 task 部分完成，未完成 task 继续重试（已完成的不回滚）
 
-> 费用策略：由于 Frost 不负责外链广播/确认，v1 推荐使用保守的 fee 参数（配置中可按年均 * 300%）。如需更复杂的加速（RBF/CPFP），建议作为后续版本在“额外 Job/额外 SignedPackage”层面实现，而不是在同一 withdraw 上生成不同模板的替代交易。
+### 7.4 协调者选举与切换（确定性）
+
+为避免“单点协调者卡死”，所有节点必须能独立算出当前协调者：
+
+- `seed = H(session_id || key_epoch || "frost_agg")`
+- `agg_candidates = Permute(active_committee, seed)`
+- `agg_index = floor((now_height - session_start_height) / rotate_blocks)`（例如每 900 区块切换一次）
+- 参与者仅接受当前 `agg_index` 对应协调者的请求，超时自然切换
+
+### 7.5 上链回写（交付物）
+
+ROAST 的交付物是 `SignedPackage`，由 Runtime 通过不同 tx 回写链上：
+
+- 提现：`FrostWithdrawSignedTx(job_id, signed_package_ref)`
+- 迁移：`FrostTransitionSignedTx(epoch_id, job_id, signed_package_ref)`
+- DKG 验证：`FrostDkgValidationSignedTx(epoch_id, validation_msg_hash, signed_package_ref)`
+
+### 7.6 通用时序图（简化）
+
+```mermaid
+sequenceDiagram
+  participant CO as 协调者（ROAST）
+  participant S as 参与者(t-of-N)
+
+  CO->>S: Round1 请求 nonce commitments(session_id, task_ids[])
+  S-->>CO: R_i[task_id]（batch）
+  CO->>S: Round2 广播 R_agg/challenge(session_id)
+  S-->>CO: z_i[task_id]（batch）
+  CO-->>CO: 聚合签名 -> SignedPackage
+```
 
 ---
 ## 8. 内部接口（模块间）——重新设计（重点）
@@ -976,6 +1003,12 @@ type FrostEnvelope struct {
 3. **模板绑定**
 
 * 所有签名 share 必须绑定链上 `tx_template_hash`，防止聚合者诱导签名不同交易
+* 参与者在产生 `R_i` 或 `z_i` 前必须校验（否则拒签）：
+  * `job_id` 存在且链上状态为 `SIGNING`（未 SIGNED）
+  * `template_hash` 与链上 `SigningJob.template_hash` 一致
+  * `key_epoch` 与链上一致（避免轮换期间签错 key）
+  * 对 BTC：每个 input/task 的 `msg = sighash(input_index, tx_template)` 必须能从链上模板纯计算
+  * 对 DKG 验证签名：`validation_msg_hash` 必须与 `H("frost_dkg_validation" || epoch_id || new_group_pubkey)` 一致
 
 4. **聚合者作恶**
 
@@ -986,6 +1019,24 @@ type FrostEnvelope struct {
 * 份额（share）必须能用链上已登记的 `commitment_points[]` 做本地验证；未登记 commitments 的 dealer 直接忽略
 * 投诉 tx 的举证数据（share）一旦上链即公开：v1 接受该权衡；如需保密可在后续版本引入加密分享 + 可验证解密证明
 * 需要防垃圾投诉：对失败投诉可选惩罚/抵押金；对被裁决作恶的 dealer 可选剔除/罚没
+
+6. **合约链去重/防重放（ETH/BNB/TRX/SOL）**
+
+* 建议把“唯一性/去重”交给合约/程序层（强约束），从而允许一个 job 覆盖多笔提现
+* 被签名的消息建议包含（域分隔）：
+  `job_id || chain_id || contract/program || method || withdraw_ids[] || to[] || amount[] || fee_cap || deadline || key_epoch`
+* 合约/程序维护 `used_withdraw_id` 或 `used_job_id`（二选一即可），确保同一提现不会被重复执行
+
+7. **BTC UTXO：模板固定与锁定（避免多签发）**
+
+* `inputs/outputs/fee/locktime/sequence/sighash` 必须在 Job 规划阶段固定，UTXO 必须被锁定，避免并发重复分配
+* 链上 FundsLedger 维护 UTXO 集与锁：`lock(utxo)->job_id`
+* Runtime `job_planner` 在生成 SigningJob 时固定：
+  * 选取 `inputs[]`（可能多笔 UTXO）
+  * 固定 `outputs[]`（可多地址、多输出）
+  * 固定 fee/feerate、locktime/sequence、sighash_type
+  * 生成 `tx_template` 并写入 `template_hash`
+* 签名阶段（ROAST）：Nonce 必须按 task 独立生成并本地持久化，绝不跨 task 复用
 
 ---
 
