@@ -14,7 +14,7 @@
 > - 提现调度 FIFO（先入账的资金先被提现）  
 > - 共识暂停时，FROST 仍持续执行**已确认**的提现/交接（状态回写可延后）
 > - 提现/迁移相关的三方链交易：**FROST/整个工程不负责广播与确认**；Runtime 只负责构建模板、完成门限签名，并把"签名产物/交易包"落链（可查询/可审计）；广播由用户/运营方手动完成。
-> - 允许 ROAST 对同一 `tx_template_hash` 产生**多份合法签名产物**；系统通过tx接受并追加记录这些产物，同时保证不会导致双花（同一 withdraw_id 绑定同一模板/同一输入集合）。
+> - 允许 ROAST 对同一 `template_hash` 产生**多份合法签名产物**；系统通过tx接受并追加记录这些产物，同时保证不会导致双花（同一 withdraw_id 绑定同一模板/同一输入集合）。
 
 ---
 
@@ -309,7 +309,7 @@ frost/
     * `dkg_status == Resolving` 且已过 `dkg_dispute_deadline`
     * `validation_status ∈ {NotStarted, Signing}`
     * `validation_msg_hash == H("frost_dkg_validation" || epoch_id || new_group_pubkey)`
-  * 作用：记录示例签名结果并将 `validation_status` 置为 `Passed`（VM 不强制验签，链下可复验）
+  * 作用：记录示例签名结果并将 `validation_status` 置为 `Passed`（VM 强制验签）
 
 * `FrostDkgFinalizeTx`（确认 DKG 结果）
   * `epoch_id`
@@ -789,7 +789,7 @@ ROAST 会话必须只对“链上已确认且可纯计算”的消息签名：
 
 为避免“单点协调者卡死”，所有节点必须能独立算出当前协调者：
 
-- `seed = H(session_id || key_epoch || "frost_agg")`
+- `seed = H(job_id || key_epoch || "frost_agg")`
 - `agg_candidates = Permute(active_committee, seed)`
 - `agg_index = floor((now_height - session_start_height) / rotate_blocks)`（例如每 900 区块切换一次）
 - 参与者仅接受当前 `agg_index` 对应协调者的请求，超时自然切换
@@ -992,7 +992,7 @@ type FrostEnvelope struct {
 
 1. **参与者验签与防重放**
 
-* FrostEnvelope 可选带消息签名（使用 miner 节点身份签名）
+* FrostEnvelope 消息签名（使用 miner 节点身份签名）
 * 必须校验 session_id / epoch / round，不接受过期消息
 
 2. **Nonce 安全**
