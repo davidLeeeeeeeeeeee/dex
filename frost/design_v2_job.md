@@ -218,14 +218,12 @@ frost/
 
 #### 4.3.1 WithdrawRequest（链上）
 
-* withdraw_id：提现tx的id
+* withdraw_id：全网唯一
+* seq：FIFO 序号（严格递增）
 * chain/asset：目标链与资产类型
 * to / amount：提现目标地址与数量
-* fee_policy：固定或上限（v1 固定取 config）
-* tx_context：提现交易签名内容，由VM填写
 * status：状态机字段（见下）
-* session_id：当前正在使用的签名会话 id（可空）
-* signed_tx_ref：签名产物（hash 或 raw 的存储引用）
+* job_id：归属的 SigningJob（当 status=SIGNED 时存在）
 
 #### 4.3.2 FundsLedger（链上）
 
@@ -526,9 +524,9 @@ BTC job 的模板本质是一笔交易：
 ### 5.4 ROAST（Job 模式）：一次会话产出 1..K 份签名
 
 对一个 `SigningJob`，Runtime 创建一个 `RoastSession(job_id)`：
-- 每个job_id一次Roast循环分配一个全网唯一的协调者负责Roast过程。Roast协调者切换算法全网统一，每隔900个区块如果协调者没有提交有效的SignedPackageTx，自动切换到下一个协调者。
+- 每个job_id一次Roast循环分配一个全网唯一的协调者负责Roast过程。Roast协调者切换算法全网统一，若在 `cfg.timeouts.aggregatorRotateMs` 超时窗口内未提交有效的 `FrostWithdrawSignedTx`，自动切换到下一个协调者。
 - session 输入：`job_id + template_hash + key_epoch + committee`
-- session 输出：`SignedPackageTx`（BTC 是 “模板 + 每个 input 的 schnorr sig”）
+- session 输出：`SignedPackage`（BTC 是 “模板 + 每个 input 的 schnorr sig”）
 
 #### 5.4.1 Task 向量化：BTC 的 “K 个 input = K 个签名任务”
 
@@ -557,11 +555,12 @@ BTC job 的模板本质是一笔交易：
 
 #### 5.4.3 聚合者切换（确定性 + 超时）
 
-输入 `job_session_id`：
+输入 `session_id`（= job_id）：
 
-- `seed = H(job_id || key_epoch || "frost_agg")`
+- `seed = H(session_id || key_epoch || "frost_agg")`
 - `agg_candidates = Permute(active_committee, seed)`
-- `agg_index = floor((now - session_start)/agg_timeout)`
+- `agg_timeout_ms = cfg.timeouts.aggregatorRotateMs`
+- `agg_index = floor((now_ms - session_start_ms)/agg_timeout_ms)`
 - 参与者仅接受当前 `agg_index` 的协调者请求，超时自然切换
 
 ---
@@ -633,7 +632,7 @@ BTC 的 `SignedPackage` 至少包含：
 - `signed_package_ref`（Signed 后写入）
 
 > 迁移 job 的本质与提现 job 相同：都是“模板 + ROAST + SignedPackage”，只是业务含义不同。
-> 同样是按一个job一个时刻900区块只有一个协调者。超时切换协调者。
+> 同样按超时窗口保证同一时刻只有一个协调者，超时切换协调者。
 
 #### 6.2.3 DkgCommitment（链上）
 
@@ -789,9 +788,10 @@ ROAST 会话必须只对“链上已确认且可纯计算”的消息签名：
 
 为避免“单点协调者卡死”，所有节点必须能独立算出当前协调者：
 
-- `seed = H(job_id || key_epoch || "frost_agg")`
+- `seed = H(session_id || key_epoch || "frost_agg")`
 - `agg_candidates = Permute(active_committee, seed)`
-- `agg_index = floor((now_height - session_start_height) / rotate_blocks)`（例如每 900 区块切换一次）
+- `agg_timeout_ms = cfg.timeouts.aggregatorRotateMs`
+- `agg_index = floor((now_ms - session_start_ms) / agg_timeout_ms)`
 - 参与者仅接受当前 `agg_index` 对应协调者的请求，超时自然切换
 
 ### 7.5 上链回写（交付物）
@@ -909,7 +909,7 @@ type FrostEnvelope struct {
   * `FrostTransitionFinalizeTx`：显式激活新 key（Active）
 
 > VM TxHandlers 的职责：**验证 + 写入状态机（共识态）**。  
-> Runtime 的职责：**离链 ROAST/FROST 签名协作 + 会话恢复**，只对链上 job 的 `template_hash` 签名；并通过 `SignedTx` 把签名产物公布到链上。  
+> Runtime 的职责：**离链 ROAST/FROST 签名协作 + 会话恢复**，只对链上 job 的 `template_hash` 签名；并通过 `FrostWithdrawSignedTx` / `FrostTransitionSignedTx` / `FrostDkgValidationSignedTx` 把签名产物公布到链上。  
 > Frost 不负责外链广播/确认；用户/运营方拿链上 `SignedPackage` 自行广播。
 
 ### 8.4 数据库存储：链上状态 vs 本地会话
@@ -1002,7 +1002,7 @@ type FrostEnvelope struct {
 
 3. **模板绑定**
 
-* 所有签名 share 必须绑定链上 `tx_template_hash`，防止聚合者诱导签名不同交易
+* 所有签名 share 必须绑定链上 `template_hash`，防止聚合者诱导签名不同交易
 * 参与者在产生 `R_i` 或 `z_i` 前必须校验（否则拒签）：
   * `job_id` 存在且链上状态为 `SIGNING`（未 SIGNED）
   * `template_hash` 与链上 `SigningJob.template_hash` 一致
