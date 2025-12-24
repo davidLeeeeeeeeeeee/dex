@@ -276,7 +276,6 @@ frost/
 
 * `FrostWithdrawRequestTx`（用户发起）
   * `chain / asset / to / amount`
-  * （可选）`memo / user_ref`
 
 说明：不引入额外的 PlanTx。VM 直接基于已最终化的 WithdrawRequest 队列与链上 FundsLedger，确定性计算“唯一合法的 next job”。
 
@@ -599,9 +598,9 @@ Frost 的“完成”定义：
 
 BTC 的 `SignedPackage` 至少包含：
 
-- `tx_template`（可为 PSBT-like：inputs/outputs/locktime/sequence）
+- `tx_template`（为 inputs/outputs/sequence）
 - `input_sigs[]`（按 input_index 对齐的 schnorr signatures）
-- （可选）`raw_wtx`（直接可广播的完整交易）
+- `raw_wtx`（直接可广播的完整交易）
 
 ---
 
