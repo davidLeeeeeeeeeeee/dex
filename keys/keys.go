@@ -226,6 +226,24 @@ func KeyFrostFundsLotSeq(chain, asset string, height uint64) string {
 	return withVer(fmt.Sprintf("frost_funds_lot_seq_%s_%s_%s", chain, asset, padUint(height)))
 }
 
+// KeyFrostFundsPendingLotIndex 待入账 lot 索引（按 request_height + seq）
+// 例：v1_frost_funds_pending_lot_<chain>_<asset>_<height>_<seq>
+func KeyFrostFundsPendingLotIndex(chain, asset string, height, seq uint64) string {
+	return withVer(fmt.Sprintf("frost_funds_pending_lot_%s_%s_%s_%s", chain, asset, padUint(height), padUint(seq)))
+}
+
+// KeyFrostFundsPendingLotSeq 待入账 lot 高度内序号
+// 例：v1_frost_funds_pending_lot_seq_<chain>_<asset>_<height>
+func KeyFrostFundsPendingLotSeq(chain, asset string, height uint64) string {
+	return withVer(fmt.Sprintf("frost_funds_pending_lot_seq_%s_%s_%s", chain, asset, padUint(height)))
+}
+
+// KeyFrostFundsPendingLotRef request_id -> pending lot key
+// 例：v1_frost_funds_pending_ref_<request_id>
+func KeyFrostFundsPendingLotRef(requestID string) string {
+	return withVer("frost_funds_pending_ref_" + requestID)
+}
+
 func padUint(v uint64) string {
 	return fmt.Sprintf("%020d", v)
 }

@@ -8,6 +8,7 @@ import (
 	"dex/witness"
 	"fmt"
 	"math/big"
+	"strconv"
 
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
@@ -248,6 +249,19 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 	}
 	ws = append(ws, WriteOp{Key: existingKey, Value: requestData, Del: false, SyncStateDB: true, Category: "witness_request"})
 	ws = append(ws, WriteOp{Key: nativeTxKey, Value: []byte(requestID), Del: false, SyncStateDB: false, Category: "index"})
+
+	pendingHeight := rechargeRequest.CreateHeight
+	if pendingHeight == 0 {
+		pendingHeight = request.Base.ExecutedHeight
+	}
+	pendingSeqKey := keys.KeyFrostFundsPendingLotSeq(request.NativeChain, request.TokenAddress, pendingHeight)
+	pendingSeq := readUintSeq(sv, pendingSeqKey)
+	pendingIndexKey := keys.KeyFrostFundsPendingLotIndex(request.NativeChain, request.TokenAddress, pendingHeight, pendingSeq)
+	pendingRefKey := keys.KeyFrostFundsPendingLotRef(requestID)
+
+	ws = append(ws, WriteOp{Key: pendingIndexKey, Value: []byte(requestID), Del: false, SyncStateDB: true, Category: "frost_funds_pending"})
+	ws = append(ws, WriteOp{Key: pendingSeqKey, Value: []byte(strconv.FormatUint(pendingSeq+1, 10)), Del: false, SyncStateDB: true, Category: "frost_funds_pending"})
+	ws = append(ws, WriteOp{Key: pendingRefKey, Value: []byte(pendingIndexKey), Del: false, SyncStateDB: true, Category: "frost_funds_pending"})
 
 	return ws, &Receipt{TxID: requestID, Status: "SUCCEED", WriteCount: len(ws)}, nil
 }

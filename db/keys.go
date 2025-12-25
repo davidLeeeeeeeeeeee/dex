@@ -147,6 +147,18 @@ func KeyFrostFundsLotSeq(chain, asset string, height uint64) string {
 	return keys.KeyFrostFundsLotSeq(chain, asset, height)
 }
 
+func KeyFrostFundsPendingLotIndex(chain, asset string, height, seq uint64) string {
+	return keys.KeyFrostFundsPendingLotIndex(chain, asset, height, seq)
+}
+
+func KeyFrostFundsPendingLotSeq(chain, asset string, height uint64) string {
+	return keys.KeyFrostFundsPendingLotSeq(chain, asset, height)
+}
+
+func KeyFrostFundsPendingLotRef(requestID string) string {
+	return keys.KeyFrostFundsPendingLotRef(requestID)
+}
+
 // ===================== VM 执行状态相关 =====================
 
 func KeyVMAppliedTx(txID string) string {

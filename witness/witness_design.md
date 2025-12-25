@@ -22,6 +22,12 @@
         *   挑战失败: 罚没挑战者资金。
 6.  **上账**: 公示期结束无异议，资产入账。
 
+## 与 FundsLedger 的衔接（两层账本）
+
+- `WitnessRequestTx` 链上确认后，VM 先写入 FundsLedger 的 **Pending 层**（待入账、不可提现）。
+- 见证流程最终化（Finalized）后，从 Pending 移除并写入 **Finalized 层**（可提现）。
+- 提现只使用 Finalized；权力交接/迁移需要覆盖 Pending + Finalized。
+
 ## 状态流转图
 
 ```mermaid

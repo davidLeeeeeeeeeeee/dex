@@ -156,6 +156,7 @@ stateDiagram-v2
 
 *   **区块高度同步**: VM 通过调用 `Service.SetCurrentHeight(height)` 驱动见证者模块的时间推进（如检查公示期、解质押锁定等）。
 *   **交易处理**: VM 解析区块中的交易，识别出 `WitnessRequestTx`, `WitnessVoteTx` 等，调用 `Service` 的相应方法（如 `CreateRechargeRequest`, `ProcessVote`）。
+*   **资金账本衔接**: `WitnessRequestTx` 确认后写入 FundsLedger Pending 层；`EventRechargeFinalized` 触发后从 Pending 移除并写入 Finalized 层。
 *   **事件通知**: `Service` 通过 `Events()` 通道向 VM 发送状态变更事件（如 `EventRechargeFinalized`），VM 接收后可触发后续逻辑（如铸造 Token）。
 
 ### 5.2 数据持久化 (DB Interface)

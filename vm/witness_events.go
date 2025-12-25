@@ -22,15 +22,28 @@ func (x *Executor) applyWitnessFinalizedEvents(sv StateView, fallbackHeight uint
 	for {
 		select {
 		case evt := <-x.WitnessService.Events():
-			if evt == nil || evt.Type != witness.EventRechargeFinalized {
+			if evt == nil {
 				continue
 			}
-			req, ok := evt.Data.(*pb.RechargeRequest)
-			if !ok || req == nil {
+			switch evt.Type {
+			case witness.EventRechargeFinalized:
+				req, ok := evt.Data.(*pb.RechargeRequest)
+				if !ok || req == nil {
+					continue
+				}
+				if err := applyRechargeFinalized(sv, req, fallbackHeight); err != nil {
+					return err
+				}
+			case witness.EventRechargeRejected:
+				req, ok := evt.Data.(*pb.RechargeRequest)
+				if !ok || req == nil {
+					continue
+				}
+				if err := applyRechargeRejected(sv, req); err != nil {
+					return err
+				}
+			default:
 				continue
-			}
-			if err := applyRechargeFinalized(sv, req, fallbackHeight); err != nil {
-				return err
 			}
 		default:
 			return nil
@@ -71,6 +84,8 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 	}
 	setWithMeta(sv, requestKey, updatedRequestData, true, "witness_request")
 
+	removePendingFunds(sv, stored.RequestId)
+
 	chain := stored.NativeChain
 	asset := stored.TokenAddress
 	finalizeHeight := stored.FinalizeHeight
@@ -86,6 +101,35 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 	return nil
 }
 
+func applyRechargeRejected(sv StateView, req *pb.RechargeRequest) error {
+	if req == nil || req.RequestId == "" {
+		return nil
+	}
+
+	requestKey := keys.KeyRechargeRequest(req.RequestId)
+	requestData, exists, err := sv.Get(requestKey)
+	if err != nil || !exists {
+		return nil
+	}
+
+	var stored pb.RechargeRequest
+	if err := proto.Unmarshal(requestData, &stored); err != nil {
+		return err
+	}
+
+	if stored.Status != pb.RechargeRequestStatus_RECHARGE_REJECTED {
+		stored.Status = pb.RechargeRequestStatus_RECHARGE_REJECTED
+		updatedRequestData, err := proto.Marshal(&stored)
+		if err != nil {
+			return err
+		}
+		setWithMeta(sv, requestKey, updatedRequestData, true, "witness_request")
+	}
+
+	removePendingFunds(sv, stored.RequestId)
+	return nil
+}
+
 func readUintSeq(sv StateView, key string) uint64 {
 	data, exists, err := sv.Get(key)
 	if err != nil || !exists || len(data) == 0 {
@@ -95,6 +139,20 @@ func readUintSeq(sv StateView, key string) uint64 {
 		return n
 	}
 	return 0
+}
+
+func removePendingFunds(sv StateView, requestID string) {
+	if requestID == "" {
+		return
+	}
+	refKey := keys.KeyFrostFundsPendingLotRef(requestID)
+	pendingKeyData, exists, err := sv.Get(refKey)
+	if err != nil || !exists || len(pendingKeyData) == 0 {
+		return
+	}
+	pendingKey := string(pendingKeyData)
+	sv.Del(pendingKey)
+	sv.Del(refKey)
 }
 
 func setWithMeta(sv StateView, key string, value []byte, syncStateDB bool, category string) {

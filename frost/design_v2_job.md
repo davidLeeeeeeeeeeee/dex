@@ -155,12 +155,12 @@ frost/
   vmhandler/                # VM TxHandlers：写入/推进链上状态机（Job 化，见 5/6/8.3）
     register.go             # Handler 注册入口
     withdraw_request.go     # FrostWithdrawRequestTx：创建 QUEUED + FIFO index
-    withdraw_signed.go      # FrostWithdrawSignedTx：写入 signed_package_ref/signed_package_bytes 并追加 receipt/history，job 与 withdraw 置为 SIGNED
+    withdraw_signed.go      # FrostWithdrawSignedTx：写入 signed_package_bytes 并追加 receipt/history，job 与 withdraw 置为 SIGNED
     dkg_commit.go           # FrostDkgCommitTx：登记 DKG 承诺点（commitments）
     dkg_complaint.go        # FrostDkgComplaintTx：链上裁决（份额无效/作恶举证）
     dkg_validation_signed.go # FrostDkgValidationSignedTx：验证示例签名并确认新 group pubkey（KeyReady）
-    transition_signed.go    # FrostTransitionSignedTx：写入迁移 signed_package_ref/signed_package_bytes 并追加 receipt/history
-    funds_ledger.go         # 资金账本 helper（lot/utxo/lock），供 withdraw handler 校验
+    transition_signed.go    # FrostTransitionSignedTx：记录迁移 SignedPackage 并追加 receipt/history，配合 FundsLedger 标记迁移进度
+    funds_ledger.go         # 资金账本 helper（lot/utxo/lock），供 withdraw/transition handler 校验
   chain/                    # 链适配器（构建模板 / 封装 SignedPackage / 解析与校验）
     adapter.go              # ChainAdapter 接口定义 + ChainAdapterFactory
     btc/
@@ -212,6 +212,9 @@ frost/
 | Funds Lot Index     | `v1_frost_funds_lot_<chain>_<asset>_<height>_<seq>` | 入账 lot 索引（按高度 FIFO 扫描，height 需零填充） |
 | Funds Lot Head      | `v1_frost_funds_lot_head_<chain>_<asset>` | FIFO 头指针（下一个未消费 lot）                  |
 | Funds Lot Seq       | `v1_frost_funds_lot_seq_<chain>_<asset>_<height>` | 每个高度的 lot 序号计数器                        |
+| Funds Pending Lot Index | `v1_frost_funds_pending_lot_<chain>_<asset>_<height>_<seq>` | 已确认但未上账的入账请求（待入账队列）              |
+| Funds Pending Lot Seq   | `v1_frost_funds_pending_lot_seq_<chain>_<asset>_<height>` | 待入账队列序号                                   |
+| Funds Pending Ref   | `v1_frost_funds_pending_ref_<request_id>` | request_id -> pending lot key                  |
 | Withdraw Queue      | `v1_frost_withdraw_<withdraw_id>`   | 提现请求与状态                                    |
 | Withdraw FIFO Index | `v1_frost_withdraw_q_<seq>`         | seq->withdraw_id，用于 FIFO 扫描                |
 | Transition State    | `v1_frost_transition_<epoch_id>`       | 轮换/交接会话与状态                                 |
@@ -237,6 +240,11 @@ frost/
   * `available_balance`（可选缓存）
   * `reserved_balance`（可选缓存，用于并发预留）
   * `next_withdraw_seq`（用于生成 withdraw_id 或 FIFO index）
+  * `pending_lots`（以独立 KV 记录，WitnessRequestTx 已确认但未上账；仅用于迁移）
+    - key：`v1_frost_funds_pending_lot_<chain>_<asset>_<height>_<seq>`
+    - value：`request_id`
+  * `pending_lot_seq`（以独立 KV 记录，每个 request_height 对应一个序号）
+    - key：`v1_frost_funds_pending_lot_seq_<chain>_<asset>_<height>`
   * `deposit_lots`（以独立 KV 记录，FIFO：每次入账形成一个 lot，提现从 lot 头部扣减）
     - key：`v1_frost_funds_lot_<chain>_<asset>_<height>_<seq>`
     - value：`request_id`（金额与 finalize_height 可从 RechargeRequest 读取；也可内联 amount 便于快速读）
@@ -252,14 +260,17 @@ frost/
 > 说明：你要求“先上账的资金先被提现”，BTC 天然可用“UTXO age 升序选取”；账户链用 `deposit_lots` 实现真正 FIFO（按 `finalize_height + seq` 扫描）。
 
 入账与索引：
-- `WitnessRequestTx` 通过并最终化后（见证共识通过 + 申诉窗口结束），VM 以 `FinalizeHeight` 记录入账逻辑时间；写入 `Funds Lot Index`（按高度 FIFO 扫描），并可选更新余额缓存。
+- 初衷：我觉得可以在FundsLedger 设计两层账本，一层是WitnessRequestTx链上已经确认了，但是还未被witness上账，一层是已经被witness上账了。一旦WitnessRequestTx链上已经确认，就交给第一层管理。witness上账之后交给第二层管理。提现只能提现第二层资产。但是权力移交需要移交一层和二层。这样设计最简单，不引入新的tx和流程。最优雅
+- `WitnessRequestTx` 链上确认后，VM 以 `request_height` 写入 `Pending Lot Index`（仅迁移用，不参与提现）。
+- 见证流程最终化（`RechargeFinalized`）后，VM 从 Pending 移除该条目，并以 `FinalizeHeight` 写入 `Funds Lot Index`（按高度 FIFO 扫描），并可选更新余额缓存。
 
 FundsLedger 最简实现思路（不引入新 tx、低成本）：
 - 账户链：用 append-only 的 lot 索引形成天然 FIFO
+  - `v1_frost_funds_pending_lot_<chain>_<asset>_<height>_<seq> -> request_id`（Pending 层，仅迁移）
   - `v1_frost_funds_lot_<chain>_<asset>_<height>_<seq> -> request_id`
   - 维护 `v1_frost_funds_lot_head_<chain>_<asset>` 作为“下一个未消费 lot”的指针
   - 每个高度用 `v1_frost_funds_lot_seq_<chain>_<asset>_<height>` 递增生成 seq
-  - 提现时从 head 顺序消耗，保证“先入先出”，无需复杂 `plan_bytes`
+  - 提现时只消费已上账 lot（Pending 不参与提现），保证“先入先出”，无需复杂 `plan_bytes`
 - BTC：按 `confirmed_height` 升序选择 UTXO，自带 FIFO 属性
 
 #### 4.3.3 TransitionState（链上）
@@ -278,12 +289,12 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
 * validation_status：NotStarted / Signing / Passed / Failed
 * validation_msg_hash：`H("frost_dkg_validation" || epoch_id || new_group_pubkey)`
 * validation_signed_ref：示例签名产物引用（Passed 后写入）
-* migration_sig_count：已落链的签名产物数量（不含 bytes）
+* migration_sig_count：已落链的签名产物数量（不含 bytes，用于统计；迁移完成以 FundsLedger 判定）
 * affected_chains：需要更新的链列表（BTC/合约链）
 * pause_withdraw_policy：是否暂停/降速（仅在"切换生效窗口"短暂停）
 
-> 当该 epoch 的所有 MigrationJob 均为 SIGNED（SignedPackages 通过 tx 落本链），视为新 key 生效（无需显式 finalize）。
-> 迁移产物（raw tx / call data / signatures）可通过重复提交 `FrostTransitionSignedTx`（同 epoch_id 多份 SignedPackage）落 receipt/history（SyncStateDB=false）。
+> 迁移产物（raw tx / call data / signatures）可能多笔，可通过重复提交 `FrostTransitionSignedTx`（同 epoch_id 多份 SignedPackage）落 receipt/history（SyncStateDB=false）。
+> 新 key 生效由 VM 结合 FundsLedger 判断：当旧 key 对应资产已全部被迁移签名覆盖/消耗，且相关 SignedPackages 已落链，即视为迁移完成。
 
 ---
 
@@ -294,11 +305,11 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
 * `FrostWithdrawRequestTx`（用户发起）
   * `chain / asset / to / amount`
 
-说明：不引入额外的 PlanTx。VM 直接基于已最终化的 WithdrawRequest 队列与链上 FundsLedger，确定性计算“队首 job 窗口”（最多 `maxInFlightPerChain` 个），该窗口对应 FIFO 队首连续前缀并按资金先入先出消耗。
+说明：VM 直接基于已最终化的 WithdrawRequest 队列与链上 FundsLedger，确定性计算“队首 job 窗口”（最多 `maxInFlightPerChain` 个），该窗口对应 FIFO 队首连续前缀并按资金先入先出消耗。
 
 * `FrostWithdrawSignedTx`（Runtime 回写）
   * `job_id`
-  * `signed_package_ref`（或 `signed_package_bytes`）
+  * `signed_package_bytes`
   * 约束：
     * VM 必须基于链上状态 + 配置，确定性重算“队首 job 窗口”（最多 `maxInFlightPerChain` 个），逐个迭代消耗 FIFO withdraws 与资金
     * 若该 `job_id` 尚不存在：仅当 tx 的 `job_id` 等于窗口中**当前最靠前的未签名 job**才接受；并写入 SigningJob 记录（status=SIGNED）、标记 withdraw 为 `SIGNED`、资金/UTXO 置为 **consumed/spent**
@@ -327,7 +338,7 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
 * `FrostDkgValidationSignedTx`（示例签名产物回写/确认 DKG 结果）
   * `epoch_id`
   * `validation_msg_hash`
-  * `signed_package_ref`（或 `signed_package_bytes`）
+  * `signed_package_bytes`
   * 约束：
     * `dkg_status == Resolving` 且已过 `dkg_dispute_deadline`
     * `validation_status ∈ {NotStarted, Signing}`
@@ -340,11 +351,14 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
 
 * `FrostTransitionSignedTx`（迁移签名产物回写）
   * `epoch_id / job_id / chain`
-  * `signed_package_ref`（或 `signed_package_bytes`）
+  * `signed_package_bytes`
   * 约束：
     * 签名产物必须绑定该 `MigrationJob.template_hash`
-    * 允许重复提交，多份产物追加 receipt/history（`v1_frost_signed_pkg_<job_id>_<idx>`），不再改变状态
-  * 作用：记录 SignedPackage；当该 epoch 下所有 MigrationJob 均为 SIGNED 时，视为新 key 生效
+    * VM 需基于 FundsLedger 确定当前待迁移资产与模板，仅接受与之匹配的 job_id/template_hash
+    * 允许重复提交，多份产物追加 receipt/history（`v1_frost_signed_pkg_<job_id>_<idx>`）
+  * 作用：
+    * 记录 SignedPackage，并据模板消耗/锁定 FundsLedger 中对应资产（迁移进度）
+    * 迁移完成以 VM 的 FundsLedger 检查为准：旧 key 资产全部覆盖/消耗后，新 key 生效
 
 ## 5. Withdraw Pipeline（提现流程，Job 模式）
 
@@ -452,7 +466,7 @@ flowchart TB
 | 6 | Runtime ROAST | 签名会话 → SignedPackage | - |
 | 7 | Runtime | 提交 `FrostWithdrawSignedTx` | - |
 | 8 | 共识层 | 打包交易到区块并确认 | - |
-| 9 | VM | Handler 校验并写入 job + signed_package_ref | Job: `[*] → SIGNED`<br>Withdraws: `QUEUED → SIGNED` |
+| 9 | VM | Handler 校验并写入 job + signed_package_bytes | Job: `[*] → SIGNED`<br>Withdraws: `QUEUED → SIGNED` |
 
 #### 5.2.3 WithdrawRequest 状态机
 
@@ -522,7 +536,7 @@ sequenceDiagram
   D-->>CO: 返回 z_D
   CO-->>RT: 聚合签名 -> SignedPackage
 
-  RT->>VM: submit FrostWithdrawSignedTx(job_id, signed_package_ref)
+  RT->>VM: submit FrostWithdrawSignedTx(job_id, signed_package_bytes)
   VM-->>RT: job SIGNED, withdraws QUEUED to SIGNED（终态）
 
   OP-->>VM: 查询/下载 SignedPackage（RPC/Indexer）
@@ -657,10 +671,10 @@ BTC job 的模板本质是一笔交易：
 Frost 的“完成”定义：
 
 - Runtime 得到 `SignedPackage`（可广播）
-- 通过 `FrostWithdrawSignedTx` 把 `signed_package_ref/signed_package_bytes` 写入链上（receipt/history 或引用）
+- 通过 `FrostWithdrawSignedTx` 把 `signed_package_bytes` 写入链上（receipt/history）
 - VM 校验签名产物绑定同一 `job_id/template_hash` 后，追加到 `v1_frost_signed_pkg_<job_id>_<idx>` 列表（append-only）
 - VM 将该 job 覆盖的所有 withdraw 标记为 `SIGNED`，并把占用资金标记为 **consumed/spent（永久不再用于后续提现）**
-- 同一 `job_id` 允许重复提交 `FrostWithdrawSignedTx`；首笔有效 tx 推进状态并写入 `signed_package_ref`，后续仅追加到 receipt/history，不再改变状态
+- 同一 `job_id` 允许重复提交 `FrostWithdrawSignedTx`；首笔有效 tx 推进状态并写入 `signed_package_bytes`，后续仅追加到 receipt/history，不再改变状态
 
 BTC 的 `SignedPackage` 至少包含：
 
@@ -681,11 +695,11 @@ BTC 的 `SignedPackage` 至少包含：
 ## 6. Power Transition Pipeline（权力交接 / 密钥轮换，Job 模式）
 
 轮换同样采用 “Job 交付签名包、外链执行交给运营方” 的模式：
-- 初衷：每隔epochBlocks区块检查一次是否达到阈值，达到了即可开始切换流程。
+- 初衷：每隔epochBlocks区块检查一次是否达到阈值，达到了即可开始切换流程，权力切换期间暂停所有提现的流程，充值流程的暂停；
 - 每一次权力交接都要有 DKG：**所有参与者必须提交 `FrostDkgCommitTx` 登记承诺点**，用于私发碎片校验；出现作恶/无效碎片时可用 `FrostDkgComplaintTx` **链上裁决**。
-- 本链负责：检测触发条件 → DKG（Commit/Share/裁决）→ 示例签名验证（`FrostDkgValidationSignedTx`）确认新 `group_pubkey` → Runtime 为每条受影响链生成 `MigrationJob` → 产出并上链 `SignedPackage`
+- 本链负责：检测触发条件 → DKG（Commit/Share/裁决）→ 示例签名验证（`FrostDkgValidationSignedTx`）确认新 `group_pubkey` → Runtime 为每条受影响链生成一个或多个 `MigrationJob` → 产出并上链一份或多份 `SignedPackage`
 - 运营方负责：拿签名包去执行外链 `updatePubkey(...)` / BTC 迁移交易广播
-- 本链 **Active** 在迁移 SignedPackages 全部落本链后自动生效（无需额外 tx）
+- 本链 **Active** 在 VM 依据 FundsLedger 判定迁移完成后自动生效（无需额外 tx）
 
 ### 6.1 触发条件（链上）
 
@@ -710,18 +724,19 @@ BTC 的 `SignedPackage` 至少包含：
 - `migration_jobs[]`：该 epoch_id 下的 `MigrationJob` 列表（按链/分片）
 
 > 约定：`dkg_commit_deadline = trigger_height + cfg.transition.dkgCommitWindowBlocks`，`dkg_dispute_deadline = dkg_commit_deadline + cfg.transition.dkgDisputeWindowBlocks`。
-> 当所有 MigrationJob 为 SIGNED（SignedPackages 通过 tx 落本链）即视为新 key 生效，无需显式 finalize。
+> MigrationJob 可按 FundsLedger 逐步追加；新 key 生效由 VM 结合 FundsLedger 判定迁移完成，无需显式 finalize。
 
 #### 6.2.2 MigrationJob（链上）
 
 - `job_id / epoch_id / chain`
 - `key_epoch`：使用哪个 epoch_id 的 `group_pubkey` 进行签名（迁移授权通常用旧 key，更新后提现用新 key）
 - `template_hash`
-- `status：SIGNING | SIGNED`
-- `signed_package_ref`（Signed 后写入；后续重复提交追加到 receipt/history）
+- `status：SIGNING | SIGNED`（SIGNED 代表已落链至少一份 SignedPackage，不代表迁移完成）
+- `signed_package_bytes`：不落在 job 结构内，产物通过 `FrostTransitionSignedTx` 追加到 receipt/history（同一 job 可多笔）
 
 > 迁移 job 的本质与提现 job 相同：都是“模板 + ROAST + SignedPackage”，只是业务含义不同。
 > 同样按超时窗口保证同一时刻只有一个协调者，超时切换协调者。
+> 迁移签名可能多笔，VM 以 FundsLedger 判断是否还有未迁移资产并决定是否继续规划 job。
 
 #### 6.2.3 DkgCommitment（链上）
 
@@ -741,7 +756,7 @@ stateDiagram-v2
   检测到变更 --> DKG中: Commit/Share/裁决/验证
   DKG中 --> DKG中: 作恶/超时/Qualified 不足 -> 重启 DKG
   DKG中 --> 密钥就绪: FrostDkgValidationSignedTx
-  密钥就绪 --> 迁移作业规划: VM 调用 FundsLedger 获取资产信息并组织 MigrationJobs
+  密钥就绪 --> 迁移作业规划: VM 调用 FundsLedger（Pending + Finalized）获取资产信息并组织 MigrationJobs
   迁移作业规划 --> ROAST 
   ROAST  --> VM检查所有资产Tx落链: 单资产 ROAST 完成 -> FrostTransitionSignedTx 落链
   VM检查所有资产Tx落链 --> ROAST: 仍有未完成资产 
@@ -780,7 +795,7 @@ sequenceDiagram
   TW->>TW: ROAST 示例签名 -> SignedPackage
 
   alt 验证通过
-    TW->>CH: FrostDkgValidationSignedTx(epoch_id, validation_msg_hash, signed_package_ref)
+    TW->>CH: FrostDkgValidationSignedTx(epoch_id, validation_msg_hash, signed_package_bytes)
     CH-->>TW: validation_status=Passed，dkg_status=KeyReady
   else 验证失败/超时
     Note over CH,TW: 重新进入 DKG_COMMITTING（new dkg_session_id, commitments 清空）
@@ -829,9 +844,9 @@ Runtime 为每条链生成一个或多个 `MigrationJob`：
 ### 6.5 与提现并行的策略（围绕 key_epoch）
 
 - 所有 Withdraw SigningJob 必须携带 `key_epoch`
-- 在迁移签名完成之前：
+- 在迁移未完成之前（VM/FundsLedger 判定）：
   - 新创建的 withdraw job 使用旧 `key_epoch`
-- 当该 epoch 的迁移 SignedPackages 全部落本链后：
+- 当 VM 依据 FundsLedger 判定该 epoch 迁移完成后：
   - 新创建的 withdraw job 使用新 `key_epoch`
 - 由于本链不追踪外链执行，建议运营流程上：**先确保迁移 SignedPackage 已产出并可执行**（MIGRATION_SIGNED），再由运营方执行外链更新。
 
@@ -893,9 +908,9 @@ ROAST 会话必须只对“链上已确认且可纯计算”的消息签名：
 
 ROAST 的交付物是 `SignedPackage`，由 Runtime 通过不同 tx 回写链上：
 
-- 提现：`FrostWithdrawSignedTx(job_id, signed_package_ref)`
-- 迁移：`FrostTransitionSignedTx(epoch_id, job_id, signed_package_ref)`
-- DKG 验证：`FrostDkgValidationSignedTx(epoch_id, validation_msg_hash, signed_package_ref)`
+- 提现：`FrostWithdrawSignedTx(job_id, signed_package_bytes)`
+- 迁移：`FrostTransitionSignedTx(epoch_id, job_id, signed_package_bytes)`
+- DKG 验证：`FrostDkgValidationSignedTx(epoch_id, validation_msg_hash, signed_package_bytes)`
 
 ### 7.6 通用时序图（简化）
 
@@ -993,13 +1008,13 @@ type FrostEnvelope struct {
 * `frost/vmhandler/register.go`：把以下 tx kind 注册到 VM 的 HandlerRegistry
 
   * `FrostWithdrawRequestTx`：创建 `WithdrawRequest{status=QUEUED}` + FIFO index + request_height
-  * `FrostWithdrawSignedTx`：确定性重算队首 job 窗口并校验当前 job，写入 `signed_package_ref/signed_package_bytes` 并追加 receipt/history；job 置为 `SIGNED`，withdraw 由 `QUEUED → SIGNED`（终态，资金视为已支出）
+  * `FrostWithdrawSignedTx`：确定性重算队首 job 窗口并校验当前 job，写入 `signed_package_bytes` 并追加 receipt/history；job 置为 `SIGNED`，withdraw 由 `QUEUED → SIGNED`（终态，资金视为已支出）
 
   * `FrostDkgCommitTx`：登记本轮 DKG 承诺点（commitments）
   * `FrostDkgComplaintTx`：无效碎片举证与链上裁决（剔除/惩罚）
   * `FrostDkgValidationSignedTx`：记录示例签名结果并确认新 key（KeyReady）
 
-  * `FrostTransitionSignedTx`：记录迁移 `signed_package_ref/signed_package_bytes` 并追加 receipt/history，将对应 MigrationJob 置为 SIGNED
+  * `FrostTransitionSignedTx`：记录迁移 SignedPackage 并追加 receipt/history；VM 基于 FundsLedger 消耗/锁定迁移资产，MigrationJob 可置为 SIGNED（签名已产出，迁移完成以 FundsLedger 判定）
 
 > VM TxHandlers 的职责：**验证 + 写入状态机（共识态）**。  
 > Runtime 的职责：**离链 ROAST/FROST 签名协作 + 会话恢复**，只对链上 job 的 `template_hash` 签名；并通过 `FrostWithdrawSignedTx` / `FrostTransitionSignedTx` / `FrostDkgValidationSignedTx` 把签名产物公布到链上。  
@@ -1023,7 +1038,7 @@ type FrostEnvelope struct {
 
 * `GetFrostConfig()`：当前 frost 配置快照
 * `GetGroupPubKey(epoch_id)`：当前/历史聚合公钥
-* `GetWithdrawStatus(withdraw_id)`：状态机、job_id、template_hash、raw_txid（可离线从模板计算）、signed_package_ref / signed_package_refs[]、失败原因
+* `GetWithdrawStatus(withdraw_id)`：状态机、job_id、template_hash、raw_txid（可离线从模板计算）、signed_package_bytes / signed_package_bytes[]、失败原因
 * `ListWithdraws(from_seq, limit)`：FIFO 扫描队列
 * `GetTransitionStatus(epoch_id)`：轮换进度、链更新结果
 * `GetDkgCommitment(epoch_id, dealer_id)`：查询某参与者的 DKG 承诺点（commitments）与状态（COMMITTED/DISQUALIFIED）
