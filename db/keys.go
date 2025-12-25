@@ -137,6 +137,16 @@ func KeyRechargeAddress(generatedAddress string) string {
 	return keys.KeyRechargeAddress(generatedAddress)
 }
 
+// ===================== FROST 相关 =====================
+
+func KeyFrostFundsLotIndex(chain, asset string, height, seq uint64) string {
+	return keys.KeyFrostFundsLotIndex(chain, asset, height, seq)
+}
+
+func KeyFrostFundsLotSeq(chain, asset string, height uint64) string {
+	return keys.KeyFrostFundsLotSeq(chain, asset, height)
+}
+
 // ===================== VM 执行状态相关 =====================
 
 func KeyVMAppliedTx(txID string) string {

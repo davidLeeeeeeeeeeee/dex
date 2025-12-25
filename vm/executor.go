@@ -97,6 +97,10 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 		return cached, nil
 	}
 
+	if x.WitnessService != nil {
+		x.WitnessService.SetCurrentHeight(b.Height)
+	}
+
 	// 创建新的状态视图
 	sv := NewStateView(x.ReadFn, x.ScanFn)
 	receipts := make([]*Receipt, 0, len(b.Body))
@@ -185,6 +189,10 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 			}
 		}
 		receipts = append(receipts, rc)
+	}
+
+	if err := x.applyWitnessFinalizedEvents(sv, b.Height); err != nil {
+		return nil, err
 	}
 
 	// 创建执行结果

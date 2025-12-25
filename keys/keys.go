@@ -212,6 +212,24 @@ func KeyRechargeAddress(generatedAddress string) string {
 	return withVer("recharge_address_" + generatedAddress)
 }
 
+// ===================== FROST 相关 =====================
+
+// KeyFrostFundsLotIndex 入账 lot 索引（按 finalize_height + seq）
+// 例：v1_frost_funds_lot_<chain>_<asset>_<height>_<seq>
+func KeyFrostFundsLotIndex(chain, asset string, height, seq uint64) string {
+	return withVer(fmt.Sprintf("frost_funds_lot_%s_%s_%s_%s", chain, asset, padUint(height), padUint(seq)))
+}
+
+// KeyFrostFundsLotSeq 入账 lot 高度内序号
+// 例：v1_frost_funds_lot_seq_<chain>_<asset>_<height>
+func KeyFrostFundsLotSeq(chain, asset string, height uint64) string {
+	return withVer(fmt.Sprintf("frost_funds_lot_seq_%s_%s_%s", chain, asset, padUint(height)))
+}
+
+func padUint(v uint64) string {
+	return fmt.Sprintf("%020d", v)
+}
+
 // ===================== VM 执行状态相关 =====================
 
 // KeyVMAppliedTx VM 已应用的交易状态
