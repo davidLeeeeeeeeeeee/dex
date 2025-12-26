@@ -326,6 +326,29 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
     * `dkg_status == Committing`
     * 同一 `epoch_id` 每个 sender 只能登记一次（或只允许覆盖为完全相同的 commitments）
 
+* `FrostDkgMissingShareTx`（缺失 share 申诉 / 触发自证）
+  * `epoch_id`
+  * `dealer_id`：被申诉的 dealer
+  * `receiver_id`：声称未收到 share 的参与者（通常等于 tx sender）
+  * `bond`：保证金（防止滥用）
+  * 约束：
+    * `dkg_status ∈ {Sharing, Resolving}` 且未超过 `dkg_dispute_deadline`
+    * `dealer_id` / `receiver_id` 必须属于 `new_committee_ref`
+    * VM 记录该缺失申诉并设置 `justify_deadline`（<= `dkg_dispute_deadline`）
+
+* `FrostDkgJustifyTx`（dealer 自证 share）
+  * `epoch_id`
+  * `dealer_id`
+  * `receiver_id`
+  * `share`：`f_dealer(x_receiver)`
+  * 约束：
+    * 必须存在未结案的 `FrostDkgMissingShareTx`
+    * 需在 `justify_deadline` 前提交
+    * VM 用链上 `commitment_points[]` 验证 `share`
+  * 结果：
+    * 验证通过：dealer 保留资格；按规则退还/扣除 `bond`
+    * 超时或验证失败：`dealer_id -> DISQUALIFIED`（可选：罚没/剔除）
+
 * `FrostDkgComplaintTx`（链上裁决 / 举证）
   * `epoch_id`
   * `dealer_id`：被投诉的 dealer
@@ -706,6 +729,14 @@ BTC 的 `SignedPackage` 至少包含：
 - `change_ratio >= transitionTriggerRatio`（例如 0.2 = 2000/10000）
 - 或治理参数指定的其它触发规则
 
+补充策略（固定边界 / 前置 DKG / 权重计算）：
+
+- **固定边界**：轮换只在 `epochBlocks` 边界生效；中途不切 key。若 DKG 未完成则顺延到下一边界，期间继续使用旧 key。
+- **DKG 前置**：达到触发条件后可提前进入 DKG；`new_group_pubkey` 先以 KeyReady 落链但不立即生效，边界到达后再进入迁移/激活流程，避免收款地址真空期。
+- **权力加权平均**：`change_ratio` 采用滑动窗口/加权平均（如 EWMA）计算，过滤短期波动后再与阈值比较。
+- **ACTIVE 才计权**：权重统计只包含 `ACTIVE` 成员；退出/被 slash 后权重立即置 0，并同步影响加权平均。
+- **双地址并行**：边界前后允许旧/新地址并行入账；witness 侧可按 `key_epoch`/地址白名单同时接受，提现仍绑定 `key_epoch`，避免切换真空期。
+
 ### 6.2 链上对象：TransitionState 与 MigrationJob
 
 #### 6.2.1 TransitionState（链上）
@@ -784,6 +815,18 @@ sequenceDiagram
   Pj->>CH: 读取 Pi 的 commitment_points
   Pj->>Pj: 本地验证 share
 
+  alt share 缺失/未收到
+    Pj->>CH: FrostDkgMissingShareTx(epoch_id, dealer_id=Pi, receiver_id=Pj, bond)
+    Note over Pi: justify_deadline 内
+    Pi->>CH: FrostDkgJustifyTx(epoch_id, dealer_id=Pi, receiver_id=Pj, share)
+    CH-->>CH: 用 commitment_points 验证 share
+    alt 验证通过
+      CH-->>Pi: 保留资格，按规则退还/扣除 bond
+    else 超时或验证失败
+      CH-->>Pi: dealer DISQUALIFIED（可选 slash），qualified_count 递减
+    end
+  end
+
   alt share 无效
     Pj->>CH: FrostDkgComplaintTx(epoch_id, dealer_id=Pi, share)
     CH-->>Pj: 裁决：作恶成立 -> 罚没质押金、剔除矿工状态
@@ -811,6 +854,8 @@ sequenceDiagram
 涉及的 Tx 目的：
 
 - `FrostDkgCommitTx`：把 dealer 的承诺点上链，供 receiver 校验私发碎片，也作为链上裁决的公开依据。
+- `FrostDkgMissingShareTx`：当 receiver 未收到 share 时发起（带 bond）；链上记录并开启 `justify_deadline`，要求 dealer 在截止前自证。
+- `FrostDkgJustifyTx`：dealer 在 `justify_deadline` 前上链提交 share，VM 用承诺点验证；通过则保留资格并按规则退还/扣除 bond，超时或无效则 dealer DISQUALIFIED（可选 slash）。
 - `FrostDkgComplaintTx`：当 receiver 发现碎片无效时提交举证，VM 用承诺点验证并裁决；一旦作恶成立，罚没质押金、剔除矿工状态，并清空 commitments 重启 DKG。
 - `FrostDkgValidationSignedTx`：记录示例签名结果并确认新 key；VM 依据链上承诺点确定性计算/校验 `new_group_pubkey`，验证通过即 KeyReady。
 
