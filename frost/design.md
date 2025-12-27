@@ -52,7 +52,7 @@ FROST 的输入来自 On-chain State（已最终化的 tx/队列），Runtime �
 - 聚合者作恶：超时切换聚合者（所有节点可独立计算切换序列）
 
 5) **两条主流程独立**  
-- Withdraw pipeline：持续执行，不因轮换长期阻塞（可设计为“只在关键切换窗口短暂停顿/降速”）  
+- Withdraw pipeline
 - Power transition pipeline：在达到触发阈值时进入，保证最终一致
 
 
@@ -1170,7 +1170,7 @@ type FrostEnvelope struct {
 5. **DKG 私发碎片与链上裁决**
 
 * 份额（share）必须能用链上已登记的 `commitment_points[]` 做本地验证；未登记 commitments 的 dealer 直接忽略
-* 投诉 tx 的举证数据（share）一旦上链即公开：v1 接受该权衡；如需保密可在后续版本引入加密分享 + 可验证解密证明
+ * 投诉 tx 的举证数据（share）一旦上链即公开：v1 接受该权衡；
 * 需要防垃圾投诉：对失败投诉可选惩罚/抵押金；对被裁决作恶的 dealer 可选剔除/罚没
 
 6. **合约链去重/防重放（ETH/BNB/TRX/SOL）**
