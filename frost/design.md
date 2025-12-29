@@ -27,7 +27,7 @@
 - **Threshold (t)**：门限签名阈值（默认 `t = ceil(N * 0.8)`，可配置）。
 - **Coordinator / Aggregator（聚合者）**：会话中负责收集承诺值/部分签名并输出聚合签名的角色；需要可切换。
 - **Session**：一次签名或一次 DKG/轮换的会话，包含 session_id、参与者集合、消息摘要等。
-- **DKG Commitments（承诺点）**：参与者在 DKG 中登记到链上的承诺点集合（用于私发碎片验证与链上裁决）。
+- **DKG Commitments（承诺点）**：参与者在 DKG 中登记到链上的承诺点集合（用于份额验证与链上裁决）。
 - **Chain Adapter**：链适配器（BTC UTXO vs 合约链/账户模型链）。
 
 ---
@@ -218,7 +218,7 @@ frost/
 | Withdraw Queue      | `v1_frost_withdraw_<withdraw_id>`   | 提现请求与状态                                    |
 | Withdraw FIFO Index | `v1_frost_withdraw_q_<seq>`         | seq->withdraw_id，用于 FIFO 扫描                |
 | Transition State    | `v1_frost_transition_<epoch_id>`       | 轮换/交接会话与状态                                 |
-| DKG Commitment      | `v1_frost_dkg_commit_<epoch_id>_<miner>` | 参与者承诺点登记（用于私发碎片验证/链上裁决）              |
+| DKG Commitment      | `v1_frost_dkg_commit_<epoch_id>_<miner>` | 参与者承诺点登记（用于份额验证/链上裁决）              |
 | SignedPackage 收据    | `v1_frost_signed_pkg_<job_id>_<idx>`   | SignedPackage 列表（receipt/history，append-only） |
 
 ### 4.3 核心结构（ Proto ）
@@ -326,37 +326,41 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
     * `dkg_status == Committing`
     * 同一 `epoch_id` 每个 sender 只能登记一次（或只允许覆盖为完全相同的 commitments）
 
-* `FrostDkgMissingShareTx`（缺失 share 申诉 / 触发自证）
+* `FrostDkgShareTx`（加密 share 上链）
   * `epoch_id`
-  * `dealer_id`：被申诉的 dealer
-  * `receiver_id`：声称未收到 share 的参与者（通常等于 tx sender）
-  * `bond`：保证金（防止滥用）
+  * `dealer_id`：share 提供者（通常等于 tx sender）
+  * `receiver_id`：share 接收者
+  * `ciphertext`：`Enc(pk_receiver, share; enc_rand)`（share 用 receiver 公钥加密）
   * 约束：
-    * `dkg_status ∈ {Sharing, Resolving}` 且未超过 `dkg_dispute_deadline`
+    * `dkg_status == Sharing`
     * `dealer_id` / `receiver_id` 必须属于 `new_committee_ref`
-    * VM 记录该缺失申诉并设置 `justify_deadline`（<= `dkg_dispute_deadline`）
-
-* `FrostDkgJustifyTx`（dealer 自证 share）
-  * `epoch_id`
-  * `dealer_id`
-  * `receiver_id`
-  * `share`：`f_dealer(x_receiver)`
-  * 约束：
-    * 必须存在未结案的 `FrostDkgMissingShareTx`
-    * 需在 `justify_deadline` 前提交
-    * VM 用链上 `commitment_points[]` 验证 `share`
-  * 结果：
-    * 验证通过：dealer 保留资格；按规则退还/扣除 `bond`
-    * 超时或验证失败：`dealer_id -> DISQUALIFIED`（可选：罚没/剔除）
+    * 同一 `(epoch_id, dealer_id, receiver_id)` 只能登记一次（可分批提交）
 
 * `FrostDkgComplaintTx`（链上裁决 / 举证）
   * `epoch_id`
   * `dealer_id`：被投诉的 dealer
   * `receiver_id`：接收该碎片的参与者（通常等于 tx sender）
-  * `share`：dealer 私发的碎片 `f_dealer(x_receiver)`（标量）
+  * `bond`：保证金（防止滥用）
   * 约束：
     * `dkg_status ∈ {Sharing, Resolving}` 且未超过 `dkg_dispute_deadline`
-    * VM 用链上已登记的 `commitment_points[]` 验证 `share`；无效则 `dealer_id -> DISQUALIFIED`（可选：罚没/剔除），否则可选惩罚恶意投诉者
+    * 必须存在对应的 `FrostDkgShareTx`（密文已上链）
+  * 结果：
+    * VM 进入待裁决并设置 `reveal_deadline`（<= `dkg_dispute_deadline`）
+
+* `FrostDkgRevealTx`（dealer 公开 share + 随机数）
+  * `epoch_id`
+  * `dealer_id`
+  * `receiver_id`
+  * `share`：`f_dealer(x_receiver)`（标量）
+  * `enc_rand`：加密随机数
+  * 约束：
+    * 必须存在未结案的 `FrostDkgComplaintTx`
+    * 需在 `reveal_deadline` 前提交
+    * VM 复算 `Enc(pk_receiver, share; enc_rand)` 与链上 `ciphertext` 一致
+    * VM 用链上已登记的 `commitment_points[]` 验证 `share`
+  * 结果：
+    * 验证通过：dealer 保留资格；可选惩罚恶意投诉者并退还/扣除 `bond`
+    * 超时或验证失败：`dealer_id -> DISQUALIFIED`（可选：罚没/剔除）
 
 * `FrostDkgValidationSignedTx`（示例签名产物回写/确认 DKG 结果）
   * `epoch_id`
@@ -719,7 +723,7 @@ BTC 的 `SignedPackage` 至少包含：
 
 轮换同样采用 “Job 交付签名包、外链执行交给运营方” 的模式：
 - 初衷：每隔epochBlocks区块检查一次是否达到阈值，达到了即可开始切换流程，权力切换期间暂停所有提现的流程，充值流程的暂停；
-- 每一次权力交接都要有 DKG：**所有参与者必须提交 `FrostDkgCommitTx` 登记承诺点**，用于私发碎片校验；出现作恶/无效碎片时可用 `FrostDkgComplaintTx` **链上裁决**。
+- 每一次权力交接都要有 DKG：**所有参与者必须提交 `FrostDkgCommitTx` 登记承诺点**，用于份额校验；出现作恶/无效碎片时可用 `FrostDkgComplaintTx` **链上裁决**。
 - 本链负责：检测触发条件 → DKG（Commit/Share/裁决）→ 示例签名验证（`FrostDkgValidationSignedTx`）确认新 `group_pubkey` → Runtime 为每条受影响链生成一个或多个 `MigrationJob` → 产出并上链一份或多份 `SignedPackage`
 - 运营方负责：拿签名包去执行外链 `updatePubkey(...)` / BTC 迁移交易广播
 - 本链 **Active** 在 VM 依据 FundsLedger 判定迁移完成后自动生效（无需额外 tx）
@@ -794,7 +798,7 @@ stateDiagram-v2
   VM检查所有资产Tx落链 --> 迁移签名完成:  检查通过
 ```
 
-#### 6.3.1 DKG 关键时序（Commit/私发碎片/裁决/验证）
+#### 6.3.1 DKG 关键时序（Commit/Share/裁决/验证）
 
 ```mermaid
 sequenceDiagram
@@ -810,27 +814,21 @@ sequenceDiagram
   Pj->>CH: FrostDkgCommitTx(epoch_id, commitment_points[])
   CH-->>Pj: 记录 commitment + a_i0
 
-  Note over Pi,Pj: dkg_status=Sharing（链下）
-  Pi-->>Pj: 私发 share=f_i(x_j)
-  Pj->>CH: 读取 Pi 的 commitment_points
-  Pj->>Pj: 本地验证 share
+  Note over Pi,Pj: dkg_status=Sharing（链上）
+  Pi->>CH: FrostDkgShareTx(epoch_id, receiver_id=Pj, ciphertext)
+  Pj->>CH: 读取 Pi 的 ciphertext
+  Pj->>Pj: 解密 share 并用 commitments 验证
 
-  alt share 缺失/未收到
-    Pj->>CH: FrostDkgMissingShareTx(epoch_id, dealer_id=Pi, receiver_id=Pj, bond)
-    Note over Pi: justify_deadline 内
-    Pi->>CH: FrostDkgJustifyTx(epoch_id, dealer_id=Pi, receiver_id=Pj, share)
-    CH-->>CH: 用 commitment_points 验证 share
+  alt share 无效
+    Pj->>CH: FrostDkgComplaintTx(epoch_id, dealer_id=Pi, receiver_id=Pj, bond)
+    Note over Pi: reveal_deadline 内
+    Pi->>CH: FrostDkgRevealTx(epoch_id, dealer_id=Pi, receiver_id=Pj, share, enc_rand)
+    CH-->>CH: 复算 ciphertext 并验证 share
     alt 验证通过
-      CH-->>Pi: 保留资格，按规则退还/扣除 bond
+      CH-->>Pj: 投诉失败（可选罚没 bond）
     else 超时或验证失败
       CH-->>Pi: dealer DISQUALIFIED（可选 slash），qualified_count 递减
     end
-  end
-
-  alt share 无效
-    Pj->>CH: FrostDkgComplaintTx(epoch_id, dealer_id=Pi, share)
-    CH-->>Pj: 裁决：作恶成立 -> 罚没质押金、剔除矿工状态
-    Note over CH,TW: 清空 commitments，new dkg_session_id，重启 DKG_COMMITTING
   end
 
   Note over CH: dkg_status=Resolving 且裁决窗口结束后（若未触发重启）
@@ -847,16 +845,16 @@ sequenceDiagram
 
 说明：
 
-- **Participant**：本轮 DKG 的参与者（`new_committee_ref` 内成员）。每个参与者既提交承诺点，也向其他参与者私发碎片，同时接收他人碎片并用链上承诺点验证；必要时发起投诉。
+- **Participant**：本轮 DKG 的参与者（`new_committee_ref` 内成员）。每个参与者既提交承诺点，也将加密 share 上链；接收者解密并用链上承诺点验证，必要时发起投诉。
 - **TransitionWorker**：Runtime 中推进轮换流程的执行者（可由确定性规则选出），负责在裁决窗口结束后组织验证签名，验证通过即确认新 key（KeyReady）；失败则触发重新 DKG。
 - **作恶裁决与重启**：裁决窗口内若有人提交可验证举证（基于链上 commitments）证明作恶，VM 立即罚没质押金、剔除矿工状态，并清空本轮 commitments，重启 DKG（new dkg_session_id）。
 
 涉及的 Tx 目的：
 
-- `FrostDkgCommitTx`：把 dealer 的承诺点上链，供 receiver 校验私发碎片，也作为链上裁决的公开依据。
-- `FrostDkgMissingShareTx`：当 receiver 未收到 share 时发起（带 bond）；链上记录并开启 `justify_deadline`，要求 dealer 在截止前自证。
-- `FrostDkgJustifyTx`：dealer 在 `justify_deadline` 前上链提交 share，VM 用承诺点验证；通过则保留资格并按规则退还/扣除 bond，超时或无效则 dealer DISQUALIFIED（可选 slash）。
-- `FrostDkgComplaintTx`：当 receiver 发现碎片无效时提交举证，VM 用承诺点验证并裁决；一旦作恶成立，罚没质押金、剔除矿工状态，并清空 commitments 重启 DKG。
+- `FrostDkgCommitTx`：把 dealer 的承诺点上链，作为份额验证与链上裁决的公开依据。
+- `FrostDkgShareTx`：把加密 share 上链（`Enc(pk_receiver, share; enc_rand)`），解决“未收到 share”的争议来源。
+- `FrostDkgComplaintTx`：receiver 认为 share 无效时发起投诉并锁定 bond，开启 `reveal_deadline`。
+- `FrostDkgRevealTx`：dealer 公开 `(share, enc_rand)`，VM 复算密文并验证 commitments；通过则驳回投诉并可惩罚恶意投诉者，失败或超时则 dealer DISQUALIFIED（可选 slash）。
 - `FrostDkgValidationSignedTx`：记录示例签名结果并确认新 key；VM 依据链上承诺点确定性计算/校验 `new_group_pubkey`，验证通过即 KeyReady。
 
 验证签名要点：
@@ -1068,7 +1066,7 @@ type FrostEnvelope struct {
 ### 8.4 数据库存储：链上状态 vs 本地会话
 
 * **链上状态（StateDB）**：Withdraw/Transition/FundsLedger/Top10000/committee 等
-* **本地会话（SessionStore）**：nonce、commit、已见消息、超时计时、重启恢复信息（包含 DKG 的 commitments/私发 shares/已裁决结果缓存等）
+* **本地会话（SessionStore）**：nonce、commit、已见消息、超时计时、重启恢复信息（包含 DKG 的 commitments/shares/已裁决结果缓存等）
 
   * 重要：nonce 必须持久化后才发送 commitment，避免重启后不小心复用
 
@@ -1167,11 +1165,11 @@ type FrostEnvelope struct {
 
 * 超时切换聚合者（确定性序列）
 
-5. **DKG 私发碎片与链上裁决**
+5. **DKG 加密 share 上链与裁决**
 
-* 份额（share）必须能用链上已登记的 `commitment_points[]` 做本地验证；未登记 commitments 的 dealer 直接忽略
- * 投诉 tx 的举证数据（share）一旦上链即公开：v1 接受该权衡；
-* 需要防垃圾投诉：对失败投诉可选惩罚/抵押金；对被裁决作恶的 dealer 可选剔除/罚没
+* dealer 上链 `commitment_points[]` 与加密 share（`Enc(pk_receiver, share; enc_rand)`），receiver 解密后本地验证
+* 争议时 dealer 公开 `(share, enc_rand)`，VM 复算密文并校验 share 与 commitments 一致性
+* 公开 share 会泄露该份 share：v1 接受该权衡；可对恶意投诉者惩罚并要求 bond
 
 6. **合约链去重/防重放（ETH/BNB/TRX/SOL）**
 

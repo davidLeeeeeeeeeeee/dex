@@ -74,5 +74,5 @@ e.g. btc直接聚合公钥地址管理，而智能合约用合约来管理资产
 6、gas or 手续费怎么获取？
 答：统计每个链一年内的平均手续费，然后以300%的价格写死，下个版本更新。
 
-7、dkg过程 1、保证dealer诚实发出share（发出的消息需要签名一个字符串） 2、保证receiver 不说谎（2.1 说自己没收到 2.2 收到的是假的）
-答：share和承诺一起上链，解决1和2.1. share用receiver公钥加密，当2.2情况出现的时候，dealer公开share链上裁决.
+7、dkg过程 1、保证dealer诚实发出share（被receiver 的公钥加密C = Enc(pk, share; r)） 2、保证receiver 不说谎（2.1 说自己没收到 2.2 收到的是假的）
+答：share和承诺一起上链，解决1和2.1. share用receiver公钥加密，当2.2情况出现的时候，dealer公开share明文r,，节点重复加密过程，链上验证裁决.

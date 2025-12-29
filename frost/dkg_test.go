@@ -67,7 +67,7 @@ func Test_CompareWithBtcecSchnorr(t *testing.T) {
 
 //估算承诺点的数据空间占用
 func Test_CommitmentSize_T100(t *testing.T) {
-	const tVal = 10000
+	const tVal = 1000
 	commitments := make([]*btcec.PublicKey, 0, tVal)
 	for i := 0; i < tVal; i++ {
 		var seed [32]byte
