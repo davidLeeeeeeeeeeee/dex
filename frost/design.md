@@ -1,17 +1,17 @@
 ﻿
 # FROST 模块设计文档（v1）
 
-> 目标：把 FROST 做成**独立于共识**的"跨链资产执行引擎"，严格按**已达成共识的队列**执行两类流程：  
-> 1) 提现（Withdraw Queue）  
-> 2) 权力交接/密钥轮换（Power Transition / Key Rotation Queue）  
+> 目标：把 FROST 做成**独立于共识**的"跨链资产执行引擎"，严格按**已达成共识的队列**执行两类流程：
+> 1) 提现（Withdraw Queue）
+> 2) 权力交接/密钥轮换（Power Transition / Key Rotation Queue）
 >
-> 关键约束来自 `frost/requirements.md`：  
-> - 前 10000 个共识 miner 参与签名流程（可从状态机/数据库获取其公钥/地址）  
-> - Withdraw 支持 FROST/ROAST；ROAST 要支持**超时切换聚合者**  
-> - Nonce/UTXO 设计要确保异步冗余下仍不多签发  
-> - v1 支持：BTC / ETH / SOL / TRX / BNB  
-> - Gas/手续费配置文件（按年均 300% 写死，后续版本治理/升级更新）  
-> - 提现调度 FIFO（先入账的资金先被提现）  
+> 关键约束来自 `frost/requirements.md`：
+> - 前 10000 个共识 miner 参与签名流程（可从状态机/数据库获取其公钥/地址）
+> - Withdraw 支持 FROST/ROAST；ROAST 要支持**超时切换聚合者**
+> - Nonce/UTXO 设计要确保异步冗余下仍不多签发
+> - v1 支持：BTC / ETH / SOL / TRX / BNB
+> - Gas/手续费配置文件（按年均 300% 写死，后续版本治理/升级更新）
+> - 提现调度 FIFO（先入账的资金先被提现）
 > - 共识暂停时，FROST 仍持续执行**已确认**的提现/交接（状态回写可延后）
 > - 提现/迁移相关的三方链交易：**FROST/整个工程不负责广播与确认**；Runtime 只负责构建模板、完成门限签名，并把"签名产物/交易包"落链（可查询/可审计）；广播由用户/运营方手动完成。
 > - 允许 ROAST 对同一 `template_hash` 产生**多份合法签名产物**；系统通过 tx 接受并追加记录这些产物（receipt/history），同时保证不会导致双花（同一 withdraw_id 绑定同一模板/同一输入集合）。
@@ -36,22 +36,22 @@
 
 ### 1.1 目标
 
-1) **确定性输入，异步执行**  
+1) **确定性输入，异步执行**
 FROST 的输入来自 On-chain State（已最终化的 tx/队列），Runtime 只“读状态 + 执行动作 + 以 tx 回写结果”。
 
-2) **模块解耦**  
-尽量复用现有工程抽象：EventBus / Transport / VM HandlerRegistry / DBManager。  
+2) **模块解耦**
+尽量复用现有工程抽象：EventBus / Transport / VM HandlerRegistry / DBManager。
 不引入独立的“ConsensusObserver / FrostVMHandler / FrostNetworkAdapter”平行体系。
 
-3) **安全的 Anti-Double-Spend / Anti-Double-Sign**  
-- BTC：UTXO 选择与锁定、模板固定  
+3) **安全的 Anti-Double-Spend / Anti-Double-Sign**
+- BTC：UTXO 选择与锁定、模板固定
 - 合约链：合约层使用 withdraw_id 去重；账户链 nonce/序列由“链上/合约”保证唯一
 
-4) **ROAST 鲁棒性**  
-- 节点掉线/恶意不配合：自动换子集/换聚合者  
+4) **ROAST 鲁棒性**
+- 节点掉线/恶意不配合：自动换子集/换聚合者
 - 聚合者作恶：超时切换聚合者（所有节点可独立计算切换序列）
 
-5) **两条主流程独立**  
+5) **两条主流程独立**
 - Withdraw pipeline
 - Power transition pipeline：在达到触发阈值时进入，保证最终一致
 
@@ -427,7 +427,7 @@ BTC 专用字段（确定性规划生成，可选落 receipt/history）：
 - `outputs[]`：withdraw 输出列表（可多地址、多输出；支持“一个 input 覆盖多笔小额提现”）
 - `change_output`：可选（返回 treasury 地址；不计入本链可用余额，直到被外部入账模块再次确认入账）
 
-> **重要**：BTC “一个大 UTXO 支付多笔提现” 就是一个 job：`1 input -> N withdraw outputs (+ change)`。  
+> **重要**：BTC “一个大 UTXO 支付多笔提现” 就是一个 job：`1 input -> N withdraw outputs (+ change)`。
 > 这会显著减少签名压力（少 inputs ⇒ 少签名任务），正是“尽可能少签名满足尽可能多提现”的核心抓手。
 
 ---
@@ -577,11 +577,11 @@ sequenceDiagram
 
 模板规划是最复杂部分，目标函数建议明确为：
 
-1) **严格 FIFO**：job 窗口只能覆盖“队首连续的一段 `QUEUED` withdraw”，且资金消耗按 lot/UTXO 先入先出（不能跳过队首去装后面的）。  
-2) **尽可能少的签名工作量**：优先减少 `job 数`；在 BTC 中进一步减少 `inputs 数`（因为 inputs 数≈签名任务数）。  
+1) **严格 FIFO**：job 窗口只能覆盖“队首连续的一段 `QUEUED` withdraw”，且资金消耗按 lot/UTXO 先入先出（不能跳过队首去装后面的）。
+2) **尽可能少的签名工作量**：优先减少 `job 数`；在 BTC 中进一步减少 `inputs 数`（因为 inputs 数≈签名任务数）。
 3) **跨链可扩展**：把“能否 batch、batch 上限”下沉到链策略/配置。
 
-本版本要求规划**确定性**：给定链上状态与配置，所有节点计算出的 `template_hash` 与资金占用结果必须一致。  
+本版本要求规划**确定性**：给定链上状态与配置，所有节点计算出的 `template_hash` 与资金占用结果必须一致。
 VM 在处理 `FrostWithdrawSignedTx` 时重算并校验，不一致直接拒绝。
 
 #### 5.3.1 确定性规划规则（VM 可复验）
@@ -632,8 +632,8 @@ BTC job 的模板本质是一笔交易：
    - `outputs[]` 顺序按 `withdraw.seq` 递增
    - `locktime/sequence/sighash_type/feerate` 来自链上配置，避免自由度
 
-> 这样自然覆盖你关心的两种场景：  
-> - “金额太大”：多个 inputs（多签名任务）  
+> 这样自然覆盖你关心的两种场景：
+> - “金额太大”：多个 inputs（多签名任务）
 > - “金额太小”：一个 input 输出给多个地址（少签名任务）
 
 #### 5.3.3 合约链/账户链规划（ETH/BNB/TRX/SOL）
@@ -667,7 +667,7 @@ BTC job 的模板本质是一笔交易：
 
 协调者最终得到 `sig[0..K-1]`，按 input_index 填入 witness。
 
-> 这不是“一个签名变成 K 份”，而是“同一套 ROAST 协调流程并行完成 K 次 FROST”。  
+> 这不是“一个签名变成 K 份”，而是“同一套 ROAST 协调流程并行完成 K 次 FROST”。
 > 安全要求：**每个 task 必须使用独立 nonce**，不得复用。
 
 #### 5.4.2 子集重试与部分完成
@@ -792,9 +792,9 @@ stateDiagram-v2
   DKG中 --> DKG中: 作恶/超时/Qualified 不足 -> 重启 DKG
   DKG中 --> 密钥就绪: FrostDkgValidationSignedTx
   密钥就绪 --> 迁移作业规划: VM 调用 FundsLedger（Pending + Finalized）获取资产信息并组织 MigrationJobs
-  迁移作业规划 --> ROAST 
+  迁移作业规划 --> ROAST
   ROAST  --> VM检查所有资产Tx落链: 单资产 ROAST 完成 -> FrostTransitionSignedTx 落链
-  VM检查所有资产Tx落链 --> ROAST: 仍有未完成资产 
+  VM检查所有资产Tx落链 --> ROAST: 仍有未完成资产
   VM检查所有资产Tx落链 --> 迁移签名完成:  检查通过
 ```
 
@@ -824,10 +824,18 @@ sequenceDiagram
     Note over Pi: reveal_deadline 内
     Pi->>CH: FrostDkgRevealTx(epoch_id, dealer_id=Pi, receiver_id=Pj, share, enc_rand)
     CH-->>CH: 复算 ciphertext 并验证 share
-    alt 验证通过
-      CH-->>Pj: 投诉失败（罚没 bond ，剔除bond发起者身份，重新生成各自私钥share,从头开始dkg过程）
-    else 超时或验证失败
-      CH-->>Pi: dealer DISQUALIFIED（slash），剔除身份，用剩下的合法的share继续，不重新生成share.
+    alt 验证通过（恶意投诉）
+      CH->>CH: 罚没 Pj 的 bond
+      CH->>CH: 剔除 Pj 身份（从 committee 移除）
+      CH->>CH: 清空 Pi 的 commitment（share 已泄露）
+      Note over CH: Pi 需重新生成多项式并提交
+      Note over Pi,Pj: ⚠️ 仅 Pi 重新提交 Commit/Share，其他人保持不变
+    else 超时或验证失败（dealer 作恶）
+      CH->>CH: slash Pi 质押金
+      CH->>CH: 剔除 Pi 身份（从 committee 移除）
+      CH->>CH: 排除 Pi 的贡献（commitments 和 shares）
+      Note over CH: 继续流程，不重启
+      Note over Pi,Pj: ✅ 其他参与者的份额计算直接排除 Pi，无需重新生成
     end
   end
 
@@ -843,18 +851,61 @@ sequenceDiagram
   end
 ```
 
+
+#### 6.3.2 投诉裁决流程图
+
+```mermaid
+flowchart TD
+    START[Pj 发起投诉<br>FrostDkgComplaintTx] --> WAIT{Pi 是否在<br>reveal_deadline 内<br>提交 RevealTx?}
+
+    WAIT -->|超时未提交| DEALER_FAULT[Pi 超时作恶]
+    WAIT -->|已提交| VERIFY{VM 验证<br>share 与 commitments<br>是否一致?}
+
+    VERIFY -->|一致（share 有效）| FALSE_COMPLAINT[恶意投诉]
+    VERIFY -->|不一致（share 无效）| DEALER_FAULT
+
+    subgraph 恶意投诉处理
+        FALSE_COMPLAINT --> SLASH_PJ[罚没 Pj 的 bond]
+        SLASH_PJ --> REMOVE_PJ[剔除 Pj 身份]
+        REMOVE_PJ --> CLEAR_PI[清空 Pi 的 commitment<br>share 已泄露]
+        CLEAR_PI --> PI_REGEN[仅 Pi 重新生成多项式]
+        PI_REGEN --> PI_RESUBMIT[Pi 重新提交<br>Commit + Share]
+    end
+
+    subgraph Dealer作恶处理
+        DEALER_FAULT --> SLASH_PI[slash Pi 质押金]
+        SLASH_PI --> REMOVE_PI[剔除 Pi 身份]
+        REMOVE_PI --> EXCLUDE[排除 Pi 的贡献]
+        EXCLUDE --> CONTINUE[其他参与者直接排除 Pi<br>无需重新生成]
+        CONTINUE --> NO_RESTART[不重启，继续流程]
+    end
+
+    style FALSE_COMPLAINT fill:#ffcccc,stroke:#cc0000
+    style DEALER_FAULT fill:#ffcccc,stroke:#cc0000
+    style RESTART fill:#ffe8d6,stroke:#d67f35
+    style NO_RESTART fill:#eaffea,stroke:#4f8f00
+```
+
+**两种裁决结果对比**：
+
+| 场景 | 被惩罚方 | 惩罚措施 | 对 DKG 的影响 |
+|------|----------|----------|---------------|
+| **恶意投诉**（share 实际有效） | 投诉者 Pj | 罚没 bond + 剔除身份 | ⚠️ **Pi 重做**：仅清空 Pi 的 commitment，Pi 重新生成多项式并提交，其他人保持不变 |
+| **Dealer 作恶**（share 无效或超时） | Dealer Pi | slash 质押金 + 剔除身份 | ✅ **继续流程**：其他参与者计算份额时直接排除 Pi 的贡献，无需重新生成 |
+
 说明：
 
 - **Participant**：本轮 DKG 的参与者（`new_committee_ref` 内成员）。每个参与者既提交承诺点，也将加密 share 上链；接收者解密并用链上承诺点验证，必要时发起投诉。
 - **TransitionWorker**：Runtime 中推进轮换流程的执行者（可由确定性规则选出），负责在裁决窗口结束后组织验证签名，验证通过即确认新 key（KeyReady）；失败则触发重新 DKG。
-- **作恶裁决与重启**：裁决窗口内若有人提交可验证举证（基于链上 commitments）证明作恶，VM 立即罚没质押金、剔除矿工状态，并清空本轮 commitments，重启 DKG（new dkg_session_id）。
+- **恶意投诉处理**：若投诉被证明无效（share 与 commitments 一致），投诉者 Pj 被惩罚并剔除。由于 Pi 的 share 已被公开泄露，**仅 Pi 需要重新生成多项式** 并重新提交 `FrostDkgCommitTx` 和 `FrostDkgShareTx`，其他参与者的 commitments/shares 保持不变。
+- **Dealer 作恶处理**：若 dealer 提供的 share 确实无效或超时未响应，仅剔除该 dealer。其他参与者在计算最终私钥份额时 **直接排除该 dealer 的贡献**（`s_j = Σ s_{i→j}` 中去掉该 dealer），无需重新生成任何多项式（前提是剩余参与者数量仍满足门限要求）。
 
 涉及的 Tx 目的：
 
 - `FrostDkgCommitTx`：把 dealer 的承诺点上链，作为份额验证与链上裁决的公开依据。
 - `FrostDkgShareTx`：把加密 share 上链（`Enc(pk_receiver, share; enc_rand)`），解决“未收到 share”的争议来源。
 - `FrostDkgComplaintTx`：receiver 认为 share 无效时发起投诉并锁定 bond，开启 `reveal_deadline`。
-- `FrostDkgRevealTx`：dealer 公开 `(share, enc_rand)`，VM 复算密文并验证 commitments；通过则驳回投诉并可惩罚恶意投诉者，失败或超时则 dealer DISQUALIFIED（可选 slash）。
+- `FrostDkgRevealTx`：dealer 公开 `(share, enc_rand)`，VM 复算密文并验证 commitments；通过则驳回投诉（恶意投诉 → 仅 dealer 重做），失败或超时则 dealer DISQUALIFIED（继续流程）。
 - `FrostDkgValidationSignedTx`：记录示例签名结果并确认新 key；VM 依据链上承诺点确定性计算/校验 `new_group_pubkey`，验证通过即 KeyReady。
 
 验证签名要点：
@@ -1005,7 +1056,7 @@ type FinalityNotifier interface {
 type P2P interface {
     Send(to NodeID, msg *FrostEnvelope) error
     Broadcast(peers []NodeID, msg *FrostEnvelope) error
-    SamplePeers(n int, role string) []NodeID  
+    SamplePeers(n int, role string) []NodeID
 }
 
 // 当前高度下 signer set（Top10000 bitmap）提供者
@@ -1059,8 +1110,8 @@ type FrostEnvelope struct {
 
   * `FrostTransitionSignedTx`：记录迁移 SignedPackage 并追加 receipt/history；VM 基于 FundsLedger 消耗/锁定迁移资产，MigrationJob 可置为 SIGNED（签名已产出，迁移完成以 FundsLedger 判定）
 
-> VM TxHandlers 的职责：**验证 + 写入状态机（共识态）**。  
-> Runtime 的职责：**离链 ROAST/FROST 签名协作 + 会话恢复**，只对链上 job 的 `template_hash` 签名；并通过 `FrostWithdrawSignedTx` / `FrostTransitionSignedTx` / `FrostDkgValidationSignedTx` 把签名产物公布到链上。  
+> VM TxHandlers 的职责：**验证 + 写入状态机（共识态）**。
+> Runtime 的职责：**离链 ROAST/FROST 签名协作 + 会话恢复**，只对链上 job 的 `template_hash` 签名；并通过 `FrostWithdrawSignedTx` / `FrostTransitionSignedTx` / `FrostDkgValidationSignedTx` 把签名产物公布到链上。
 > Frost 不负责外链广播/确认；用户/运营方拿链上 `SignedPackage` 自行广播。
 
 ### 8.4 数据库存储：链上状态 vs 本地会话
