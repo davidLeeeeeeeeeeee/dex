@@ -825,9 +825,9 @@ sequenceDiagram
     Pi->>CH: FrostDkgRevealTx(epoch_id, dealer_id=Pi, receiver_id=Pj, share, enc_rand)
     CH-->>CH: 复算 ciphertext 并验证 share
     alt 验证通过
-      CH-->>Pj: 投诉失败（可选罚没 bond）
+      CH-->>Pj: 投诉失败（罚没 bond ，剔除bond发起者身份，重新生成各自私钥share,从头开始dkg过程）
     else 超时或验证失败
-      CH-->>Pi: dealer DISQUALIFIED（可选 slash），qualified_count 递减
+      CH-->>Pi: dealer DISQUALIFIED（slash），剔除身份，用剩下的合法的share继续，不重新生成share.
     end
   end
 
