@@ -139,7 +139,6 @@ func KeyOrderPriceIndexPrefix(pair string, isFilled bool) string {
 	return withVer(fmt.Sprintf("pair:%s|is_filled:%t|", pair, isFilled))
 }
 
-
 // ===================== Token 相关 =====================
 
 // KeyToken Token 数据
@@ -242,6 +241,30 @@ func KeyFrostFundsPendingLotSeq(chain, asset string, height uint64) string {
 // 例：v1_frost_funds_pending_ref_<request_id>
 func KeyFrostFundsPendingLotRef(requestID string) string {
 	return withVer("frost_funds_pending_ref_" + requestID)
+}
+
+// KeyFrostWithdraw 提现请求状态
+// 例：v1_frost_withdraw_<withdraw_id>
+func KeyFrostWithdraw(withdrawID string) string {
+	return withVer("frost_withdraw_" + withdrawID)
+}
+
+// KeyFrostWithdrawFIFOIndex 按 (chain, asset) 分队列的 FIFO 索引
+// 例：v1_frost_withdraw_q_<chain>_<asset>_<seq>
+func KeyFrostWithdrawFIFOIndex(chain, asset string, seq uint64) string {
+	return withVer(fmt.Sprintf("frost_withdraw_q_%s_%s_%s", chain, asset, padUint(seq)))
+}
+
+// KeyFrostWithdrawFIFOSeq 每个 (chain, asset) 队列的 seq 计数器
+// 例：v1_frost_withdraw_seq_<chain>_<asset>
+func KeyFrostWithdrawFIFOSeq(chain, asset string) string {
+	return withVer(fmt.Sprintf("frost_withdraw_seq_%s_%s", chain, asset))
+}
+
+// KeyFrostWithdrawFIFOHead 每个队列的 FIFO 头指针（下一个待处理 seq）
+// 例：v1_frost_withdraw_head_<chain>_<asset>
+func KeyFrostWithdrawFIFOHead(chain, asset string) string {
+	return withVer(fmt.Sprintf("frost_withdraw_head_%s_%s", chain, asset))
 }
 
 func padUint(v uint64) string {

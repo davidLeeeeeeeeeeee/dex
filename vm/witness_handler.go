@@ -109,12 +109,20 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		if balance.Cmp(amount) < 0 {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "insufficient balance"}, fmt.Errorf("insufficient balance")
 		}
-		newBalance := new(big.Int).Sub(balance, amount)
+		// 使用安全减法
+		newBalance, err := SafeSub(balance, amount)
+		if err != nil {
+			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "balance underflow"}, fmt.Errorf("balance underflow: %w", err)
+		}
 		lockedBalance, _ := new(big.Int).SetString(fbBalance.WitnessLockedBalance, 10)
 		if lockedBalance == nil {
 			lockedBalance = big.NewInt(0)
 		}
-		newLocked := new(big.Int).Add(lockedBalance, amount)
+		// 使用安全加法检查锁定余额溢出
+		newLocked, err := SafeAdd(lockedBalance, amount)
+		if err != nil {
+			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "locked balance overflow"}, fmt.Errorf("locked balance overflow: %w", err)
+		}
 		fbBalance.Balance = newBalance.String()
 		fbBalance.WitnessLockedBalance = newLocked.String()
 
@@ -122,7 +130,12 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		if currentStake == nil {
 			currentStake = big.NewInt(0)
 		}
-		witnessInfo.StakeAmount = new(big.Int).Add(currentStake, amount).String()
+		// 使用安全加法检查质押金额溢出
+		newStake, err := SafeAdd(currentStake, amount)
+		if err != nil {
+			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "stake amount overflow"}, fmt.Errorf("stake amount overflow: %w", err)
+		}
+		witnessInfo.StakeAmount = newStake.String()
 		witnessInfo.Status = pb.WitnessStatus_WITNESS_ACTIVE
 	} else {
 		// 使用 WitnessService 进行验证（如果可用）

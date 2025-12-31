@@ -153,7 +153,32 @@ message AnyTx {
 // --------------------- 订单 & 状态相关 ---------------------
 enum OrderOp {
   ADD = 0;
-  REMOVE = 1;
+  REMOVE = 1;你说：“，业务层禁止直接 a+b 改余额；uint64 可用 math/bits 检测溢出（bits.Add64/Sub64/Mul64）。”我有点不懂，这些函数我好像没用过，你意思是业务层，比如VM中，用函数加法？
+
+
+对，我的意思是：在“共识/资产相关”的业务逻辑里（比如 VM 里更新余额、nonce、额度），不要直接写 a + b/a - b，而是走“带溢出检查”的加减函数。原因是 Go 的整数溢出不会报错，会直接回绕（wrap），这在资产逻辑里可能变成漏洞。
+
+math/bits 就是标准库里做这个检查的工具：
+
+import "math/bits"
+
+func AddU64(a, b uint64) (uint64, bool) {
+  sum, carry := bits.Add64(a, b, 0)
+  return sum, carry == 0 // carry==1 表示溢出
+}
+
+func SubU64(a, b uint64) (uint64, bool) {
+  diff, borrow := bits.Sub64(a, b, 0)
+  return diff, borrow == 0 // borrow==1 表示下溢（a<b）
+}
+VM/状态迁移里用法类似：
+
+newBal, ok := AddU64(oldBal, delta)
+if !ok { return ErrOverflow } // 直接判交易无效/回滚
+
+newBal, ok = SubU64(oldBal, spend)
+if !ok { return ErrInsufficientBalance }
+非共识关键的地方（比如数组下标、统计计数）继续用普通 + 没问题；关键是余额这类地方统一走 checked 函数/方法。
 }
 
 enum Status {

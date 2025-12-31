@@ -135,15 +135,30 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 
 	ws := make([]WriteOp, 0)
 
-	// 从可用余额转移到锁定余额
-	newVoterBalance := new(big.Int).Sub(voterBalance, amount)
+	// 从可用余额转移到锁定余额（使用安全减法）
+	newVoterBalance, err := SafeSub(voterBalance, amount)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   candidate.Base.TxId,
+			Status: "FAILED",
+			Error:  "balance underflow",
+		}, fmt.Errorf("balance underflow: %w", err)
+	}
 	voterAccount.Balances[nativeTokenAddr].Balance = newVoterBalance.String()
 
 	currentLockedBalance, _ := new(big.Int).SetString(voterAccount.Balances[nativeTokenAddr].CandidateLockedBalance, 10)
 	if currentLockedBalance == nil {
 		currentLockedBalance = big.NewInt(0)
 	}
-	newLockedBalance := new(big.Int).Add(currentLockedBalance, amount)
+	// 使用安全加法检查锁定余额溢出
+	newLockedBalance, err := SafeAdd(currentLockedBalance, amount)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   candidate.Base.TxId,
+			Status: "FAILED",
+			Error:  "locked balance overflow",
+		}, fmt.Errorf("locked balance overflow: %w", err)
+	}
 	voterAccount.Balances[nativeTokenAddr].CandidateLockedBalance = newLockedBalance.String()
 
 	// 设置投票的候选人
@@ -167,12 +182,19 @@ func (h *CandidateTxHandler) handleAddVote(candidate *pb.CandidateTx, sv StateVi
 		Category:    "account",
 	})
 
-	// 更新候选人收到的投票数
+	// 更新候选人收到的投票数（使用安全加法）
 	candidateVotes, _ := new(big.Int).SetString(candidateAccount.ReceiveVotes, 10)
 	if candidateVotes == nil {
 		candidateVotes = big.NewInt(0)
 	}
-	newCandidateVotes := new(big.Int).Add(candidateVotes, amount)
+	newCandidateVotes, err := SafeAdd(candidateVotes, amount)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   candidate.Base.TxId,
+			Status: "FAILED",
+			Error:  "vote count overflow",
+		}, fmt.Errorf("vote count overflow: %w", err)
+	}
 	candidateAccount.ReceiveVotes = newCandidateVotes.String()
 
 	// 保存候选人账户
@@ -309,14 +331,21 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 
 	ws := make([]WriteOp, 0)
 
-	// 从锁定余额转回可用余额
+	// 从锁定余额转回可用余额（使用安全加法）
 	voterAccount.Balances[nativeTokenAddr].CandidateLockedBalance = "0"
-	
+
 	currentBalance, _ := new(big.Int).SetString(voterAccount.Balances[nativeTokenAddr].Balance, 10)
 	if currentBalance == nil {
 		currentBalance = big.NewInt(0)
 	}
-	newBalance := new(big.Int).Add(currentBalance, lockedBalance)
+	newBalance, err := SafeAdd(currentBalance, lockedBalance)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   candidate.Base.TxId,
+			Status: "FAILED",
+			Error:  "balance overflow",
+		}, fmt.Errorf("balance overflow: %w", err)
+	}
 	voterAccount.Balances[nativeTokenAddr].Balance = newBalance.String()
 
 	// 清除投票记录
@@ -340,13 +369,14 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 		Category:    "account",
 	})
 
-	// 减少候选人收到的投票数
+	// 减少候选人收到的投票数（使用安全减法）
 	candidateVotes, _ := new(big.Int).SetString(candidateAccount.ReceiveVotes, 10)
 	if candidateVotes == nil {
 		candidateVotes = big.NewInt(0)
 	}
-	newCandidateVotes := new(big.Int).Sub(candidateVotes, lockedBalance)
-	if newCandidateVotes.Sign() < 0 {
+	newCandidateVotes, err := SafeSub(candidateVotes, lockedBalance)
+	if err != nil {
+		// 如果下溢则设为 0（保护性处理）
 		newCandidateVotes = big.NewInt(0)
 	}
 	candidateAccount.ReceiveVotes = newCandidateVotes.String()
@@ -400,4 +430,3 @@ func (h *CandidateTxHandler) handleRemoveVote(candidate *pb.CandidateTx, sv Stat
 func (h *CandidateTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
-

@@ -216,7 +216,9 @@ frost/
 | Funds Pending Lot Seq   | `v1_frost_funds_pending_lot_seq_<chain>_<asset>_<height>` | 待入账队列序号                                   |
 | Funds Pending Ref   | `v1_frost_funds_pending_ref_<request_id>` | request_id -> pending lot key                  |
 | Withdraw Queue      | `v1_frost_withdraw_<withdraw_id>`   | 提现请求与状态                                    |
-| Withdraw FIFO Index | `v1_frost_withdraw_q_<seq>`         | seq->withdraw_id，用于 FIFO 扫描                |
+| Withdraw FIFO Index | `v1_frost_withdraw_q_<chain>_<asset>_<seq>` | 按 (chain, asset) 分队列的 FIFO 索引           |
+| Withdraw FIFO Seq   | `v1_frost_withdraw_seq_<chain>_<asset>` | 每个 (chain, asset) 队列的 seq 计数器          |
+| Withdraw FIFO Head  | `v1_frost_withdraw_head_<chain>_<asset>` | 每个队列的 FIFO 头指针（下一个待处理 seq）      |
 | Transition State    | `v1_frost_transition_<epoch_id>`       | 轮换/交接会话与状态                                 |
 | DKG Commitment      | `v1_frost_dkg_commit_<epoch_id>_<miner>` | 参与者承诺点登记（用于份额验证/链上裁决）              |
 | SignedPackage 收据    | `v1_frost_signed_pkg_<job_id>_<idx>`   | SignedPackage 列表（receipt/history，append-only） |
@@ -225,13 +227,15 @@ frost/
 
 #### 4.3.1 WithdrawRequest（链上）
 
-* withdraw_id：全网唯一
-* seq：FIFO 序号（严格递增）
+* withdraw_id：全网唯一（`H(chain || asset || seq || request_height)`）
+* seq：队列内 FIFO 序号（每个 `(chain, asset)` 独立递增）
 * chain/asset：目标链与资产类型
 * to / amount：提现目标地址与数量
 * request_height：`FrostWithdrawRequestTx` 最终化高度（用于会话开始高度）
 * status：`QUEUED | SIGNED`
 * job_id：归属的 SigningJob（当 status=SIGNED 时存在）
+
+> 说明：提现队列按 `(chain, asset)` 分开管理，不同资产的提现互不阻塞。`seq` 在每个队列内严格递增。
 
 #### 4.3.2 FundsLedger（链上）
 
@@ -239,7 +243,7 @@ frost/
 
   * `available_balance`（可选缓存）
   * `reserved_balance`（可选缓存，用于并发预留）
-  * `next_withdraw_seq`（用于生成 withdraw_id 或 FIFO index）
+  * `next_withdraw_seq`（已废弃，改用独立的 `v1_frost_withdraw_seq_<chain>_<asset>` 管理）
   * `pending_lots`（以独立 KV 记录，WitnessRequestTx 已确认但未上账；仅用于迁移）
     - key：`v1_frost_funds_pending_lot_<chain>_<asset>_<height>_<seq>`
     - value：`request_id`
@@ -305,13 +309,13 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
 * `FrostWithdrawRequestTx`（用户发起）
   * `chain / asset / to / amount`
 
-说明：VM 直接基于已最终化的 WithdrawRequest 队列与链上 FundsLedger，确定性计算“队首 job 窗口”（最多 `maxInFlightPerChain` 个），该窗口对应 FIFO 队首连续前缀并按资金先入先出消耗。
+说明：VM 直接基于已最终化的 WithdrawRequest 队列与链上 FundsLedger，确定性计算“队首 job 窗口”（最多 `maxInFlightPerChainAsset` 个），该窗口对应 FIFO 队首连续前缀并按资金先入先出消耗。
 
 * `FrostWithdrawSignedTx`（Runtime 回写）
   * `job_id`
   * `signed_package_bytes`
   * 约束：
-    * VM 必须基于链上状态 + 配置，确定性重算“队首 job 窗口”（最多 `maxInFlightPerChain` 个），逐个迭代消耗 FIFO withdraws 与资金
+    * VM 必须基于链上状态 + 配置，确定性重算“队首 job 窗口”（最多 `maxInFlightPerChainAsset` 个），逐个迭代消耗 FIFO withdraws 与资金
     * 若该 `job_id` 尚不存在：仅当 tx 的 `job_id` 等于窗口中**当前最靠前的未签名 job**才接受；并写入 SigningJob 记录（status=SIGNED）、标记 withdraw 为 `SIGNED`、资金/UTXO 置为 **consumed/spent**
     * 若 job 已存在：签名产物必须绑定已存的 `template_hash`，只追加 receipt/history（`v1_frost_signed_pkg_<job_id>_<idx>`），不再改变状态
 
@@ -399,14 +403,14 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
 
 #### 5.1.1 WithdrawRequest（链上）
 
-- `withdraw_id`：全网唯一
-- `seq`：FIFO 序号（严格递增）
+- `withdraw_id`：全网唯一（`H(chain || asset || seq || request_height)`）
+- `seq`：队列内 FIFO 序号（每个 `(chain, asset)` 独立严格递增）
 - `chain / asset / to / amount`
 - `request_height`：`FrostWithdrawRequestTx` 最终化高度（用于会话开始高度）
 - `status`：`QUEUED | SIGNED`
 - `job_id`：归属的 SigningJob（当 status=SIGNED 时存在）
 
-
+> 说明：提现队列按 `(chain, asset)` 分开管理，不同资产的提现互不阻塞。
 
 #### 5.1.2 SigningJob（链上）
 
@@ -414,10 +418,11 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
 
 通用字段：
 
-- `job_id`：全网唯一（ `H(chain || first_seq || template_hash || key_epoch)`）
+- `job_id`：全网唯一（ `H(chain || asset || first_seq || template_hash || key_epoch)`）
 - `chain`：btc/eth/trx/sol/bnb...
+- `asset`：资产类型（native/token address）
 - `key_epoch`：使用哪个 epoch_id 的 `group_pubkey` 进行签名（避免轮换期间歧义）
-- `withdraw_ids[]`：被该 job 覆盖的 withdraw 列表（按 seq 升序，必须是 FIFO 队首连续的 `QUEUED` 前缀）
+- `withdraw_ids[]`：被该 job 覆盖的 withdraw 列表（按 seq 升序，必须是该 `(chain, asset)` 队列 FIFO 队首连续的 `QUEUED` 前缀）
 - `template_hash`：模板摘要（签名绑定的唯一输入）
 - `status`：`SIGNED`
 
@@ -445,7 +450,7 @@ flowchart TB
   subgraph VM["链上 VM"]
     V1[FrostWithdrawRequestTx Handler]
     V2[FrostWithdrawSignedTx Handler]
-    WR["WithdrawRequest[]\n{status=QUEUED, seq=N,N+1,N+2...}"]
+    WR["WithdrawRequest[] 按 chain,asset 分队列\n{status=QUEUED, seq=N,N+1,N+2...}"]
     WRS["WithdrawRequest[]\n{status=SIGNED, job_id}"]
     SJS["SigningJob\n{status=SIGNED}"]
   end
@@ -456,7 +461,7 @@ flowchart TB
   end
 
   subgraph Runtime["Runtime 层"]
-    R1[Scanner: 扫描 FIFO 队列]
+    R1[Scanner: 扫描各 chain,asset FIFO 队列]
     R2[JobPlanner: 收集连续 QUEUED withdraws + 读取 FundsLedger FIFO]
     R3[JobPlanner: 生成 job 窗口 + template_hash]
     R4[ROAST: 签名会话 -> SignedPackage]
@@ -469,7 +474,7 @@ flowchart TB
   C2 --> V1
   V1 --> WR
 
-  WR -.->|FIFO 队列| R1
+  WR -.->|各队列独立 FIFO| R1
   R1 --> R2
   R2 --> R3
   R3 --> R4
@@ -487,9 +492,9 @@ flowchart TB
 |------|------|------|----------|
 | 1 | 用户 | 发起 `FrostWithdrawRequestTx` | - |
 | 2 | 共识层 | 打包交易到区块并确认 | - |
-| 3 | VM | Handler 创建 WithdrawRequest | `[*] → QUEUED`，分配 FIFO seq + request_height |
-| 4 | Runtime Scanner | 扫描链上 FIFO 队列 | - |
-| 5 | Runtime JobPlanner | 生成 job 窗口 + template_hash（基于 FundsLedger FIFO） | - |
+| 3 | VM | Handler 创建 WithdrawRequest | `[*] → QUEUED`，分配队列内 FIFO seq + request_height |
+| 4 | Runtime Scanner | 扫描各 `(chain, asset)` FIFO 队列 | - |
+| 5 | Runtime JobPlanner | 生成 job 窗口 + template_hash（基于 FundsLedger FIFO） | 每个队列独立规划 |
 | 6 | Runtime ROAST | 签名会话 → SignedPackage | - |
 | 7 | Runtime | 提交 `FrostWithdrawSignedTx` | - |
 | 8 | 共识层 | 打包交易到区块并确认 | - |
@@ -513,7 +518,7 @@ stateDiagram-v2
 ```
 
 > 注：本链**不需要**链上记录 "SIGNING 中/会话进度"；会话信息放在 Runtime 的 `SessionStore`（可重启恢复）。
-> 注：同链任意时刻有一个“队首 job 窗口”（最多 `maxInFlightPerChain` 个）。Runtime 可并发签名窗口内 job，但 VM 上链仍按队首顺序接受，跳过前序 job 的提交会被拒绝。
+> 注：同链任意时刻有一个“队首 job 窗口”（最多 `maxInFlightPerChainAsset` 个）。Runtime 可并发签名窗口内 job，但 VM 上链仍按队首顺序接受，跳过前序 job 的提交会被拒绝。
 ---
 ---
 
@@ -586,15 +591,15 @@ VM 在处理 `FrostWithdrawSignedTx` 时重算并校验，不一致直接拒绝�
 
 #### 5.3.1 确定性规划规则（VM 可复验）
 
-Runtime 的 `job_planner` 按确定性算法生成 job 窗口（最多 `maxInFlightPerChain` 个）及其 `template_hash` 并完成签名，提交 `FrostWithdrawSignedTx`；VM 用同算法复算并写入 `SigningJob`：
+Runtime 的 `job_planner` **对每个 `(chain, asset)` 队列独立**按确定性算法生成 job 窗口（最多 `maxInFlightPerChainAsset` 个）及其 `template_hash` 并完成签名，提交 `FrostWithdrawSignedTx`；VM 用同算法复算并写入 `SigningJob`：
 
-当允许并发时，`job_planner` 需要按确定性规则连续生成最多 `maxInFlightPerChain` 个 job；每生成一个 job，就在内存中消耗对应 withdraw/资金，再生成下一个。VM 以相同方式重算，保证窗口唯一。
+当允许并发时，`job_planner` 对每个 `(chain, asset)` 队列独立规划，按确定性规则连续生成最多 `maxInFlightPerChainAsset` 个 job；每生成一个 job，就在内存中消耗对应 withdraw/资金，再生成下一个。VM 以相同方式重算，保证窗口唯一。
 
 单个 job 的规划规则如下（生成窗口时重复执行）：
 
-- 扫描链上 FIFO 队列，从 `plan_head_seq`（最小的 `status=QUEUED` seq）开始收集连续 withdraw
-- `withdraw_ids[]` 必须是从 `plan_head_seq` 开始的 **连续 QUEUED 前缀**
-- 资金占用按 `deposit_lots` 的 `finalize_height + seq` 递增顺序扣减（先入先出）
+- 扫描该 `(chain, asset)` 的 FIFO 队列，从 `plan_head_seq`（该队列最小的 `status=QUEUED` seq）开始收集连续 withdraw
+- `withdraw_ids[]` 必须是从 `plan_head_seq` 开始的 **连续 QUEUED 前缀**（同一 `(chain, asset)` 内）
+- 资金占用按对应 `(chain, asset)` 的 `deposit_lots` 的 `finalize_height + seq` 递增顺序扣减（先入先出）
 - `job.template_hash` 由 `ChainAdapter.BuildTemplate(...)->TemplateHash(...)` 生成（编码必须规范化）
 - 资金占用必须合法：
   - BTC：选中的 UTXO 当前未锁定，且总额覆盖 `sum(outputs)+fee+min_change`（或允许 “no-change eat fee”）
@@ -604,7 +609,7 @@ Runtime 的 `job_planner` 按确定性算法生成 job 窗口（最多 `maxInFli
 可选把模板明细追加到 receipt/history 便于审计，但不作为共识验证所必需数据。
 
 > 规划必须“唯一确定”，否则 VM 无法校验；允许保守但不允许多解。
-> `maxInFlightPerChain` 决定“队首 job 窗口”大小；Runtime 可并发签名窗口内 job，但 VM 仍按队首顺序接受。
+> `maxInFlightPerChainAsset` 决定“队首 job 窗口”大小；Runtime 可并发签名窗口内 job，但 VM 仍按队首顺序接受。
 
 #### 5.3.2 BTC 规划算法（支持 多 inputs 与 多 outputs）
 
@@ -1101,8 +1106,8 @@ type FrostEnvelope struct {
 
 * `frost/vmhandler/register.go`：把以下 tx kind 注册到 VM 的 HandlerRegistry
 
-  * `FrostWithdrawRequestTx`：创建 `WithdrawRequest{status=QUEUED}` + FIFO index + request_height
-  * `FrostWithdrawSignedTx`：确定性重算队首 job 窗口并校验当前 job，写入 `signed_package_bytes` 并追加 receipt/history；job 置为 `SIGNED`，withdraw 由 `QUEUED → SIGNED`（终态，资金视为已支出）
+  * `FrostWithdrawRequestTx`：创建 `WithdrawRequest{status=QUEUED}` + 按 `(chain, asset)` 分配 FIFO index + request_height
+  * `FrostWithdrawSignedTx`：确定性重算该 `(chain, asset)` 队首 job 窗口并校验当前 job，写入 `signed_package_bytes` 并追加 receipt/history；job 置为 `SIGNED`，withdraw 由 `QUEUED → SIGNED`（终态，资金视为已支出）
 
   * `FrostDkgCommitTx`：登记本轮 DKG 承诺点（commitments）
   * `FrostDkgComplaintTx`：无效碎片举证与链上裁决（剔除/惩罚）
@@ -1133,7 +1138,7 @@ type FrostEnvelope struct {
 * `GetFrostConfig()`：当前 frost 配置快照
 * `GetGroupPubKey(epoch_id)`：当前/历史聚合公钥
 * `GetWithdrawStatus(withdraw_id)`：状态机、job_id、template_hash、raw_txid（可离线从模板计算）、signed_package_bytes / signed_package_bytes[]、失败原因
-* `ListWithdraws(from_seq, limit)`：FIFO 扫描队列
+* `ListWithdraws(chain, asset, from_seq, limit)`：FIFO 扫描指定 `(chain, asset)` 队列
 * `GetTransitionStatus(epoch_id)`：轮换进度、链更新结果
 * `GetDkgCommitment(epoch_id, dealer_id)`：查询某参与者的 DKG 承诺点（commitments）与状态（COMMITTED/DISQUALIFIED）
 * `ListDkgComplaints(epoch_id, from, limit)`：（可选）查询链上裁决记录
@@ -1167,7 +1172,7 @@ type FrostEnvelope struct {
     "sessionMaxBlocks": 60
   },
   "withdraw": {
-    "maxInFlightPerChain": 1, // 队首 job 窗口大小（可并发签名）
+    "maxInFlightPerChainAsset": 1, // 队首 job 窗口大小（可并发签名）
     "retryPolicy": { "maxRetry": 5, "backoffBlocks": 5 }
   },
   "transition": {

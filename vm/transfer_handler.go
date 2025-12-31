@@ -125,8 +125,15 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	// 6. 执行转账
-	// 减少发送方余额
-	newFromBalance := new(big.Int).Sub(fromBalance, amount)
+	// 减少发送方余额（使用安全减法）
+	newFromBalance, err := SafeSub(fromBalance, amount)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   transfer.Base.TxId,
+			Status: "FAILED",
+			Error:  "balance underflow",
+		}, fmt.Errorf("balance underflow: %w", err)
+	}
 	fromAccount.Balances[transfer.TokenAddress].Balance = newFromBalance.String()
 
 	// 增加接收方余额
@@ -135,12 +142,12 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 	if toAccount.Balances[transfer.TokenAddress] == nil {
 		toAccount.Balances[transfer.TokenAddress] = &pb.TokenBalance{
-			Balance:                  "0",
-			CandidateLockedBalance:   "0",
-			MinerLockedBalance:       "0",
-			LiquidLockedBalance:      "0",
-			WitnessLockedBalance:     "0",
-			LeverageLockedBalance:    "0",
+			Balance:                "0",
+			CandidateLockedBalance: "0",
+			MinerLockedBalance:     "0",
+			LiquidLockedBalance:    "0",
+			WitnessLockedBalance:   "0",
+			LeverageLockedBalance:  "0",
 		}
 	}
 
@@ -148,7 +155,15 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	if toBalance == nil {
 		toBalance = big.NewInt(0)
 	}
-	newToBalance := new(big.Int).Add(toBalance, amount)
+	// 使用安全加法检查接收方余额溢出
+	newToBalance, err := SafeAdd(toBalance, amount)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   transfer.Base.TxId,
+			Status: "FAILED",
+			Error:  "balance overflow",
+		}, fmt.Errorf("receiver balance overflow: %w", err)
+	}
 	toAccount.Balances[transfer.TokenAddress].Balance = newToBalance.String()
 
 	// 7. 保存更新后的账户
@@ -209,4 +224,3 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 func (h *TransferTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
-

@@ -106,15 +106,30 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 
 	ws := make([]WriteOp, 0)
 
-	// 从可用余额转移到挖矿锁定余额
-	newBalance := new(big.Int).Sub(balance, amount)
+	// 从可用余额转移到挖矿锁定余额（使用安全减法）
+	newBalance, err := SafeSub(balance, amount)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   minerTx.Base.TxId,
+			Status: "FAILED",
+			Error:  "balance underflow",
+		}, fmt.Errorf("balance underflow: %w", err)
+	}
 	account.Balances[nativeTokenAddr].Balance = newBalance.String()
 
 	currentLockedBalance, _ := new(big.Int).SetString(account.Balances[nativeTokenAddr].MinerLockedBalance, 10)
 	if currentLockedBalance == nil {
 		currentLockedBalance = big.NewInt(0)
 	}
-	newLockedBalance := new(big.Int).Add(currentLockedBalance, amount)
+	// 使用安全加法检查锁定余额溢出
+	newLockedBalance, err := SafeAdd(currentLockedBalance, amount)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   minerTx.Base.TxId,
+			Status: "FAILED",
+			Error:  "locked balance overflow",
+		}, fmt.Errorf("locked balance overflow: %w", err)
+	}
 	account.Balances[nativeTokenAddr].MinerLockedBalance = newLockedBalance.String()
 
 	// 设置为矿工状态
@@ -209,14 +224,21 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 
 	ws := make([]WriteOp, 0)
 
-	// 将锁定余额转回可用余额
+	// 将锁定余额转回可用余额（使用安全加法）
 	account.Balances[nativeTokenAddr].MinerLockedBalance = "0"
 
 	currentBalance, _ := new(big.Int).SetString(account.Balances[nativeTokenAddr].Balance, 10)
 	if currentBalance == nil {
 		currentBalance = big.NewInt(0)
 	}
-	newBalance := new(big.Int).Add(currentBalance, lockedBalance)
+	newBalance, err := SafeAdd(currentBalance, lockedBalance)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   minerTx.Base.TxId,
+			Status: "FAILED",
+			Error:  "balance overflow",
+		}, fmt.Errorf("balance overflow: %w", err)
+	}
 	account.Balances[nativeTokenAddr].Balance = newBalance.String()
 
 	// 取消矿工状态
@@ -261,4 +283,3 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 func (h *MinerTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
-
