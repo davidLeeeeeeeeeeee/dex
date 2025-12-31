@@ -12,7 +12,6 @@
 > - v1 支持：BTC / ETH / SOL / TRX / BNB
 > - Gas/手续费配置文件（按年均 300% 写死，后续版本治理/升级更新）
 > - 提现调度 FIFO（先入账的资金先被提现）
-> - 共识暂停时，FROST 仍持续执行**已确认**的提现/交接（状态回写可延后）
 > - 提现/迁移相关的三方链交易：**FROST/整个工程不负责广播与确认**；Runtime 只负责构建模板、完成门限签名，并把"签名产物/交易包"落链（可查询/可审计）；广播由用户/运营方手动完成。
 > - 允许 ROAST 对同一 `template_hash` 产生**多份合法签名产物**；系统通过 tx 接受并追加记录这些产物（receipt/history），同时保证不会导致双花（同一 withdraw_id 绑定同一模板/同一输入集合）。
 
@@ -557,12 +556,12 @@ sequenceDiagram
   CO->>A: 请求 Nonce 承诺
   CO->>B: 请求 Nonce 承诺
   CO->>D: 请求 Nonce 承诺
-  A-->>CO: 返回 R_A
-  B-->>CO: 返回 R_B
+  A-->>CO: 返回 R_A‘（原来的作废）
+  B-->>CO: 返回 R_B’
   D-->>CO: 返回 R_D
-  CO->>A: 广播 R_A, R_B, R_D
-  CO->>B: 广播 R_A, R_B, R_D
-  CO->>D: 广播 R_A, R_B, R_D
+  CO->>A: 广播 R_A‘, R_B’, R_D
+  CO->>B: 广播 R_A’, R_B‘, R_D
+  CO->>D: 广播 R_A‘, R_B’, R_D
   A-->>CO: 返回 z_A
   B-->>CO: 返回 z_B
   D-->>CO: 返回 z_D
