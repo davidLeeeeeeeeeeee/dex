@@ -29,6 +29,34 @@
 - **DKG Commitments（承诺点）**：参与者在 DKG 中登记到链上的承诺点集合（用于份额验证与链上裁决）。
 - **Chain Adapter**：链适配器（BTC UTXO vs 合约链/账户模型链）。
 
+**Vault 相关术语（资金分片）**：
+
+- **Vault（金库）**：每条链上的一个独立资金分片，拥有自己的门限公钥、签名委员会和资金池。同一条链可有 M 个 Vault，资金与签名权限按 Vault 隔离。
+- **vault_id**：Vault 的唯一标识（`0..M-1`），用于区分同链的不同金库。
+- **VaultRef（金库地址）**：Vault 在目标链上的具体地址/合约：
+  - BTC：Taproot 地址（由该 Vault 的 `group_pubkey` 派生）
+  - EVM（ETH/BNB）：托管合约地址
+  - SOL：程序派生账户（PDA）
+  - TRX：托管合约地址
+- **VaultCommittee（金库委员会）**：负责该 Vault 签名的 K 个矿工子集（从 Top10000 确定性分配）。
+- **vault_key_epoch**：Vault 当前生效的密钥版本（每次该 Vault 的 DKG 完成后递增）。
+- **VaultConfig**：链级 Vault 配置（vault_count、committee_size、threshold_ratio 等）。
+- **VaultState**：单个 Vault 的运行时状态（vault_ref、group_pubkey、committee_members、lifecycle 等）。
+
+**签名算法与曲线（按链区分）**：
+
+> 不同链使用不同的签名曲线/算法（来自 `pb.SignAlgo`），因此每个 Vault 的 `group_pubkey` 是**曲线相关**的。DKG 产出的密钥份额和公钥只能用于该曲线的签名。
+
+| 链 | SignAlgo | 曲线 | FROST 变体 | group_pubkey 格式 |
+|----|----------|------|-----------|------------------|
+| BTC | `SCHNORR_SECP256K1_BIP340` | secp256k1 | FROST-secp256k1 | 32 bytes x-only（BIP-340） |
+| ETH/BNB | `SCHNORR_ALT_BN128` | alt_bn128 | FROST-bn128 | 64 bytes (x \|\| y) |
+| SOL | `ED25519` | ed25519 | FROST-Ed25519 | 32 bytes |
+| TRX | `ECDSA_SECP256K1` | secp256k1 | **GG20/CGGMP**（非 FROST） | 33 bytes 压缩格式 |
+
+- **Vault 与链绑定**：每个 Vault 只服务于一条链（一种曲线），`sign_algo` 字段决定 DKG 使用哪种曲线。
+- **TRX 特殊处理**：TRX 需要 ECDSA 签名（ecrecover），无法使用 FROST Schnorr；需使用 GG20/CGGMP 等 ECDSA 门限方案。v1 可暂不支持 TRX 门限签名，或采用独立的 ECDSA 门限模块。
+
 ---
 
 ## 1. 设计目标与非目标
@@ -54,6 +82,19 @@ FROST 的输入来自 On-chain State（已最终化的 tx/队列），Runtime �
 - Withdraw pipeline
 - Power transition pipeline：在达到触发阈值时进入，保证最终一致
 
+6) **资金分片与权限分散（Vault 模式）**
+- **安全域隔离**：从"单 key 控制全部资金"改为"每个 Vault 只控制一部分资金"。任何单个 Vault 被攻破只影响该分片，不波及全局。
+- **去中心化覆盖**：从"单钥匙 10000 人"改为"Top10000 被分摊到 M 个 Vault 的委员会里"。每个矿工最多参与一个 Vault 的签名（当 M×K ≈ 10000），权限天然分散。
+- **DKG/ROAST 可落地**：每个 Vault 的委员会规模为 K（如 200~500），而非 10000，使得 DKG 与 ROAST 在工程上可行。
+- **独立生命周期**：每个 Vault 可独立轮换、迁移、暂停（DRAINING/RETIRED），不需要一次性全网切换。
+
+7) **多曲线/多签名算法支持（按链区分）**
+- 每条链绑定唯一的签名算法（`pb.SignAlgo`），决定 DKG 和 ROAST 使用哪种曲线
+- BTC: FROST-secp256k1（Schnorr BIP-340）
+- ETH/BNB: FROST-bn128（Schnorr alt_bn128）
+- SOL: FROST-Ed25519
+- TRX: **不使用 FROST**，需 GG20/CGGMP（ECDSA），v1 暂不支持或独立模块
+
 
 ---
 
@@ -69,7 +110,7 @@ flowchart TB
     VTX["TxHandlers/状态机\n（提现/轮换/DKG）"]
     VFL["资金账本\n入账/余额/UTXO/锁/已消耗"]
     VWD["提现队列与作业\nWithdrawRequest / SigningJob"]
-    VTR["轮换与DKG状态\nTransitionState / commitments / 迁移作业 / 验证"]
+    VTR["轮换与DKG状态\nVaultTransitionState / commitments / 迁移作业 / 验证"]
     VRH["签名产物登记\nSignedPackage（回执/历史，可审计可下载）"]
 
     VCFG --> VTX
@@ -155,10 +196,12 @@ frost/
     register.go             # Handler 注册入口
     withdraw_request.go     # FrostWithdrawRequestTx：创建 QUEUED + FIFO index
     withdraw_signed.go      # FrostWithdrawSignedTx：写入 signed_package_bytes 并追加 receipt/history，job 与 withdraw 置为 SIGNED
-    dkg_commit.go           # FrostDkgCommitTx：登记 DKG 承诺点（commitments）
-    dkg_complaint.go        # FrostDkgComplaintTx：链上裁决（份额无效/作恶举证）
-    dkg_validation_signed.go # FrostDkgValidationSignedTx：验证示例签名并确认新 group pubkey（KeyReady）
-    transition_signed.go    # FrostTransitionSignedTx：记录迁移 SignedPackage 并追加 receipt/history，配合 FundsLedger 标记迁移进度
+    vault_dkg_commit.go     # FrostVaultDkgCommitTx：登记 Vault DKG 承诺点（commitments）
+    vault_dkg_share.go      # FrostVaultDkgShareTx：登记 Vault 加密 share
+    vault_dkg_complaint.go  # FrostVaultDkgComplaintTx：链上裁决（份额无效/作恶举证）
+    vault_dkg_reveal.go     # FrostVaultDkgRevealTx：dealer 公开 share + 随机数
+    vault_dkg_validation_signed.go # FrostVaultDkgValidationSignedTx：验证示例签名并确认新 group pubkey（KeyReady）
+    vault_transition_signed.go # FrostVaultTransitionSignedTx：记录 Vault 迁移 SignedPackage 并追加 receipt/history，配合 FundsLedger 标记迁移进度
     funds_ledger.go         # 资金账本 helper（lot/utxo/lock），供 withdraw/transition handler 校验
   chain/                    # 链适配器（构建模板 / 封装 SignedPackage / 解析与校验）
     adapter.go              # ChainAdapter 接口定义 + ChainAdapterFactory
@@ -203,26 +246,103 @@ frost/
 
 > 具体由keys\keys.go管理。这里用 `v1_frost_` 举例。
 
+**全局配置与委员会**：
+
 | 数据                  | Key 示例                              | 说明                                         |
 | ------------------- | ----------------------------------- | ------------------------------------------ |
 | 配置快照                | `v1_frost_cfg`                      | topN、thresholdRatio、timeouts、链配置 hash 等 |
 | Top10000 集合         | `v1_frost_top10000_<height>`        | bitmap（bitset，按 Top10000 index 排序） |
-| Funds Ledger        | `v1_frost_funds_<chain>_<asset>`    | 余额、lot 队列、UTXO set（BTC）等                   |
-| Funds Lot Index     | `v1_frost_funds_lot_<chain>_<asset>_<height>_<seq>` | 入账 lot 索引（按高度 FIFO 扫描，height 需零填充） |
-| Funds Lot Head      | `v1_frost_funds_lot_head_<chain>_<asset>` | FIFO 头指针（下一个未消费 lot）                  |
-| Funds Lot Seq       | `v1_frost_funds_lot_seq_<chain>_<asset>_<height>` | 每个高度的 lot 序号计数器                        |
-| Funds Pending Lot Index | `v1_frost_funds_pending_lot_<chain>_<asset>_<height>_<seq>` | 已确认但未上账的入账请求（待入账队列）              |
-| Funds Pending Lot Seq   | `v1_frost_funds_pending_lot_seq_<chain>_<asset>_<height>` | 待入账队列序号                                   |
-| Funds Pending Ref   | `v1_frost_funds_pending_ref_<request_id>` | request_id -> pending lot key                  |
-| Withdraw Queue      | `v1_frost_withdraw_<withdraw_id>`   | 提现请求与状态                                    |
-| Withdraw FIFO Index | `v1_frost_withdraw_q_<chain>_<asset>_<seq>` | 按 (chain, asset) 分队列的 FIFO 索引           |
-| Withdraw FIFO Seq   | `v1_frost_withdraw_seq_<chain>_<asset>` | 每个 (chain, asset) 队列的 seq 计数器          |
-| Withdraw FIFO Head  | `v1_frost_withdraw_head_<chain>_<asset>` | 每个队列的 FIFO 头指针（下一个待处理 seq）      |
-| Transition State    | `v1_frost_transition_<epoch_id>`       | 轮换/交接会话与状态                                 |
-| DKG Commitment      | `v1_frost_dkg_commit_<epoch_id>_<miner>` | 参与者承诺点登记（用于份额验证/链上裁决）              |
+
+**Vault 配置与状态（每条链 M 个 Vault）**：
+
+| 数据                  | Key 示例                              | 说明                                         |
+| ------------------- | ----------------------------------- | ------------------------------------------ |
+| Vault 配置            | `v1_frost_vault_cfg_<chain>`        | VaultConfig：vault_count(M)、committee_size(K)、threshold_ratio、selection_seed_rule |
+| Vault 状态            | `v1_frost_vault_<chain>_<vault_id>` | VaultState：vault_ref、sign_algo、committee_members、key_epoch、group_pubkey、lifecycle |
+| Vault 轮换状态        | `v1_frost_vault_transition_<chain>_<vault_id>_<epoch_id>` | 单个 Vault 的 DKG/迁移状态（独立于其他 Vault） |
+| Vault DKG 承诺        | `v1_frost_vault_dkg_commit_<chain>_<vault_id>_<epoch_id>_<miner>` | 该 Vault DKG 的参与者承诺点 |
+
+**资金账本（按 Vault 分片）**：
+
+| 数据                  | Key 示例                              | 说明                                         |
+| ------------------- | ----------------------------------- | ------------------------------------------ |
+| Funds Ledger        | `v1_frost_funds_<chain>_<asset>_<vault_id>` | 该 Vault 的余额、lot 队列、UTXO set（BTC）等 |
+| Funds Lot Index     | `v1_frost_funds_lot_<chain>_<asset>_<vault_id>_<height>_<seq>` | 入账 lot 索引（按 Vault 分片，height 需零填充） |
+| Funds Lot Head      | `v1_frost_funds_lot_head_<chain>_<asset>_<vault_id>` | 该 Vault 的 FIFO 头指针 |
+| Funds Lot Seq       | `v1_frost_funds_lot_seq_<chain>_<asset>_<vault_id>_<height>` | 每个高度的 lot 序号计数器 |
+| Funds Pending Lot   | `v1_frost_funds_pending_lot_<chain>_<asset>_<vault_id>_<height>_<seq>` | 已确认但未上账（待入账队列，按 Vault 分片） |
+| Funds Pending Lot Seq | `v1_frost_funds_pending_lot_seq_<chain>_<asset>_<vault_id>_<height>` | 待入账队列序号 |
+| Funds Pending Ref   | `v1_frost_funds_pending_ref_<request_id>` | request_id -> (vault_id, pending lot key) |
+| BTC UTXO            | `v1_frost_btc_utxo_<vault_id>_<txid>_<vout>` | 该 Vault 的 UTXO（避免跨 Vault 误签） |
+| BTC Locked UTXO     | `v1_frost_btc_locked_utxo_<vault_id>_<txid>_<vout>` | 该 Vault 已锁定的 UTXO -> job_id |
+
+**提现队列（全局 FIFO，签名时选择 Vault）**：
+
+| 数据                  | Key 示例                              | 说明                                         |
+| ------------------- | ----------------------------------- | ------------------------------------------ |
+| Withdraw Queue      | `v1_frost_withdraw_<withdraw_id>`   | 提现请求与状态（含 vault_id 字段，SIGNED 后回填） |
+| Withdraw FIFO Index | `v1_frost_withdraw_q_<chain>_<asset>_<seq>` | 按 (chain, asset) 分队列的 FIFO 索引 |
+| Withdraw FIFO Seq   | `v1_frost_withdraw_seq_<chain>_<asset>` | 每个 (chain, asset) 队列的 seq 计数器 |
+| Withdraw FIFO Head  | `v1_frost_withdraw_head_<chain>_<asset>` | 每个队列的 FIFO 头指针 |
+
+**签名产物**：
+
+| 数据                  | Key 示例                              | 说明                                         |
+| ------------------- | ----------------------------------- | ------------------------------------------ |
 | SignedPackage 收据    | `v1_frost_signed_pkg_<job_id>_<idx>`   | SignedPackage 列表（receipt/history，append-only） |
 
 ### 4.3 核心结构（ Proto ）
+
+#### 4.3.0 VaultConfig 与 VaultState（链上，Vault 分片核心）
+
+**VaultConfig（链级配置）**：
+
+每条链一个配置，决定该链的 Vault 分片策略：
+
+* `chain`：链标识（btc/eth/bnb/trx/sol）
+* `sign_algo`：该链使用的签名算法（对应 `pb.SignAlgo`）：
+  - BTC: `SCHNORR_SECP256K1_BIP340`
+  - ETH/BNB: `SCHNORR_ALT_BN128`
+  - SOL: `ED25519`
+  - TRX: `ECDSA_SECP256K1`（需 GG20/CGGMP，v1 暂不支持或独立模块）
+* `vault_count`（M）：该链的 Vault 数量（如 20~50）
+* `committee_size`（K）：每个 Vault 的委员会规模（如 200~500）
+* `threshold_ratio`：门限比例（如 0.67~0.8）
+* `selection_seed_rule`：委员会选取种子规则（如 `H(epoch_id || chain)`）
+* `vault_refs[]`：各 Vault 的地址/合约（BTC=Taproot 地址；EVM=合约地址；可由 group_pubkey 派生或预部署）
+* `deposit_allocation_rule`：入账分配策略（如 `H(request_id) % M` 或轮询）
+
+**VaultState（单个 Vault 运行时状态）**：
+
+每条链的每个 Vault 一个状态：
+
+* `chain / vault_id`：链标识与 Vault 编号（`0..M-1`）
+* `vault_ref`：该 Vault 在目标链的地址/合约地址
+* `sign_algo`：签名算法（从 VaultConfig 继承，对应 `pb.SignAlgo`）
+* `committee_ref`：委员会快照高度（指向 Top10000）
+* `committee_members[]`：该 Vault 的 K 个签名者（可从 Top10000 + selection_seed 确定性计算，也可显式存储）
+* `key_epoch`：该 Vault 当前生效的密钥版本（每次 DKG 完成后递增）
+* `group_pubkey`：该 Vault 当前的聚合公钥（格式由 `sign_algo` 决定）
+  - `SCHNORR_SECP256K1_BIP340`: 32 bytes x-only
+  - `SCHNORR_ALT_BN128`: 64 bytes (x || y)
+  - `ED25519`: 32 bytes
+  - `ECDSA_SECP256K1`: 33 bytes 压缩格式
+* `lifecycle`：生命周期状态
+  - `ACTIVE`：正常运行（可入账、可提现）
+  - `DRAINING`：排空中（停止新入账，现有资金继续提现/迁移）
+  - `RETIRED`：已退役（资金已全部迁移，不再使用）
+
+**Vault 委员会分组规则**：
+
+从 Top10000 确定性分配到 M 个 Vault 的委员会：
+
+1. 取 Top10000 的确定性列表（按 bit index 排序）
+2. 计算种子：`seed = H(epoch_id || chain)`
+3. 对列表做确定性洗牌：`permuted_list = Permute(top10000_list, seed)`
+4. 按顺序切分：`vault[j].committee = permuted_list[j*K : (j+1)*K]`（j = 0..M-1）
+
+当 `M × K ≈ 10000` 时，每个矿工最多只在一个 Vault 里，权限天然分散。
+若 `M × K < 10000`，可允许部分矿工不参与任何 Vault（或用于备选）。
 
 #### 4.3.1 WithdrawRequest（链上）
 
@@ -233,71 +353,88 @@ frost/
 * request_height：`FrostWithdrawRequestTx` 最终化高度（用于会话开始高度）
 * status：`QUEUED | SIGNED`
 * job_id：归属的 SigningJob（当 status=SIGNED 时存在）
+* **vault_id**：由哪个 Vault 支付（QUEUED 时为空，SIGNED 时由 JobPlanner 确定性选择并回填）
 
 > 说明：提现队列按 `(chain, asset)` 分开管理，不同资产的提现互不阻塞。`seq` 在每个队列内严格递增。
+> **Vault 选择**：提现请求不预先绑定 Vault；JobPlanner 在规划时按确定性顺序尝试各 Vault，选出能覆盖该笔提现的第一个 Vault。
 
-#### 4.3.2 FundsLedger（链上）
+#### 4.3.2 FundsLedger（链上，按 Vault 分片）
+
+> **关键变化**：所有资金按 `(chain, asset, vault_id)` 三元组分片存储。每个 Vault 独立管理自己的 lot/UTXO 集合。
 
 * Account/Contract chains（ETH/BNB/TRX/SOL）：
 
-  * `available_balance`（可选缓存）
-  * `reserved_balance`（可选缓存，用于并发预留）
-  * `next_withdraw_seq`（已废弃，改用独立的 `v1_frost_withdraw_seq_<chain>_<asset>` 管理）
-  * `pending_lots`（以独立 KV 记录，WitnessRequestTx 已确认但未上账；仅用于迁移）
-    - key：`v1_frost_funds_pending_lot_<chain>_<asset>_<height>_<seq>`
+  * `available_balance`（可选缓存，按 Vault 分片）
+  * `reserved_balance`（可选缓存，按 Vault 分片）
+  * `pending_lots`（以独立 KV 记录，按 Vault 分片）
+    - key：`v1_frost_funds_pending_lot_<chain>_<asset>_<vault_id>_<height>_<seq>`
     - value：`request_id`
-  * `pending_lot_seq`（以独立 KV 记录，每个 request_height 对应一个序号）
-    - key：`v1_frost_funds_pending_lot_seq_<chain>_<asset>_<height>`
-  * `deposit_lots`（以独立 KV 记录，FIFO：每次入账形成一个 lot，提现从 lot 头部扣减）
-    - key：`v1_frost_funds_lot_<chain>_<asset>_<height>_<seq>`
-    - value：`request_id`（金额与 finalize_height 可从 RechargeRequest 读取；也可内联 amount 便于快速读）
-  * `deposit_lot_seq`（以独立 KV 记录，每个 finalize_height 对应一个序号）
-    - key：`v1_frost_funds_lot_seq_<chain>_<asset>_<height>`
+  * `deposit_lots`（以独立 KV 记录，按 Vault 分片，FIFO）
+    - key：`v1_frost_funds_lot_<chain>_<asset>_<vault_id>_<height>_<seq>`
+    - value：`request_id`（金额与 finalize_height 可从 RechargeRequest 读取）
 
-* BTC：
+* BTC（按 Vault 分片）：
 
-  * `utxos[]`（每个含：txid:vout:value:pkScript:confirmed_height）
-  * `locked_utxos`（映射 utxo->job_id，防并发）
-  * `change_utxo_policy`（用于后续 CPFP/归集）
+  * `utxos[]`（每个 Vault 独立的 UTXO 集合：txid:vout:value:pkScript:confirmed_height）
+    - key：`v1_frost_btc_utxo_<vault_id>_<txid>_<vout>`
+  * `locked_utxos`（映射 utxo->job_id，按 Vault 分片，防止跨 Vault 误签）
+    - key：`v1_frost_btc_locked_utxo_<vault_id>_<txid>_<vout>`
 
-> 说明：你要求“先上账的资金先被提现”，BTC 天然可用“UTXO age 升序选取”；账户链用 `deposit_lots` 实现真正 FIFO（按 `finalize_height + seq` 扫描）。
+> 说明：BTC 的 UTXO 必须按 Vault 隔离，因为不同 Vault 的 Taproot 地址不同，UTXO 归属于特定 Vault。
 
-入账与索引：
-- 初衷：我觉得可以在FundsLedger 设计两层账本，一层是WitnessRequestTx链上已经确认了，但是还未被witness上账，一层是已经被witness上账了。一旦WitnessRequestTx链上已经确认，就交给第一层管理。witness上账之后交给第二层管理。提现只能提现第二层资产。但是权力移交需要移交一层和二层。这样设计最简单，不引入新的tx和流程。最优雅
-- `WitnessRequestTx` 链上确认后，VM 以 `request_height` 写入 `Pending Lot Index`（仅迁移用，不参与提现）。
-- 见证流程最终化（`RechargeFinalized`）后，VM 从 Pending 移除该条目，并以 `FinalizeHeight` 写入 `Funds Lot Index`（按高度 FIFO 扫描），并可选更新余额缓存。
+**入账与 Vault 分配**：
 
-FundsLedger 最简实现思路（不引入新 tx、低成本）：
-- 账户链：用 append-only 的 lot 索引形成天然 FIFO
-  - `v1_frost_funds_pending_lot_<chain>_<asset>_<height>_<seq> -> request_id`（Pending 层，仅迁移）
-  - `v1_frost_funds_lot_<chain>_<asset>_<height>_<seq> -> request_id`
-  - 维护 `v1_frost_funds_lot_head_<chain>_<asset>` 作为“下一个未消费 lot”的指针
-  - 每个高度用 `v1_frost_funds_lot_seq_<chain>_<asset>_<height>` 递增生成 seq
-  - 提现时只消费已上账 lot（Pending 不参与提现），保证“先入先出”，无需复杂 `plan_bytes`
-- BTC：按 `confirmed_height` 升序选择 UTXO，自带 FIFO 属性
+充值时需要明确钱进了哪个 Vault：
 
-#### 4.3.3 TransitionState（链上）
+1. **充值地址生成**：用户充值前，系统按 `deposit_allocation_rule`（如 `H(request_id) % M`）为其分配一个 `vault_id`，并返回该 Vault 的 `vault_ref`（BTC 地址/合约地址）
+2. **Witness 记录**：`WitnessRequestTx` 必须包含 `deposit_address`（或 `vault_id`），用于验证充值确实进入了该 Vault
+3. **Pending Lot 写入**：`WitnessRequestTx` 确认后，VM 以 `(chain, asset, vault_id, height, seq)` 写入 Pending Lot Index
+4. **Finalized Lot 写入**：见证最终化后，VM 将 lot 移入 `Funds Lot Index`，同样按 Vault 分片
 
-* epoch_id / trigger_height 这次轮换的唯一编号（一般单调递增）；触发轮换的链上高度
-* old_committee_ref / new_committee_ref（指向 `v1_frost_top10000_<height>`）
-* dkg_status：NotStarted / Committing / Sharing / Resolving / KeyReady / Failed
-* dkg_session_id：`H(epoch_id || new_committee_ref || "dkg")`
-* dkg_threshold_t / dkg_n：本次 DKG 的参数（可与签名阈值一致）
-* dkg_commit_deadline / dkg_dispute_deadline（height）：commit / 裁决窗口
-* dkg_commitments：`map<miner_id, DkgCommitmentMeta>`（或用独立 KV：`v1_frost_dkg_commit_<epoch_id>_<miner>`）
-  * `commitment_points[]`（承诺点集合）或其 hash/ref
-  * `a_i0`（常数项承诺点，用于聚合 `new_group_pubkey`）
-  * `status：COMMITTED | DISQUALIFIED`
-* old_group_pubkey / new_group_pubkey（KeyReady 后落链）
-* validation_status：NotStarted / Signing / Passed / Failed
-* validation_msg_hash：`H("frost_dkg_validation" || epoch_id || new_group_pubkey)`
-* validation_signed_ref：示例签名产物引用（Passed 后写入）
-* migration_sig_count：已落链的签名产物数量（不含 bytes，用于统计；迁移完成以 FundsLedger 判定）
-* affected_chains：需要更新的链列表（BTC/合约链）
-* pause_withdraw_policy：是否暂停/降速（仅在"切换生效窗口"短暂停）
+> 设计思路：两层账本（Pending 层 + Finalized 层）。Pending 层仅用于迁移，提现只能提现 Finalized 层资产。
 
-> 迁移产物（raw tx / call data / signatures）可能多笔，可通过重复提交 `FrostTransitionSignedTx`（同 epoch_id 多份 SignedPackage）落 receipt/history（SyncStateDB=false）。
-> 新 key 生效由 VM 结合 FundsLedger 判断：当旧 key 对应资产已全部被迁移签名覆盖/消耗，且相关 SignedPackages 已落链，即视为迁移完成。
+FundsLedger 实现思路（按 Vault 分片）：
+- 账户链：用 append-only 的 lot 索引形成天然 FIFO（每个 Vault 独立 FIFO）
+  - `v1_frost_funds_pending_lot_<chain>_<asset>_<vault_id>_<height>_<seq> -> request_id`
+  - `v1_frost_funds_lot_<chain>_<asset>_<vault_id>_<height>_<seq> -> request_id`
+  - 维护 `v1_frost_funds_lot_head_<chain>_<asset>_<vault_id>` 作为该 Vault 的 FIFO 头指针
+- BTC：每个 Vault 独立的 UTXO 集合，按 `confirmed_height` 升序选择
+
+#### 4.3.3 VaultTransitionState（链上，按 Vault 独立轮换）
+
+> **关键变化**：轮换从"全网一把 key"改为"按 Vault 独立轮换"。每个 Vault 拥有独立的 DKG/迁移状态，委员会规模为 K（而非 10000），使 DKG 可落地。
+
+每条链的每个 Vault 独立维护一个轮换状态（key = `v1_frost_vault_transition_<chain>_<vault_id>_<epoch_id>`）：
+
+* `chain / vault_id / epoch_id`：该 Vault 的本次轮换标识
+* `sign_algo`：该 Vault 使用的签名算法（从 VaultConfig 继承，决定 DKG 使用哪种曲线）
+* `trigger_height`：触发轮换的链上高度
+* `old_committee_members[] / new_committee_members[]`：旧/新委员会成员（K 个，从 Top10000 确定性分配）
+* `dkg_status`：NotStarted / Committing / Sharing / Resolving / KeyReady / Failed
+* `dkg_session_id`：`H(chain || vault_id || epoch_id || sign_algo || "dkg")`
+* `dkg_threshold_t / dkg_n`：本次 DKG 的参数（t = ceil(K * threshold_ratio)）
+* `dkg_commit_deadline / dkg_dispute_deadline`（height）：commit / 裁决窗口
+* `dkg_commitments`：该 Vault 委员会成员的承诺点（独立 KV：`v1_frost_vault_dkg_commit_<chain>_<vault_id>_<epoch_id>_<miner>`）
+* `old_group_pubkey / new_group_pubkey`：格式由 `sign_algo` 决定（KeyReady 后落链）
+* `validation_status`：NotStarted / Signing / Passed / Failed
+* `validation_msg_hash`：`H("frost_vault_dkg_validation" || chain || vault_id || epoch_id || sign_algo || new_group_pubkey)`
+* `lifecycle`：该 Vault 的生命周期（ACTIVE / DRAINING / RETIRED）
+
+**Vault 生命周期管理**：
+
+* `ACTIVE`：正常运行，可接收充值、可提现
+* `DRAINING`：排空中，停止新充值（witness 不再分配该 Vault 的地址），现有资金继续提现或迁移
+* `RETIRED`：已退役，资金全部迁移完成，该 Vault 不再使用
+
+**迁移策略（按 Vault 分片）**：
+
+* 每个 Vault 独立迁移：DKG 完成后，只需迁移该 Vault 的资金
+* EVM/BNB：每个 Vault 合约各自 `updatePubkey(...)`
+* BTC：每个 Vault 地址各自 sweep 到新地址（分片后每次 sweep 更小）
+* 引入 `lifecycle=DRAINING`：先停止该 Vault 新入账，再迁移或等余额自然用完
+
+> 迁移产物（raw tx / call data / signatures）可能多笔，可通过重复提交 `FrostVaultTransitionSignedTx`（同 vault_id + epoch_id 多份 SignedPackage）落 receipt/history。
+> 新 key 生效由 VM 结合 FundsLedger 判断：当该 Vault 旧 key 对应资产已全部被迁移签名覆盖/消耗，即视为迁移完成。
 
 ---
 
@@ -318,46 +455,48 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
     * 若该 `job_id` 尚不存在：仅当 tx 的 `job_id` 等于窗口中**当前最靠前的未签名 job**才接受；并写入 SigningJob 记录（status=SIGNED）、标记 withdraw 为 `SIGNED`、资金/UTXO 置为 **consumed/spent**
     * 若 job 已存在：签名产物必须绑定已存的 `template_hash`，只追加 receipt/history（`v1_frost_signed_pkg_<job_id>_<idx>`），不再改变状态
 
-#### 4.4.2 轮换/DKG 类
+#### 4.4.2 轮换/DKG 类（按 Vault 分片）
 
-* `FrostDkgCommitTx`（每个参与者必须提交）
-  * `epoch_id`
+> **关键变化**：所有 DKG 相关 Tx 增加 `chain` 和 `vault_id` 字段，每个 Vault 独立进行 DKG。
+
+* `FrostVaultDkgCommitTx`（每个参与者必须提交）
+  * `chain / vault_id / epoch_id`
   * `commitment_points[]`：承诺点集合（例如 Feldman VSS 的 `A_{ik}=a_{ik}·G, k=0..t-1`）
   * `a_i0`：常数项承诺点（可冗余携带，便于 VM 增量计算 `new_group_pubkey`）
   * 约束：
-    * tx sender 必须属于 `new_committee_ref`
+    * tx sender 必须属于该 Vault 的 `new_committee_members[]`
     * `dkg_status == Committing`
-    * 同一 `epoch_id` 每个 sender 只能登记一次（或只允许覆盖为完全相同的 commitments）
+    * 同一 `(chain, vault_id, epoch_id)` 每个 sender 只能登记一次
 
-* `FrostDkgShareTx`（加密 share 上链）
-  * `epoch_id`
+* `FrostVaultDkgShareTx`（加密 share 上链）
+  * `chain / vault_id / epoch_id`
   * `dealer_id`：share 提供者（通常等于 tx sender）
   * `receiver_id`：share 接收者
   * `ciphertext`：`Enc(pk_receiver, share; enc_rand)`（share 用 receiver 公钥加密）
   * 约束：
     * `dkg_status == Sharing`
-    * `dealer_id` / `receiver_id` 必须属于 `new_committee_ref`
-    * 同一 `(epoch_id, dealer_id, receiver_id)` 只能登记一次（可分批提交）
+    * `dealer_id` / `receiver_id` 必须属于该 Vault 的 `new_committee_members[]`
+    * 同一 `(chain, vault_id, epoch_id, dealer_id, receiver_id)` 只能登记一次
 
-* `FrostDkgComplaintTx`（链上裁决 / 举证）
-  * `epoch_id`
+* `FrostVaultDkgComplaintTx`（链上裁决 / 举证）
+  * `chain / vault_id / epoch_id`
   * `dealer_id`：被投诉的 dealer
   * `receiver_id`：接收该碎片的参与者（通常等于 tx sender）
   * `bond`：保证金（防止滥用）
   * 约束：
     * `dkg_status ∈ {Sharing, Resolving}` 且未超过 `dkg_dispute_deadline`
-    * 必须存在对应的 `FrostDkgShareTx`（密文已上链）
+    * 必须存在对应的 `FrostVaultDkgShareTx`（密文已上链）
   * 结果：
     * VM 进入待裁决并设置 `reveal_deadline`（<= `dkg_dispute_deadline`）
 
-* `FrostDkgRevealTx`（dealer 公开 share + 随机数）
-  * `epoch_id`
+* `FrostVaultDkgRevealTx`（dealer 公开 share + 随机数）
+  * `chain / vault_id / epoch_id`
   * `dealer_id`
   * `receiver_id`
   * `share`：`f_dealer(x_receiver)`（标量）
   * `enc_rand`：加密随机数
   * 约束：
-    * 必须存在未结案的 `FrostDkgComplaintTx`
+    * 必须存在未结案的 `FrostVaultDkgComplaintTx`
     * 需在 `reveal_deadline` 前提交
     * VM 复算 `Enc(pk_receiver, share; enc_rand)` 与链上 `ciphertext` 一致
     * VM 用链上已登记的 `commitment_points[]` 验证 `share`
@@ -365,30 +504,30 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
     * 验证通过：dealer 保留资格；可选惩罚恶意投诉者并退还/扣除 `bond`
     * 超时或验证失败：`dealer_id -> DISQUALIFIED`（可选：罚没/剔除）
 
-* `FrostDkgValidationSignedTx`（示例签名产物回写/确认 DKG 结果）
-  * `epoch_id`
+* `FrostVaultDkgValidationSignedTx`（示例签名产物回写/确认 DKG 结果）
+  * `chain / vault_id / epoch_id`
   * `validation_msg_hash`
   * `signed_package_bytes`
   * 约束：
     * `dkg_status == Resolving` 且已过 `dkg_dispute_deadline`
     * `validation_status ∈ {NotStarted, Signing}`
     * `dkg_qualified_count >= dkg_threshold_t`
-    * VM 重算 `new_group_pubkey == Σ a_i0(qualified_dealers)`，并校验 `validation_msg_hash == H("frost_dkg_validation" || epoch_id || new_group_pubkey)`
+    * VM 重算 `new_group_pubkey == Σ a_i0(qualified_dealers)`，并校验 `validation_msg_hash == H("frost_vault_dkg_validation" || chain || vault_id || epoch_id || new_group_pubkey)`
   * 作用：VM 强制验签；通过后写入 `new_group_pubkey`，并将 `validation_status=Passed`、`dkg_status=KeyReady`
   * 发起者与冲突处理：
     * **permissionless**：任何节点/参与者均可提交
-    * **幂等**：仅第一笔有效 tx 将状态推进到 `KeyReady`，之后同 epoch_id 的 validation tx 因 `dkg_status` 不匹配而无效
+    * **幂等**：仅第一笔有效 tx 将状态推进到 `KeyReady`，之后同 `(chain, vault_id, epoch_id)` 的 validation tx 因 `dkg_status` 不匹配而无效
 
-* `FrostTransitionSignedTx`（迁移签名产物回写）
-  * `epoch_id / job_id / chain`
+* `FrostVaultTransitionSignedTx`（迁移签名产物回写）
+  * `chain / vault_id / epoch_id / job_id`
   * `signed_package_bytes`
   * 约束：
     * 签名产物必须绑定该 `MigrationJob.template_hash`
-    * VM 需基于 FundsLedger 确定当前待迁移资产与模板，仅接受与之匹配的 job_id/template_hash
-    * 允许重复提交，多份产物追加 receipt/history（`v1_frost_signed_pkg_<job_id>_<idx>`）
+    * VM 需基于该 Vault 的 FundsLedger 确定当前待迁移资产与模板，仅接受与之匹配的 job_id/template_hash
+    * 允许重复提交，多份产物追加 receipt/history（`v1_frost_signed_pkg_<vault_id>_<job_id>_<idx>`）
   * 作用：
-    * 记录 SignedPackage，并据模板消耗/锁定 FundsLedger 中对应资产（迁移进度）
-    * 迁移完成以 VM 的 FundsLedger 检查为准：旧 key 资产全部覆盖/消耗后，新 key 生效
+    * 记录 SignedPackage，并据模板消耗/锁定该 Vault 的 FundsLedger 中对应资产（迁移进度）
+    * 迁移完成以 VM 的 FundsLedger 检查为准：该 Vault 旧 key 资产全部覆盖/消耗后，新 key 生效
 
 ## 5. Withdraw Pipeline（提现流程，Job 模式）
 
@@ -411,25 +550,34 @@ FundsLedger 最简实现思路（不引入新 tx、低成本）：
 
 > 说明：提现队列按 `(chain, asset)` 分开管理，不同资产的提现互不阻塞。
 
-#### 5.1.2 SigningJob（链上）
+#### 5.1.2 SigningJob（链上，按 Vault 分片）
 
 一个 job 必须能被任何节点**纯验证**（不依赖外链 RPC）。链上只记录已完成签名的 job（SIGNING 状态在链下 SessionStore）。
 
 通用字段：
 
-- `job_id`：全网唯一（ `H(chain || asset || first_seq || template_hash || key_epoch)`）
+- `job_id`：全网唯一（ `H(chain || asset || vault_id || first_seq || template_hash || key_epoch)`）
 - `chain`：btc/eth/trx/sol/bnb...
 - `asset`：资产类型（native/token address）
-- `key_epoch`：使用哪个 epoch_id 的 `group_pubkey` 进行签名（避免轮换期间歧义）
+- `vault_id`：该 job 使用哪个 Vault 的资金和密钥
+- `sign_algo`：该 Vault 使用的签名算法（从 VaultConfig 继承，对应 `pb.SignAlgo`）
+- `key_epoch`：使用该 Vault 哪个 epoch_id 的 `group_pubkey` 进行签名
 - `withdraw_ids[]`：被该 job 覆盖的 withdraw 列表（按 seq 升序，必须是该 `(chain, asset)` 队列 FIFO 队首连续的 `QUEUED` 前缀）
 - `template_hash`：模板摘要（签名绑定的唯一输入）
 - `status`：`SIGNED`
 
+**Vault 选择逻辑**：
+
+提现请求不预先绑定 Vault。JobPlanner 在规划时按确定性顺序尝试各 Vault：
+1. 按 `vault_id` 升序遍历所有 `lifecycle=ACTIVE` 的 Vault
+2. 检查该 Vault 的 `available_balance`（或 UTXO 集合）是否能覆盖该笔提现
+3. 选出第一个能覆盖的 Vault，生成 job
+
 BTC 专用字段（确定性规划生成，可选落 receipt/history）：
 
-- `inputs[]`：UTXO 列表（可能多笔）
+- `inputs[]`：该 Vault 的 UTXO 列表（可能多笔）
 - `outputs[]`：withdraw 输出列表（可多地址、多输出；支持“一个 input 覆盖多笔小额提现”）
-- `change_output`：可选（返回 treasury 地址；不计入本链可用余额，直到被外部入账模块再次确认入账）
+- `change_output`：可选（返回该 Vault 的 treasury 地址；不计入本链可用余额，直到被外部入账模块再次确认入账）
 
 > **重要**：BTC “一个大 UTXO 支付多笔提现” 就是一个 job：`1 input -> N withdraw outputs (+ change)`。
 > 这会显著减少签名压力（少 inputs ⇒ 少签名任务），正是“尽可能少签名满足尽可能多提现”的核心抓手。
@@ -654,7 +802,7 @@ BTC job 的模板本质是一笔交易：
 
 对一个 `SigningJob`，Runtime 创建一个 `RoastSession(job_id)`：
 - 每个job_id一次Roast循环分配一个全网唯一的协调者负责Roast过程。Roast协调者切换算法全网统一，若在 `cfg.timeouts.aggregatorRotateBlocks` 超时窗口内未提交有效的 `FrostWithdrawSignedTx`，自动切换到下一个协调者。
-- session 输入：`job_id`（已绑定 `template_hash + key_epoch`）+ `committee`（key_epoch 对应的 Top10000 bitmap）
+- session 输入：`job_id`（已绑定 `template_hash + vault_id + key_epoch`）+ `committee`（该 Vault 的 K 个委员会成员）
 - session 输出：`SignedPackage`（BTC 是 “模板 + 每个 input 的 schnorr sig”）
 
 #### 5.4.1 Task 向量化：BTC 的 “K 个 input = K 个签名任务”
@@ -723,16 +871,21 @@ BTC 的 `SignedPackage` 至少包含：
 
 ---
 
-## 6. Power Transition Pipeline（权力交接 / 密钥轮换，Job 模式）
+## 6. Power Transition Pipeline（权力交接 / 密钥轮换，按 Vault 分片）
+
+> **关键变化**：轮换从"全网一把 key"改为"按 Vault 独立轮换"。每个 Vault 拥有独立的 DKG/迁移状态，委员会规模为 K（而非 10000），使 DKG 可落地。
 
 轮换同样采用 “Job 交付签名包、外链执行交给运营方” 的模式：
-- 初衷：每隔epochBlocks区块检查一次是否达到阈值，达到了即可开始切换流程，权力切换期间暂停所有提现的流程，充值流程的暂停；
-- 每一次权力交接都要有 DKG：**所有参与者必须提交 `FrostDkgCommitTx` 登记承诺点**，用于份额校验；出现作恶/无效碎片时可用 `FrostDkgComplaintTx` **链上裁决**。
-- 本链负责：检测触发条件 → DKG（Commit/Share/裁决）→ 示例签名验证（`FrostDkgValidationSignedTx`）确认新 `group_pubkey` → Runtime 为每条受影响链生成一个或多个 `MigrationJob` → 产出并上链一份或多份 `SignedPackage`
+- 初衷：每隔 epochBlocks 区块检查一次是否达到阈值，达到了即可开始切换流程
+- **按 Vault 独立轮换**：每个 Vault 独立进行 DKG，委员会规模为 K（如 100），使 DKG 可落地
+- 每一次权力交接都要有 DKG：**该 Vault 的 K 个参与者必须提交 `FrostVaultDkgCommitTx` 登记承诺点**
+- 本链负责：检测触发条件 → 按 Vault 独立 DKG → 示例签名验证 → 迁移该 Vault 资金
 - 运营方负责：拿签名包去执行外链 `updatePubkey(...)` / BTC 迁移交易广播
-- 本链 **Active** 在 VM 依据 FundsLedger 判定迁移完成后自动生效（无需额外 tx）
+- 本链 **Active** 在 VM 依据该 Vault 的 FundsLedger 判定迁移完成后自动生效
 
-### 6.1 触发条件（链上）
+### 6.1 触发条件（按 Vault 独立）
+
+每个 Vault 独立检测触发条件：
 
 - `change_ratio >= transitionTriggerRatio`（例如 0.2 = 2000/10000）
 - 或治理参数指定的其它触发规则
@@ -745,64 +898,68 @@ BTC 的 `SignedPackage` 至少包含：
 - **ACTIVE 才计权**：权重统计只包含 `ACTIVE` 成员；退出/被 slash 后权重立即置 0，并同步影响加权平均。
 - **双地址并行**：边界前后允许旧/新地址并行入账；witness 侧可按 `key_epoch`/地址白名单同时接受，提现仍绑定 `key_epoch`，避免切换真空期。
 
-### 6.2 链上对象：TransitionState 与 MigrationJob
+### 6.2 链上对象：VaultTransitionState 与 MigrationJob
 
-#### 6.2.1 TransitionState（链上）
+#### 6.2.1 VaultTransitionState（链上，按 Vault 独立）
 
-- `epoch_id / trigger_height`
-- `old_committee_ref / new_committee_ref`（指向 `v1_frost_top10000_<height>`）
+每个 Vault 独立维护一个轮换状态（key = `v1_frost_vault_transition_<chain>_<vault_id>_<epoch_id>`）：
+
+- `chain / vault_id / epoch_id / trigger_height`
+- `old_committee_members[] / new_committee_members[]`：旧/新委员会成员（K 个）
 - `dkg_status：NotStarted / Committing / Sharing / Resolving / KeyReady / Failed`
-- `dkg_session_id`
-- `dkg_threshold_t / dkg_n`
+- `dkg_session_id`：`H(chain || vault_id || epoch_id || "dkg")`
+- `dkg_threshold_t / dkg_n`：本次 DKG 的参数（t = ceil(K * threshold_ratio)）
 - `dkg_commit_deadline / dkg_dispute_deadline（height）`
 - `dkg_commit_count / dkg_qualified_count`
 - `new_group_pubkey`（KeyReady 后落链）
 - `validation_status：NotStarted / Signing / Passed / Failed`
 - `validation_msg_hash`
 - `validation_signed_ref`
-- `migration_jobs[]`：该 epoch_id 下的 `MigrationJob` 列表（按链/分片）
+- `lifecycle`：该 Vault 的生命周期（ACTIVE / DRAINING / RETIRED）
 
-> 约定：`dkg_commit_deadline = trigger_height + cfg.transition.dkgCommitWindowBlocks`，`dkg_dispute_deadline = dkg_commit_deadline + cfg.transition.dkgDisputeWindowBlocks`。
-> MigrationJob 可按 FundsLedger 逐步追加；新 key 生效由 VM 结合 FundsLedger 判定迁移完成，无需显式 finalize。
+> 约定：`dkg_commit_deadline = trigger_height + cfg.transition.dkgCommitWindowBlocks`。
+> MigrationJob 可按该 Vault 的 FundsLedger 逐步追加；新 key 生效由 VM 结合 FundsLedger 判定迁移完成。
 
-#### 6.2.2 MigrationJob（链上）
+#### 6.2.2 MigrationJob（链上，按 Vault 分片）
 
-- `job_id / epoch_id / chain`
-- `key_epoch`：使用哪个 epoch_id 的 `group_pubkey` 进行签名（迁移授权通常用旧 key，更新后提现用新 key）
+- `job_id / chain / vault_id / epoch_id`
+- `key_epoch`：使用该 Vault 哪个 epoch_id 的 `group_pubkey` 进行签名
 - `template_hash`
 - `status：SIGNING | SIGNED`（SIGNED 代表已落链至少一份 SignedPackage，不代表迁移完成）
-- `signed_package_bytes`：不落在 job 结构内，产物通过 `FrostTransitionSignedTx` 追加到 receipt/history（同一 job 可多笔）
+- `signed_package_bytes`：不落在 job 结构内，产物通过 `FrostVaultTransitionSignedTx` 追加到 receipt/history
 
 > 迁移 job 的本质与提现 job 相同：都是“模板 + ROAST + SignedPackage”，只是业务含义不同。
-> 同样按超时窗口保证同一时刻只有一个协调者，超时切换协调者。
-> 迁移签名可能多笔，VM 以 FundsLedger 判断是否还有未迁移资产并决定是否继续规划 job。
+> 每个 Vault 独立迁移，分片后每次迁移更小、更可控。
 
-#### 6.2.3 DkgCommitment（链上）
+#### 6.2.3 VaultDkgCommitment（链上，按 Vault 分片）
 
-按参与者拆分存储，避免把所有 commitments 塞进一个 `TransitionState`：
+按参与者拆分存储（key = `v1_frost_vault_dkg_commit_<chain>_<vault_id>_<epoch_id>_<dealer_id>`）：
 
-- `epoch_id / dealer_id`
-- `commitment_points[]`：承诺点集合（用于份额验证）
+- `chain / vault_id / epoch_id / dealer_id`
+- `sign_algo`：该 DKG 使用的签名算法（决定曲线与点格式）
+- `commitment_points[]`：承诺点集合（格式由 `sign_algo` 决定，用于份额验证）
 - `a_i0`：常数项承诺点（用于聚合 `new_group_pubkey`）
 - `status：COMMITTED | DISQUALIFIED`
 - `commit_txid / height`
 
-### 6.3 状态机（链上）
+> **曲线一致性**：同一 `(chain, vault_id, epoch_id)` 的所有 DKG 参与者必须使用相同的 `sign_algo`（从 VaultConfig 继承）。VM 在接受 `FrostVaultDkgCommitTx` 时必须校验 `sign_algo` 一致。
+
+### 6.3 状态机（按 Vault 独立）
 
 ```mermaid
 stateDiagram-v2
-  [*] --> 检测到变更: miner set change >= threshold
-  检测到变更 --> DKG中: Commit/Share/裁决/验证
+  [*] --> 检测到变更: Vault 委员会变更 >= threshold
+  检测到变更 --> DKG中: Commit/Share/裁决/验证（K 个参与者）
   DKG中 --> DKG中: 作恶/超时/Qualified 不足 -> 重启 DKG
-  DKG中 --> 密钥就绪: FrostDkgValidationSignedTx
-  密钥就绪 --> 迁移作业规划: VM 调用 FundsLedger（Pending + Finalized）获取资产信息并组织 MigrationJobs
+  DKG中 --> 密钥就绪: FrostVaultDkgValidationSignedTx
+  密钥就绪 --> 迁移作业规划: VM 调用该 Vault 的 FundsLedger 组织 MigrationJobs
   迁移作业规划 --> ROAST
-  ROAST  --> VM检查所有资产Tx落链: 单资产 ROAST 完成 -> FrostTransitionSignedTx 落链
-  VM检查所有资产Tx落链 --> ROAST: 仍有未完成资产
-  VM检查所有资产Tx落链 --> 迁移签名完成:  检查通过
+  ROAST  --> VM检查该Vault资产Tx落链: ROAST 完成 -> FrostVaultTransitionSignedTx 落链
+  VM检查该Vault资产Tx落链 --> ROAST: 仍有未完成资产
+  VM检查该Vault资产Tx落链 --> 迁移签名完成: 该 Vault 迁移完成
 ```
 
-#### 6.3.1 DKG 关键时序（Commit/Share/裁决/验证）
+#### 6.3.1 DKG 关键时序（按 Vault 独立，K 个参与者）
 
 ```mermaid
 sequenceDiagram
@@ -811,22 +968,22 @@ sequenceDiagram
   participant Pj as Participant(j)
   participant TW as TransitionWorker(Runtime)
 
-  Note over Pi,Pj: 每个参与者都要发送 share 并接收验证；下例仅示 i -> j
+  Note over Pi,Pj: 该 Vault 的 K 个参与者都要发送 share 并接收验证
   Note over CH: dkg_status=Committing
-  Pi->>CH: FrostDkgCommitTx(epoch_id, commitment_points[])
+  Pi->>CH: FrostVaultDkgCommitTx(chain, vault_id, epoch_id, commitment_points[])
   CH-->>Pi: 记录 commitment + a_i0
-  Pj->>CH: FrostDkgCommitTx(epoch_id, commitment_points[])
+  Pj->>CH: FrostVaultDkgCommitTx(chain, vault_id, epoch_id, commitment_points[])
   CH-->>Pj: 记录 commitment + a_i0
 
   Note over Pi,Pj: dkg_status=Sharing（链上）
-  Pi->>CH: FrostDkgShareTx(epoch_id, receiver_id=Pj, ciphertext)
+  Pi->>CH: FrostVaultDkgShareTx(chain, vault_id, epoch_id, receiver_id=Pj, ciphertext)
   Pj->>CH: 读取 Pi 的 ciphertext
   Pj->>Pj: 解密 share 并用 commitments 验证
 
   alt share 无效
-    Pj->>CH: FrostDkgComplaintTx(epoch_id, dealer_id=Pi, receiver_id=Pj, bond)
+    Pj->>CH: FrostVaultDkgComplaintTx(chain, vault_id, epoch_id, dealer_id=Pi, receiver_id=Pj, bond)
     Note over Pi: reveal_deadline 内
-    Pi->>CH: FrostDkgRevealTx(epoch_id, dealer_id=Pi, receiver_id=Pj, share, enc_rand)
+    Pi->>CH: FrostVaultDkgRevealTx(chain, vault_id, epoch_id, dealer_id=Pi, receiver_id=Pj, share, enc_rand)
     CH-->>CH: 复算 ciphertext 并验证 share
     alt 验证通过（恶意投诉）
       CH->>CH: 罚没 Pj 的 bond
@@ -844,11 +1001,11 @@ sequenceDiagram
   end
 
   Note over CH: dkg_status=Resolving 且裁决窗口结束后（若未触发重启）
-  Note over TW: 组织示例签名 msg=H("frost_dkg_validation" || epoch_id || new_group_pubkey)
-  TW->>TW: ROAST 示例签名 -> SignedPackage
+  Note over TW: 组织示例签名 msg=H("frost_vault_dkg_validation" || chain || vault_id || epoch_id || new_group_pubkey)
+  TW->>TW: ROAST 示例签名 -> SignedPackage（K 个参与者）
 
   alt 验证通过
-    TW->>CH: FrostDkgValidationSignedTx(epoch_id, validation_msg_hash, signed_package_bytes)
+    TW->>CH: FrostVaultDkgValidationSignedTx(chain, vault_id, epoch_id, validation_msg_hash, signed_package_bytes)
     CH-->>TW: validation_status=Passed，dkg_status=KeyReady
   else 验证失败/超时
     Note over CH,TW: 重新进入 DKG_COMMITTING（new dkg_session_id, commitments 清空）
@@ -860,7 +1017,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    START[Pj 发起投诉<br>FrostDkgComplaintTx] --> WAIT{Pi 是否在<br>reveal_deadline 内<br>提交 RevealTx?}
+    START[Pj 发起投诉<br>FrostVaultDkgComplaintTx] --> WAIT{Pi 是否在<br>reveal_deadline 内<br>提交 RevealTx?}
 
     WAIT -->|超时未提交| DEALER_FAULT[Pi 超时作恶]
     WAIT -->|已提交| VERIFY{VM 验证<br>share 与 commitments<br>是否一致?}
@@ -899,80 +1056,90 @@ flowchart TD
 
 说明：
 
-- **Participant**：本轮 DKG 的参与者（`new_committee_ref` 内成员）。每个参与者既提交承诺点，也将加密 share 上链；接收者解密并用链上承诺点验证，必要时发起投诉。
+- **Participant**：本轮 DKG 的参与者（该 Vault 的 `new_committee_members[]` 内成员，共 K 个）。每个参与者既提交承诺点，也将加密 share 上链；接收者解密并用链上承诺点验证，必要时发起投诉。
 - **TransitionWorker**：Runtime 中推进轮换流程的执行者（可由确定性规则选出），负责在裁决窗口结束后组织验证签名，验证通过即确认新 key（KeyReady）；失败则触发重新 DKG。
-- **恶意投诉处理**：若投诉被证明无效（share 与 commitments 一致），投诉者 Pj 被惩罚并剔除。由于 Pi 的 share 已被公开泄露，**仅 Pi 需要重新生成多项式** 并重新提交 `FrostDkgCommitTx` 和 `FrostDkgShareTx`，其他参与者的 commitments/shares 保持不变。
+- **恶意投诉处理**：若投诉被证明无效（share 与 commitments 一致），投诉者 Pj 被惩罚并剔除。由于 Pi 的 share 已被公开泄露，**仅 Pi 需要重新生成多项式** 并重新提交 `FrostVaultDkgCommitTx` 和 `FrostVaultDkgShareTx`，其他参与者的 commitments/shares 保持不变。
 - **Dealer 作恶处理**：若 dealer 提供的 share 确实无效或超时未响应，仅剔除该 dealer。其他参与者在计算最终私钥份额时 **直接排除该 dealer 的贡献**（`s_j = Σ s_{i→j}` 中去掉该 dealer），无需重新生成任何多项式（前提是剩余参与者数量仍满足门限要求）。
 
-涉及的 Tx 目的：
+涉及的 Tx 目的（按 Vault 分片）：
 
-- `FrostDkgCommitTx`：把 dealer 的承诺点上链，作为份额验证与链上裁决的公开依据。
-- `FrostDkgShareTx`：把加密 share 上链（`Enc(pk_receiver, share; enc_rand)`），解决“未收到 share”的争议来源。
-- `FrostDkgComplaintTx`：receiver 认为 share 无效时发起投诉并锁定 bond，开启 `reveal_deadline`。
-- `FrostDkgRevealTx`：dealer 公开 `(share, enc_rand)`，VM 复算密文并验证 commitments；通过则驳回投诉（恶意投诉 → 仅 dealer 重做），失败或超时则 dealer DISQUALIFIED（继续流程）。
-- `FrostDkgValidationSignedTx`：记录示例签名结果并确认新 key；VM 依据链上承诺点确定性计算/校验 `new_group_pubkey`，验证通过即 KeyReady。
+- `FrostVaultDkgCommitTx`：把 dealer 的承诺点上链，作为份额验证与链上裁决的公开依据。
+- `FrostVaultDkgShareTx`：把加密 share 上链（`Enc(pk_receiver, share; enc_rand)`），解决“未收到 share”的争议来源。
+- `FrostVaultDkgComplaintTx`：receiver 认为 share 无效时发起投诉并锁定 bond，开启 `reveal_deadline`。
+- `FrostVaultDkgRevealTx`：dealer 公开 `(share, enc_rand)`，VM 复算密文并验证 commitments；通过则驳回投诉（恶意投诉 → 仅 dealer 重做），失败或超时则 dealer DISQUALIFIED（继续流程）。
+- `FrostVaultDkgValidationSignedTx`：记录示例签名结果并确认新 key；VM 依据链上承诺点确定性计算/校验 `new_group_pubkey`，验证通过即 KeyReady。
 
 验证签名要点：
 
 - 验证时机：裁决窗口结束后；VM 依据 commitments 重算 `new_group_pubkey` 校验 `validation_msg_hash`
-- 验证消息：`msg = H("frost_dkg_validation" || epoch_id || new_group_pubkey)`（单 task、无外链副作用）
-- 通过 ROAST 产出 `SignedPackage`，提交 `FrostDkgValidationSignedTx` 写链并置 `validation_status=Passed`、`dkg_status=KeyReady`
+- 验证消息：`msg = H("frost_vault_dkg_validation" || chain || vault_id || epoch_id || new_group_pubkey)`（单 task、无外链副作用）
+- 通过 ROAST 产出 `SignedPackage`（K 个参与者），提交 `FrostVaultDkgValidationSignedTx` 写链并置 `validation_status=Passed`、`dkg_status=KeyReady`
 - 若会话超时/收集不足导致验证失败，触发重新 DKG（生成新的 `dkg_session_id`，清空上一轮 commitments），状态回到 `DKG_COMMITTING`
 
-### 6.4 迁移 Job 规划与签名
+### 6.4 迁移 Job 规划与签名（按 Vault 分片）
 
 #### 6.4.1 合约链（ETH/BNB/TRX/SOL）
 
-Runtime 为每条链生成一个或多个 `MigrationJob`：
+Runtime 为该 Vault 生成一个或多个 `MigrationJob`：
 
-- `template`：`updatePubkey(new_pubkey, epoch_id, ...)`（建议合约支持 batch/nonce 防重放）
-- `template_hash`：对 calldata/params 做 hash（包含 epoch_id、chain_id、合约地址等域分隔）
-- 通过 ROAST（通常 1 个 task）产出聚合签名，封装成可广播 `SignedPackage`
+- `template`：`updatePubkey(new_pubkey, vault_id, epoch_id, ...)`（建议合约支持 batch/nonce 防重放）
+- `template_hash`：对 calldata/params 做 hash（包含 chain、vault_id、epoch_id、合约地址等域分隔）
+- 通过 ROAST（该 Vault 的 K 个参与者，通常 1 个 task）产出聚合签名，封装成可广播 `SignedPackage`
 
 #### 6.4.2 BTC
 
 若你的 BTC 侧采用 “旧地址资金迁移到新地址”的方案：
 
-- MigrationJob 模板是一笔或多笔 BTC 交易
+- 每个 Vault 独立迁移：MigrationJob 模板是该 Vault 的一笔或多笔 BTC 交易
 - 同样支持：
-  - 多 inputs（迁移多个 UTXO）
+  - 多 inputs（迁移该 Vault 的多个 UTXO）
   - 多 outputs（分批迁移/多找零）
+- 分片后每次迁移更小、更可控
 - ROAST 仍按 “每个 input 一个 task” 批量完成签名（复用 5.4 的机制）
 
-### 6.5 与提现并行的策略（围绕 key_epoch）
+### 6.5 与提现并行的策略（围绕 Vault 和 key_epoch）
 
-- 所有 Withdraw SigningJob 必须携带 `key_epoch`
-- 在迁移未完成之前（VM/FundsLedger 判定）：
-  - 新创建的 withdraw job 使用旧 `key_epoch`
-- 当 VM 依据 FundsLedger 判定该 epoch 迁移完成后：
-  - 新创建的 withdraw job 使用新 `key_epoch`
+- 所有 Withdraw SigningJob 必须携带 `vault_id` 和 `key_epoch`
+- 在该 Vault 迁移未完成之前（VM/FundsLedger 判定）：
+  - 新创建的 withdraw job 使用该 Vault 的旧 `key_epoch`
+- 当 VM 依据该 Vault 的 FundsLedger 判定迁移完成后：
+  - 新创建的 withdraw job 使用该 Vault 的新 `key_epoch`
 - 由于本链不追踪外链执行，建议运营流程上：**先确保迁移 SignedPackage 已产出并可执行**（MIGRATION_SIGNED），再由运营方执行外链更新。
 
 说明：
-- `key_epoch` 的作用是把签名绑定到某次轮换的 `group_pubkey + committee` 快照（来自 `TransitionState`），避免轮换窗口内用错 key/委员会
+- `key_epoch` 的作用是把签名绑定到该 Vault 某次轮换的 `group_pubkey + committee` 快照（来自 `VaultTransitionState`），避免轮换窗口内用错 key/委员会
 - 若希望移除 `key_epoch`，需在 job 中显式写入 `group_pubkey_ref` 或 `committee_ref`（或其 hash），并将其纳入 `job_id/template_hash`，VM 仍需校验一致
 
 ---
 ## 7. ROAST（通用签名会话流程）
 
 ROAST 是本设计里所有“需要门限签名”的统一会话层：**两轮 FROST + 子集重试 + 协调者切换**。
+
+> **关键变化**：ROAST 会话现在按 Vault 分片。每个 Vault 的 K 个委员会成员独立进行 ROAST，而非全网 10000 个节点。
+
 在 v1 中 ROAST 会被三处复用：
 
-- 提现：`SigningJob -> FrostWithdrawSignedTx`
-- 轮换迁移：`MigrationJob -> FrostTransitionSignedTx`
-- DKG 验证签名：`validation_msg_hash -> FrostDkgValidationSignedTx`
+- 提现：`SigningJob -> FrostWithdrawSignedTx`（该 Vault 的 K 个参与者）
+- 轮换迁移：`MigrationJob -> FrostVaultTransitionSignedTx`（该 Vault 的 K 个参与者）
+- DKG 验证签名：`validation_msg_hash -> FrostVaultDkgValidationSignedTx`（该 Vault 的 K 个参与者）
 
 ### 7.1 会话输入（链上可验证）
 
 ROAST 会话必须只对“链上已确认且可纯计算”的消息签名：
 
-- `session_id`：建议直接使用 `job_id`；DKG 验证签名使用 `epoch_id + validation_msg_hash`（此时 `key_epoch = epoch_id`）
-- `committee / threshold(t)`：来自 `key_epoch` 对应的 `TransitionState.new_committee_ref`（Top10000 bitmap，按 bit index 展开为确定性顺序）
-- `key_epoch`：绑定使用哪个 epoch_id 的 `group_pubkey`
+- `session_id`：建议直接使用 `job_id`（包含 vault_id）；DKG 验证签名使用 `chain + vault_id + epoch_id + validation_msg_hash`
+- `vault_id`：该会话属于哪个 Vault
+- `sign_algo`：该 Vault 使用的签名算法（决定 FROST 变体与曲线）
+  - `SCHNORR_SECP256K1_BIP340`: FROST-secp256k1（BTC）
+  - `SCHNORR_ALT_BN128`: FROST-bn128（ETH/BNB）
+  - `ED25519`: FROST-Ed25519（SOL）
+  - `ECDSA_SECP256K1`: **不使用 FROST**，需 GG20/CGGMP（TRX，v1 暂不支持）
+- `committee / threshold(t)`：来自该 Vault 的 `VaultTransitionState.new_committee_members[]`（K 个成员）
+- `key_epoch`：绑定使用该 Vault 哪个 epoch_id 的 `group_pubkey`
 - `msg`：
   - 合约链/账户链：从 `template_hash` 确定性导出
-  - BTC：从 `tx_template` 确定性导出 `K=len(inputs)` 个 `sighash(input_index)`（task 向量化）
-  - DKG 验证：`msg = H("frost_dkg_validation" || epoch_id || new_group_pubkey)`（单 task）
+  - BTC：从 `tx_template` 确定性导出 `N=len(inputs)` 个 `sighash(input_index)`（task 向量化）
+  - DKG 验证：`msg = H("frost_vault_dkg_validation" || chain || vault_id || epoch_id || sign_algo || new_group_pubkey)`（单 task）
 
 ### 7.2 两轮消息（Commit -> Share）
 
@@ -1007,15 +1174,15 @@ ROAST 会话必须只对“链上已确认且可纯计算”的消息签名：
 ROAST 的交付物是 `SignedPackage`，由 Runtime 通过不同 tx 回写链上：
 
 - 提现：`FrostWithdrawSignedTx(job_id, signed_package_bytes)`
-- 迁移：`FrostTransitionSignedTx(epoch_id, job_id, signed_package_bytes)`
-- DKG 验证：`FrostDkgValidationSignedTx(epoch_id, validation_msg_hash, signed_package_bytes)`
+- 迁移：`FrostVaultTransitionSignedTx(chain, vault_id, epoch_id, job_id, signed_package_bytes)`
+- DKG 验证：`FrostVaultDkgValidationSignedTx(chain, vault_id, epoch_id, validation_msg_hash, signed_package_bytes)`
 
 ### 7.6 通用时序图（简化）
 
 ```mermaid
 sequenceDiagram
   participant CO as 协调者（ROAST）
-  participant S as 参与者(t-of-N)
+  participant S as 参与者(t-of-K)
 
   CO->>S: Round1 请求 nonce commitments(session_id, task_ids[])
   S-->>CO: R_i[task_id]（batch）
@@ -1069,6 +1236,16 @@ type SignerSetProvider interface {
     CurrentEpoch(height uint64) uint64
 }
 
+// Vault 委员会提供者（按 Vault 分片）
+type VaultCommitteeProvider interface {
+    // 获取指定 Vault 的委员会成员（K 个）
+    VaultCommittee(chain string, vaultID uint32, epoch uint64) ([]SignerInfo, error)
+    // 获取指定 Vault 的当前 epoch
+    VaultCurrentEpoch(chain string, vaultID uint32) uint64
+    // 获取指定 Vault 的 group_pubkey
+    VaultGroupPubkey(chain string, vaultID uint32, epoch uint64) ([]byte, error)
+}
+
 // 链适配器工厂
 type ChainAdapterFactory interface {
     Adapter(chain string) (ChainAdapter, error)
@@ -1092,9 +1269,12 @@ type FrostEnvelope struct {
     SessionID   string
     Kind        string   // "NonceCommit" | "SigShare" | "Abort" | "CoordinatorAnnounce" | ...
     From        NodeID
+    Chain       string   // 目标链
+    VaultID     uint32   // 目标 Vault
+    SignAlgo    int32    // pb.SignAlgo 枚举值，决定 FROST 变体与曲线
     Epoch       uint64   // key_epoch
     Round       uint32
-    Payload     []byte   // protobuf / json
+    Payload     []byte   // protobuf / json（承诺点/份额格式由 SignAlgo 决定）
     Sig         []byte   // 消息签名（防伪造/重放）
 }
 ```
@@ -1108,20 +1288,22 @@ type FrostEnvelope struct {
   * `FrostWithdrawRequestTx`：创建 `WithdrawRequest{status=QUEUED}` + 按 `(chain, asset)` 分配 FIFO index + request_height
   * `FrostWithdrawSignedTx`：确定性重算该 `(chain, asset)` 队首 job 窗口并校验当前 job，写入 `signed_package_bytes` 并追加 receipt/history；job 置为 `SIGNED`，withdraw 由 `QUEUED → SIGNED`（终态，资金视为已支出）
 
-  * `FrostDkgCommitTx`：登记本轮 DKG 承诺点（commitments）
-  * `FrostDkgComplaintTx`：无效碎片举证与链上裁决（剔除/惩罚）
-  * `FrostDkgValidationSignedTx`：记录示例签名结果并确认新 key（KeyReady）
+  * `FrostVaultDkgCommitTx`：登记该 Vault 本轮 DKG 承诺点（commitments）
+  * `FrostVaultDkgShareTx`：登记该 Vault 的加密 share
+  * `FrostVaultDkgComplaintTx`：无效碎片举证与链上裁决（剔除/惩罚）
+  * `FrostVaultDkgRevealTx`：dealer 公开 share + 随机数
+  * `FrostVaultDkgValidationSignedTx`：记录示例签名结果并确认该 Vault 的新 key（KeyReady）
 
-  * `FrostTransitionSignedTx`：记录迁移 SignedPackage 并追加 receipt/history；VM 基于 FundsLedger 消耗/锁定迁移资产，MigrationJob 可置为 SIGNED（签名已产出，迁移完成以 FundsLedger 判定）
+  * `FrostVaultTransitionSignedTx`：记录该 Vault 的迁移 SignedPackage 并追加 receipt/history；VM 基于该 Vault 的 FundsLedger 消耗/锁定迁移资产
 
 > VM TxHandlers 的职责：**验证 + 写入状态机（共识态）**。
-> Runtime 的职责：**离链 ROAST/FROST 签名协作 + 会话恢复**，只对链上 job 的 `template_hash` 签名；并通过 `FrostWithdrawSignedTx` / `FrostTransitionSignedTx` / `FrostDkgValidationSignedTx` 把签名产物公布到链上。
+> Runtime 的职责：**离链 ROAST/FROST 签名协作 + 会话恢复**，只对链上 job 的 `template_hash` 签名；并通过 `FrostWithdrawSignedTx` / `FrostVaultTransitionSignedTx` / `FrostVaultDkgValidationSignedTx` 把签名产物公布到链上。
 > Frost 不负责外链广播/确认；用户/运营方拿链上 `SignedPackage` 自行广播。
 
 ### 8.4 数据库存储：链上状态 vs 本地会话
 
-* **链上状态（StateDB）**：Withdraw/Transition/FundsLedger/Top10000/committee 等
-* **本地会话（SessionStore）**：nonce、commit、已见消息、超时计时、重启恢复信息（包含 DKG 的 commitments/shares/已裁决结果缓存等）
+* **链上状态（StateDB）**：Withdraw/VaultTransitionState/VaultFundsLedger/Top10000/VaultCommittee 等（按 Vault 分片）
+* **本地会话（SessionStore）**：nonce、commit、已见消息、超时计时、重启恢复信息（包含 DKG 的 commitments/shares/已裁决结果缓存等，按 Vault 隔离）
 
   * 重要：nonce 必须持久化后才发送 commitment，避免重启后不小心复用
 
@@ -1135,19 +1317,20 @@ type FrostEnvelope struct {
 ### 9.1 查询类
 
 * `GetFrostConfig()`：当前 frost 配置快照
-* `GetGroupPubKey(epoch_id)`：当前/历史聚合公钥
+* `GetVaultGroupPubKey(chain, vault_id, epoch_id)`：指定 Vault 的当前/历史聚合公钥
 * `GetWithdrawStatus(withdraw_id)`：状态机、job_id、template_hash、raw_txid（可离线从模板计算）、signed_package_bytes / signed_package_bytes[]、失败原因
 * `ListWithdraws(chain, asset, from_seq, limit)`：FIFO 扫描指定 `(chain, asset)` 队列
-* `GetTransitionStatus(epoch_id)`：轮换进度、链更新结果
-* `GetDkgCommitment(epoch_id, dealer_id)`：查询某参与者的 DKG 承诺点（commitments）与状态（COMMITTED/DISQUALIFIED）
-* `ListDkgComplaints(epoch_id, from, limit)`：（可选）查询链上裁决记录
+* `GetVaultTransitionStatus(chain, vault_id, epoch_id)`：指定 Vault 的轮换进度
+* `GetVaultDkgCommitment(chain, vault_id, epoch_id, dealer_id)`：查询某参与者的 DKG 承诺点（commitments）与状态
+* `ListVaultDkgComplaints(chain, vault_id, epoch_id, from, limit)`：（可选）查询链上裁决记录
 * `GetTxSignInfo(withdraw_id)`：聚合签名结果
 * `GetAllWithdrawSignInfo(height1, height2)`：按高度范围汇总
+* `ListVaults(chain)`：列出指定链的所有 Vault
 
 ### 9.2 运维/调试类
 
 * `GetHealth()`：DB/StateReader/ChainAdapters/P2P/Scanner 状态
-* `GetSession(job_id)`：本地会话详情（当前聚合者 index、每个 task 收到多少份、谁超时）
+* `GetSession(job_id)`：本地会话详情（当前聚合者 index、每个 task 收到多少份、谁超时，包含 vault_id）
 * `ForceRescan()`：触发 scanner 立即跑一轮（仅本地）
 * `Metrics()`：签名耗时分布、聚合者切换次数、子集重试次数、失败原因统计等（不做外链确认统计）
 
@@ -1162,7 +1345,13 @@ type FrostEnvelope struct {
   "committee": {
     "topN": 10000,
     "thresholdRatio": 0.8,
-    "epochBlocks": 200000 //每隔epochBlocks检查一次是否变化量达到阈值，需要更换委员会
+    "epochBlocks": 200000
+  },
+  "vault": {
+    "defaultK": 100,
+    "minK": 50,
+    "maxK": 500,
+    "thresholdRatio": 0.67
   },
   "timeouts": {
     "nonceCommitBlocks": 2,
@@ -1171,8 +1360,11 @@ type FrostEnvelope struct {
     "sessionMaxBlocks": 60
   },
   "withdraw": {
-    "maxInFlightPerChainAsset": 1, // 队首 job 窗口大小（可并发签名）
-    "retryPolicy": { "maxRetry": 5, "backoffBlocks": 5 }
+    "maxInFlightPerChainAsset": 1,
+    "retryPolicy": {
+      "maxRetry": 5,
+      "backoffBlocks": 5
+    }
   },
   "transition": {
     "triggerChangeRatio": 0.2,
@@ -1181,13 +1373,46 @@ type FrostEnvelope struct {
     "dkgDisputeWindowBlocks": 2000
   },
   "chains": {
-    "btc": { "feeSatsPerVByte": 25 },
-    "eth": { "gasPriceGwei": 30, "gasLimit": 180000 },
-    "bnb": { "gasPriceGwei": 3, "gasLimit": 180000 },
-    "trx": { "feeLimitSun": 30000000 },
-    "sol": { "priorityFeeMicroLamports": 2000 }
+    "btc": {
+      "signAlgo": "SCHNORR_SECP256K1_BIP340",
+      "frostVariant": "frost-secp256k1",
+      "feeSatsPerVByte": 25,
+      "vaultsPerChain": 100
+    },
+    "eth": {
+      "signAlgo": "SCHNORR_ALT_BN128",
+      "frostVariant": "frost-bn128",
+      "gasPriceGwei": 30,
+      "gasLimit": 180000,
+      "vaultsPerChain": 100
+    },
+    "bnb": {
+      "signAlgo": "SCHNORR_ALT_BN128",
+      "frostVariant": "frost-bn128",
+      "gasPriceGwei": 3,
+      "gasLimit": 180000,
+      "vaultsPerChain": 100
+    },
+    "trx": {
+      "signAlgo": "ECDSA_SECP256K1",
+      "frostVariant": null,
+      "thresholdScheme": "gg20 or cggmp (v1 not supported)",
+      "feeLimitSun": 30000000,
+      "vaultsPerChain": 100
+    },
+    "sol": {
+      "signAlgo": "ED25519",
+      "frostVariant": "frost-ed25519",
+      "priorityFeeMicroLamports": 2000,
+      "vaultsPerChain": 100
+    }
   }
 }
+
+// 说明：
+// - signAlgo: 对应 pb.SignAlgo 枚举，决定 DKG/ROAST 使用的曲线
+// - frostVariant: FROST 实现变体名称（null 表示不使用 FROST）
+// - TRX 使用 ECDSA，需要 GG20/CGGMP 等 ECDSA 门限方案，v1 暂不支持
 ```
 
 ---
@@ -1199,7 +1424,7 @@ type FrostEnvelope struct {
 1. **参与者验签与防重放**
 
 * FrostEnvelope 消息签名（使用 miner 节点身份签名）
-* 必须校验 session_id / key_epoch / round，不接受过期消息
+* 必须校验 session_id / vault_id / sign_algo / key_epoch / round，不接受过期消息
 
 2. **Nonce 安全**
 
@@ -1213,8 +1438,9 @@ type FrostEnvelope struct {
   * `job_id` 要么等于链上确定性重算的队首 job（位于 job 窗口最前），要么已存在于 `SigningJob`（允许重复签名产物）
   * `template_hash` 与链上重算/已存的 `SigningJob.template_hash` 一致
   * `key_epoch` 与链上一致（避免轮换期间签错 key）
+  * **`sign_algo` 与该 Vault 的配置一致**（避免跨曲线误用）
   * 对 BTC：每个 input/task 的 `msg = sighash(input_index, tx_template)` 必须能从链上模板纯计算
-  * 对 DKG 验证签名：`validation_msg_hash` 必须与 `H("frost_dkg_validation" || epoch_id || new_group_pubkey)` 一致
+  * 对 DKG 验证签名：`validation_msg_hash` 必须与 `H("frost_vault_dkg_validation" || chain || vault_id || epoch_id || sign_algo || new_group_pubkey)` 一致
 
 4. **聚合者作恶**
 
@@ -1225,6 +1451,13 @@ type FrostEnvelope struct {
 * dealer 上链 `commitment_points[]` 与加密 share（`Enc(pk_receiver, share; enc_rand)`），receiver 解密后本地验证
 * 争议时 dealer 公开 `(share, enc_rand)`，VM 复算密文并校验 share 与 commitments 一致性
 * 公开 share 会泄露该份 share：v1 接受该权衡；可对恶意投诉者惩罚并要求 bond
+
+6. **签名算法一致性（跨曲线防护）**
+
+* 每个 Vault 绑定唯一的 `sign_algo`（从 VaultConfig 继承）
+* DKG 和 ROAST 必须校验所有参与者使用相同的 `sign_algo`
+* 不同曲线的密钥/份额不可混用：secp256k1 ≠ alt_bn128 ≠ ed25519
+* TRX 使用 ECDSA（`ECDSA_SECP256K1`），不能使用 FROST Schnorr，需独立的 GG20/CGGMP 模块
 
 6. **合约链去重/防重放（ETH/BNB/TRX/SOL）**
 
