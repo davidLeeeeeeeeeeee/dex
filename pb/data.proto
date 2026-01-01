@@ -47,10 +47,10 @@ enum SignAlgo {
   SIGN_ALGO_ECDSA_SECP256K1 = 6; // TRX：ecrecover 验签（需 ECDSA 门限如 GG20/CGGMP）
 }
 
-// 带方案标识的公钥类型（支持多曲线/多编码）
-message PublicKey {
-  SignAlgo sign_algo = 1; // 签名算法（决定 public_key_bytes 的解析方式）
-  bytes public_key_bytes = 2; // 公钥字节（按 sign_algo 约定的编码格式）
+// 公钥集合（一个参与者持有所有链的公钥）
+message PublicKeys {
+  // key = SignAlgo 枚举值（int32），value = 公钥字节（按对应算法编码）
+  map<int32, bytes> keys = 1;
 }
 
 // --------------------- 公共字段定义 ---------------------
@@ -58,8 +58,8 @@ message BaseMessage {
   string tx_id = 1; // 交易 ID 即 hash
   string from_address = 2; // 发起者地址
   uint64 executed_height = 3; // 实际执行的区块高度
-  PublicKey public_key = 4; // 公钥（带方案标识）
-  bytes signature = 5; // 签名（按 public_key.sign_algo 约定的编码）
+  PublicKeys public_keys = 4; // 公钥集合（所有链的公钥）
+  bytes signature = 5; // 签名
   string fee = 6;
   Status status = 7;
   uint64 nonce = 8;
@@ -68,7 +68,7 @@ message BaseMessage {
 // --------------------- 账户 & 区块信息 ---------------------
 message Account {
   string address = 1; // 账户地址
-  PublicKey public_key = 2; // 地址对应的公钥（带方案标识）
+  PublicKeys public_keys = 2; // 公钥集合（所有链的公钥）
   uint64 nonce = 3; // 账户的操作序号
   repeated string orders = 4; // 未执行完的 order 状态的 hash 列表
   map<string, TokenBalance> balances = 5; // key为token地址
@@ -199,7 +199,7 @@ enum Status {
 
 // --------------------- 节点==客户端信息 ---------------------
 message NodeInfo {
-  PublicKey public_key = 1; // 节点公钥（带方案标识）
+  PublicKeys public_keys = 1; // 节点公钥集合（所有链的公钥）
   string ip = 2;
   bool is_online = 3;
 }
@@ -211,14 +211,14 @@ message NodeList {
 message ClientInfo {
   string ip = 1;
   bool authed = 2;
-  PublicKey public_key = 3; // 客户端公钥（带方案标识）
+  PublicKeys public_keys = 3; // 客户端公钥集合（所有链的公钥）
 }
 
 // --------------------- Handshake & 状态请求 ---------------------
 message HandshakeRequest {
   string client_id = 1; // 就是矿工地址
-  PublicKey public_key = 2; // 公钥（带方案标识）
-  bytes signature = 3; // 签名（按 public_key.sign_algo 约定的编码）
+  PublicKeys public_keys = 2; // 公钥集合（所有链的公钥）
+  bytes signature = 3; // 签名
 }
 
 message HandshakeResponse {

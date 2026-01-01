@@ -555,29 +555,29 @@ func (x *TokenRegistry) GetTokens() map[string]*Token {
 	return nil
 }
 
-// 带方案标识的公钥类型（支持多曲线/多编码）
-type PublicKey struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	SignAlgo       SignAlgo               `protobuf:"varint,1,opt,name=sign_algo,json=signAlgo,proto3,enum=pb.SignAlgo" json:"sign_algo,omitempty"`   // 签名算法（决定 public_key_bytes 的解析方式）
-	PublicKeyBytes []byte                 `protobuf:"bytes,2,opt,name=public_key_bytes,json=publicKeyBytes,proto3" json:"public_key_bytes,omitempty"` // 公钥字节（按 sign_algo 约定的编码格式）
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+// 公钥集合（一个参与者持有所有链的公钥）
+type PublicKeys struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// key = SignAlgo 枚举值（int32），value = 公钥字节（按对应算法编码）
+	Keys          map[int32][]byte `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *PublicKey) Reset() {
-	*x = PublicKey{}
+func (x *PublicKeys) Reset() {
+	*x = PublicKeys{}
 	mi := &file_data_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *PublicKey) String() string {
+func (x *PublicKeys) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*PublicKey) ProtoMessage() {}
+func (*PublicKeys) ProtoMessage() {}
 
-func (x *PublicKey) ProtoReflect() protoreflect.Message {
+func (x *PublicKeys) ProtoReflect() protoreflect.Message {
 	mi := &file_data_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -589,21 +589,14 @@ func (x *PublicKey) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use PublicKey.ProtoReflect.Descriptor instead.
-func (*PublicKey) Descriptor() ([]byte, []int) {
+// Deprecated: Use PublicKeys.ProtoReflect.Descriptor instead.
+func (*PublicKeys) Descriptor() ([]byte, []int) {
 	return file_data_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *PublicKey) GetSignAlgo() SignAlgo {
+func (x *PublicKeys) GetKeys() map[int32][]byte {
 	if x != nil {
-		return x.SignAlgo
-	}
-	return SignAlgo_SIGN_ALGO_UNSPECIFIED
-}
-
-func (x *PublicKey) GetPublicKeyBytes() []byte {
-	if x != nil {
-		return x.PublicKeyBytes
+		return x.Keys
 	}
 	return nil
 }
@@ -614,8 +607,8 @@ type BaseMessage struct {
 	TxId           string                 `protobuf:"bytes,1,opt,name=tx_id,json=txId,proto3" json:"tx_id,omitempty"`                                // 交易 ID 即 hash
 	FromAddress    string                 `protobuf:"bytes,2,opt,name=from_address,json=fromAddress,proto3" json:"from_address,omitempty"`           // 发起者地址
 	ExecutedHeight uint64                 `protobuf:"varint,3,opt,name=executed_height,json=executedHeight,proto3" json:"executed_height,omitempty"` // 实际执行的区块高度
-	PublicKey      *PublicKey             `protobuf:"bytes,4,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`                 // 公钥（带方案标识）
-	Signature      []byte                 `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`                                  // 签名（按 public_key.sign_algo 约定的编码）
+	PublicKeys     *PublicKeys            `protobuf:"bytes,4,opt,name=public_keys,json=publicKeys,proto3" json:"public_keys,omitempty"`              // 公钥集合（所有链的公钥）
+	Signature      []byte                 `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`                                  // 签名
 	Fee            string                 `protobuf:"bytes,6,opt,name=fee,proto3" json:"fee,omitempty"`
 	Status         Status                 `protobuf:"varint,7,opt,name=status,proto3,enum=pb.Status" json:"status,omitempty"`
 	Nonce          uint64                 `protobuf:"varint,8,opt,name=nonce,proto3" json:"nonce,omitempty"`
@@ -674,9 +667,9 @@ func (x *BaseMessage) GetExecutedHeight() uint64 {
 	return 0
 }
 
-func (x *BaseMessage) GetPublicKey() *PublicKey {
+func (x *BaseMessage) GetPublicKeys() *PublicKeys {
 	if x != nil {
-		return x.PublicKey
+		return x.PublicKeys
 	}
 	return nil
 }
@@ -713,7 +706,7 @@ func (x *BaseMessage) GetNonce() uint64 {
 type Account struct {
 	state           protoimpl.MessageState   `protogen:"open.v1"`
 	Address         string                   `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`                                                                             // 账户地址
-	PublicKey       *PublicKey               `protobuf:"bytes,2,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`                                                        // 地址对应的公钥（带方案标识）
+	PublicKeys      *PublicKeys              `protobuf:"bytes,2,opt,name=public_keys,json=publicKeys,proto3" json:"public_keys,omitempty"`                                                     // 公钥集合（所有链的公钥）
 	Nonce           uint64                   `protobuf:"varint,3,opt,name=nonce,proto3" json:"nonce,omitempty"`                                                                                // 账户的操作序号
 	Orders          []string                 `protobuf:"bytes,4,rep,name=orders,proto3" json:"orders,omitempty"`                                                                               // 未执行完的 order 状态的 hash 列表
 	Balances        map[string]*TokenBalance `protobuf:"bytes,5,rep,name=balances,proto3" json:"balances,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // key为token地址
@@ -766,9 +759,9 @@ func (x *Account) GetAddress() string {
 	return ""
 }
 
-func (x *Account) GetPublicKey() *PublicKey {
+func (x *Account) GetPublicKeys() *PublicKeys {
 	if x != nil {
-		return x.PublicKey
+		return x.PublicKeys
 	}
 	return nil
 }
@@ -1910,7 +1903,7 @@ func (*AnyTx_WitnessClaimRewardTx) isAnyTx_Content() {}
 // --------------------- 节点==客户端信息 ---------------------
 type NodeInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	PublicKey     *PublicKey             `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"` // 节点公钥（带方案标识）
+	PublicKeys    *PublicKeys            `protobuf:"bytes,1,opt,name=public_keys,json=publicKeys,proto3" json:"public_keys,omitempty"` // 节点公钥集合（所有链的公钥）
 	Ip            string                 `protobuf:"bytes,2,opt,name=ip,proto3" json:"ip,omitempty"`
 	IsOnline      bool                   `protobuf:"varint,3,opt,name=is_online,json=isOnline,proto3" json:"is_online,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1947,9 +1940,9 @@ func (*NodeInfo) Descriptor() ([]byte, []int) {
 	return file_data_proto_rawDescGZIP(), []int{17}
 }
 
-func (x *NodeInfo) GetPublicKey() *PublicKey {
+func (x *NodeInfo) GetPublicKeys() *PublicKeys {
 	if x != nil {
-		return x.PublicKey
+		return x.PublicKeys
 	}
 	return nil
 }
@@ -2016,7 +2009,7 @@ type ClientInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ip            string                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
 	Authed        bool                   `protobuf:"varint,2,opt,name=authed,proto3" json:"authed,omitempty"`
-	PublicKey     *PublicKey             `protobuf:"bytes,3,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"` // 客户端公钥（带方案标识）
+	PublicKeys    *PublicKeys            `protobuf:"bytes,3,opt,name=public_keys,json=publicKeys,proto3" json:"public_keys,omitempty"` // 客户端公钥集合（所有链的公钥）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2065,9 +2058,9 @@ func (x *ClientInfo) GetAuthed() bool {
 	return false
 }
 
-func (x *ClientInfo) GetPublicKey() *PublicKey {
+func (x *ClientInfo) GetPublicKeys() *PublicKeys {
 	if x != nil {
-		return x.PublicKey
+		return x.PublicKeys
 	}
 	return nil
 }
@@ -2075,9 +2068,9 @@ func (x *ClientInfo) GetPublicKey() *PublicKey {
 // --------------------- Handshake & 状态请求 ---------------------
 type HandshakeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClientId      string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`    // 就是矿工地址
-	PublicKey     *PublicKey             `protobuf:"bytes,2,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"` // 公钥（带方案标识）
-	Signature     []byte                 `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`                  // 签名（按 public_key.sign_algo 约定的编码）
+	ClientId      string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`       // 就是矿工地址
+	PublicKeys    *PublicKeys            `protobuf:"bytes,2,opt,name=public_keys,json=publicKeys,proto3" json:"public_keys,omitempty"` // 公钥集合（所有链的公钥）
+	Signature     []byte                 `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`                     // 签名
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2119,9 +2112,9 @@ func (x *HandshakeRequest) GetClientId() string {
 	return ""
 }
 
-func (x *HandshakeRequest) GetPublicKey() *PublicKey {
+func (x *HandshakeRequest) GetPublicKeys() *PublicKeys {
 	if x != nil {
-		return x.PublicKey
+		return x.PublicKeys
 	}
 	return nil
 }
@@ -4138,25 +4131,28 @@ const file_data_proto_rawDesc = "" +
 	"\x06tokens\x18\x01 \x03(\v2\x1d.pb.TokenRegistry.TokensEntryR\x06tokens\x1aD\n" +
 	"\vTokensEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1f\n" +
-	"\x05value\x18\x02 \x01(\v2\t.pb.TokenR\x05value:\x028\x01\"`\n" +
-	"\tPublicKey\x12)\n" +
-	"\tsign_algo\x18\x01 \x01(\x0e2\f.pb.SignAlgoR\bsignAlgo\x12(\n" +
-	"\x10public_key_bytes\x18\x02 \x01(\fR\x0epublicKeyBytes\"\x86\x02\n" +
+	"\x05value\x18\x02 \x01(\v2\t.pb.TokenR\x05value:\x028\x01\"s\n" +
+	"\n" +
+	"PublicKeys\x12,\n" +
+	"\x04keys\x18\x01 \x03(\v2\x18.pb.PublicKeys.KeysEntryR\x04keys\x1a7\n" +
+	"\tKeysEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\x05R\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\x89\x02\n" +
 	"\vBaseMessage\x12\x13\n" +
 	"\x05tx_id\x18\x01 \x01(\tR\x04txId\x12!\n" +
 	"\ffrom_address\x18\x02 \x01(\tR\vfromAddress\x12'\n" +
-	"\x0fexecuted_height\x18\x03 \x01(\x04R\x0eexecutedHeight\x12,\n" +
-	"\n" +
-	"public_key\x18\x04 \x01(\v2\r.pb.PublicKeyR\tpublicKey\x12\x1c\n" +
+	"\x0fexecuted_height\x18\x03 \x01(\x04R\x0eexecutedHeight\x12/\n" +
+	"\vpublic_keys\x18\x04 \x01(\v2\x0e.pb.PublicKeysR\n" +
+	"publicKeys\x12\x1c\n" +
 	"\tsignature\x18\x05 \x01(\fR\tsignature\x12\x10\n" +
 	"\x03fee\x18\x06 \x01(\tR\x03fee\x12\"\n" +
 	"\x06status\x18\a \x01(\x0e2\n" +
 	".pb.StatusR\x06status\x12\x14\n" +
-	"\x05nonce\x18\b \x01(\x04R\x05nonce\"\xf0\x03\n" +
+	"\x05nonce\x18\b \x01(\x04R\x05nonce\"\xf3\x03\n" +
 	"\aAccount\x12\x18\n" +
-	"\aaddress\x18\x01 \x01(\tR\aaddress\x12,\n" +
-	"\n" +
-	"public_key\x18\x02 \x01(\v2\r.pb.PublicKeyR\tpublicKey\x12\x14\n" +
+	"\aaddress\x18\x01 \x01(\tR\aaddress\x12/\n" +
+	"\vpublic_keys\x18\x02 \x01(\v2\x0e.pb.PublicKeysR\n" +
+	"publicKeys\x12\x14\n" +
 	"\x05nonce\x18\x03 \x01(\x04R\x05nonce\x12\x16\n" +
 	"\x06orders\x18\x04 \x03(\tR\x06orders\x125\n" +
 	"\bbalances\x18\x05 \x03(\v2\x19.pb.Account.BalancesEntryR\bbalances\x12#\n" +
@@ -4261,24 +4257,24 @@ const file_data_proto_rawDesc = "" +
 	" \x01(\v2\x16.pb.WitnessChallengeTxH\x00R\x12witnessChallengeTx\x12G\n" +
 	"\x13arbitration_vote_tx\x18\v \x01(\v2\x15.pb.ArbitrationVoteTxH\x00R\x11arbitrationVoteTx\x12Q\n" +
 	"\x17witness_claim_reward_tx\x18\f \x01(\v2\x18.pb.WitnessClaimRewardTxH\x00R\x14witnessClaimRewardTxB\t\n" +
-	"\acontent\"e\n" +
-	"\bNodeInfo\x12,\n" +
-	"\n" +
-	"public_key\x18\x01 \x01(\v2\r.pb.PublicKeyR\tpublicKey\x12\x0e\n" +
+	"\acontent\"h\n" +
+	"\bNodeInfo\x12/\n" +
+	"\vpublic_keys\x18\x01 \x01(\v2\x0e.pb.PublicKeysR\n" +
+	"publicKeys\x12\x0e\n" +
 	"\x02ip\x18\x02 \x01(\tR\x02ip\x12\x1b\n" +
 	"\tis_online\x18\x03 \x01(\bR\bisOnline\".\n" +
 	"\bNodeList\x12\"\n" +
-	"\x05nodes\x18\x01 \x03(\v2\f.pb.NodeInfoR\x05nodes\"b\n" +
+	"\x05nodes\x18\x01 \x03(\v2\f.pb.NodeInfoR\x05nodes\"e\n" +
 	"\n" +
 	"ClientInfo\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x16\n" +
-	"\x06authed\x18\x02 \x01(\bR\x06authed\x12,\n" +
-	"\n" +
-	"public_key\x18\x03 \x01(\v2\r.pb.PublicKeyR\tpublicKey\"{\n" +
+	"\x06authed\x18\x02 \x01(\bR\x06authed\x12/\n" +
+	"\vpublic_keys\x18\x03 \x01(\v2\x0e.pb.PublicKeysR\n" +
+	"publicKeys\"~\n" +
 	"\x10HandshakeRequest\x12\x1b\n" +
-	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12,\n" +
-	"\n" +
-	"public_key\x18\x02 \x01(\v2\r.pb.PublicKeyR\tpublicKey\x12\x1c\n" +
+	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12/\n" +
+	"\vpublic_keys\x18\x02 \x01(\v2\x0e.pb.PublicKeysR\n" +
+	"publicKeys\x12\x1c\n" +
 	"\tsignature\x18\x03 \x01(\fR\tsignature\"+\n" +
 	"\x11HandshakeResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\")\n" +
@@ -4508,7 +4504,7 @@ func file_data_proto_rawDescGZIP() []byte {
 }
 
 var file_data_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_data_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_data_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
 var file_data_proto_goTypes = []any{
 	(SignAlgo)(0),                    // 0: pb.SignAlgo
 	(OrderOp)(0),                     // 1: pb.OrderOp
@@ -4519,7 +4515,7 @@ var file_data_proto_goTypes = []any{
 	(ChallengeStatus)(0),             // 6: pb.ChallengeStatus
 	(*Token)(nil),                    // 7: pb.Token
 	(*TokenRegistry)(nil),            // 8: pb.TokenRegistry
-	(*PublicKey)(nil),                // 9: pb.PublicKey
+	(*PublicKeys)(nil),               // 9: pb.PublicKeys
 	(*BaseMessage)(nil),              // 10: pb.BaseMessage
 	(*Account)(nil),                  // 11: pb.Account
 	(*TokenBalance)(nil),             // 12: pb.TokenBalance
@@ -4565,15 +4561,16 @@ var file_data_proto_goTypes = []any{
 	(*WitnessClaimRewardTx)(nil),     // 52: pb.WitnessClaimRewardTx
 	(*WitnessConfig)(nil),            // 53: pb.WitnessConfig
 	nil,                              // 54: pb.TokenRegistry.TokensEntry
-	nil,                              // 55: pb.Account.BalancesEntry
+	nil,                              // 55: pb.PublicKeys.KeysEntry
+	nil,                              // 56: pb.Account.BalancesEntry
 }
 var file_data_proto_depIdxs = []int32{
 	54, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
-	0,  // 1: pb.PublicKey.sign_algo:type_name -> pb.SignAlgo
-	9,  // 2: pb.BaseMessage.public_key:type_name -> pb.PublicKey
+	55, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
+	9,  // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
 	2,  // 3: pb.BaseMessage.status:type_name -> pb.Status
-	9,  // 4: pb.Account.public_key:type_name -> pb.PublicKey
-	55, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	9,  // 4: pb.Account.public_keys:type_name -> pb.PublicKeys
+	56, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
 	23, // 6: pb.Block.body:type_name -> pb.AnyTx
 	10, // 7: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
 	10, // 8: pb.FreezeTx.base:type_name -> pb.BaseMessage
@@ -4596,10 +4593,10 @@ var file_data_proto_depIdxs = []int32{
 	49, // 25: pb.AnyTx.witness_challenge_tx:type_name -> pb.WitnessChallengeTx
 	51, // 26: pb.AnyTx.arbitration_vote_tx:type_name -> pb.ArbitrationVoteTx
 	52, // 27: pb.AnyTx.witness_claim_reward_tx:type_name -> pb.WitnessClaimRewardTx
-	9,  // 28: pb.NodeInfo.public_key:type_name -> pb.PublicKey
+	9,  // 28: pb.NodeInfo.public_keys:type_name -> pb.PublicKeys
 	24, // 29: pb.NodeList.nodes:type_name -> pb.NodeInfo
-	9,  // 30: pb.ClientInfo.public_key:type_name -> pb.PublicKey
-	9,  // 31: pb.HandshakeRequest.public_key:type_name -> pb.PublicKey
+	9,  // 30: pb.ClientInfo.public_keys:type_name -> pb.PublicKeys
+	9,  // 31: pb.HandshakeRequest.public_keys:type_name -> pb.PublicKeys
 	13, // 32: pb.GetBlockResponse.block:type_name -> pb.Block
 	23, // 33: pb.BatchGetShortTxResponse.transactions:type_name -> pb.AnyTx
 	3,  // 34: pb.WitnessInfo.status:type_name -> pb.WitnessStatus
@@ -4651,7 +4648,7 @@ func file_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_data_proto_rawDesc), len(file_data_proto_rawDesc)),
 			NumEnums:      7,
-			NumMessages:   49,
+			NumMessages:   50,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
