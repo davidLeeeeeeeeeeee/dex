@@ -391,6 +391,21 @@ frost/
 3. **Pending Lot 写入**：`WitnessRequestTx` 确认后，VM 以 `(chain, asset, vault_id, height, seq)` 写入 Pending Lot Index
 4. **Finalized Lot 写入**：见证最终化后，VM 将 lot 移入 `Funds Lot Index`，同样按 Vault 分片
 
+**确定性 Vault 分配算法**（已实现于 `vm/witness_handler.go`）：
+
+```go
+// allocateVaultID 确定性分配 vault_id
+// 使用 H(request_id) % vault_count 确保相同 request_id 总是分配到相同 vault
+func allocateVaultID(requestID string, vaultCount uint32) uint32 {
+    hash := sha256.Sum256([]byte(requestID))
+    n := binary.BigEndian.Uint32(hash[:4])
+    return n % vaultCount
+}
+```
+
+> **关键安全约束**：资金 lot 的 key 必须包含 `vault_id`，否则会导致不同 Vault 的资金混入同一 FIFO，破坏确定性规划和防多签发机制。
+> 参见 `keys/keys.go` 中的 `KeyFrostFundsLotIndex`、`KeyFrostFundsPendingLotIndex` 等函数。
+
 > 设计思路：两层账本（Pending 层 + Finalized 层）。Pending 层仅用于迁移，提现只能提现 Finalized 层资产。
 
 FundsLedger 实现思路（按 Vault 分片）：
@@ -581,6 +596,38 @@ BTC 专用字段（确定性规划生成，可选落 receipt/history）：
 
 > **重要**：BTC “一个大 UTXO 支付多笔提现” 就是一个 job：`1 input -> N withdraw outputs (+ change)`。
 > 这会显著减少签名压力（少 inputs ⇒ 少签名任务），正是“尽可能少签名满足尽可能多提现”的核心抓手。
+
+**跨 Vault 组合支付（解决队首大额阻塞）**：
+
+> **问题**：严格 FIFO + 单 Vault 支付时，若队首有一笔大额提现超过任何单个 Vault 的可用余额，会阻塞整个队列（包括后面的小额提现）。
+
+**解决方案：CompositeJob（跨 Vault 组合支付，仅限合约链/账户链）**
+
+当队首提现无法由单个 Vault 覆盖时，启用跨 Vault 组合模式：
+
+1. **触发条件**：所有 ACTIVE Vault 的单独余额都无法覆盖队首提现
+
+2. **CompositeJob 结构**：
+   ```
+   CompositeJob {
+       composite_job_id: H(chain || asset || first_seq || vault_ids[] || "composite")
+       withdraw_ids[]: 被覆盖的提现列表
+       sub_jobs[]: 子 job 列表，每个对应一个 Vault 的部分支付
+           - vault_id / key_epoch / partial_amount / template_hash
+   }
+   ```
+
+3. **组合规划算法**（确定性）：按 vault_id 升序累加可用余额直至覆盖总额
+
+4. **执行流程**：
+   - 每个 SubJob 独立进行 ROAST 签名（由对应 Vault 委员会执行）
+   - 所有 SubJob 完成后，CompositeJob 完成，head_withdraw 变为 SIGNED
+   - 合约链：多笔转账 batch 或多笔独立 tx
+
+5. **BTC 不支持跨 Vault 组合**：
+   - 每个 Vault 是独立 Taproot 地址，无法原子组合
+   - 大额 BTC 提现必须等待单个 Vault 余额足够，或用户拆分请求
+
 
 ---
 
@@ -851,6 +898,7 @@ Frost 的“完成”定义：
 
 - Runtime 得到 `SignedPackage`（可广播）
 - 通过 `FrostWithdrawSignedTx` 把 `signed_package_bytes` 写入链上（receipt/history）
+- **VM 必须验证聚合签名有效性**（见下文），验证失败直接拒绝该 tx
 - VM 校验签名产物绑定同一 `job_id/template_hash` 后，追加到 `v1_frost_signed_pkg_<job_id>_<idx>` 列表（append-only）
 - VM 将该 job 覆盖的所有 withdraw 标记为 `SIGNED`，并把占用资金标记为 **consumed/spent（永久不再用于后续提现）**
 - 同一 `job_id` 允许重复提交 `FrostWithdrawSignedTx`；首笔有效 tx 推进状态并写入 `signed_package_bytes`，后续仅追加到 receipt/history，不再改变状态
@@ -860,6 +908,34 @@ BTC 的 `SignedPackage` 至少包含：
 - `tx_template`（为 inputs/outputs/sequence）
 - `input_sigs[]`（按 input_index 对齐的 schnorr signatures）
 - `raw_wtx`（直接可广播的完整交易）
+
+#### 5.5.1 VM 签名验证规则（防止垃圾签名锁死资金）
+
+> **安全必要性**：若 VM 不验签就记账，恶意或有 bug 的 Runtime 可上链无效签名，导致资金被标记为 consumed 但实际无法在外链花费，永久锁死。
+
+VM 在接受 `FrostWithdrawSignedTx` / `FrostVaultTransitionSignedTx` / `FrostVaultDkgValidationSignedTx` 时**必须验证聚合签名**：
+
+1. **提取验证参数**：
+   - `group_pubkey`：从 `VaultState` 读取该 Vault 当前生效的 `(key_epoch, group_pubkey)`
+   - `sign_algo`：从 `VaultConfig` 读取（决定验签算法）
+   - `msg`：从 `template_hash` / `validation_msg_hash` 确定性派生
+
+2. **签名验证**（按 `sign_algo` 分支）：
+   - `SCHNORR_SECP256K1_BIP340`（BTC）：对每个 `input_sigs[i]`，验证 `schnorr_verify(group_pubkey, sighash(i), sig[i])`
+   - `SCHNORR_ALT_BN128`（ETH/BNB）：验证 `bn128_schnorr_verify(group_pubkey, msg, sig)`
+   - `ED25519`（SOL）：验证 `ed25519_verify(group_pubkey, msg, sig)`
+   - `ECDSA_SECP256K1`（TRX）：验证 `ecdsa_verify(group_pubkey, msg, sig)`（需 GG20/CGGMP）
+
+3. **验证失败处理**：
+   - 直接拒绝该 tx（不写入任何状态）
+   - 不惩罚提交者（可能是网络传输错误），但计入节点信誉
+
+4. **验证通过后**：
+   - 写入 `SigningJob`（status=SIGNED）
+   - 标记 withdraw 为 `SIGNED`
+   - 资金/UTXO 置为 consumed/spent
+
+> **性能说明**：签名验证是轻量操作（单次 Schnorr/ECDSA 验签 < 1ms），不会成为 VM 瓶颈。BTC 多 input 需验证 K 个签名，但 K 通常 < 10。
 
 ---
 
@@ -1053,6 +1129,78 @@ flowchart TD
 |------|----------|----------|---------------|
 | **恶意投诉**（share 实际有效） | 投诉者 Pj | 罚没 bond + 剔除身份 | ⚠️ **Pi 重做**：仅清空 Pi 的 commitment，Pi 重新生成多项式并提交，其他人保持不变 |
 | **Dealer 作恶**（share 无效或超时） | Dealer Pi | slash 质押金 + 剔除身份 | ✅ **继续流程**：其他参与者计算份额时直接排除 Pi 的贡献，无需重新生成 |
+
+#### 6.3.3 DKG 剔除后的确定性规则（n/t 更新与有效集合）
+
+> **问题背景**：裁决可能剔除参与者，导致 `n` 减少。若无明确规则，各节点对 `(n, t, qualified_set)` 计算可能不一致，甚至导致"永远凑不齐门限"。
+
+**链上状态维护**（VaultTransitionState 新增字段）：
+
+- `initial_n`：DKG 开始时的参与者数量（= K = 初始委员会规模）
+- `initial_t`：DKG 开始时的门限（= ceil(K * threshold_ratio)）
+- `qualified_set[]`：当前有效参与者集合（初始 = `new_committee_members[]`，剔除时移除）
+- `disqualified_set[]`：已剔除的参与者集合（含剔除原因与高度）
+
+**确定性更新规则**：
+
+1. **剔除操作**（VM 在处理 `FrostVaultDkgRevealTx` 时执行）：
+   ```
+   // 恶意投诉：剔除投诉者 Pj
+   qualified_set.remove(Pj)
+   disqualified_set.add(Pj, reason="FALSE_COMPLAINT", height)
+
+   // Dealer 作恶：剔除 dealer Pi
+   qualified_set.remove(Pi)
+   disqualified_set.add(Pi, reason="INVALID_SHARE", height)
+   ```
+
+2. **n/t 动态更新**：
+   ```
+   current_n = len(qualified_set)
+   // t 保持不变：t = initial_t
+   // 理由：动态降低 t 会降低安全性，不推荐
+   ```
+
+3. **门限可行性检查**（每次剔除后 VM 自动执行）：
+   ```
+   if current_n < initial_t:
+       // 无法凑齐门限，必须重启 DKG
+       dkg_status = FAILED
+       trigger_dkg_restart(reason="INSUFFICIENT_QUALIFIED_PARTICIPANTS")
+   ```
+
+4. **DKG 重启规则**：
+   ```
+   when dkg_status == FAILED:
+       epoch_id += 1  // 新 epoch
+       dkg_session_id = H(chain || vault_id || epoch_id || sign_algo || "dkg")
+       qualified_set = new_committee_members[]  // 重新加载完整委员会
+       disqualified_set = []  // 清空（惩罚已执行，不重复）
+       initial_n = K
+       initial_t = ceil(K * threshold_ratio)
+       dkg_status = COMMITTING
+       // 所有参与者重新提交 Commit/Share
+   ```
+
+5. **group_pubkey 计算一致性**：
+   ```
+   // 裁决窗口结束后，VM 确定性计算 new_group_pubkey
+   new_group_pubkey = Σ a_i0 for i in qualified_set where status == COMMITTED
+   // 只聚合 qualified_set 中的常数项承诺点
+   ```
+
+6. **Signer ID 集合确定**：
+   ```
+   // ROAST 使用的 signer 集合
+   valid_signers = qualified_set.sorted_by(miner_id)
+   signer_index[i] = position of miner_i in valid_signers  // 0-based
+   // 所有节点按相同规则排序，保证 index 一致
+   ```
+
+**重启次数限制**：
+
+- `max_dkg_restarts_per_epoch = 3`（配置）
+- 超过后 Vault 进入 `lifecycle=DRAINING`，等待人工干预
 
 说明：
 
@@ -1426,10 +1574,61 @@ type FrostEnvelope struct {
 * FrostEnvelope 消息签名（使用 miner 节点身份签名）
 * 必须校验 session_id / vault_id / sign_algo / key_epoch / round，不接受过期消息
 
-2. **Nonce 安全**
+2. **Nonce 安全（防止二次签名攻击）**
 
 * Nonce 生成后必须本地落盘再发送 commitment
 * 会话失败后 nonce 不复用
+* **同一 nonce commitment 只能产出一次 sig share**（核心安全约束）
+
+> **攻击场景**：恶意协调者收到参与者的 `R_i` 后，可能尝试用两个不同的 `msg`（或不同的 `R_agg`）诱导参与者产出两份 share `z_i` 和 `z_i'`。若成功，攻击者可通过 `z_i - z_i' = x_i * (c - c')` 反算出参与者的私钥份额 `x_i`（密钥恢复攻击）。
+
+**参与者必须执行的防护**：
+
+```
+// SessionStore 维护的 nonce 状态
+type NonceState struct {
+    R_i         Point    // 已发送的 commitment
+    msg_bound   []byte   // 已绑定的 msg（首次产出 share 时绑定）
+    share_sent  bool     // 是否已产出 share
+    task_id     string   // 绑定的 task_id
+}
+
+// 产出 sig share 前的校验
+func (p *Participant) ProduceSigShare(session_id, task_id string, R_agg Point, msg []byte) error {
+    nonce := p.sessionStore.GetNonce(session_id, task_id)
+    if nonce == nil {
+        return ErrNonceNotFound
+    }
+
+    // 核心校验：同一 nonce 只能用于一个 msg
+    if nonce.share_sent {
+        if !bytes.Equal(nonce.msg_bound, msg) {
+            // 检测到二次签名攻击
+            p.logger.Warn("duplicate share request with different msg, rejecting",
+                "session_id", session_id, "task_id", task_id)
+            return ErrDuplicateShareDifferentMsg
+        }
+        // 允许重发相同 msg 的 share（幂等）
+        return nil
+    }
+
+    // 首次产出 share
+    z_i := ComputeSigShare(nonce.secret, R_agg, msg)
+    nonce.msg_bound = msg
+    nonce.share_sent = true
+    p.sessionStore.SaveNonce(session_id, task_id, nonce)  // 必须落盘
+
+    return p.sendShare(session_id, task_id, z_i)
+}
+```
+
+**关键规则**：
+
+1. **一次性绑定**：`R_i` 只能与一个 `(R_agg, msg)` 组合产出 share
+2. **落盘再发送**：`share_sent = true` 必须持久化后才发送 share
+3. **重发幂等**：同一 `(R_i, msg)` 可重发相同 share（网络重试）
+4. **不同 msg 拒绝**：同一 `R_i` 收到不同 msg 的请求，必须拒绝并告警
+5. **会话隔离**：不同 `session_id` 使用不同 nonce（不可跨会话复用）
 
 3. **模板绑定**
 

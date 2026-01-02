@@ -3,9 +3,11 @@
 package vm
 
 import (
+	"crypto/sha256"
 	"dex/keys"
 	"dex/pb"
 	"dex/witness"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -13,6 +15,21 @@ import (
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
 )
+
+// DefaultVaultCount 默认每条链的 Vault 数量
+const DefaultVaultCount = 100
+
+// allocateVaultID 确定性分配 vault_id
+// 使用 H(request_id) % vault_count 确保相同 request_id 总是分配到相同 vault
+func allocateVaultID(requestID string, vaultCount uint32) uint32 {
+	if vaultCount == 0 {
+		vaultCount = DefaultVaultCount
+	}
+	hash := sha256.Sum256([]byte(requestID))
+	// 使用前 4 字节作为 uint32
+	n := binary.BigEndian.Uint32(hash[:4])
+	return n % vaultCount
+}
 
 // WitnessServiceAware 见证者服务感知接口
 // 实现此接口的 handler 可以接收 WitnessService 的引用
@@ -267,9 +284,14 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 	if pendingHeight == 0 {
 		pendingHeight = request.Base.ExecutedHeight
 	}
-	pendingSeqKey := keys.KeyFrostFundsPendingLotSeq(request.NativeChain, request.TokenAddress, pendingHeight)
+
+	// 确定性分配 vault_id，避免跨 Vault 混用资金
+	vaultID := allocateVaultID(requestID, DefaultVaultCount)
+	rechargeRequest.VaultId = vaultID
+
+	pendingSeqKey := keys.KeyFrostFundsPendingLotSeq(request.NativeChain, request.TokenAddress, vaultID, pendingHeight)
 	pendingSeq := readUintSeq(sv, pendingSeqKey)
-	pendingIndexKey := keys.KeyFrostFundsPendingLotIndex(request.NativeChain, request.TokenAddress, pendingHeight, pendingSeq)
+	pendingIndexKey := keys.KeyFrostFundsPendingLotIndex(request.NativeChain, request.TokenAddress, vaultID, pendingHeight, pendingSeq)
 	pendingRefKey := keys.KeyFrostFundsPendingLotRef(requestID)
 
 	ws = append(ws, WriteOp{Key: pendingIndexKey, Value: []byte(requestID), Del: false, SyncStateDB: true, Category: "frost_funds_pending"})

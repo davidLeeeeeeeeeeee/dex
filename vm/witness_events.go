@@ -88,12 +88,13 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 
 	chain := stored.NativeChain
 	asset := stored.TokenAddress
+	vaultID := stored.VaultId // 使用入账时分配的 vault_id，保证资金按 Vault 分片
 	finalizeHeight := stored.FinalizeHeight
 
-	seqKey := keys.KeyFrostFundsLotSeq(chain, asset, finalizeHeight)
+	seqKey := keys.KeyFrostFundsLotSeq(chain, asset, vaultID, finalizeHeight)
 	seq := readUintSeq(sv, seqKey)
 
-	indexKey := keys.KeyFrostFundsLotIndex(chain, asset, finalizeHeight, seq)
+	indexKey := keys.KeyFrostFundsLotIndex(chain, asset, vaultID, finalizeHeight, seq)
 	setWithMeta(sv, indexKey, []byte(stored.RequestId), true, "frost_funds")
 
 	seq++

@@ -212,35 +212,60 @@ func KeyRechargeAddress(generatedAddress string) string {
 }
 
 // ===================== FROST 相关 =====================
+// 重要：资金 lot 必须按 vault_id 分片，避免跨 Vault 混用导致确定性规划错误或多签发
 
-// KeyFrostFundsLotIndex 入账 lot 索引（按 finalize_height + seq）
-// 例：v1_frost_funds_lot_<chain>_<asset>_<height>_<seq>
-func KeyFrostFundsLotIndex(chain, asset string, height, seq uint64) string {
-	return withVer(fmt.Sprintf("frost_funds_lot_%s_%s_%s_%s", chain, asset, padUint(height), padUint(seq)))
+// KeyFrostFundsLotIndex 入账 lot 索引（按 vault_id + finalize_height + seq）
+// 例：v1_frost_funds_lot_<chain>_<asset>_<vault_id>_<height>_<seq>
+func KeyFrostFundsLotIndex(chain, asset string, vaultID uint32, height, seq uint64) string {
+	return withVer(fmt.Sprintf("frost_funds_lot_%s_%s_%d_%s_%s", chain, asset, vaultID, padUint(height), padUint(seq)))
 }
 
-// KeyFrostFundsLotSeq 入账 lot 高度内序号
-// 例：v1_frost_funds_lot_seq_<chain>_<asset>_<height>
-func KeyFrostFundsLotSeq(chain, asset string, height uint64) string {
-	return withVer(fmt.Sprintf("frost_funds_lot_seq_%s_%s_%s", chain, asset, padUint(height)))
+// KeyFrostFundsLotSeq 入账 lot 高度内序号（按 vault_id 分片）
+// 例：v1_frost_funds_lot_seq_<chain>_<asset>_<vault_id>_<height>
+func KeyFrostFundsLotSeq(chain, asset string, vaultID uint32, height uint64) string {
+	return withVer(fmt.Sprintf("frost_funds_lot_seq_%s_%s_%d_%s", chain, asset, vaultID, padUint(height)))
 }
 
-// KeyFrostFundsPendingLotIndex 待入账 lot 索引（按 request_height + seq）
-// 例：v1_frost_funds_pending_lot_<chain>_<asset>_<height>_<seq>
-func KeyFrostFundsPendingLotIndex(chain, asset string, height, seq uint64) string {
-	return withVer(fmt.Sprintf("frost_funds_pending_lot_%s_%s_%s_%s", chain, asset, padUint(height), padUint(seq)))
+// KeyFrostFundsLotHead 每个 Vault 的 FIFO 头指针
+// 例：v1_frost_funds_lot_head_<chain>_<asset>_<vault_id>
+func KeyFrostFundsLotHead(chain, asset string, vaultID uint32) string {
+	return withVer(fmt.Sprintf("frost_funds_lot_head_%s_%s_%d", chain, asset, vaultID))
 }
 
-// KeyFrostFundsPendingLotSeq 待入账 lot 高度内序号
-// 例：v1_frost_funds_pending_lot_seq_<chain>_<asset>_<height>
-func KeyFrostFundsPendingLotSeq(chain, asset string, height uint64) string {
-	return withVer(fmt.Sprintf("frost_funds_pending_lot_seq_%s_%s_%s", chain, asset, padUint(height)))
+// KeyFrostFundsPendingLotIndex 待入账 lot 索引（按 vault_id + request_height + seq）
+// 例：v1_frost_funds_pending_lot_<chain>_<asset>_<vault_id>_<height>_<seq>
+func KeyFrostFundsPendingLotIndex(chain, asset string, vaultID uint32, height, seq uint64) string {
+	return withVer(fmt.Sprintf("frost_funds_pending_lot_%s_%s_%d_%s_%s", chain, asset, vaultID, padUint(height), padUint(seq)))
 }
 
-// KeyFrostFundsPendingLotRef request_id -> pending lot key
+// KeyFrostFundsPendingLotSeq 待入账 lot 高度内序号（按 vault_id 分片）
+// 例：v1_frost_funds_pending_lot_seq_<chain>_<asset>_<vault_id>_<height>
+func KeyFrostFundsPendingLotSeq(chain, asset string, vaultID uint32, height uint64) string {
+	return withVer(fmt.Sprintf("frost_funds_pending_lot_seq_%s_%s_%d_%s", chain, asset, vaultID, padUint(height)))
+}
+
+// KeyFrostFundsPendingLotRef request_id -> (vault_id, pending lot key)
 // 例：v1_frost_funds_pending_ref_<request_id>
 func KeyFrostFundsPendingLotRef(requestID string) string {
 	return withVer("frost_funds_pending_ref_" + requestID)
+}
+
+// KeyFrostVaultFundsLedger Vault 的资金账本聚合状态
+// 例：v1_frost_funds_<chain>_<asset>_<vault_id>
+func KeyFrostVaultFundsLedger(chain, asset string, vaultID uint32) string {
+	return withVer(fmt.Sprintf("frost_funds_%s_%s_%d", chain, asset, vaultID))
+}
+
+// KeyFrostBtcUtxo Vault 的 UTXO（按 vault_id 隔离，避免跨 Vault 误签）
+// 例：v1_frost_btc_utxo_<vault_id>_<txid>_<vout>
+func KeyFrostBtcUtxo(vaultID uint32, txid string, vout uint32) string {
+	return withVer(fmt.Sprintf("frost_btc_utxo_%d_%s_%d", vaultID, txid, vout))
+}
+
+// KeyFrostBtcLockedUtxo Vault 的已锁定 UTXO -> job_id
+// 例：v1_frost_btc_locked_utxo_<vault_id>_<txid>_<vout>
+func KeyFrostBtcLockedUtxo(vaultID uint32, txid string, vout uint32) string {
+	return withVer(fmt.Sprintf("frost_btc_locked_utxo_%d_%s_%d", vaultID, txid, vout))
 }
 
 // KeyFrostWithdraw 提现请求状态

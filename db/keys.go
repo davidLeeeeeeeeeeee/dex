@@ -138,25 +138,42 @@ func KeyRechargeAddress(generatedAddress string) string {
 }
 
 // ===================== FROST 相关 =====================
+// 重要：资金 lot 必须按 vault_id 分片，避免跨 Vault 混用导致确定性规划错误或多签发
 
-func KeyFrostFundsLotIndex(chain, asset string, height, seq uint64) string {
-	return keys.KeyFrostFundsLotIndex(chain, asset, height, seq)
+func KeyFrostFundsLotIndex(chain, asset string, vaultID uint32, height, seq uint64) string {
+	return keys.KeyFrostFundsLotIndex(chain, asset, vaultID, height, seq)
 }
 
-func KeyFrostFundsLotSeq(chain, asset string, height uint64) string {
-	return keys.KeyFrostFundsLotSeq(chain, asset, height)
+func KeyFrostFundsLotSeq(chain, asset string, vaultID uint32, height uint64) string {
+	return keys.KeyFrostFundsLotSeq(chain, asset, vaultID, height)
 }
 
-func KeyFrostFundsPendingLotIndex(chain, asset string, height, seq uint64) string {
-	return keys.KeyFrostFundsPendingLotIndex(chain, asset, height, seq)
+func KeyFrostFundsLotHead(chain, asset string, vaultID uint32) string {
+	return keys.KeyFrostFundsLotHead(chain, asset, vaultID)
 }
 
-func KeyFrostFundsPendingLotSeq(chain, asset string, height uint64) string {
-	return keys.KeyFrostFundsPendingLotSeq(chain, asset, height)
+func KeyFrostFundsPendingLotIndex(chain, asset string, vaultID uint32, height, seq uint64) string {
+	return keys.KeyFrostFundsPendingLotIndex(chain, asset, vaultID, height, seq)
+}
+
+func KeyFrostFundsPendingLotSeq(chain, asset string, vaultID uint32, height uint64) string {
+	return keys.KeyFrostFundsPendingLotSeq(chain, asset, vaultID, height)
 }
 
 func KeyFrostFundsPendingLotRef(requestID string) string {
 	return keys.KeyFrostFundsPendingLotRef(requestID)
+}
+
+func KeyFrostVaultFundsLedger(chain, asset string, vaultID uint32) string {
+	return keys.KeyFrostVaultFundsLedger(chain, asset, vaultID)
+}
+
+func KeyFrostBtcUtxo(vaultID uint32, txid string, vout uint32) string {
+	return keys.KeyFrostBtcUtxo(vaultID, txid, vout)
+}
+
+func KeyFrostBtcLockedUtxo(vaultID uint32, txid string, vout uint32) string {
+	return keys.KeyFrostBtcLockedUtxo(vaultID, txid, vout)
 }
 
 // ===================== VM 执行状态相关 =====================
@@ -190,4 +207,3 @@ func KeyNode() string {
 func KeyClientInfo(ip string) string {
 	return keys.KeyClientInfo(ip)
 }
-
