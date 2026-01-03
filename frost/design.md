@@ -167,7 +167,7 @@ flowchart TB
 
 > 你当前 `frost/` 里已有 DKG/曲线适配/签名实验代码（package 名叫 dkg）。需要迁移到 core 子目录，保持“纯算法不依赖网络/DB”。
 
-建议目录：
+建议目录（与现有工程结构对齐）：
 
 ```
 frost/
@@ -192,17 +192,6 @@ frost/
     net/
       msg.go                # MsgFrost envelope 定义（见 8.2）
       handlers.go           # P2P 消息处理器（NonceCommit/SigShare/Abort 等）
-  vmhandler/                # VM TxHandlers：写入/推进链上状态机（Job 化，见 5/6/8.3）
-    register.go             # Handler 注册入口
-    withdraw_request.go     # FrostWithdrawRequestTx：创建 QUEUED + FIFO index
-    withdraw_signed.go      # FrostWithdrawSignedTx：写入 signed_package_bytes 并追加 receipt/history，job 与 withdraw 置为 SIGNED
-    vault_dkg_commit.go     # FrostVaultDkgCommitTx：登记 Vault DKG 承诺点（commitments）
-    vault_dkg_share.go      # FrostVaultDkgShareTx：登记 Vault 加密 share
-    vault_dkg_complaint.go  # FrostVaultDkgComplaintTx：链上裁决（份额无效/作恶举证）
-    vault_dkg_reveal.go     # FrostVaultDkgRevealTx：dealer 公开 share + 随机数
-    vault_dkg_validation_signed.go # FrostVaultDkgValidationSignedTx：验证示例签名并确认新 group pubkey（KeyReady）
-    vault_transition_signed.go # FrostVaultTransitionSignedTx：记录 Vault 迁移 SignedPackage 并追加 receipt/history，配合 FundsLedger 标记迁移进度
-    funds_ledger.go         # 资金账本 helper（lot/utxo/lock），供 withdraw/transition handler 校验
   chain/                    # 链适配器（构建模板 / 封装 SignedPackage / 解析与校验）
     adapter.go              # ChainAdapter 接口定义 + ChainAdapterFactory
     btc/
@@ -216,16 +205,33 @@ frost/
       adapter.go            # TRON 适配器实现
     solana/
       adapter.go            # Solana 适配器实现
-  api/                      # 对外 RPC/HTTP（只读查询 + 运维，见 9）
-    http.go                 # HTTP 服务入口
-    routes.go               # 路由注册
-    query_handlers.go       # 查询类接口实现（GetWithdrawStatus 等）
-    admin_handlers.go       # 运维类接口实现（GetHealth/ForceRescan 等）
-    types.go                # API 请求/响应类型定义
-  config/
-    default.json            # 默认配置文件（见 10）
-    config.go               # 配置加载与解析
 ```
+
+在现有目录中落地（避免与现有包形成循环依赖）：
+
+```
+vm/                         # VM TxHandlers：写入/推进链上状态机（Job 化，见 5/6/8.3）
+  frost_withdraw_request.go     # FrostWithdrawRequestTx：创建 QUEUED + FIFO index
+  frost_withdraw_signed.go      # FrostWithdrawSignedTx：写入 signed_package_bytes 并追加 receipt/history
+  frost_vault_dkg_commit.go     # FrostVaultDkgCommitTx：登记 Vault DKG 承诺点
+  frost_vault_dkg_share.go      # FrostVaultDkgShareTx：登记 Vault 加密 share
+  frost_vault_dkg_complaint.go  # FrostVaultDkgComplaintTx：链上裁决
+  frost_vault_dkg_reveal.go     # FrostVaultDkgRevealTx：dealer 公开 share + 随机数
+  frost_vault_dkg_validation_signed.go # FrostVaultDkgValidationSignedTx：确认新 group pubkey
+  frost_vault_transition_signed.go # FrostVaultTransitionSignedTx：记录 Vault 迁移 SignedPackage
+  frost_funds_ledger.go         # 资金账本 helper（lot/utxo/lock）
+
+handlers/                   # 对外 HTTP（只读查询 + 运维，见 9）
+  frost_routes.go           # 路由注册
+  frost_query_handlers.go   # 查询类接口实现（GetWithdrawStatus 等）
+  frost_admin_handlers.go   # 运维类接口实现（GetHealth/ForceRescan 等）
+
+config/
+  frost.go                  # FrostConfig 结构体与默认值挂到总配置里
+  frost_default.json        # 默认配置文件（可选）
+```
+
+说明：VM TxHandlers 继续放在 `vm` 包内，避免 `vm ↔ frost` 循环依赖；HTTP API 复用现有 `handlers` 路由体系；配置项并入 `config` 统一管理。
 
 ---
 
@@ -1675,6 +1681,5 @@ func (p *Participant) ProduceSigShare(session_id, task_id string, R_agg Point, m
   * 固定 fee/feerate、locktime/sequence、sighash_type
   * 生成 `tx_template` 并写入 `template_hash`
 * 签名阶段（ROAST）：Nonce 必须按 task 独立生成并本地持久化，绝不跨 task 复用
-
 
 
