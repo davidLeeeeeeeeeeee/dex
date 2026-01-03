@@ -1,15 +1,13 @@
-package dkg
+package curve
 
 import (
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 )
 
 // BN256Group 将 alt_bn128 曲线封装为 Group 接口
 type BN256Group struct{}
-
-// bn256_adapter.go（摘录）
 
 func (g *BN256Group) Order() *big.Int {
 	return new(big.Int).Set(bn256.Order)
@@ -70,12 +68,13 @@ func unmarshalG1(P *bn256.G1) Point {
 	}
 }
 
-// bn256_adapter.go
 func (g *BN256Group) ScalarBaseMultBytes(k []byte) Point {
 	kInt := new(big.Int).SetBytes(k)
 	return g.ScalarBaseMult(kInt) // 调用已有的 *big.Int 版本
 }
+
 func (g *BN256Group) ScalarMultBytes(P Point, k []byte) Point {
 	kInt := new(big.Int).SetBytes(k)
 	return g.ScalarMult(P, kInt)
 }
+

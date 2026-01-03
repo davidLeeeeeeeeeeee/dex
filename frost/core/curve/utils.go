@@ -1,22 +1,23 @@
-package dkg
+package curve
 
 import (
 	"crypto/sha256"
-	"github.com/btcsuite/btcd/btcec/v2"
 	"math/big"
+
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // -----------------------------------------------------------------------------
 // Taproot Key‑Path tweak helpers  —— 纯 *big.Int 接口
 // -----------------------------------------------------------------------------
 
-// 把 “私钥序列化字节” 转 big.Int 的小工具。
-func privBytesToBig(priv *btcec.PrivateKey) *big.Int {
-	return new(big.Int).SetBytes(priv.Serialize()) // 32 bytes → big.Int
+// PrivBytesToBig 把 "私钥序列化字节" 转 big.Int 的小工具。
+func PrivBytesToBig(priv *btcec.PrivateKey) *big.Int {
+	return new(big.Int).SetBytes(priv.Serialize()) // 32 bytes → big.Int
 }
 
-// tapTweakScalar(Px) = SHA256( H(tag) || H(tag) || Px )  mod n
-func tapTweakScalar(Px *big.Int, tag string) *big.Int {
+// TapTweakScalar(Px) = SHA256( H(tag) || H(tag) || Px )  mod n
+func TapTweakScalar(Px *big.Int, tag string) *big.Int {
 	curve := btcec.S256()
 	Htag := sha256.Sum256([]byte(tag))
 
@@ -30,13 +31,13 @@ func tapTweakScalar(Px *big.Int, tag string) *big.Int {
 	return t
 }
 
-// ── 私钥级 tweak，入参/出参都是 *big.Int ──────────────────────────────────────
+// TweakPrivScalar 私钥级 tweak，入参/出参都是 *big.Int
 func TweakPrivScalar(d *big.Int, tag string) *big.Int {
 	curve := btcec.S256()
 	n := curve.Params().N
 
 	Px, _ := curve.ScalarBaseMult(d.Bytes())
-	t := tapTweakScalar(Px, tag)
+	t := TapTweakScalar(Px, tag)
 
 	dp := new(big.Int).Add(d, t)
 	dp.Mod(dp, n)
@@ -48,14 +49,14 @@ func TweakPrivScalar(d *big.Int, tag string) *big.Int {
 	return dp
 }
 
-// ── 公钥级 tweak，入参 Px,Py 都是 *big.Int；返回 Qx,Qy 也是 *big.Int ──────────
+// TweakPubPoint 公钥级 tweak，入参 Px,Py 都是 *big.Int；返回 Qx,Qy 也是 *big.Int
 func TweakPubPoint(Px, Py *big.Int, tag string) (*big.Int, *big.Int) {
 	curve := btcec.S256()
 
 	if Py.Bit(0) == 1 { // 翻到偶‑Y
 		Py = new(big.Int).Sub(curve.Params().P, Py)
 	}
-	t := tapTweakScalar(Px, tag)
+	t := TapTweakScalar(Px, tag)
 	tx, ty := curve.ScalarBaseMult(t.Bytes())
 	return curve.Add(Px, Py, tx, ty)
 }
@@ -64,10 +65,10 @@ func TweakPubPoint(Px, Py *big.Int, tag string) (*big.Int, *big.Int) {
 // big.Int  →  *FieldVal   转换（适配 btcec/v2）
 // -----------------------------------------------------------------------------
 
-// bigIntToFieldVal packs a non‑negative *big.Int (≤ P‑1) into a new FieldVal.
+// BigIntToFieldVal packs a non‑negative *big.Int (≤ P‑1) into a new FieldVal.
 //
 // It panics if x ≥ 2^256.
-func bigIntToFieldVal(x *big.Int) *btcec.FieldVal {
+func BigIntToFieldVal(x *big.Int) *btcec.FieldVal {
 	if x.Sign() < 0 || x.BitLen() > 256 {
 		panic("bigIntToFieldVal: out‑of‑range")
 	}
@@ -80,3 +81,4 @@ func bigIntToFieldVal(x *big.Int) *btcec.FieldVal {
 	fv.SetBytes(&be32) // constant‑time pack
 	return &fv
 }
+

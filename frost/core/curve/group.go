@@ -1,4 +1,4 @@
-package dkg
+package curve
 
 import "math/big"
 
@@ -28,3 +28,4 @@ type Group interface {
 	ScalarBaseMultBytes(k []byte) Point
 	ScalarMultBytes(P Point, k []byte) Point
 }
+
