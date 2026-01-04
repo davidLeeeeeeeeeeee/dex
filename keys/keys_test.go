@@ -78,5 +78,14 @@ func TestFrostKeys(t *testing.T) {
 		key := KeyFrostWithdrawFIFOHead("SOL", "native")
 		assert.Equal(t, "v1_frost_withdraw_head_SOL_native", key)
 	})
-}
 
+	t.Run("KeyFrostWithdrawTxRef", func(t *testing.T) {
+		key := KeyFrostWithdrawTxRef("tx-id-abc-123")
+		assert.Equal(t, "v1_frost_withdraw_ref_tx-id-abc-123", key)
+	})
+
+	t.Run("KeyFrostSignedPackageCount", func(t *testing.T) {
+		key := KeyFrostSignedPackageCount("job-id-xyz")
+		assert.Equal(t, "v1_frost_signed_pkg_count_job-id-xyz", key)
+	})
+}

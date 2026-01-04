@@ -510,4 +510,29 @@ message FrostWithdrawSignedTx {
   BaseMessage base = 1;
   string job_id = 2; // 签名任务 ID
   bytes signed_package_bytes = 3; // 签名包（可广播的交易数据）
+  repeated string withdraw_ids = 4; // 被该 job 覆盖的 withdraw_id 列表
+}
+
+// Frost 提现请求状态（链上存储）
+message FrostWithdrawState {
+  string withdraw_id = 1; // 全网唯一（H(chain || asset || seq || request_height)）
+  string tx_id = 2; // 原始交易 ID
+  uint64 seq = 3; // 队列内 FIFO 序号
+  string chain = 4; // 目标链标识
+  string asset = 5; // 资产类型
+  string to = 6; // 提现目标地址
+  string amount = 7; // 提现金额
+  uint64 request_height = 8; // 请求最终化高度
+  string status = 9; // QUEUED | SIGNED
+  string job_id = 10; // 归属的 SigningJob（当 status=SIGNED 时存在）
+  uint32 vault_id = 11; // 由哪个 Vault 支付
+}
+
+// Frost 签名产物（链上存储，receipt/history）
+message FrostSignedPackage {
+  string job_id = 1; // 签名任务 ID
+  uint64 idx = 2; // 产物序号（同一 job 可能有多份）
+  bytes signed_package_bytes = 3; // 签名包
+  uint64 submit_height = 4; // 提交高度
+  string submitter = 5; // 提交者地址
 }

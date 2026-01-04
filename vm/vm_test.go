@@ -609,3 +609,303 @@ func TestFrostKind(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "frost_withdraw_signed", h2.Kind())
 }
+
+// TestFrostWithdrawRequest 测试 FrostWithdrawRequest handler
+func TestFrostWithdrawRequest(t *testing.T) {
+	// 创建 StateView
+	store := make(map[string][]byte)
+	readFn := func(key string) ([]byte, error) {
+		if v, ok := store[key]; ok {
+			return v, nil
+		}
+		return nil, nil
+	}
+	scanFn := func(prefix string) (map[string][]byte, error) {
+		return make(map[string][]byte), nil
+	}
+
+	handler := &vm.FrostWithdrawRequestTxHandler{}
+
+	// 测试1：第一笔 withdraw request，seq 应该是 1
+	sv := vm.NewStateView(readFn, scanFn)
+	tx1 := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawRequestTx{
+			FrostWithdrawRequestTx: &pb.FrostWithdrawRequestTx{
+				Base: &pb.BaseMessage{
+					TxId:           "tx_001",
+					FromAddress:    "alice",
+					ExecutedHeight: 100,
+				},
+				Chain:  "BTC",
+				Asset:  "native",
+				To:     "bc1qtest001",
+				Amount: "100000",
+			},
+		},
+	}
+
+	ops1, receipt1, err1 := handler.DryRun(tx1, sv)
+	assert.NoError(t, err1)
+	assert.Equal(t, "SUCCEED", receipt1.Status)
+	assert.True(t, len(ops1) >= 4) // withdraw + fifo_index + seq + tx_ref
+
+	// 应用写入到 store
+	for _, op := range ops1 {
+		store[op.Key] = op.Value
+	}
+
+	// 测试2：第二笔不同 tx_id，seq 应该递增到 2
+	sv2 := vm.NewStateView(readFn, scanFn)
+	tx2 := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawRequestTx{
+			FrostWithdrawRequestTx: &pb.FrostWithdrawRequestTx{
+				Base: &pb.BaseMessage{
+					TxId:           "tx_002",
+					FromAddress:    "bob",
+					ExecutedHeight: 101,
+				},
+				Chain:  "BTC",
+				Asset:  "native",
+				To:     "bc1qtest002",
+				Amount: "200000",
+			},
+		},
+	}
+
+	ops2, receipt2, err2 := handler.DryRun(tx2, sv2)
+	assert.NoError(t, err2)
+	assert.Equal(t, "SUCCEED", receipt2.Status)
+	assert.True(t, len(ops2) >= 4)
+
+	// 应用写入到 store
+	for _, op := range ops2 {
+		store[op.Key] = op.Value
+	}
+
+	// 验证 seq 已递增（通过检查 FIFO index 存在性）
+	seqKey := keys.KeyFrostWithdrawFIFOSeq("BTC", "native")
+	seqData := store[seqKey]
+	assert.Equal(t, "2", string(seqData))
+
+	// 测试3：重复 tx_id 不递增 seq（幂等）
+	sv3 := vm.NewStateView(readFn, scanFn)
+	ops3, receipt3, err3 := handler.DryRun(tx1, sv3) // 重复 tx_001
+	assert.NoError(t, err3)
+	assert.Equal(t, "SUCCEED", receipt3.Status)
+	assert.Equal(t, 0, receipt3.WriteCount) // 没有新的写入
+
+	// seq 仍然是 2
+	assert.Nil(t, ops3)
+	seqData2 := store[seqKey]
+	assert.Equal(t, "2", string(seqData2))
+}
+
+// TestFrostWithdrawSigned 测试 FrostWithdrawSigned handler
+func TestFrostWithdrawSigned(t *testing.T) {
+	store := make(map[string][]byte)
+	readFn := func(key string) ([]byte, error) {
+		if v, ok := store[key]; ok {
+			return v, nil
+		}
+		return nil, nil
+	}
+	scanFn := func(prefix string) (map[string][]byte, error) {
+		return make(map[string][]byte), nil
+	}
+
+	requestHandler := &vm.FrostWithdrawRequestTxHandler{}
+	signedHandler := &vm.FrostWithdrawSignedTxHandler{}
+
+	// 先创建一个 withdraw request
+	sv1 := vm.NewStateView(readFn, scanFn)
+	tx1 := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawRequestTx{
+			FrostWithdrawRequestTx: &pb.FrostWithdrawRequestTx{
+				Base: &pb.BaseMessage{
+					TxId:           "tx_req_001",
+					FromAddress:    "alice",
+					ExecutedHeight: 100,
+				},
+				Chain:  "ETH",
+				Asset:  "USDT",
+				To:     "0xabc123",
+				Amount: "1000000",
+			},
+		},
+	}
+
+	ops1, _, _ := requestHandler.DryRun(tx1, sv1)
+	for _, op := range ops1 {
+		store[op.Key] = op.Value
+	}
+
+	// 获取 withdraw_id（从 tx_ref 读取）
+	txRefKey := keys.KeyFrostWithdrawTxRef("tx_req_001")
+	withdrawID := string(store[txRefKey])
+	assert.NotEmpty(t, withdrawID)
+
+	// 测试签名完成
+	sv2 := vm.NewStateView(readFn, scanFn)
+	signedTx := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawSignedTx{
+			FrostWithdrawSignedTx: &pb.FrostWithdrawSignedTx{
+				Base: &pb.BaseMessage{
+					TxId:           "tx_signed_001",
+					FromAddress:    "coordinator",
+					ExecutedHeight: 110,
+				},
+				JobId:              "job_001",
+				SignedPackageBytes: []byte("signed_tx_data"),
+				WithdrawIds:        []string{withdrawID},
+			},
+		},
+	}
+
+	ops2, receipt2, err2 := signedHandler.DryRun(signedTx, sv2)
+	assert.NoError(t, err2)
+	assert.Equal(t, "SUCCEED", receipt2.Status)
+	assert.True(t, len(ops2) >= 3) // withdraw update + signed_pkg + count + head
+
+	// 应用写入
+	for _, op := range ops2 {
+		store[op.Key] = op.Value
+	}
+
+	// 验证 withdraw 状态变为 SIGNED
+	withdrawKey := keys.KeyFrostWithdraw(withdrawID)
+	withdrawData := store[withdrawKey]
+	assert.NotEmpty(t, withdrawData)
+
+	// 测试重复提交只追加 receipt
+	sv3 := vm.NewStateView(readFn, scanFn)
+	signedTx2 := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawSignedTx{
+			FrostWithdrawSignedTx: &pb.FrostWithdrawSignedTx{
+				Base: &pb.BaseMessage{
+					TxId:           "tx_signed_002",
+					FromAddress:    "coordinator2",
+					ExecutedHeight: 111,
+				},
+				JobId:              "job_001", // 同一个 job
+				SignedPackageBytes: []byte("signed_tx_data_v2"),
+				WithdrawIds:        []string{withdrawID},
+			},
+		},
+	}
+
+	ops3, receipt3, err3 := signedHandler.DryRun(signedTx2, sv3)
+	assert.NoError(t, err3)
+	assert.Equal(t, "SUCCEED", receipt3.Status)
+	// 只有 signed_pkg 和 count 两个写入（不再更新 withdraw 状态）
+	assert.Equal(t, 2, len(ops3))
+
+	// 验证 count 更新为 2
+	for _, op := range ops3 {
+		store[op.Key] = op.Value
+	}
+	countKey := keys.KeyFrostSignedPackageCount("job_001")
+	countData := store[countKey]
+	assert.Equal(t, "2", string(countData))
+}
+
+// TestFrostFundsLedger 测试 FundsLedger helper
+func TestFrostFundsLedger(t *testing.T) {
+	store := make(map[string][]byte)
+	readFn := func(key string) ([]byte, error) {
+		if v, ok := store[key]; ok {
+			return v, nil
+		}
+		return nil, nil
+	}
+	scanFn := func(prefix string) (map[string][]byte, error) {
+		return make(map[string][]byte), nil
+	}
+
+	chain := "ETH"
+	asset := "native"
+	vaultID := uint32(0)
+
+	// 初始状态：没有任何 lot
+	sv := vm.NewStateView(readFn, scanFn)
+	head := vm.GetFundsLotHead(sv, chain, asset, vaultID)
+	assert.Equal(t, uint64(0), head.Height)
+	assert.Equal(t, uint64(0), head.Seq)
+
+	// 模拟添加 lot（通过直接设置 seq 和 index）
+	// height=100, seq=1
+	seqKey1 := keys.KeyFrostFundsLotSeq(chain, asset, vaultID, 100)
+	store[seqKey1] = []byte("2") // 2 个 lot
+	lotKey1 := keys.KeyFrostFundsLotIndex(chain, asset, vaultID, 100, 1)
+	store[lotKey1] = []byte("request_001")
+	lotKey2 := keys.KeyFrostFundsLotIndex(chain, asset, vaultID, 100, 2)
+	store[lotKey2] = []byte("request_002")
+
+	// height=102, seq=1
+	seqKey2 := keys.KeyFrostFundsLotSeq(chain, asset, vaultID, 102)
+	store[seqKey2] = []byte("1")
+	lotKey3 := keys.KeyFrostFundsLotIndex(chain, asset, vaultID, 102, 1)
+	store[lotKey3] = []byte("request_003")
+
+	// 设置初始头指针
+	vm.SetFundsLotHead(sv, &vm.FundsLotHead{
+		Chain:   chain,
+		Asset:   asset,
+		VaultID: vaultID,
+		Height:  100,
+		Seq:     1,
+	})
+	// 保存头指针
+	for _, op := range sv.Diff() {
+		store[op.Key] = op.Value
+	}
+
+	// 测试获取头部 lot
+	sv2 := vm.NewStateView(readFn, scanFn)
+	requestID, ok := vm.GetFundsLotAtHead(sv2, chain, asset, vaultID)
+	assert.True(t, ok)
+	assert.Equal(t, "request_001", requestID)
+
+	// 消费第一个 lot
+	sv3 := vm.NewStateView(readFn, scanFn)
+	consumedID, consumed := vm.ConsumeFundsLot(sv3, chain, asset, vaultID)
+	assert.True(t, consumed)
+	assert.Equal(t, "request_001", consumedID)
+
+	// 保存头指针更新
+	for _, op := range sv3.Diff() {
+		store[op.Key] = op.Value
+	}
+
+	// 验证头指针已推进到 (100, 2)
+	sv4 := vm.NewStateView(readFn, scanFn)
+	head2 := vm.GetFundsLotHead(sv4, chain, asset, vaultID)
+	assert.Equal(t, uint64(100), head2.Height)
+	assert.Equal(t, uint64(2), head2.Seq)
+
+	// 获取新头部 lot
+	requestID2, ok2 := vm.GetFundsLotAtHead(sv4, chain, asset, vaultID)
+	assert.True(t, ok2)
+	assert.Equal(t, "request_002", requestID2)
+
+	// 消费第二个 lot
+	sv5 := vm.NewStateView(readFn, scanFn)
+	consumedID2, consumed2 := vm.ConsumeFundsLot(sv5, chain, asset, vaultID)
+	assert.True(t, consumed2)
+	assert.Equal(t, "request_002", consumedID2)
+
+	// 保存头指针更新
+	for _, op := range sv5.Diff() {
+		store[op.Key] = op.Value
+	}
+
+	// 验证头指针已推进到 (102, 1)
+	sv6 := vm.NewStateView(readFn, scanFn)
+	head3 := vm.GetFundsLotHead(sv6, chain, asset, vaultID)
+	assert.Equal(t, uint64(102), head3.Height)
+	assert.Equal(t, uint64(1), head3.Seq)
+
+	// 获取新头部 lot
+	requestID3, ok3 := vm.GetFundsLotAtHead(sv6, chain, asset, vaultID)
+	assert.True(t, ok3)
+	assert.Equal(t, "request_003", requestID3)
+}

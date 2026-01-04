@@ -292,6 +292,18 @@ func KeyFrostWithdrawFIFOHead(chain, asset string) string {
 	return withVer(fmt.Sprintf("frost_withdraw_head_%s_%s", chain, asset))
 }
 
+// KeyFrostWithdrawTxRef tx_id -> withdraw_id 引用（用于幂等检查）
+// 例：v1_frost_withdraw_ref_<tx_id>
+func KeyFrostWithdrawTxRef(txID string) string {
+	return withVer("frost_withdraw_ref_" + txID)
+}
+
+// KeyFrostSignedPackageCount 签名产物数量（用于追加 receipt/history）
+// 例：v1_frost_signed_pkg_count_<job_id>
+func KeyFrostSignedPackageCount(jobID string) string {
+	return withVer("frost_signed_pkg_count_" + jobID)
+}
+
 // KeyFrostConfig Frost 全局配置
 // 例：v1_frost_cfg
 func KeyFrostConfig() string {

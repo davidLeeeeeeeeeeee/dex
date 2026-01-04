@@ -4238,6 +4238,7 @@ type FrostWithdrawSignedTx struct {
 	Base               *BaseMessage           `protobuf:"bytes,1,opt,name=base,proto3" json:"base,omitempty"`
 	JobId              string                 `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`                                          // 签名任务 ID
 	SignedPackageBytes []byte                 `protobuf:"bytes,3,opt,name=signed_package_bytes,json=signedPackageBytes,proto3" json:"signed_package_bytes,omitempty"` // 签名包（可广播的交易数据）
+	WithdrawIds        []string               `protobuf:"bytes,4,rep,name=withdraw_ids,json=withdrawIds,proto3" json:"withdraw_ids,omitempty"`                        // 被该 job 覆盖的 withdraw_id 列表
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -4291,6 +4292,215 @@ func (x *FrostWithdrawSignedTx) GetSignedPackageBytes() []byte {
 		return x.SignedPackageBytes
 	}
 	return nil
+}
+
+func (x *FrostWithdrawSignedTx) GetWithdrawIds() []string {
+	if x != nil {
+		return x.WithdrawIds
+	}
+	return nil
+}
+
+// Frost 提现请求状态（链上存储）
+type FrostWithdrawState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WithdrawId    string                 `protobuf:"bytes,1,opt,name=withdraw_id,json=withdrawId,proto3" json:"withdraw_id,omitempty"`           // 全网唯一（H(chain || asset || seq || request_height)）
+	TxId          string                 `protobuf:"bytes,2,opt,name=tx_id,json=txId,proto3" json:"tx_id,omitempty"`                             // 原始交易 ID
+	Seq           uint64                 `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"`                                          // 队列内 FIFO 序号
+	Chain         string                 `protobuf:"bytes,4,opt,name=chain,proto3" json:"chain,omitempty"`                                       // 目标链标识
+	Asset         string                 `protobuf:"bytes,5,opt,name=asset,proto3" json:"asset,omitempty"`                                       // 资产类型
+	To            string                 `protobuf:"bytes,6,opt,name=to,proto3" json:"to,omitempty"`                                             // 提现目标地址
+	Amount        string                 `protobuf:"bytes,7,opt,name=amount,proto3" json:"amount,omitempty"`                                     // 提现金额
+	RequestHeight uint64                 `protobuf:"varint,8,opt,name=request_height,json=requestHeight,proto3" json:"request_height,omitempty"` // 请求最终化高度
+	Status        string                 `protobuf:"bytes,9,opt,name=status,proto3" json:"status,omitempty"`                                     // QUEUED | SIGNED
+	JobId         string                 `protobuf:"bytes,10,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`                         // 归属的 SigningJob（当 status=SIGNED 时存在）
+	VaultId       uint32                 `protobuf:"varint,11,opt,name=vault_id,json=vaultId,proto3" json:"vault_id,omitempty"`                  // 由哪个 Vault 支付
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostWithdrawState) Reset() {
+	*x = FrostWithdrawState{}
+	mi := &file_data_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostWithdrawState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostWithdrawState) ProtoMessage() {}
+
+func (x *FrostWithdrawState) ProtoReflect() protoreflect.Message {
+	mi := &file_data_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostWithdrawState.ProtoReflect.Descriptor instead.
+func (*FrostWithdrawState) Descriptor() ([]byte, []int) {
+	return file_data_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *FrostWithdrawState) GetWithdrawId() string {
+	if x != nil {
+		return x.WithdrawId
+	}
+	return ""
+}
+
+func (x *FrostWithdrawState) GetTxId() string {
+	if x != nil {
+		return x.TxId
+	}
+	return ""
+}
+
+func (x *FrostWithdrawState) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *FrostWithdrawState) GetChain() string {
+	if x != nil {
+		return x.Chain
+	}
+	return ""
+}
+
+func (x *FrostWithdrawState) GetAsset() string {
+	if x != nil {
+		return x.Asset
+	}
+	return ""
+}
+
+func (x *FrostWithdrawState) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+func (x *FrostWithdrawState) GetAmount() string {
+	if x != nil {
+		return x.Amount
+	}
+	return ""
+}
+
+func (x *FrostWithdrawState) GetRequestHeight() uint64 {
+	if x != nil {
+		return x.RequestHeight
+	}
+	return 0
+}
+
+func (x *FrostWithdrawState) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *FrostWithdrawState) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *FrostWithdrawState) GetVaultId() uint32 {
+	if x != nil {
+		return x.VaultId
+	}
+	return 0
+}
+
+// Frost 签名产物（链上存储，receipt/history）
+type FrostSignedPackage struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	JobId              string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`                                          // 签名任务 ID
+	Idx                uint64                 `protobuf:"varint,2,opt,name=idx,proto3" json:"idx,omitempty"`                                                          // 产物序号（同一 job 可能有多份）
+	SignedPackageBytes []byte                 `protobuf:"bytes,3,opt,name=signed_package_bytes,json=signedPackageBytes,proto3" json:"signed_package_bytes,omitempty"` // 签名包
+	SubmitHeight       uint64                 `protobuf:"varint,4,opt,name=submit_height,json=submitHeight,proto3" json:"submit_height,omitempty"`                    // 提交高度
+	Submitter          string                 `protobuf:"bytes,5,opt,name=submitter,proto3" json:"submitter,omitempty"`                                               // 提交者地址
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *FrostSignedPackage) Reset() {
+	*x = FrostSignedPackage{}
+	mi := &file_data_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostSignedPackage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostSignedPackage) ProtoMessage() {}
+
+func (x *FrostSignedPackage) ProtoReflect() protoreflect.Message {
+	mi := &file_data_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostSignedPackage.ProtoReflect.Descriptor instead.
+func (*FrostSignedPackage) Descriptor() ([]byte, []int) {
+	return file_data_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *FrostSignedPackage) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *FrostSignedPackage) GetIdx() uint64 {
+	if x != nil {
+		return x.Idx
+	}
+	return 0
+}
+
+func (x *FrostSignedPackage) GetSignedPackageBytes() []byte {
+	if x != nil {
+		return x.SignedPackageBytes
+	}
+	return nil
+}
+
+func (x *FrostSignedPackage) GetSubmitHeight() uint64 {
+	if x != nil {
+		return x.SubmitHeight
+	}
+	return 0
+}
+
+func (x *FrostSignedPackage) GetSubmitter() string {
+	if x != nil {
+		return x.Submitter
+	}
+	return ""
 }
 
 var File_data_proto protoreflect.FileDescriptor
@@ -4635,11 +4845,32 @@ const file_data_proto_rawDesc = "" +
 	"\x05chain\x18\x02 \x01(\tR\x05chain\x12\x14\n" +
 	"\x05asset\x18\x03 \x01(\tR\x05asset\x12\x0e\n" +
 	"\x02to\x18\x04 \x01(\tR\x02to\x12\x16\n" +
-	"\x06amount\x18\x05 \x01(\tR\x06amount\"\x85\x01\n" +
+	"\x06amount\x18\x05 \x01(\tR\x06amount\"\xa8\x01\n" +
 	"\x15FrostWithdrawSignedTx\x12#\n" +
 	"\x04base\x18\x01 \x01(\v2\x0f.pb.BaseMessageR\x04base\x12\x15\n" +
 	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x120\n" +
-	"\x14signed_package_bytes\x18\x03 \x01(\fR\x12signedPackageBytes*\xda\x01\n" +
+	"\x14signed_package_bytes\x18\x03 \x01(\fR\x12signedPackageBytes\x12!\n" +
+	"\fwithdraw_ids\x18\x04 \x03(\tR\vwithdrawIds\"\xa1\x02\n" +
+	"\x12FrostWithdrawState\x12\x1f\n" +
+	"\vwithdraw_id\x18\x01 \x01(\tR\n" +
+	"withdrawId\x12\x13\n" +
+	"\x05tx_id\x18\x02 \x01(\tR\x04txId\x12\x10\n" +
+	"\x03seq\x18\x03 \x01(\x04R\x03seq\x12\x14\n" +
+	"\x05chain\x18\x04 \x01(\tR\x05chain\x12\x14\n" +
+	"\x05asset\x18\x05 \x01(\tR\x05asset\x12\x0e\n" +
+	"\x02to\x18\x06 \x01(\tR\x02to\x12\x16\n" +
+	"\x06amount\x18\a \x01(\tR\x06amount\x12%\n" +
+	"\x0erequest_height\x18\b \x01(\x04R\rrequestHeight\x12\x16\n" +
+	"\x06status\x18\t \x01(\tR\x06status\x12\x15\n" +
+	"\x06job_id\x18\n" +
+	" \x01(\tR\x05jobId\x12\x19\n" +
+	"\bvault_id\x18\v \x01(\rR\avaultId\"\xb2\x01\n" +
+	"\x12FrostSignedPackage\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x10\n" +
+	"\x03idx\x18\x02 \x01(\x04R\x03idx\x120\n" +
+	"\x14signed_package_bytes\x18\x03 \x01(\fR\x12signedPackageBytes\x12#\n" +
+	"\rsubmit_height\x18\x04 \x01(\x04R\fsubmitHeight\x12\x1c\n" +
+	"\tsubmitter\x18\x05 \x01(\tR\tsubmitter*\xda\x01\n" +
 	"\bSignAlgo\x12\x19\n" +
 	"\x15SIGN_ALGO_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14SIGN_ALGO_ECDSA_P256\x10\x01\x12\x1a\n" +
@@ -4696,7 +4927,7 @@ func file_data_proto_rawDescGZIP() []byte {
 }
 
 var file_data_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_data_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
+var file_data_proto_msgTypes = make([]protoimpl.MessageInfo, 54)
 var file_data_proto_goTypes = []any{
 	(SignAlgo)(0),                    // 0: pb.SignAlgo
 	(OrderOp)(0),                     // 1: pb.OrderOp
@@ -4754,17 +4985,19 @@ var file_data_proto_goTypes = []any{
 	(*WitnessConfig)(nil),            // 53: pb.WitnessConfig
 	(*FrostWithdrawRequestTx)(nil),   // 54: pb.FrostWithdrawRequestTx
 	(*FrostWithdrawSignedTx)(nil),    // 55: pb.FrostWithdrawSignedTx
-	nil,                              // 56: pb.TokenRegistry.TokensEntry
-	nil,                              // 57: pb.PublicKeys.KeysEntry
-	nil,                              // 58: pb.Account.BalancesEntry
+	(*FrostWithdrawState)(nil),       // 56: pb.FrostWithdrawState
+	(*FrostSignedPackage)(nil),       // 57: pb.FrostSignedPackage
+	nil,                              // 58: pb.TokenRegistry.TokensEntry
+	nil,                              // 59: pb.PublicKeys.KeysEntry
+	nil,                              // 60: pb.Account.BalancesEntry
 }
 var file_data_proto_depIdxs = []int32{
-	56, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
-	57, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
+	58, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
+	59, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
 	9,  // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
 	2,  // 3: pb.BaseMessage.status:type_name -> pb.Status
 	9,  // 4: pb.Account.public_keys:type_name -> pb.PublicKeys
-	58, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	60, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
 	23, // 6: pb.Block.body:type_name -> pb.AnyTx
 	10, // 7: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
 	10, // 8: pb.FreezeTx.base:type_name -> pb.BaseMessage
@@ -4848,7 +5081,7 @@ func file_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_data_proto_rawDesc), len(file_data_proto_rawDesc)),
 			NumEnums:      7,
-			NumMessages:   52,
+			NumMessages:   54,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
