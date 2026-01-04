@@ -662,3 +662,13 @@ message FrostVaultDkgValidationSignedTx {
   bytes new_group_pubkey = 5; // 新群公钥
   bytes signature = 6; // 群签名
 }
+
+// FrostVaultTransitionSignedTx 迁移签名产物上链
+message FrostVaultTransitionSignedTx {
+  string chain = 1; // 链标识
+  uint32 old_vault_id = 2; // 旧 Vault ID
+  uint32 new_vault_id = 3; // 新 Vault ID
+  uint64 epoch_id = 4; // epoch 版本
+  bytes msg_hash = 5; // 迁移消息哈希
+  bytes signature = 6; // 旧 Vault 群签名
+}

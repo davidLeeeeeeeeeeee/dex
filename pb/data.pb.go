@@ -5498,6 +5498,91 @@ func (x *FrostVaultDkgValidationSignedTx) GetSignature() []byte {
 	return nil
 }
 
+// FrostVaultTransitionSignedTx 迁移签名产物上链
+type FrostVaultTransitionSignedTx struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Chain         string                 `protobuf:"bytes,1,opt,name=chain,proto3" json:"chain,omitempty"`                                // 链标识
+	OldVaultId    uint32                 `protobuf:"varint,2,opt,name=old_vault_id,json=oldVaultId,proto3" json:"old_vault_id,omitempty"` // 旧 Vault ID
+	NewVaultId    uint32                 `protobuf:"varint,3,opt,name=new_vault_id,json=newVaultId,proto3" json:"new_vault_id,omitempty"` // 新 Vault ID
+	EpochId       uint64                 `protobuf:"varint,4,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`            // epoch 版本
+	MsgHash       []byte                 `protobuf:"bytes,5,opt,name=msg_hash,json=msgHash,proto3" json:"msg_hash,omitempty"`             // 迁移消息哈希
+	Signature     []byte                 `protobuf:"bytes,6,opt,name=signature,proto3" json:"signature,omitempty"`                        // 旧 Vault 群签名
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostVaultTransitionSignedTx) Reset() {
+	*x = FrostVaultTransitionSignedTx{}
+	mi := &file_pb_data_proto_msgTypes[60]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostVaultTransitionSignedTx) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostVaultTransitionSignedTx) ProtoMessage() {}
+
+func (x *FrostVaultTransitionSignedTx) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[60]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostVaultTransitionSignedTx.ProtoReflect.Descriptor instead.
+func (*FrostVaultTransitionSignedTx) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *FrostVaultTransitionSignedTx) GetChain() string {
+	if x != nil {
+		return x.Chain
+	}
+	return ""
+}
+
+func (x *FrostVaultTransitionSignedTx) GetOldVaultId() uint32 {
+	if x != nil {
+		return x.OldVaultId
+	}
+	return 0
+}
+
+func (x *FrostVaultTransitionSignedTx) GetNewVaultId() uint32 {
+	if x != nil {
+		return x.NewVaultId
+	}
+	return 0
+}
+
+func (x *FrostVaultTransitionSignedTx) GetEpochId() uint64 {
+	if x != nil {
+		return x.EpochId
+	}
+	return 0
+}
+
+func (x *FrostVaultTransitionSignedTx) GetMsgHash() []byte {
+	if x != nil {
+		return x.MsgHash
+	}
+	return nil
+}
+
+func (x *FrostVaultTransitionSignedTx) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
 var File_pb_data_proto protoreflect.FileDescriptor
 
 const file_pb_data_proto_rawDesc = "" +
@@ -5958,6 +6043,15 @@ const file_pb_data_proto_rawDesc = "" +
 	"\bepoch_id\x18\x03 \x01(\x04R\aepochId\x12\x19\n" +
 	"\bmsg_hash\x18\x04 \x01(\fR\amsgHash\x12(\n" +
 	"\x10new_group_pubkey\x18\x05 \x01(\fR\x0enewGroupPubkey\x12\x1c\n" +
+	"\tsignature\x18\x06 \x01(\fR\tsignature\"\xcc\x01\n" +
+	"\x1cFrostVaultTransitionSignedTx\x12\x14\n" +
+	"\x05chain\x18\x01 \x01(\tR\x05chain\x12 \n" +
+	"\fold_vault_id\x18\x02 \x01(\rR\n" +
+	"oldVaultId\x12 \n" +
+	"\fnew_vault_id\x18\x03 \x01(\rR\n" +
+	"newVaultId\x12\x19\n" +
+	"\bepoch_id\x18\x04 \x01(\x04R\aepochId\x12\x19\n" +
+	"\bmsg_hash\x18\x05 \x01(\fR\amsgHash\x12\x1c\n" +
 	"\tsignature\x18\x06 \x01(\fR\tsignature*\xda\x01\n" +
 	"\bSignAlgo\x12\x19\n" +
 	"\x15SIGN_ALGO_UNSPECIFIED\x10\x00\x12\x18\n" +
@@ -6023,7 +6117,7 @@ func file_pb_data_proto_rawDescGZIP() []byte {
 }
 
 var file_pb_data_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 63)
+var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 64)
 var file_pb_data_proto_goTypes = []any{
 	(SignAlgo)(0),                           // 0: pb.SignAlgo
 	(OrderOp)(0),                            // 1: pb.OrderOp
@@ -6093,17 +6187,18 @@ var file_pb_data_proto_goTypes = []any{
 	(*FrostVaultDkgCommitment)(nil),         // 65: pb.FrostVaultDkgCommitment
 	(*FrostVaultDkgShare)(nil),              // 66: pb.FrostVaultDkgShare
 	(*FrostVaultDkgValidationSignedTx)(nil), // 67: pb.FrostVaultDkgValidationSignedTx
-	nil,                                     // 68: pb.TokenRegistry.TokensEntry
-	nil,                                     // 69: pb.PublicKeys.KeysEntry
-	nil,                                     // 70: pb.Account.BalancesEntry
+	(*FrostVaultTransitionSignedTx)(nil),    // 68: pb.FrostVaultTransitionSignedTx
+	nil,                                     // 69: pb.TokenRegistry.TokensEntry
+	nil,                                     // 70: pb.PublicKeys.KeysEntry
+	nil,                                     // 71: pb.Account.BalancesEntry
 }
 var file_pb_data_proto_depIdxs = []int32{
-	68, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
-	69, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
+	69, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
+	70, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
 	10, // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
 	2,  // 3: pb.BaseMessage.status:type_name -> pb.Status
 	10, // 4: pb.Account.public_keys:type_name -> pb.PublicKeys
-	70, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	71, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
 	24, // 6: pb.Block.body:type_name -> pb.AnyTx
 	11, // 7: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
 	11, // 8: pb.FreezeTx.base:type_name -> pb.BaseMessage
@@ -6193,7 +6288,7 @@ func file_pb_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_data_proto_rawDesc), len(file_pb_data_proto_rawDesc)),
 			NumEnums:      8,
-			NumMessages:   63,
+			NumMessages:   64,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
