@@ -54,6 +54,88 @@ func (db *SimpleDB) Scan(prefix string) (map[string][]byte, error) {
 	return result, nil
 }
 
+func (db *SimpleDB) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {
+	result := make(map[string]map[string][]byte)
+	for _, pair := range pairs {
+		result[pair] = make(map[string][]byte)
+	}
+	return result, nil
+}
+
+// ========== Frost 相关方法 ==========
+
+func (db *SimpleDB) GetFrostVaultTransition(key string) (*pb.VaultTransitionState, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var state pb.VaultTransitionState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func (db *SimpleDB) SetFrostVaultTransition(key string, state *pb.VaultTransitionState) error {
+	data, _ := json.Marshal(state)
+	db.data[key] = data
+	return nil
+}
+
+func (db *SimpleDB) GetFrostDkgCommitment(key string) (*pb.FrostVaultDkgCommitment, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var commitment pb.FrostVaultDkgCommitment
+	if err := json.Unmarshal(data, &commitment); err != nil {
+		return nil, err
+	}
+	return &commitment, nil
+}
+
+func (db *SimpleDB) SetFrostDkgCommitment(key string, commitment *pb.FrostVaultDkgCommitment) error {
+	data, _ := json.Marshal(commitment)
+	db.data[key] = data
+	return nil
+}
+
+func (db *SimpleDB) GetFrostDkgShare(key string) (*pb.FrostVaultDkgShare, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var share pb.FrostVaultDkgShare
+	if err := json.Unmarshal(data, &share); err != nil {
+		return nil, err
+	}
+	return &share, nil
+}
+
+func (db *SimpleDB) SetFrostDkgShare(key string, share *pb.FrostVaultDkgShare) error {
+	data, _ := json.Marshal(share)
+	db.data[key] = data
+	return nil
+}
+
+func (db *SimpleDB) GetFrostVaultState(key string) (*pb.FrostVaultState, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var state pb.FrostVaultState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func (db *SimpleDB) SetFrostVaultState(key string, state *pb.FrostVaultState) error {
+	data, _ := json.Marshal(state)
+	db.data[key] = data
+	return nil
+}
+
 // CustomHandler 自定义Handler示例
 type CustomHandler struct {
 	name string
