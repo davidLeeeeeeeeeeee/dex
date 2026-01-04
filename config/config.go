@@ -15,6 +15,7 @@ type Config struct {
 	Sender   SenderConfig
 	Auth     AuthConfig
 	Window   WindowConfig // 新增：Window配置
+	Frost    FrostConfig  // FROST门限签名配置
 }
 
 // ServerConfig HTTP/3服务器配置
@@ -217,12 +218,13 @@ func DefaultConfig() *Config {
 		Window: WindowConfig{
 			Enabled: true,
 			Stages: []WindowStage{
-				{Duration: 5 * time.Second, Probability: 0.05},   // Window 0: 0-5s, 5%概率
-				{Duration: 5 * time.Second, Probability: 0.15},   // Window 1: 5-10s, 15%概率
-				{Duration: 10 * time.Second, Probability: 0.30},  // Window 2: 10-20s, 30%概率
-				{Duration: 0, Probability: 0.50},                 // Window 3: 20s+, 50%概率（Duration=0表示无限）
+				{Duration: 5 * time.Second, Probability: 0.05},  // Window 0: 0-5s, 5%概率
+				{Duration: 5 * time.Second, Probability: 0.15},  // Window 1: 5-10s, 15%概率
+				{Duration: 10 * time.Second, Probability: 0.30}, // Window 2: 10-20s, 30%概率
+				{Duration: 0, Probability: 0.50},                // Window 3: 20s+, 50%概率（Duration=0表示无限）
 			},
 		},
+		Frost: DefaultFrostConfig(),
 	}
 }
 
