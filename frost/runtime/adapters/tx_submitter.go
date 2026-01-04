@@ -1,0 +1,135 @@
+// frost/runtime/adapters/tx_submitter.go
+// TxSubmitter 适配器实现（基于 txpool）
+package adapters
+
+import (
+	"crypto/sha256"
+	"dex/frost/runtime"
+	"encoding/hex"
+	"errors"
+	"sync"
+
+	"google.golang.org/protobuf/proto"
+)
+
+// ErrTxPoolFull txpool 已满
+var ErrTxPoolFull = errors.New("txpool is full")
+
+// TxPool 交易池接口（由外部实现）
+type TxPool interface {
+	// AddTx 添加交易到池中
+	AddTx(tx proto.Message) error
+	// Broadcast 广播交易
+	Broadcast(tx proto.Message) error
+}
+
+// TxPoolSubmitter 基于 TxPool 的 TxSubmitter 实现
+type TxPoolSubmitter struct {
+	pool TxPool
+}
+
+// NewTxPoolSubmitter 创建新的 TxPoolSubmitter
+func NewTxPoolSubmitter(pool TxPool) *TxPoolSubmitter {
+	return &TxPoolSubmitter{pool: pool}
+}
+
+// Submit 提交交易
+func (s *TxPoolSubmitter) Submit(tx any) (txID string, err error) {
+	msg, ok := tx.(proto.Message)
+	if !ok {
+		return "", errors.New("tx must be proto.Message")
+	}
+
+	// 计算 txID
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(data)
+	txID = hex.EncodeToString(hash[:])
+
+	// 添加到 pool 并广播
+	if err := s.pool.AddTx(msg); err != nil {
+		return "", err
+	}
+	if err := s.pool.Broadcast(msg); err != nil {
+		// 广播失败不影响 txID 返回，交易已在本地 pool
+		// 可以后续重试广播
+	}
+
+	return txID, nil
+}
+
+// Ensure TxPoolSubmitter implements runtime.TxSubmitter
+var _ runtime.TxSubmitter = (*TxPoolSubmitter)(nil)
+
+// FakeTxSubmitter 用于测试的 fake TxSubmitter
+type FakeTxSubmitter struct {
+	mu          sync.Mutex
+	submitted   []any
+	submitCount int
+	shouldFail  bool
+	failErr     error
+}
+
+// NewFakeTxSubmitter 创建新的 FakeTxSubmitter
+func NewFakeTxSubmitter() *FakeTxSubmitter {
+	return &FakeTxSubmitter{
+		submitted: make([]any, 0),
+	}
+}
+
+// Submit 提交交易（测试用）
+func (s *FakeTxSubmitter) Submit(tx any) (txID string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.shouldFail {
+		return "", s.failErr
+	}
+
+	s.submitted = append(s.submitted, tx)
+	s.submitCount++
+
+	// 生成 fake txID
+	txID = hex.EncodeToString(sha256.New().Sum([]byte{byte(s.submitCount)}))
+	return txID, nil
+}
+
+// GetSubmitted 获取所有已提交的交易
+func (s *FakeTxSubmitter) GetSubmitted() []any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]any, len(s.submitted))
+	copy(result, s.submitted)
+	return result
+}
+
+// SubmitCount 获取提交次数
+func (s *FakeTxSubmitter) SubmitCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.submitCount
+}
+
+// SetShouldFail 设置是否应该失败（测试用）
+func (s *FakeTxSubmitter) SetShouldFail(fail bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shouldFail = fail
+	s.failErr = err
+}
+
+// Reset 重置状态
+func (s *FakeTxSubmitter) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.submitted = make([]any, 0)
+	s.submitCount = 0
+	s.shouldFail = false
+	s.failErr = nil
+}
+
+// Ensure FakeTxSubmitter implements runtime.TxSubmitter
+var _ runtime.TxSubmitter = (*FakeTxSubmitter)(nil)
+
