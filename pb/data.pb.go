@@ -4684,6 +4684,7 @@ type FrostVaultState struct {
 	SignAlgo          SignAlgo               `protobuf:"varint,5,opt,name=sign_algo,json=signAlgo,proto3,enum=pb.SignAlgo" json:"sign_algo,omitempty"`             // 签名算法
 	Status            string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`                                                   // PENDING | KEY_READY | ACTIVE | DEPRECATED
 	ActiveSinceHeight uint64                 `protobuf:"varint,7,opt,name=active_since_height,json=activeSinceHeight,proto3" json:"active_since_height,omitempty"` // 激活高度
+	CommitteeMembers  []string               `protobuf:"bytes,8,rep,name=committee_members,json=committeeMembers,proto3" json:"committee_members,omitempty"`       // 委员会成员
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -4767,6 +4768,194 @@ func (x *FrostVaultState) GetActiveSinceHeight() uint64 {
 	return 0
 }
 
+func (x *FrostVaultState) GetCommitteeMembers() []string {
+	if x != nil {
+		return x.CommitteeMembers
+	}
+	return nil
+}
+
+// Vault 轮换状态（DKG 进度）
+type VaultTransitionState struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Chain               string                 `protobuf:"bytes,1,opt,name=chain,proto3" json:"chain,omitempty"`                                                          // 链标识
+	VaultId             uint32                 `protobuf:"varint,2,opt,name=vault_id,json=vaultId,proto3" json:"vault_id,omitempty"`                                      // Vault ID
+	EpochId             uint64                 `protobuf:"varint,3,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`                                      // epoch 版本
+	SignAlgo            SignAlgo               `protobuf:"varint,4,opt,name=sign_algo,json=signAlgo,proto3,enum=pb.SignAlgo" json:"sign_algo,omitempty"`                  // 签名算法
+	TriggerHeight       uint64                 `protobuf:"varint,5,opt,name=trigger_height,json=triggerHeight,proto3" json:"trigger_height,omitempty"`                    // 触发轮换的高度
+	OldCommitteeMembers []string               `protobuf:"bytes,6,rep,name=old_committee_members,json=oldCommitteeMembers,proto3" json:"old_committee_members,omitempty"` // 旧委员会成员
+	NewCommitteeMembers []string               `protobuf:"bytes,7,rep,name=new_committee_members,json=newCommitteeMembers,proto3" json:"new_committee_members,omitempty"` // 新委员会成员
+	DkgStatus           string                 `protobuf:"bytes,8,opt,name=dkg_status,json=dkgStatus,proto3" json:"dkg_status,omitempty"`                                 // NOT_STARTED | COMMITTING | SHARING | RESOLVING | KEY_READY | FAILED
+	DkgSessionId        string                 `protobuf:"bytes,9,opt,name=dkg_session_id,json=dkgSessionId,proto3" json:"dkg_session_id,omitempty"`                      // DKG 会话 ID
+	DkgThresholdT       uint32                 `protobuf:"varint,10,opt,name=dkg_threshold_t,json=dkgThresholdT,proto3" json:"dkg_threshold_t,omitempty"`                 // 门限 t
+	DkgN                uint32                 `protobuf:"varint,11,opt,name=dkg_n,json=dkgN,proto3" json:"dkg_n,omitempty"`                                              // 参与者数量 n
+	DkgCommitDeadline   uint64                 `protobuf:"varint,12,opt,name=dkg_commit_deadline,json=dkgCommitDeadline,proto3" json:"dkg_commit_deadline,omitempty"`     // commit 截止高度
+	DkgDisputeDeadline  uint64                 `protobuf:"varint,13,opt,name=dkg_dispute_deadline,json=dkgDisputeDeadline,proto3" json:"dkg_dispute_deadline,omitempty"`  // 裁决截止高度
+	OldGroupPubkey      []byte                 `protobuf:"bytes,14,opt,name=old_group_pubkey,json=oldGroupPubkey,proto3" json:"old_group_pubkey,omitempty"`               // 旧群公钥
+	NewGroupPubkey      []byte                 `protobuf:"bytes,15,opt,name=new_group_pubkey,json=newGroupPubkey,proto3" json:"new_group_pubkey,omitempty"`               // 新群公钥（KeyReady 后填入）
+	ValidationStatus    string                 `protobuf:"bytes,16,opt,name=validation_status,json=validationStatus,proto3" json:"validation_status,omitempty"`           // NOT_STARTED | SIGNING | PASSED | FAILED
+	ValidationMsgHash   []byte                 `protobuf:"bytes,17,opt,name=validation_msg_hash,json=validationMsgHash,proto3" json:"validation_msg_hash,omitempty"`      // 验证消息哈希
+	Lifecycle           string                 `protobuf:"bytes,18,opt,name=lifecycle,proto3" json:"lifecycle,omitempty"`                                                 // ACTIVE | DRAINING | RETIRED
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *VaultTransitionState) Reset() {
+	*x = VaultTransitionState{}
+	mi := &file_pb_data_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VaultTransitionState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VaultTransitionState) ProtoMessage() {}
+
+func (x *VaultTransitionState) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VaultTransitionState.ProtoReflect.Descriptor instead.
+func (*VaultTransitionState) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *VaultTransitionState) GetChain() string {
+	if x != nil {
+		return x.Chain
+	}
+	return ""
+}
+
+func (x *VaultTransitionState) GetVaultId() uint32 {
+	if x != nil {
+		return x.VaultId
+	}
+	return 0
+}
+
+func (x *VaultTransitionState) GetEpochId() uint64 {
+	if x != nil {
+		return x.EpochId
+	}
+	return 0
+}
+
+func (x *VaultTransitionState) GetSignAlgo() SignAlgo {
+	if x != nil {
+		return x.SignAlgo
+	}
+	return SignAlgo_SIGN_ALGO_UNSPECIFIED
+}
+
+func (x *VaultTransitionState) GetTriggerHeight() uint64 {
+	if x != nil {
+		return x.TriggerHeight
+	}
+	return 0
+}
+
+func (x *VaultTransitionState) GetOldCommitteeMembers() []string {
+	if x != nil {
+		return x.OldCommitteeMembers
+	}
+	return nil
+}
+
+func (x *VaultTransitionState) GetNewCommitteeMembers() []string {
+	if x != nil {
+		return x.NewCommitteeMembers
+	}
+	return nil
+}
+
+func (x *VaultTransitionState) GetDkgStatus() string {
+	if x != nil {
+		return x.DkgStatus
+	}
+	return ""
+}
+
+func (x *VaultTransitionState) GetDkgSessionId() string {
+	if x != nil {
+		return x.DkgSessionId
+	}
+	return ""
+}
+
+func (x *VaultTransitionState) GetDkgThresholdT() uint32 {
+	if x != nil {
+		return x.DkgThresholdT
+	}
+	return 0
+}
+
+func (x *VaultTransitionState) GetDkgN() uint32 {
+	if x != nil {
+		return x.DkgN
+	}
+	return 0
+}
+
+func (x *VaultTransitionState) GetDkgCommitDeadline() uint64 {
+	if x != nil {
+		return x.DkgCommitDeadline
+	}
+	return 0
+}
+
+func (x *VaultTransitionState) GetDkgDisputeDeadline() uint64 {
+	if x != nil {
+		return x.DkgDisputeDeadline
+	}
+	return 0
+}
+
+func (x *VaultTransitionState) GetOldGroupPubkey() []byte {
+	if x != nil {
+		return x.OldGroupPubkey
+	}
+	return nil
+}
+
+func (x *VaultTransitionState) GetNewGroupPubkey() []byte {
+	if x != nil {
+		return x.NewGroupPubkey
+	}
+	return nil
+}
+
+func (x *VaultTransitionState) GetValidationStatus() string {
+	if x != nil {
+		return x.ValidationStatus
+	}
+	return ""
+}
+
+func (x *VaultTransitionState) GetValidationMsgHash() []byte {
+	if x != nil {
+		return x.ValidationMsgHash
+	}
+	return nil
+}
+
+func (x *VaultTransitionState) GetLifecycle() string {
+	if x != nil {
+		return x.Lifecycle
+	}
+	return ""
+}
+
 // FrostEnvelope Frost P2P 消息信封
 type FrostEnvelope struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -4783,7 +4972,7 @@ type FrostEnvelope struct {
 
 func (x *FrostEnvelope) Reset() {
 	*x = FrostEnvelope{}
-	mi := &file_pb_data_proto_msgTypes[53]
+	mi := &file_pb_data_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4795,7 +4984,7 @@ func (x *FrostEnvelope) String() string {
 func (*FrostEnvelope) ProtoMessage() {}
 
 func (x *FrostEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_data_proto_msgTypes[53]
+	mi := &file_pb_data_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4808,7 +4997,7 @@ func (x *FrostEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostEnvelope.ProtoReflect.Descriptor instead.
 func (*FrostEnvelope) Descriptor() ([]byte, []int) {
-	return file_pb_data_proto_rawDescGZIP(), []int{53}
+	return file_pb_data_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *FrostEnvelope) GetFrom() string {
@@ -4856,6 +5045,370 @@ func (x *FrostEnvelope) GetJobId() string {
 func (x *FrostEnvelope) GetSeq() uint64 {
 	if x != nil {
 		return x.Seq
+	}
+	return 0
+}
+
+// FrostVaultDkgCommitTx DKG 承诺点上链
+type FrostVaultDkgCommitTx struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Chain            string                 `protobuf:"bytes,1,opt,name=chain,proto3" json:"chain,omitempty"`                                               // 链标识
+	VaultId          uint32                 `protobuf:"varint,2,opt,name=vault_id,json=vaultId,proto3" json:"vault_id,omitempty"`                           // Vault ID
+	EpochId          uint64                 `protobuf:"varint,3,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`                           // epoch 版本
+	SignAlgo         SignAlgo               `protobuf:"varint,4,opt,name=sign_algo,json=signAlgo,proto3,enum=pb.SignAlgo" json:"sign_algo,omitempty"`       // 签名算法（决定曲线）
+	CommitmentPoints [][]byte               `protobuf:"bytes,5,rep,name=commitment_points,json=commitmentPoints,proto3" json:"commitment_points,omitempty"` // 承诺点集合（Feldman VSS A_ik）
+	AI0              []byte                 `protobuf:"bytes,6,opt,name=a_i0,json=aI0,proto3" json:"a_i0,omitempty"`                                        // 常数项承诺点（用于计算 group_pubkey）
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *FrostVaultDkgCommitTx) Reset() {
+	*x = FrostVaultDkgCommitTx{}
+	mi := &file_pb_data_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostVaultDkgCommitTx) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostVaultDkgCommitTx) ProtoMessage() {}
+
+func (x *FrostVaultDkgCommitTx) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostVaultDkgCommitTx.ProtoReflect.Descriptor instead.
+func (*FrostVaultDkgCommitTx) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *FrostVaultDkgCommitTx) GetChain() string {
+	if x != nil {
+		return x.Chain
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgCommitTx) GetVaultId() uint32 {
+	if x != nil {
+		return x.VaultId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgCommitTx) GetEpochId() uint64 {
+	if x != nil {
+		return x.EpochId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgCommitTx) GetSignAlgo() SignAlgo {
+	if x != nil {
+		return x.SignAlgo
+	}
+	return SignAlgo_SIGN_ALGO_UNSPECIFIED
+}
+
+func (x *FrostVaultDkgCommitTx) GetCommitmentPoints() [][]byte {
+	if x != nil {
+		return x.CommitmentPoints
+	}
+	return nil
+}
+
+func (x *FrostVaultDkgCommitTx) GetAI0() []byte {
+	if x != nil {
+		return x.AI0
+	}
+	return nil
+}
+
+// FrostVaultDkgShareTx 加密 share 上链
+type FrostVaultDkgShareTx struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Chain         string                 `protobuf:"bytes,1,opt,name=chain,proto3" json:"chain,omitempty"`                             // 链标识
+	VaultId       uint32                 `protobuf:"varint,2,opt,name=vault_id,json=vaultId,proto3" json:"vault_id,omitempty"`         // Vault ID
+	EpochId       uint64                 `protobuf:"varint,3,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`         // epoch 版本
+	DealerId      string                 `protobuf:"bytes,4,opt,name=dealer_id,json=dealerId,proto3" json:"dealer_id,omitempty"`       // share 提供者地址
+	ReceiverId    string                 `protobuf:"bytes,5,opt,name=receiver_id,json=receiverId,proto3" json:"receiver_id,omitempty"` // share 接收者地址
+	Ciphertext    []byte                 `protobuf:"bytes,6,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`                   // 加密的 share
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostVaultDkgShareTx) Reset() {
+	*x = FrostVaultDkgShareTx{}
+	mi := &file_pb_data_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostVaultDkgShareTx) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostVaultDkgShareTx) ProtoMessage() {}
+
+func (x *FrostVaultDkgShareTx) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostVaultDkgShareTx.ProtoReflect.Descriptor instead.
+func (*FrostVaultDkgShareTx) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *FrostVaultDkgShareTx) GetChain() string {
+	if x != nil {
+		return x.Chain
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgShareTx) GetVaultId() uint32 {
+	if x != nil {
+		return x.VaultId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgShareTx) GetEpochId() uint64 {
+	if x != nil {
+		return x.EpochId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgShareTx) GetDealerId() string {
+	if x != nil {
+		return x.DealerId
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgShareTx) GetReceiverId() string {
+	if x != nil {
+		return x.ReceiverId
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgShareTx) GetCiphertext() []byte {
+	if x != nil {
+		return x.Ciphertext
+	}
+	return nil
+}
+
+// FrostVaultDkgCommitment DKG 承诺存储
+type FrostVaultDkgCommitment struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Chain            string                 `protobuf:"bytes,1,opt,name=chain,proto3" json:"chain,omitempty"`
+	VaultId          uint32                 `protobuf:"varint,2,opt,name=vault_id,json=vaultId,proto3" json:"vault_id,omitempty"`
+	EpochId          uint64                 `protobuf:"varint,3,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	MinerAddress     string                 `protobuf:"bytes,4,opt,name=miner_address,json=minerAddress,proto3" json:"miner_address,omitempty"` // 提交者地址
+	SignAlgo         SignAlgo               `protobuf:"varint,5,opt,name=sign_algo,json=signAlgo,proto3,enum=pb.SignAlgo" json:"sign_algo,omitempty"`
+	CommitmentPoints [][]byte               `protobuf:"bytes,6,rep,name=commitment_points,json=commitmentPoints,proto3" json:"commitment_points,omitempty"`
+	AI0              []byte                 `protobuf:"bytes,7,opt,name=a_i0,json=aI0,proto3" json:"a_i0,omitempty"`
+	CommitHeight     uint64                 `protobuf:"varint,8,opt,name=commit_height,json=commitHeight,proto3" json:"commit_height,omitempty"` // 提交高度
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *FrostVaultDkgCommitment) Reset() {
+	*x = FrostVaultDkgCommitment{}
+	mi := &file_pb_data_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostVaultDkgCommitment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostVaultDkgCommitment) ProtoMessage() {}
+
+func (x *FrostVaultDkgCommitment) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostVaultDkgCommitment.ProtoReflect.Descriptor instead.
+func (*FrostVaultDkgCommitment) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *FrostVaultDkgCommitment) GetChain() string {
+	if x != nil {
+		return x.Chain
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgCommitment) GetVaultId() uint32 {
+	if x != nil {
+		return x.VaultId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgCommitment) GetEpochId() uint64 {
+	if x != nil {
+		return x.EpochId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgCommitment) GetMinerAddress() string {
+	if x != nil {
+		return x.MinerAddress
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgCommitment) GetSignAlgo() SignAlgo {
+	if x != nil {
+		return x.SignAlgo
+	}
+	return SignAlgo_SIGN_ALGO_UNSPECIFIED
+}
+
+func (x *FrostVaultDkgCommitment) GetCommitmentPoints() [][]byte {
+	if x != nil {
+		return x.CommitmentPoints
+	}
+	return nil
+}
+
+func (x *FrostVaultDkgCommitment) GetAI0() []byte {
+	if x != nil {
+		return x.AI0
+	}
+	return nil
+}
+
+func (x *FrostVaultDkgCommitment) GetCommitHeight() uint64 {
+	if x != nil {
+		return x.CommitHeight
+	}
+	return 0
+}
+
+// FrostVaultDkgShare DKG share 存储
+type FrostVaultDkgShare struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Chain         string                 `protobuf:"bytes,1,opt,name=chain,proto3" json:"chain,omitempty"`
+	VaultId       uint32                 `protobuf:"varint,2,opt,name=vault_id,json=vaultId,proto3" json:"vault_id,omitempty"`
+	EpochId       uint64                 `protobuf:"varint,3,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`
+	DealerId      string                 `protobuf:"bytes,4,opt,name=dealer_id,json=dealerId,proto3" json:"dealer_id,omitempty"`
+	ReceiverId    string                 `protobuf:"bytes,5,opt,name=receiver_id,json=receiverId,proto3" json:"receiver_id,omitempty"`
+	Ciphertext    []byte                 `protobuf:"bytes,6,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	ShareHeight   uint64                 `protobuf:"varint,7,opt,name=share_height,json=shareHeight,proto3" json:"share_height,omitempty"` // 提交高度
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostVaultDkgShare) Reset() {
+	*x = FrostVaultDkgShare{}
+	mi := &file_pb_data_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostVaultDkgShare) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostVaultDkgShare) ProtoMessage() {}
+
+func (x *FrostVaultDkgShare) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostVaultDkgShare.ProtoReflect.Descriptor instead.
+func (*FrostVaultDkgShare) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *FrostVaultDkgShare) GetChain() string {
+	if x != nil {
+		return x.Chain
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgShare) GetVaultId() uint32 {
+	if x != nil {
+		return x.VaultId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgShare) GetEpochId() uint64 {
+	if x != nil {
+		return x.EpochId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgShare) GetDealerId() string {
+	if x != nil {
+		return x.DealerId
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgShare) GetReceiverId() string {
+	if x != nil {
+		return x.ReceiverId
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgShare) GetCiphertext() []byte {
+	if x != nil {
+		return x.Ciphertext
+	}
+	return nil
+}
+
+func (x *FrostVaultDkgShare) GetShareHeight() uint64 {
+	if x != nil {
+		return x.ShareHeight
 	}
 	return 0
 }
@@ -5238,7 +5791,7 @@ const file_pb_data_proto_rawDesc = "" +
 	"\x03idx\x18\x02 \x01(\x04R\x03idx\x120\n" +
 	"\x14signed_package_bytes\x18\x03 \x01(\fR\x12signedPackageBytes\x12#\n" +
 	"\rsubmit_height\x18\x04 \x01(\x04R\fsubmitHeight\x12\x1c\n" +
-	"\tsubmitter\x18\x05 \x01(\tR\tsubmitter\"\xf5\x01\n" +
+	"\tsubmitter\x18\x05 \x01(\tR\tsubmitter\"\xa2\x02\n" +
 	"\x0fFrostVaultState\x12\x19\n" +
 	"\bvault_id\x18\x01 \x01(\rR\avaultId\x12\x14\n" +
 	"\x05chain\x18\x02 \x01(\tR\x05chain\x12\x1b\n" +
@@ -5246,7 +5799,29 @@ const file_pb_data_proto_rawDesc = "" +
 	"\fgroup_pubkey\x18\x04 \x01(\fR\vgroupPubkey\x12)\n" +
 	"\tsign_algo\x18\x05 \x01(\x0e2\f.pb.SignAlgoR\bsignAlgo\x12\x16\n" +
 	"\x06status\x18\x06 \x01(\tR\x06status\x12.\n" +
-	"\x13active_since_height\x18\a \x01(\x04R\x11activeSinceHeight\"\xb3\x01\n" +
+	"\x13active_since_height\x18\a \x01(\x04R\x11activeSinceHeight\x12+\n" +
+	"\x11committee_members\x18\b \x03(\tR\x10committeeMembers\"\xcf\x05\n" +
+	"\x14VaultTransitionState\x12\x14\n" +
+	"\x05chain\x18\x01 \x01(\tR\x05chain\x12\x19\n" +
+	"\bvault_id\x18\x02 \x01(\rR\avaultId\x12\x19\n" +
+	"\bepoch_id\x18\x03 \x01(\x04R\aepochId\x12)\n" +
+	"\tsign_algo\x18\x04 \x01(\x0e2\f.pb.SignAlgoR\bsignAlgo\x12%\n" +
+	"\x0etrigger_height\x18\x05 \x01(\x04R\rtriggerHeight\x122\n" +
+	"\x15old_committee_members\x18\x06 \x03(\tR\x13oldCommitteeMembers\x122\n" +
+	"\x15new_committee_members\x18\a \x03(\tR\x13newCommitteeMembers\x12\x1d\n" +
+	"\n" +
+	"dkg_status\x18\b \x01(\tR\tdkgStatus\x12$\n" +
+	"\x0edkg_session_id\x18\t \x01(\tR\fdkgSessionId\x12&\n" +
+	"\x0fdkg_threshold_t\x18\n" +
+	" \x01(\rR\rdkgThresholdT\x12\x13\n" +
+	"\x05dkg_n\x18\v \x01(\rR\x04dkgN\x12.\n" +
+	"\x13dkg_commit_deadline\x18\f \x01(\x04R\x11dkgCommitDeadline\x120\n" +
+	"\x14dkg_dispute_deadline\x18\r \x01(\x04R\x12dkgDisputeDeadline\x12(\n" +
+	"\x10old_group_pubkey\x18\x0e \x01(\fR\x0eoldGroupPubkey\x12(\n" +
+	"\x10new_group_pubkey\x18\x0f \x01(\fR\x0enewGroupPubkey\x12+\n" +
+	"\x11validation_status\x18\x10 \x01(\tR\x10validationStatus\x12.\n" +
+	"\x13validation_msg_hash\x18\x11 \x01(\fR\x11validationMsgHash\x12\x1c\n" +
+	"\tlifecycle\x18\x12 \x01(\tR\tlifecycle\"\xb3\x01\n" +
 	"\rFrostEnvelope\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\tR\x04from\x12\x0e\n" +
 	"\x02to\x18\x02 \x01(\tR\x02to\x12)\n" +
@@ -5254,7 +5829,44 @@ const file_pb_data_proto_rawDesc = "" +
 	"\apayload\x18\x04 \x01(\fR\apayload\x12\x10\n" +
 	"\x03sig\x18\x05 \x01(\fR\x03sig\x12\x15\n" +
 	"\x06job_id\x18\x06 \x01(\tR\x05jobId\x12\x10\n" +
-	"\x03seq\x18\a \x01(\x04R\x03seq*\xda\x01\n" +
+	"\x03seq\x18\a \x01(\x04R\x03seq\"\xce\x01\n" +
+	"\x15FrostVaultDkgCommitTx\x12\x14\n" +
+	"\x05chain\x18\x01 \x01(\tR\x05chain\x12\x19\n" +
+	"\bvault_id\x18\x02 \x01(\rR\avaultId\x12\x19\n" +
+	"\bepoch_id\x18\x03 \x01(\x04R\aepochId\x12)\n" +
+	"\tsign_algo\x18\x04 \x01(\x0e2\f.pb.SignAlgoR\bsignAlgo\x12+\n" +
+	"\x11commitment_points\x18\x05 \x03(\fR\x10commitmentPoints\x12\x11\n" +
+	"\x04a_i0\x18\x06 \x01(\fR\x03aI0\"\xc0\x01\n" +
+	"\x14FrostVaultDkgShareTx\x12\x14\n" +
+	"\x05chain\x18\x01 \x01(\tR\x05chain\x12\x19\n" +
+	"\bvault_id\x18\x02 \x01(\rR\avaultId\x12\x19\n" +
+	"\bepoch_id\x18\x03 \x01(\x04R\aepochId\x12\x1b\n" +
+	"\tdealer_id\x18\x04 \x01(\tR\bdealerId\x12\x1f\n" +
+	"\vreceiver_id\x18\x05 \x01(\tR\n" +
+	"receiverId\x12\x1e\n" +
+	"\n" +
+	"ciphertext\x18\x06 \x01(\fR\n" +
+	"ciphertext\"\x9a\x02\n" +
+	"\x17FrostVaultDkgCommitment\x12\x14\n" +
+	"\x05chain\x18\x01 \x01(\tR\x05chain\x12\x19\n" +
+	"\bvault_id\x18\x02 \x01(\rR\avaultId\x12\x19\n" +
+	"\bepoch_id\x18\x03 \x01(\x04R\aepochId\x12#\n" +
+	"\rminer_address\x18\x04 \x01(\tR\fminerAddress\x12)\n" +
+	"\tsign_algo\x18\x05 \x01(\x0e2\f.pb.SignAlgoR\bsignAlgo\x12+\n" +
+	"\x11commitment_points\x18\x06 \x03(\fR\x10commitmentPoints\x12\x11\n" +
+	"\x04a_i0\x18\a \x01(\fR\x03aI0\x12#\n" +
+	"\rcommit_height\x18\b \x01(\x04R\fcommitHeight\"\xe1\x01\n" +
+	"\x12FrostVaultDkgShare\x12\x14\n" +
+	"\x05chain\x18\x01 \x01(\tR\x05chain\x12\x19\n" +
+	"\bvault_id\x18\x02 \x01(\rR\avaultId\x12\x19\n" +
+	"\bepoch_id\x18\x03 \x01(\x04R\aepochId\x12\x1b\n" +
+	"\tdealer_id\x18\x04 \x01(\tR\bdealerId\x12\x1f\n" +
+	"\vreceiver_id\x18\x05 \x01(\tR\n" +
+	"receiverId\x12\x1e\n" +
+	"\n" +
+	"ciphertext\x18\x06 \x01(\fR\n" +
+	"ciphertext\x12!\n" +
+	"\fshare_height\x18\a \x01(\x04R\vshareHeight*\xda\x01\n" +
 	"\bSignAlgo\x12\x19\n" +
 	"\x15SIGN_ALGO_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14SIGN_ALGO_ECDSA_P256\x10\x01\x12\x1a\n" +
@@ -5319,7 +5931,7 @@ func file_pb_data_proto_rawDescGZIP() []byte {
 }
 
 var file_pb_data_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
+var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
 var file_pb_data_proto_goTypes = []any{
 	(SignAlgo)(0),                    // 0: pb.SignAlgo
 	(OrderOp)(0),                     // 1: pb.OrderOp
@@ -5382,18 +5994,23 @@ var file_pb_data_proto_goTypes = []any{
 	(*FrostWithdrawState)(nil),       // 58: pb.FrostWithdrawState
 	(*FrostSignedPackage)(nil),       // 59: pb.FrostSignedPackage
 	(*FrostVaultState)(nil),          // 60: pb.FrostVaultState
-	(*FrostEnvelope)(nil),            // 61: pb.FrostEnvelope
-	nil,                              // 62: pb.TokenRegistry.TokensEntry
-	nil,                              // 63: pb.PublicKeys.KeysEntry
-	nil,                              // 64: pb.Account.BalancesEntry
+	(*VaultTransitionState)(nil),     // 61: pb.VaultTransitionState
+	(*FrostEnvelope)(nil),            // 62: pb.FrostEnvelope
+	(*FrostVaultDkgCommitTx)(nil),    // 63: pb.FrostVaultDkgCommitTx
+	(*FrostVaultDkgShareTx)(nil),     // 64: pb.FrostVaultDkgShareTx
+	(*FrostVaultDkgCommitment)(nil),  // 65: pb.FrostVaultDkgCommitment
+	(*FrostVaultDkgShare)(nil),       // 66: pb.FrostVaultDkgShare
+	nil,                              // 67: pb.TokenRegistry.TokensEntry
+	nil,                              // 68: pb.PublicKeys.KeysEntry
+	nil,                              // 69: pb.Account.BalancesEntry
 }
 var file_pb_data_proto_depIdxs = []int32{
-	62, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
-	63, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
+	67, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
+	68, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
 	10, // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
 	2,  // 3: pb.BaseMessage.status:type_name -> pb.Status
 	10, // 4: pb.Account.public_keys:type_name -> pb.PublicKeys
-	64, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	69, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
 	24, // 6: pb.Block.body:type_name -> pb.AnyTx
 	11, // 7: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
 	11, // 8: pb.FreezeTx.base:type_name -> pb.BaseMessage
@@ -5443,14 +6060,17 @@ var file_pb_data_proto_depIdxs = []int32{
 	11, // 52: pb.FrostWithdrawSignedTx.base:type_name -> pb.BaseMessage
 	57, // 53: pb.FrostWithdrawSignedTx.utxo_inputs:type_name -> pb.UtxoInput
 	0,  // 54: pb.FrostVaultState.sign_algo:type_name -> pb.SignAlgo
-	7,  // 55: pb.FrostEnvelope.kind:type_name -> pb.FrostEnvelopeKind
-	8,  // 56: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
-	13, // 57: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
-	58, // [58:58] is the sub-list for method output_type
-	58, // [58:58] is the sub-list for method input_type
-	58, // [58:58] is the sub-list for extension type_name
-	58, // [58:58] is the sub-list for extension extendee
-	0,  // [0:58] is the sub-list for field type_name
+	0,  // 55: pb.VaultTransitionState.sign_algo:type_name -> pb.SignAlgo
+	7,  // 56: pb.FrostEnvelope.kind:type_name -> pb.FrostEnvelopeKind
+	0,  // 57: pb.FrostVaultDkgCommitTx.sign_algo:type_name -> pb.SignAlgo
+	0,  // 58: pb.FrostVaultDkgCommitment.sign_algo:type_name -> pb.SignAlgo
+	8,  // 59: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
+	13, // 60: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
+	61, // [61:61] is the sub-list for method output_type
+	61, // [61:61] is the sub-list for method input_type
+	61, // [61:61] is the sub-list for extension type_name
+	61, // [61:61] is the sub-list for extension extendee
+	0,  // [0:61] is the sub-list for field type_name
 }
 
 func init() { file_pb_data_proto_init() }
@@ -5480,7 +6100,7 @@ func file_pb_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_data_proto_rawDesc), len(file_pb_data_proto_rawDesc)),
 			NumEnums:      8,
-			NumMessages:   57,
+			NumMessages:   62,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

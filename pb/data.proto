@@ -559,6 +559,29 @@ message FrostVaultState {
   SignAlgo sign_algo = 5; // 签名算法
   string status = 6; // PENDING | KEY_READY | ACTIVE | DEPRECATED
   uint64 active_since_height = 7; // 激活高度
+  repeated string committee_members = 8; // 委员会成员
+}
+
+// Vault 轮换状态（DKG 进度）
+message VaultTransitionState {
+  string chain = 1; // 链标识
+  uint32 vault_id = 2; // Vault ID
+  uint64 epoch_id = 3; // epoch 版本
+  SignAlgo sign_algo = 4; // 签名算法
+  uint64 trigger_height = 5; // 触发轮换的高度
+  repeated string old_committee_members = 6; // 旧委员会成员
+  repeated string new_committee_members = 7; // 新委员会成员
+  string dkg_status = 8; // NOT_STARTED | COMMITTING | SHARING | RESOLVING | KEY_READY | FAILED
+  string dkg_session_id = 9; // DKG 会话 ID
+  uint32 dkg_threshold_t = 10; // 门限 t
+  uint32 dkg_n = 11; // 参与者数量 n
+  uint64 dkg_commit_deadline = 12; // commit 截止高度
+  uint64 dkg_dispute_deadline = 13; // 裁决截止高度
+  bytes old_group_pubkey = 14; // 旧群公钥
+  bytes new_group_pubkey = 15; // 新群公钥（KeyReady 后填入）
+  string validation_status = 16; // NOT_STARTED | SIGNING | PASSED | FAILED
+  bytes validation_msg_hash = 17; // 验证消息哈希
+  string lifecycle = 18; // ACTIVE | DRAINING | RETIRED
 }
 
 // ========== Frost P2P 消息 ==========
@@ -583,4 +606,49 @@ enum FrostEnvelopeKind {
   FROST_ENVELOPE_KIND_SIGN_SHARE = 4; // 签名份额
   FROST_ENVELOPE_KIND_ROAST_REQUEST = 5; // ROAST 签名请求（聚合者发起）
   FROST_ENVELOPE_KIND_ROAST_RESPONSE = 6; // ROAST 响应（参与者回复）
+}
+
+// ========== DKG 链上交易 ==========
+
+// FrostVaultDkgCommitTx DKG 承诺点上链
+message FrostVaultDkgCommitTx {
+  string chain = 1; // 链标识
+  uint32 vault_id = 2; // Vault ID
+  uint64 epoch_id = 3; // epoch 版本
+  SignAlgo sign_algo = 4; // 签名算法（决定曲线）
+  repeated bytes commitment_points = 5; // 承诺点集合（Feldman VSS A_ik）
+  bytes a_i0 = 6; // 常数项承诺点（用于计算 group_pubkey）
+}
+
+// FrostVaultDkgShareTx 加密 share 上链
+message FrostVaultDkgShareTx {
+  string chain = 1; // 链标识
+  uint32 vault_id = 2; // Vault ID
+  uint64 epoch_id = 3; // epoch 版本
+  string dealer_id = 4; // share 提供者地址
+  string receiver_id = 5; // share 接收者地址
+  bytes ciphertext = 6; // 加密的 share
+}
+
+// FrostVaultDkgCommitment DKG 承诺存储
+message FrostVaultDkgCommitment {
+  string chain = 1;
+  uint32 vault_id = 2;
+  uint64 epoch_id = 3;
+  string miner_address = 4; // 提交者地址
+  SignAlgo sign_algo = 5;
+  repeated bytes commitment_points = 6;
+  bytes a_i0 = 7;
+  uint64 commit_height = 8; // 提交高度
+}
+
+// FrostVaultDkgShare DKG share 存储
+message FrostVaultDkgShare {
+  string chain = 1;
+  uint32 vault_id = 2;
+  uint64 epoch_id = 3;
+  string dealer_id = 4;
+  string receiver_id = 5;
+  bytes ciphertext = 6;
+  uint64 share_height = 7; // 提交高度
 }

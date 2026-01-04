@@ -50,6 +50,20 @@ type DBManager interface {
 	Scan(prefix string) (map[string][]byte, error)
 	// 一次性扫描多个交易对的订单索引
 	ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error)
+
+	// ========== Frost 相关方法 ==========
+	// Vault 轮换状态
+	GetFrostVaultTransition(key string) (*pb.VaultTransitionState, error)
+	SetFrostVaultTransition(key string, state *pb.VaultTransitionState) error
+	// DKG 承诺
+	GetFrostDkgCommitment(key string) (*pb.FrostVaultDkgCommitment, error)
+	SetFrostDkgCommitment(key string, commitment *pb.FrostVaultDkgCommitment) error
+	// DKG share
+	GetFrostDkgShare(key string) (*pb.FrostVaultDkgShare, error)
+	SetFrostDkgShare(key string, share *pb.FrostVaultDkgShare) error
+	// Vault 状态
+	GetFrostVaultState(key string) (*pb.FrostVaultState, error)
+	SetFrostVaultState(key string, state *pb.FrostVaultState) error
 }
 
 // （读穿函数）
