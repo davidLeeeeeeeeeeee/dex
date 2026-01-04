@@ -6,12 +6,16 @@ import (
 	"dex/sender"
 	"dex/stats"
 	"dex/txpool"
+	"dex/types"
 	"net/http"
 	"strings"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
 )
+
+// FrostMsgHandler Frost 消息处理回调
+type FrostMsgHandler func(msg types.Message) error
 
 // HandlerManager 管理所有HTTP处理器及其依赖
 type HandlerManager struct {
@@ -27,6 +31,8 @@ type HandlerManager struct {
 	seenBlocksCache *lru.Cache // 用于记录已处理的区块ID
 	// 统计相关字段
 	Stats *stats.Stats
+	// Frost 消息处理器
+	frostMsgHandler FrostMsgHandler
 }
 
 // NewHandlerManager 创建新的处理器管理器
@@ -57,6 +63,11 @@ type ChallengeInfo struct {
 	CreatedTime time.Time
 }
 
+// SetFrostMsgHandler 设置 Frost 消息处理器
+func (hm *HandlerManager) SetFrostMsgHandler(handler FrostMsgHandler) {
+	hm.frostMsgHandler = handler
+}
+
 // RegisterRoutes 注册所有路由
 func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	// Snowman共识相关
@@ -74,7 +85,8 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/nodes", hm.HandleNodes)
 	mux.HandleFunc("/getblockbyid", hm.HandleGet)
 	mux.HandleFunc("/put", hm.HandlePut)
-
+	// Frost P2P
+	mux.HandleFunc("/frostmsg", hm.HandleFrostMsg)
 }
 
 // 添加身份验证方法

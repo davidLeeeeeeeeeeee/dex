@@ -426,6 +426,68 @@ func (ChallengeStatus) EnumDescriptor() ([]byte, []int) {
 	return file_pb_data_proto_rawDescGZIP(), []int{6}
 }
 
+// FrostEnvelopeKind 消息类型
+type FrostEnvelopeKind int32
+
+const (
+	FrostEnvelopeKind_FROST_ENVELOPE_KIND_UNSPECIFIED    FrostEnvelopeKind = 0
+	FrostEnvelopeKind_FROST_ENVELOPE_KIND_DKG_ROUND1     FrostEnvelopeKind = 1 // DKG 第 1 轮
+	FrostEnvelopeKind_FROST_ENVELOPE_KIND_DKG_ROUND2     FrostEnvelopeKind = 2 // DKG 第 2 轮
+	FrostEnvelopeKind_FROST_ENVELOPE_KIND_SIGN_NONCE     FrostEnvelopeKind = 3 // 签名 nonce 承诺
+	FrostEnvelopeKind_FROST_ENVELOPE_KIND_SIGN_SHARE     FrostEnvelopeKind = 4 // 签名份额
+	FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_REQUEST  FrostEnvelopeKind = 5 // ROAST 签名请求（聚合者发起）
+	FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_RESPONSE FrostEnvelopeKind = 6 // ROAST 响应（参与者回复）
+)
+
+// Enum value maps for FrostEnvelopeKind.
+var (
+	FrostEnvelopeKind_name = map[int32]string{
+		0: "FROST_ENVELOPE_KIND_UNSPECIFIED",
+		1: "FROST_ENVELOPE_KIND_DKG_ROUND1",
+		2: "FROST_ENVELOPE_KIND_DKG_ROUND2",
+		3: "FROST_ENVELOPE_KIND_SIGN_NONCE",
+		4: "FROST_ENVELOPE_KIND_SIGN_SHARE",
+		5: "FROST_ENVELOPE_KIND_ROAST_REQUEST",
+		6: "FROST_ENVELOPE_KIND_ROAST_RESPONSE",
+	}
+	FrostEnvelopeKind_value = map[string]int32{
+		"FROST_ENVELOPE_KIND_UNSPECIFIED":    0,
+		"FROST_ENVELOPE_KIND_DKG_ROUND1":     1,
+		"FROST_ENVELOPE_KIND_DKG_ROUND2":     2,
+		"FROST_ENVELOPE_KIND_SIGN_NONCE":     3,
+		"FROST_ENVELOPE_KIND_SIGN_SHARE":     4,
+		"FROST_ENVELOPE_KIND_ROAST_REQUEST":  5,
+		"FROST_ENVELOPE_KIND_ROAST_RESPONSE": 6,
+	}
+)
+
+func (x FrostEnvelopeKind) Enum() *FrostEnvelopeKind {
+	p := new(FrostEnvelopeKind)
+	*p = x
+	return p
+}
+
+func (x FrostEnvelopeKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FrostEnvelopeKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_data_proto_enumTypes[7].Descriptor()
+}
+
+func (FrostEnvelopeKind) Type() protoreflect.EnumType {
+	return &file_pb_data_proto_enumTypes[7]
+}
+
+func (x FrostEnvelopeKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FrostEnvelopeKind.Descriptor instead.
+func (FrostEnvelopeKind) EnumDescriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{7}
+}
+
 // --------------------- Token & Registry ---------------------
 type Token struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -4705,6 +4767,99 @@ func (x *FrostVaultState) GetActiveSinceHeight() uint64 {
 	return 0
 }
 
+// FrostEnvelope Frost P2P 消息信封
+type FrostEnvelope struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	From          string                 `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty"`                            // 发送方地址
+	To            string                 `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`                                // 接收方地址（单播）或 "" （广播）
+	Kind          FrostEnvelopeKind      `protobuf:"varint,3,opt,name=kind,proto3,enum=pb.FrostEnvelopeKind" json:"kind,omitempty"` // 消息类型
+	Payload       []byte                 `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`                      // 载荷（根据 kind 不同而不同）
+	Sig           []byte                 `protobuf:"bytes,5,opt,name=sig,proto3" json:"sig,omitempty"`                              // 对 (from || to || kind || payload) 的签名
+	JobId         string                 `protobuf:"bytes,6,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`             // 关联的 job_id（可选）
+	Seq           uint64                 `protobuf:"varint,7,opt,name=seq,proto3" json:"seq,omitempty"`                             // 消息序号（用于去重和排序）
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostEnvelope) Reset() {
+	*x = FrostEnvelope{}
+	mi := &file_pb_data_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostEnvelope) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostEnvelope) ProtoMessage() {}
+
+func (x *FrostEnvelope) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostEnvelope.ProtoReflect.Descriptor instead.
+func (*FrostEnvelope) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *FrostEnvelope) GetFrom() string {
+	if x != nil {
+		return x.From
+	}
+	return ""
+}
+
+func (x *FrostEnvelope) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+func (x *FrostEnvelope) GetKind() FrostEnvelopeKind {
+	if x != nil {
+		return x.Kind
+	}
+	return FrostEnvelopeKind_FROST_ENVELOPE_KIND_UNSPECIFIED
+}
+
+func (x *FrostEnvelope) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *FrostEnvelope) GetSig() []byte {
+	if x != nil {
+		return x.Sig
+	}
+	return nil
+}
+
+func (x *FrostEnvelope) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *FrostEnvelope) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
 var File_pb_data_proto protoreflect.FileDescriptor
 
 const file_pb_data_proto_rawDesc = "" +
@@ -5091,7 +5246,15 @@ const file_pb_data_proto_rawDesc = "" +
 	"\fgroup_pubkey\x18\x04 \x01(\fR\vgroupPubkey\x12)\n" +
 	"\tsign_algo\x18\x05 \x01(\x0e2\f.pb.SignAlgoR\bsignAlgo\x12\x16\n" +
 	"\x06status\x18\x06 \x01(\tR\x06status\x12.\n" +
-	"\x13active_since_height\x18\a \x01(\x04R\x11activeSinceHeight*\xda\x01\n" +
+	"\x13active_since_height\x18\a \x01(\x04R\x11activeSinceHeight\"\xb3\x01\n" +
+	"\rFrostEnvelope\x12\x12\n" +
+	"\x04from\x18\x01 \x01(\tR\x04from\x12\x0e\n" +
+	"\x02to\x18\x02 \x01(\tR\x02to\x12)\n" +
+	"\x04kind\x18\x03 \x01(\x0e2\x15.pb.FrostEnvelopeKindR\x04kind\x12\x18\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\x12\x10\n" +
+	"\x03sig\x18\x05 \x01(\fR\x03sig\x12\x15\n" +
+	"\x06job_id\x18\x06 \x01(\tR\x05jobId\x12\x10\n" +
+	"\x03seq\x18\a \x01(\x04R\x03seq*\xda\x01\n" +
 	"\bSignAlgo\x12\x19\n" +
 	"\x15SIGN_ALGO_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14SIGN_ALGO_ECDSA_P256\x10\x01\x12\x1a\n" +
@@ -5133,7 +5296,15 @@ const file_pb_data_proto_rawDesc = "" +
 	"\x0fChallengeStatus\x12\x14\n" +
 	"\x10CHALLENGE_ACTIVE\x10\x00\x12\x15\n" +
 	"\x11CHALLENGE_SHELVED\x10\x01\x12\x17\n" +
-	"\x13CHALLENGE_FINALIZED\x10\x02B\vZ\tdex/pb;pbb\x06proto3"
+	"\x13CHALLENGE_FINALIZED\x10\x02*\x97\x02\n" +
+	"\x11FrostEnvelopeKind\x12#\n" +
+	"\x1fFROST_ENVELOPE_KIND_UNSPECIFIED\x10\x00\x12\"\n" +
+	"\x1eFROST_ENVELOPE_KIND_DKG_ROUND1\x10\x01\x12\"\n" +
+	"\x1eFROST_ENVELOPE_KIND_DKG_ROUND2\x10\x02\x12\"\n" +
+	"\x1eFROST_ENVELOPE_KIND_SIGN_NONCE\x10\x03\x12\"\n" +
+	"\x1eFROST_ENVELOPE_KIND_SIGN_SHARE\x10\x04\x12%\n" +
+	"!FROST_ENVELOPE_KIND_ROAST_REQUEST\x10\x05\x12&\n" +
+	"\"FROST_ENVELOPE_KIND_ROAST_RESPONSE\x10\x06B\vZ\tdex/pb;pbb\x06proto3"
 
 var (
 	file_pb_data_proto_rawDescOnce sync.Once
@@ -5147,8 +5318,8 @@ func file_pb_data_proto_rawDescGZIP() []byte {
 	return file_pb_data_proto_rawDescData
 }
 
-var file_pb_data_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
-var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 56)
+var file_pb_data_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
+var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
 var file_pb_data_proto_goTypes = []any{
 	(SignAlgo)(0),                    // 0: pb.SignAlgo
 	(OrderOp)(0),                     // 1: pb.OrderOp
@@ -5157,126 +5328,129 @@ var file_pb_data_proto_goTypes = []any{
 	(WitnessVoteType)(0),             // 4: pb.WitnessVoteType
 	(RechargeRequestStatus)(0),       // 5: pb.RechargeRequestStatus
 	(ChallengeStatus)(0),             // 6: pb.ChallengeStatus
-	(*Token)(nil),                    // 7: pb.Token
-	(*TokenRegistry)(nil),            // 8: pb.TokenRegistry
-	(*PublicKeys)(nil),               // 9: pb.PublicKeys
-	(*BaseMessage)(nil),              // 10: pb.BaseMessage
-	(*Account)(nil),                  // 11: pb.Account
-	(*TokenBalance)(nil),             // 12: pb.TokenBalance
-	(*Block)(nil),                    // 13: pb.Block
-	(*RewordInfo)(nil),               // 14: pb.RewordInfo
-	(*OrderPriceIndex)(nil),          // 15: pb.OrderPriceIndex
-	(*CandidateIndex)(nil),           // 16: pb.CandidateIndex
-	(*IssueTokenTx)(nil),             // 17: pb.IssueTokenTx
-	(*FreezeTx)(nil),                 // 18: pb.FreezeTx
-	(*Transaction)(nil),              // 19: pb.Transaction
-	(*OrderTx)(nil),                  // 20: pb.OrderTx
-	(*CandidateTx)(nil),              // 21: pb.CandidateTx
-	(*MinerTx)(nil),                  // 22: pb.MinerTx
-	(*AnyTx)(nil),                    // 23: pb.AnyTx
-	(*NodeInfo)(nil),                 // 24: pb.NodeInfo
-	(*NodeList)(nil),                 // 25: pb.NodeList
-	(*ClientInfo)(nil),               // 26: pb.ClientInfo
-	(*HandshakeRequest)(nil),         // 27: pb.HandshakeRequest
-	(*HandshakeResponse)(nil),        // 28: pb.HandshakeResponse
-	(*StatusRequest)(nil),            // 29: pb.StatusRequest
-	(*StatusResponse)(nil),           // 30: pb.StatusResponse
-	(*GetData)(nil),                  // 31: pb.GetData
-	(*GetBlockRequest)(nil),          // 32: pb.GetBlockRequest
-	(*GetBlockResponse)(nil),         // 33: pb.GetBlockResponse
-	(*BatchGetShortTxRequest)(nil),   // 34: pb.BatchGetShortTxRequest
-	(*BatchGetShortTxResponse)(nil),  // 35: pb.BatchGetShortTxResponse
-	(*CheckPointInfo)(nil),           // 36: pb.CheckPointInfo
-	(*GetConsensusStateRequest)(nil), // 37: pb.GetConsensusStateRequest
-	(*PushQuery)(nil),                // 38: pb.PushQuery
-	(*PullQuery)(nil),                // 39: pb.PullQuery
-	(*Chits)(nil),                    // 40: pb.Chits
-	(*HeightResponse)(nil),           // 41: pb.HeightResponse
-	(*GetBlockByIDRequest)(nil),      // 42: pb.GetBlockByIDRequest
-	(*WitnessInfo)(nil),              // 43: pb.WitnessInfo
-	(*WitnessStakeTx)(nil),           // 44: pb.WitnessStakeTx
-	(*WitnessRequestTx)(nil),         // 45: pb.WitnessRequestTx
-	(*WitnessVote)(nil),              // 46: pb.WitnessVote
-	(*WitnessVoteTx)(nil),            // 47: pb.WitnessVoteTx
-	(*RechargeRequest)(nil),          // 48: pb.RechargeRequest
-	(*WitnessChallengeTx)(nil),       // 49: pb.WitnessChallengeTx
-	(*ChallengeRecord)(nil),          // 50: pb.ChallengeRecord
-	(*ArbitrationVoteTx)(nil),        // 51: pb.ArbitrationVoteTx
-	(*WitnessClaimRewardTx)(nil),     // 52: pb.WitnessClaimRewardTx
-	(*WitnessConfig)(nil),            // 53: pb.WitnessConfig
-	(*FrostWithdrawRequestTx)(nil),   // 54: pb.FrostWithdrawRequestTx
-	(*FrostWithdrawSignedTx)(nil),    // 55: pb.FrostWithdrawSignedTx
-	(*UtxoInput)(nil),                // 56: pb.UtxoInput
-	(*FrostWithdrawState)(nil),       // 57: pb.FrostWithdrawState
-	(*FrostSignedPackage)(nil),       // 58: pb.FrostSignedPackage
-	(*FrostVaultState)(nil),          // 59: pb.FrostVaultState
-	nil,                              // 60: pb.TokenRegistry.TokensEntry
-	nil,                              // 61: pb.PublicKeys.KeysEntry
-	nil,                              // 62: pb.Account.BalancesEntry
+	(FrostEnvelopeKind)(0),           // 7: pb.FrostEnvelopeKind
+	(*Token)(nil),                    // 8: pb.Token
+	(*TokenRegistry)(nil),            // 9: pb.TokenRegistry
+	(*PublicKeys)(nil),               // 10: pb.PublicKeys
+	(*BaseMessage)(nil),              // 11: pb.BaseMessage
+	(*Account)(nil),                  // 12: pb.Account
+	(*TokenBalance)(nil),             // 13: pb.TokenBalance
+	(*Block)(nil),                    // 14: pb.Block
+	(*RewordInfo)(nil),               // 15: pb.RewordInfo
+	(*OrderPriceIndex)(nil),          // 16: pb.OrderPriceIndex
+	(*CandidateIndex)(nil),           // 17: pb.CandidateIndex
+	(*IssueTokenTx)(nil),             // 18: pb.IssueTokenTx
+	(*FreezeTx)(nil),                 // 19: pb.FreezeTx
+	(*Transaction)(nil),              // 20: pb.Transaction
+	(*OrderTx)(nil),                  // 21: pb.OrderTx
+	(*CandidateTx)(nil),              // 22: pb.CandidateTx
+	(*MinerTx)(nil),                  // 23: pb.MinerTx
+	(*AnyTx)(nil),                    // 24: pb.AnyTx
+	(*NodeInfo)(nil),                 // 25: pb.NodeInfo
+	(*NodeList)(nil),                 // 26: pb.NodeList
+	(*ClientInfo)(nil),               // 27: pb.ClientInfo
+	(*HandshakeRequest)(nil),         // 28: pb.HandshakeRequest
+	(*HandshakeResponse)(nil),        // 29: pb.HandshakeResponse
+	(*StatusRequest)(nil),            // 30: pb.StatusRequest
+	(*StatusResponse)(nil),           // 31: pb.StatusResponse
+	(*GetData)(nil),                  // 32: pb.GetData
+	(*GetBlockRequest)(nil),          // 33: pb.GetBlockRequest
+	(*GetBlockResponse)(nil),         // 34: pb.GetBlockResponse
+	(*BatchGetShortTxRequest)(nil),   // 35: pb.BatchGetShortTxRequest
+	(*BatchGetShortTxResponse)(nil),  // 36: pb.BatchGetShortTxResponse
+	(*CheckPointInfo)(nil),           // 37: pb.CheckPointInfo
+	(*GetConsensusStateRequest)(nil), // 38: pb.GetConsensusStateRequest
+	(*PushQuery)(nil),                // 39: pb.PushQuery
+	(*PullQuery)(nil),                // 40: pb.PullQuery
+	(*Chits)(nil),                    // 41: pb.Chits
+	(*HeightResponse)(nil),           // 42: pb.HeightResponse
+	(*GetBlockByIDRequest)(nil),      // 43: pb.GetBlockByIDRequest
+	(*WitnessInfo)(nil),              // 44: pb.WitnessInfo
+	(*WitnessStakeTx)(nil),           // 45: pb.WitnessStakeTx
+	(*WitnessRequestTx)(nil),         // 46: pb.WitnessRequestTx
+	(*WitnessVote)(nil),              // 47: pb.WitnessVote
+	(*WitnessVoteTx)(nil),            // 48: pb.WitnessVoteTx
+	(*RechargeRequest)(nil),          // 49: pb.RechargeRequest
+	(*WitnessChallengeTx)(nil),       // 50: pb.WitnessChallengeTx
+	(*ChallengeRecord)(nil),          // 51: pb.ChallengeRecord
+	(*ArbitrationVoteTx)(nil),        // 52: pb.ArbitrationVoteTx
+	(*WitnessClaimRewardTx)(nil),     // 53: pb.WitnessClaimRewardTx
+	(*WitnessConfig)(nil),            // 54: pb.WitnessConfig
+	(*FrostWithdrawRequestTx)(nil),   // 55: pb.FrostWithdrawRequestTx
+	(*FrostWithdrawSignedTx)(nil),    // 56: pb.FrostWithdrawSignedTx
+	(*UtxoInput)(nil),                // 57: pb.UtxoInput
+	(*FrostWithdrawState)(nil),       // 58: pb.FrostWithdrawState
+	(*FrostSignedPackage)(nil),       // 59: pb.FrostSignedPackage
+	(*FrostVaultState)(nil),          // 60: pb.FrostVaultState
+	(*FrostEnvelope)(nil),            // 61: pb.FrostEnvelope
+	nil,                              // 62: pb.TokenRegistry.TokensEntry
+	nil,                              // 63: pb.PublicKeys.KeysEntry
+	nil,                              // 64: pb.Account.BalancesEntry
 }
 var file_pb_data_proto_depIdxs = []int32{
-	60, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
-	61, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
-	9,  // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
+	62, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
+	63, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
+	10, // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
 	2,  // 3: pb.BaseMessage.status:type_name -> pb.Status
-	9,  // 4: pb.Account.public_keys:type_name -> pb.PublicKeys
-	62, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
-	23, // 6: pb.Block.body:type_name -> pb.AnyTx
-	10, // 7: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
-	10, // 8: pb.FreezeTx.base:type_name -> pb.BaseMessage
-	10, // 9: pb.Transaction.base:type_name -> pb.BaseMessage
-	10, // 10: pb.OrderTx.base:type_name -> pb.BaseMessage
+	10, // 4: pb.Account.public_keys:type_name -> pb.PublicKeys
+	64, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	24, // 6: pb.Block.body:type_name -> pb.AnyTx
+	11, // 7: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
+	11, // 8: pb.FreezeTx.base:type_name -> pb.BaseMessage
+	11, // 9: pb.Transaction.base:type_name -> pb.BaseMessage
+	11, // 10: pb.OrderTx.base:type_name -> pb.BaseMessage
 	1,  // 11: pb.OrderTx.op:type_name -> pb.OrderOp
-	10, // 12: pb.CandidateTx.base:type_name -> pb.BaseMessage
+	11, // 12: pb.CandidateTx.base:type_name -> pb.BaseMessage
 	1,  // 13: pb.CandidateTx.op:type_name -> pb.OrderOp
-	10, // 14: pb.MinerTx.base:type_name -> pb.BaseMessage
+	11, // 14: pb.MinerTx.base:type_name -> pb.BaseMessage
 	1,  // 15: pb.MinerTx.op:type_name -> pb.OrderOp
-	17, // 16: pb.AnyTx.issue_token_tx:type_name -> pb.IssueTokenTx
-	18, // 17: pb.AnyTx.freeze_tx:type_name -> pb.FreezeTx
-	19, // 18: pb.AnyTx.transaction:type_name -> pb.Transaction
-	20, // 19: pb.AnyTx.order_tx:type_name -> pb.OrderTx
-	21, // 20: pb.AnyTx.candidate_tx:type_name -> pb.CandidateTx
-	22, // 21: pb.AnyTx.miner_tx:type_name -> pb.MinerTx
-	44, // 22: pb.AnyTx.witness_stake_tx:type_name -> pb.WitnessStakeTx
-	45, // 23: pb.AnyTx.witness_request_tx:type_name -> pb.WitnessRequestTx
-	47, // 24: pb.AnyTx.witness_vote_tx:type_name -> pb.WitnessVoteTx
-	49, // 25: pb.AnyTx.witness_challenge_tx:type_name -> pb.WitnessChallengeTx
-	51, // 26: pb.AnyTx.arbitration_vote_tx:type_name -> pb.ArbitrationVoteTx
-	52, // 27: pb.AnyTx.witness_claim_reward_tx:type_name -> pb.WitnessClaimRewardTx
-	54, // 28: pb.AnyTx.frost_withdraw_request_tx:type_name -> pb.FrostWithdrawRequestTx
-	55, // 29: pb.AnyTx.frost_withdraw_signed_tx:type_name -> pb.FrostWithdrawSignedTx
-	9,  // 30: pb.NodeInfo.public_keys:type_name -> pb.PublicKeys
-	24, // 31: pb.NodeList.nodes:type_name -> pb.NodeInfo
-	9,  // 32: pb.ClientInfo.public_keys:type_name -> pb.PublicKeys
-	9,  // 33: pb.HandshakeRequest.public_keys:type_name -> pb.PublicKeys
-	13, // 34: pb.GetBlockResponse.block:type_name -> pb.Block
-	23, // 35: pb.BatchGetShortTxResponse.transactions:type_name -> pb.AnyTx
+	18, // 16: pb.AnyTx.issue_token_tx:type_name -> pb.IssueTokenTx
+	19, // 17: pb.AnyTx.freeze_tx:type_name -> pb.FreezeTx
+	20, // 18: pb.AnyTx.transaction:type_name -> pb.Transaction
+	21, // 19: pb.AnyTx.order_tx:type_name -> pb.OrderTx
+	22, // 20: pb.AnyTx.candidate_tx:type_name -> pb.CandidateTx
+	23, // 21: pb.AnyTx.miner_tx:type_name -> pb.MinerTx
+	45, // 22: pb.AnyTx.witness_stake_tx:type_name -> pb.WitnessStakeTx
+	46, // 23: pb.AnyTx.witness_request_tx:type_name -> pb.WitnessRequestTx
+	48, // 24: pb.AnyTx.witness_vote_tx:type_name -> pb.WitnessVoteTx
+	50, // 25: pb.AnyTx.witness_challenge_tx:type_name -> pb.WitnessChallengeTx
+	52, // 26: pb.AnyTx.arbitration_vote_tx:type_name -> pb.ArbitrationVoteTx
+	53, // 27: pb.AnyTx.witness_claim_reward_tx:type_name -> pb.WitnessClaimRewardTx
+	55, // 28: pb.AnyTx.frost_withdraw_request_tx:type_name -> pb.FrostWithdrawRequestTx
+	56, // 29: pb.AnyTx.frost_withdraw_signed_tx:type_name -> pb.FrostWithdrawSignedTx
+	10, // 30: pb.NodeInfo.public_keys:type_name -> pb.PublicKeys
+	25, // 31: pb.NodeList.nodes:type_name -> pb.NodeInfo
+	10, // 32: pb.ClientInfo.public_keys:type_name -> pb.PublicKeys
+	10, // 33: pb.HandshakeRequest.public_keys:type_name -> pb.PublicKeys
+	14, // 34: pb.GetBlockResponse.block:type_name -> pb.Block
+	24, // 35: pb.BatchGetShortTxResponse.transactions:type_name -> pb.AnyTx
 	3,  // 36: pb.WitnessInfo.status:type_name -> pb.WitnessStatus
-	10, // 37: pb.WitnessStakeTx.base:type_name -> pb.BaseMessage
+	11, // 37: pb.WitnessStakeTx.base:type_name -> pb.BaseMessage
 	1,  // 38: pb.WitnessStakeTx.op:type_name -> pb.OrderOp
-	10, // 39: pb.WitnessRequestTx.base:type_name -> pb.BaseMessage
+	11, // 39: pb.WitnessRequestTx.base:type_name -> pb.BaseMessage
 	4,  // 40: pb.WitnessVote.vote_type:type_name -> pb.WitnessVoteType
-	10, // 41: pb.WitnessVoteTx.base:type_name -> pb.BaseMessage
-	46, // 42: pb.WitnessVoteTx.vote:type_name -> pb.WitnessVote
+	11, // 41: pb.WitnessVoteTx.base:type_name -> pb.BaseMessage
+	47, // 42: pb.WitnessVoteTx.vote:type_name -> pb.WitnessVote
 	5,  // 43: pb.RechargeRequest.status:type_name -> pb.RechargeRequestStatus
-	46, // 44: pb.RechargeRequest.votes:type_name -> pb.WitnessVote
-	10, // 45: pb.WitnessChallengeTx.base:type_name -> pb.BaseMessage
-	46, // 46: pb.ChallengeRecord.arbitration_votes:type_name -> pb.WitnessVote
+	47, // 44: pb.RechargeRequest.votes:type_name -> pb.WitnessVote
+	11, // 45: pb.WitnessChallengeTx.base:type_name -> pb.BaseMessage
+	47, // 46: pb.ChallengeRecord.arbitration_votes:type_name -> pb.WitnessVote
 	6,  // 47: pb.ChallengeRecord.status:type_name -> pb.ChallengeStatus
-	10, // 48: pb.ArbitrationVoteTx.base:type_name -> pb.BaseMessage
-	46, // 49: pb.ArbitrationVoteTx.vote:type_name -> pb.WitnessVote
-	10, // 50: pb.WitnessClaimRewardTx.base:type_name -> pb.BaseMessage
-	10, // 51: pb.FrostWithdrawRequestTx.base:type_name -> pb.BaseMessage
-	10, // 52: pb.FrostWithdrawSignedTx.base:type_name -> pb.BaseMessage
-	56, // 53: pb.FrostWithdrawSignedTx.utxo_inputs:type_name -> pb.UtxoInput
+	11, // 48: pb.ArbitrationVoteTx.base:type_name -> pb.BaseMessage
+	47, // 49: pb.ArbitrationVoteTx.vote:type_name -> pb.WitnessVote
+	11, // 50: pb.WitnessClaimRewardTx.base:type_name -> pb.BaseMessage
+	11, // 51: pb.FrostWithdrawRequestTx.base:type_name -> pb.BaseMessage
+	11, // 52: pb.FrostWithdrawSignedTx.base:type_name -> pb.BaseMessage
+	57, // 53: pb.FrostWithdrawSignedTx.utxo_inputs:type_name -> pb.UtxoInput
 	0,  // 54: pb.FrostVaultState.sign_algo:type_name -> pb.SignAlgo
-	7,  // 55: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
-	12, // 56: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
-	57, // [57:57] is the sub-list for method output_type
-	57, // [57:57] is the sub-list for method input_type
-	57, // [57:57] is the sub-list for extension type_name
-	57, // [57:57] is the sub-list for extension extendee
-	0,  // [0:57] is the sub-list for field type_name
+	7,  // 55: pb.FrostEnvelope.kind:type_name -> pb.FrostEnvelopeKind
+	8,  // 56: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
+	13, // 57: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
+	58, // [58:58] is the sub-list for method output_type
+	58, // [58:58] is the sub-list for method input_type
+	58, // [58:58] is the sub-list for extension type_name
+	58, // [58:58] is the sub-list for extension extendee
+	0,  // [0:58] is the sub-list for field type_name
 }
 
 func init() { file_pb_data_proto_init() }
@@ -5305,8 +5479,8 @@ func file_pb_data_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_data_proto_rawDesc), len(file_pb_data_proto_rawDesc)),
-			NumEnums:      7,
-			NumMessages:   56,
+			NumEnums:      8,
+			NumMessages:   57,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

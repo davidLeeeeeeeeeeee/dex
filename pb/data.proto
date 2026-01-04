@@ -560,3 +560,27 @@ message FrostVaultState {
   string status = 6; // PENDING | KEY_READY | ACTIVE | DEPRECATED
   uint64 active_since_height = 7; // 激活高度
 }
+
+// ========== Frost P2P 消息 ==========
+
+// FrostEnvelope Frost P2P 消息信封
+message FrostEnvelope {
+  string from = 1; // 发送方地址
+  string to = 2; // 接收方地址（单播）或 "" （广播）
+  FrostEnvelopeKind kind = 3; // 消息类型
+  bytes payload = 4; // 载荷（根据 kind 不同而不同）
+  bytes sig = 5; // 对 (from || to || kind || payload) 的签名
+  string job_id = 6; // 关联的 job_id（可选）
+  uint64 seq = 7; // 消息序号（用于去重和排序）
+}
+
+// FrostEnvelopeKind 消息类型
+enum FrostEnvelopeKind {
+  FROST_ENVELOPE_KIND_UNSPECIFIED = 0;
+  FROST_ENVELOPE_KIND_DKG_ROUND1 = 1; // DKG 第 1 轮
+  FROST_ENVELOPE_KIND_DKG_ROUND2 = 2; // DKG 第 2 轮
+  FROST_ENVELOPE_KIND_SIGN_NONCE = 3; // 签名 nonce 承诺
+  FROST_ENVELOPE_KIND_SIGN_SHARE = 4; // 签名份额
+  FROST_ENVELOPE_KIND_ROAST_REQUEST = 5; // ROAST 签名请求（聚合者发起）
+  FROST_ENVELOPE_KIND_ROAST_RESPONSE = 6; // ROAST 响应（参与者回复）
+}

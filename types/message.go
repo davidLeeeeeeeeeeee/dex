@@ -34,6 +34,7 @@ const (
 	MsgHeightResponse   = "MsgHeightResponse"
 	MsgSnapshotRequest  = "MsgSnapshotRequest"  // 请求快照
 	MsgSnapshotResponse = "MsgSnapshotResponse" // 快照响应
+	MsgFrost            = "MsgFrost"            // Frost 签名消息
 )
 
 // 基础消息结构
@@ -60,4 +61,6 @@ type Message struct {
 	Snapshot        *Snapshot
 	SnapshotHeight  uint64
 	RequestSnapshot bool
+	// For Frost
+	FrostPayload []byte // FrostEnvelope 序列化数据
 }
