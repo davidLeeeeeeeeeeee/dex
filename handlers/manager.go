@@ -91,6 +91,10 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/frost/config", hm.HandleGetFrostConfig)
 	mux.HandleFunc("/frost/withdraw/status", hm.HandleGetWithdrawStatus)
 	mux.HandleFunc("/frost/withdraws", hm.HandleListWithdraws)
+	// Frost 管理接口
+	mux.HandleFunc("/frost/health", hm.HandleGetHealth)
+	mux.HandleFunc("/frost/metrics", hm.HandleGetMetrics)
+	mux.HandleFunc("/frost/rescan", hm.HandleForceRescan)
 }
 
 // 添加身份验证方法
