@@ -239,3 +239,169 @@ func reverseBytes(b []byte) {
 		b[i], b[j] = b[j], b[i]
 	}
 }
+
+// ========== BIP-341 Taproot Sighash 计算 ==========
+
+// SighashType sighash 类型
+type SighashType byte
+
+const (
+	// SighashDefault SIGHASH_DEFAULT (0x00) - Taproot 默认
+	SighashDefault SighashType = 0x00
+	// SighashAll SIGHASH_ALL (0x01)
+	SighashAll SighashType = 0x01
+)
+
+// ComputeTaprootSighash 计算 Taproot sighash（BIP-341）
+// 返回每个 input 的 sighash（32 字节）
+// scriptPubKeys: 每个 input 的 scriptPubKey（用于签名验证）
+func (t *BTCTemplate) ComputeTaprootSighash(scriptPubKeys [][]byte, sighashType SighashType) ([][]byte, error) {
+	if len(scriptPubKeys) != len(t.Inputs) {
+		return nil, errors.New("scriptPubKeys count mismatch with inputs")
+	}
+
+	// 预计算共享哈希值
+	hashPrevouts := t.hashPrevouts()
+	hashAmounts := t.hashAmounts()
+	hashScriptPubkeys := hashScriptPubKeys(scriptPubKeys)
+	hashSequences := t.hashSequences()
+	hashOutputs := t.hashOutputs()
+
+	sighashes := make([][]byte, len(t.Inputs))
+	for i := range t.Inputs {
+		sighash := t.computeSingleTaprootSighash(
+			i,
+			hashPrevouts,
+			hashAmounts,
+			hashScriptPubkeys,
+			hashSequences,
+			hashOutputs,
+			scriptPubKeys[i],
+			sighashType,
+		)
+		sighashes[i] = sighash
+	}
+
+	return sighashes, nil
+}
+
+// computeSingleTaprootSighash 计算单个 input 的 Taproot sighash
+func (t *BTCTemplate) computeSingleTaprootSighash(
+	inputIndex int,
+	hashPrevouts, hashAmounts, hashScriptPubkeys, hashSequences, hashOutputs []byte,
+	scriptPubKey []byte,
+	sighashType SighashType,
+) []byte {
+	var buf bytes.Buffer
+
+	// epoch (0x00)
+	buf.WriteByte(0x00)
+
+	// hash_type (1 byte)
+	buf.WriteByte(byte(sighashType))
+
+	// nVersion (4 bytes, little-endian)
+	binary.Write(&buf, binary.LittleEndian, t.Version)
+
+	// nLockTime (4 bytes, little-endian)
+	binary.Write(&buf, binary.LittleEndian, t.LockTime)
+
+	// SIGHASH_ANYONECANPAY not set, so include these:
+	buf.Write(hashPrevouts)      // sha_prevouts
+	buf.Write(hashAmounts)       // sha_amounts
+	buf.Write(hashScriptPubkeys) // sha_scriptpubkeys
+	buf.Write(hashSequences)     // sha_sequences
+
+	// SIGHASH_NONE and SIGHASH_SINGLE not set:
+	buf.Write(hashOutputs) // sha_outputs
+
+	// spend_type (1 byte): ext_flag * 2 + annex_present
+	// 假设 key-path spend，没有 annex
+	spendType := byte(0x00)
+	buf.WriteByte(spendType)
+
+	// input_index (4 bytes, little-endian)
+	binary.Write(&buf, binary.LittleEndian, uint32(inputIndex))
+
+	// 使用 tagged hash
+	return taggedHash("TapSighash", buf.Bytes())
+}
+
+// hashPrevouts 计算 sha_prevouts = SHA256(所有 input 的 prevout)
+func (t *BTCTemplate) hashPrevouts() []byte {
+	var buf bytes.Buffer
+	for _, in := range t.Inputs {
+		// txid (32 bytes, 内部字节序 - 反转)
+		txidBytes, _ := hex.DecodeString(in.TxID)
+		reverseBytes(txidBytes)
+		buf.Write(txidBytes)
+		// vout (4 bytes, little-endian)
+		binary.Write(&buf, binary.LittleEndian, in.Vout)
+	}
+	hash := sha256.Sum256(buf.Bytes())
+	return hash[:]
+}
+
+// hashAmounts 计算 sha_amounts = SHA256(所有 input 的 amount)
+func (t *BTCTemplate) hashAmounts() []byte {
+	var buf bytes.Buffer
+	for _, in := range t.Inputs {
+		binary.Write(&buf, binary.LittleEndian, in.Amount)
+	}
+	hash := sha256.Sum256(buf.Bytes())
+	return hash[:]
+}
+
+// hashScriptPubKeys 计算 sha_scriptpubkeys = SHA256(所有 input 的 scriptPubKey)
+func hashScriptPubKeys(scriptPubKeys [][]byte) []byte {
+	var buf bytes.Buffer
+	for _, spk := range scriptPubKeys {
+		// 先写长度（compact size）
+		writeCompactSize(&buf, uint64(len(spk)))
+		buf.Write(spk)
+	}
+	hash := sha256.Sum256(buf.Bytes())
+	return hash[:]
+}
+
+// hashSequences 计算 sha_sequences = SHA256(所有 input 的 sequence)
+func (t *BTCTemplate) hashSequences() []byte {
+	var buf bytes.Buffer
+	for _, in := range t.Inputs {
+		binary.Write(&buf, binary.LittleEndian, in.Sequence)
+	}
+	hash := sha256.Sum256(buf.Bytes())
+	return hash[:]
+}
+
+// hashOutputs 计算 sha_outputs = SHA256(所有 output)
+// 注意：这里简化处理，使用地址字符串。实际应该转换为 scriptPubKey
+func (t *BTCTemplate) hashOutputs() []byte {
+	var buf bytes.Buffer
+	for _, out := range t.Outputs {
+		// amount (8 bytes, little-endian)
+		binary.Write(&buf, binary.LittleEndian, out.Amount)
+		// scriptPubKey (简化：使用地址的 bytes)
+		// 实际应该将地址解码为 scriptPubKey
+		addrBytes := []byte(out.Address)
+		writeCompactSize(&buf, uint64(len(addrBytes)))
+		buf.Write(addrBytes)
+	}
+	hash := sha256.Sum256(buf.Bytes())
+	return hash[:]
+}
+
+// taggedHash BIP-340 tagged hash
+func taggedHash(tag string, data []byte) []byte {
+	tagSum := sha256.Sum256([]byte(tag))
+	h := sha256.New()
+	h.Write(tagSum[:])
+	h.Write(tagSum[:])
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+// writeCompactSize 写入 compact size（与 varint 相同）
+func writeCompactSize(buf *bytes.Buffer, n uint64) {
+	writeVarInt(buf, n)
+}

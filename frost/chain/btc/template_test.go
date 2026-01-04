@@ -366,3 +366,195 @@ func TestNewBTCTemplate_OutputOrderMismatch(t *testing.T) {
 		t.Error("Expected withdraw output order mismatch error")
 	}
 }
+
+// ==================== Taproot Sighash 测试 ====================
+
+// TestTaprootSighash_Deterministic 测试 sighash 是确定性的
+func TestTaprootSighash_Deterministic(t *testing.T) {
+	// 构建模板
+	params := chain.WithdrawTemplateParams{
+		Chain:       "btc",
+		VaultID:     1,
+		KeyEpoch:    100,
+		WithdrawIDs: []string{"w1"},
+		Outputs: []chain.WithdrawOutput{
+			{WithdrawID: "w1", To: "bc1qaddr1", Amount: 10000},
+		},
+		Inputs: []chain.UTXO{
+			{TxID: txid1, Vout: 0, Amount: 50000},
+		},
+		ChangeAddress: "bc1qchange",
+		Fee:           1000,
+		ChangeAmount:  39000,
+	}
+
+	template, err := NewBTCTemplate(params)
+	if err != nil {
+		t.Fatalf("NewBTCTemplate failed: %v", err)
+	}
+
+	// 模拟 scriptPubKey（22 字节 P2WPKH）
+	scriptPubKeys := [][]byte{
+		{0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+			0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14},
+	}
+
+	// 计算两次 sighash
+	sighashes1, err := template.ComputeTaprootSighash(scriptPubKeys, SighashDefault)
+	if err != nil {
+		t.Fatalf("ComputeTaprootSighash failed: %v", err)
+	}
+
+	sighashes2, err := template.ComputeTaprootSighash(scriptPubKeys, SighashDefault)
+	if err != nil {
+		t.Fatalf("ComputeTaprootSighash failed: %v", err)
+	}
+
+	// 验证确定性
+	if !bytes.Equal(sighashes1[0], sighashes2[0]) {
+		t.Errorf("Sighash not deterministic:\n  first:  %x\n  second: %x", sighashes1[0], sighashes2[0])
+	}
+
+	// 验证长度为 32 字节
+	if len(sighashes1[0]) != 32 {
+		t.Errorf("Expected sighash length 32, got %d", len(sighashes1[0]))
+	}
+
+	t.Logf("Sighash: %x", sighashes1[0])
+}
+
+// TestTaprootSighash_DifferentInputs 测试不同输入产生不同 sighash
+func TestTaprootSighash_DifferentInputs(t *testing.T) {
+	// 模板1
+	params1 := chain.WithdrawTemplateParams{
+		Chain:       "btc",
+		VaultID:     1,
+		KeyEpoch:    100,
+		WithdrawIDs: []string{"w1"},
+		Outputs: []chain.WithdrawOutput{
+			{WithdrawID: "w1", To: "bc1qaddr1", Amount: 10000},
+		},
+		Inputs: []chain.UTXO{
+			{TxID: txid1, Vout: 0, Amount: 50000},
+		},
+		ChangeAddress: "bc1qchange",
+		Fee:           1000,
+		ChangeAmount:  39000,
+	}
+
+	// 模板2（不同的输入 txid）
+	params2 := chain.WithdrawTemplateParams{
+		Chain:       "btc",
+		VaultID:     1,
+		KeyEpoch:    100,
+		WithdrawIDs: []string{"w1"},
+		Outputs: []chain.WithdrawOutput{
+			{WithdrawID: "w1", To: "bc1qaddr1", Amount: 10000},
+		},
+		Inputs: []chain.UTXO{
+			{TxID: txid2, Vout: 0, Amount: 50000}, // 不同的 txid
+		},
+		ChangeAddress: "bc1qchange",
+		Fee:           1000,
+		ChangeAmount:  39000,
+	}
+
+	template1, _ := NewBTCTemplate(params1)
+	template2, _ := NewBTCTemplate(params2)
+
+	scriptPubKeys := [][]byte{
+		{0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+			0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14},
+	}
+
+	sighashes1, _ := template1.ComputeTaprootSighash(scriptPubKeys, SighashDefault)
+	sighashes2, _ := template2.ComputeTaprootSighash(scriptPubKeys, SighashDefault)
+
+	if bytes.Equal(sighashes1[0], sighashes2[0]) {
+		t.Error("Different inputs should produce different sighash")
+	}
+}
+
+// TestTaprootSighash_MultipleInputs 测试多输入场景
+func TestTaprootSighash_MultipleInputs(t *testing.T) {
+	params := chain.WithdrawTemplateParams{
+		Chain:       "btc",
+		VaultID:     1,
+		KeyEpoch:    100,
+		WithdrawIDs: []string{"w1"},
+		Outputs: []chain.WithdrawOutput{
+			{WithdrawID: "w1", To: "bc1qaddr1", Amount: 50000},
+		},
+		Inputs: []chain.UTXO{
+			{TxID: txid1, Vout: 0, Amount: 30000},
+			{TxID: txid2, Vout: 1, Amount: 30000},
+		},
+		ChangeAddress: "bc1qchange",
+		Fee:           1000,
+		ChangeAmount:  9000,
+	}
+
+	template, err := NewBTCTemplate(params)
+	if err != nil {
+		t.Fatalf("NewBTCTemplate failed: %v", err)
+	}
+
+	// 两个输入的 scriptPubKey
+	scriptPubKeys := [][]byte{
+		{0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+			0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14},
+		{0x00, 0x14, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+			0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34},
+	}
+
+	sighashes, err := template.ComputeTaprootSighash(scriptPubKeys, SighashDefault)
+	if err != nil {
+		t.Fatalf("ComputeTaprootSighash failed: %v", err)
+	}
+
+	// 验证返回了两个 sighash
+	if len(sighashes) != 2 {
+		t.Errorf("Expected 2 sighashes, got %d", len(sighashes))
+	}
+
+	// 验证两个 sighash 不同（因为 input_index 不同）
+	if bytes.Equal(sighashes[0], sighashes[1]) {
+		t.Error("Different input indices should produce different sighash")
+	}
+
+	t.Logf("Sighash[0]: %x", sighashes[0])
+	t.Logf("Sighash[1]: %x", sighashes[1])
+}
+
+// TestTaprootSighash_ScriptPubKeyMismatch 测试 scriptPubKey 数量不匹配
+func TestTaprootSighash_ScriptPubKeyMismatch(t *testing.T) {
+	params := chain.WithdrawTemplateParams{
+		Chain:       "btc",
+		VaultID:     1,
+		KeyEpoch:    100,
+		WithdrawIDs: []string{"w1"},
+		Outputs: []chain.WithdrawOutput{
+			{WithdrawID: "w1", To: "bc1qaddr1", Amount: 10000},
+		},
+		Inputs: []chain.UTXO{
+			{TxID: txid1, Vout: 0, Amount: 50000},
+			{TxID: txid2, Vout: 1, Amount: 30000},
+		},
+		ChangeAddress: "bc1qchange",
+		Fee:           1000,
+		ChangeAmount:  69000,
+	}
+
+	template, _ := NewBTCTemplate(params)
+
+	// 只提供一个 scriptPubKey，但有两个输入
+	scriptPubKeys := [][]byte{
+		{0x00, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+			0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14},
+	}
+
+	_, err := template.ComputeTaprootSighash(scriptPubKeys, SighashDefault)
+	if err == nil {
+		t.Error("Expected error for scriptPubKey count mismatch")
+	}
+}
