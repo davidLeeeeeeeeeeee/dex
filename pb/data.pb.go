@@ -5583,6 +5583,184 @@ func (x *FrostVaultTransitionSignedTx) GetSignature() []byte {
 	return nil
 }
 
+// FrostTop10000 Top10000 矿工列表（用于 Vault 委员会分配）
+type FrostTop10000 struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Height        uint64                 `protobuf:"varint,1,opt,name=height,proto3" json:"height,omitempty"`                                 // 快照高度
+	Indices       []uint64               `protobuf:"varint,2,rep,packed,name=indices,proto3" json:"indices,omitempty"`                        // 矿工索引列表（按 bit index 排序）
+	Addresses     []string               `protobuf:"bytes,3,rep,name=addresses,proto3" json:"addresses,omitempty"`                            // 矿工地址列表（与 indices 对应）
+	PublicKeys    [][]byte               `protobuf:"bytes,4,rep,name=public_keys,json=publicKeys,proto3" json:"public_keys,omitempty"`        // 矿工公钥列表（与 indices 对应）
+	UpdateHeight  uint64                 `protobuf:"varint,5,opt,name=update_height,json=updateHeight,proto3" json:"update_height,omitempty"` // 最近更新高度
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostTop10000) Reset() {
+	*x = FrostTop10000{}
+	mi := &file_pb_data_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostTop10000) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostTop10000) ProtoMessage() {}
+
+func (x *FrostTop10000) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostTop10000.ProtoReflect.Descriptor instead.
+func (*FrostTop10000) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{61}
+}
+
+func (x *FrostTop10000) GetHeight() uint64 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *FrostTop10000) GetIndices() []uint64 {
+	if x != nil {
+		return x.Indices
+	}
+	return nil
+}
+
+func (x *FrostTop10000) GetAddresses() []string {
+	if x != nil {
+		return x.Addresses
+	}
+	return nil
+}
+
+func (x *FrostTop10000) GetPublicKeys() [][]byte {
+	if x != nil {
+		return x.PublicKeys
+	}
+	return nil
+}
+
+func (x *FrostTop10000) GetUpdateHeight() uint64 {
+	if x != nil {
+		return x.UpdateHeight
+	}
+	return 0
+}
+
+// FrostVaultConfig Vault 链级配置
+type FrostVaultConfig struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Chain                 string                 `protobuf:"bytes,1,opt,name=chain,proto3" json:"chain,omitempty"`                                                                // 链标识（btc/eth/bnb/trx/sol）
+	SignAlgo              SignAlgo               `protobuf:"varint,2,opt,name=sign_algo,json=signAlgo,proto3,enum=pb.SignAlgo" json:"sign_algo,omitempty"`                        // 签名算法
+	VaultCount            uint32                 `protobuf:"varint,3,opt,name=vault_count,json=vaultCount,proto3" json:"vault_count,omitempty"`                                   // Vault 数量 (M)
+	CommitteeSize         uint32                 `protobuf:"varint,4,opt,name=committee_size,json=committeeSize,proto3" json:"committee_size,omitempty"`                          // 每个 Vault 委员会规模 (K)
+	ThresholdRatio        float32                `protobuf:"fixed32,5,opt,name=threshold_ratio,json=thresholdRatio,proto3" json:"threshold_ratio,omitempty"`                      // 门限比例（如 0.67）
+	SelectionSeedRule     string                 `protobuf:"bytes,6,opt,name=selection_seed_rule,json=selectionSeedRule,proto3" json:"selection_seed_rule,omitempty"`             // 委员会选取种子规则
+	VaultRefs             []string               `protobuf:"bytes,7,rep,name=vault_refs,json=vaultRefs,proto3" json:"vault_refs,omitempty"`                                       // 各 Vault 的地址/合约
+	DepositAllocationRule string                 `protobuf:"bytes,8,opt,name=deposit_allocation_rule,json=depositAllocationRule,proto3" json:"deposit_allocation_rule,omitempty"` // 入账分配策略
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *FrostVaultConfig) Reset() {
+	*x = FrostVaultConfig{}
+	mi := &file_pb_data_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostVaultConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostVaultConfig) ProtoMessage() {}
+
+func (x *FrostVaultConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostVaultConfig.ProtoReflect.Descriptor instead.
+func (*FrostVaultConfig) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{62}
+}
+
+func (x *FrostVaultConfig) GetChain() string {
+	if x != nil {
+		return x.Chain
+	}
+	return ""
+}
+
+func (x *FrostVaultConfig) GetSignAlgo() SignAlgo {
+	if x != nil {
+		return x.SignAlgo
+	}
+	return SignAlgo_SIGN_ALGO_UNSPECIFIED
+}
+
+func (x *FrostVaultConfig) GetVaultCount() uint32 {
+	if x != nil {
+		return x.VaultCount
+	}
+	return 0
+}
+
+func (x *FrostVaultConfig) GetCommitteeSize() uint32 {
+	if x != nil {
+		return x.CommitteeSize
+	}
+	return 0
+}
+
+func (x *FrostVaultConfig) GetThresholdRatio() float32 {
+	if x != nil {
+		return x.ThresholdRatio
+	}
+	return 0
+}
+
+func (x *FrostVaultConfig) GetSelectionSeedRule() string {
+	if x != nil {
+		return x.SelectionSeedRule
+	}
+	return ""
+}
+
+func (x *FrostVaultConfig) GetVaultRefs() []string {
+	if x != nil {
+		return x.VaultRefs
+	}
+	return nil
+}
+
+func (x *FrostVaultConfig) GetDepositAllocationRule() string {
+	if x != nil {
+		return x.DepositAllocationRule
+	}
+	return ""
+}
+
 var File_pb_data_proto protoreflect.FileDescriptor
 
 const file_pb_data_proto_rawDesc = "" +
@@ -6052,7 +6230,25 @@ const file_pb_data_proto_rawDesc = "" +
 	"newVaultId\x12\x19\n" +
 	"\bepoch_id\x18\x04 \x01(\x04R\aepochId\x12\x19\n" +
 	"\bmsg_hash\x18\x05 \x01(\fR\amsgHash\x12\x1c\n" +
-	"\tsignature\x18\x06 \x01(\fR\tsignature*\xda\x01\n" +
+	"\tsignature\x18\x06 \x01(\fR\tsignature\"\xa5\x01\n" +
+	"\rFrostTop10000\x12\x16\n" +
+	"\x06height\x18\x01 \x01(\x04R\x06height\x12\x18\n" +
+	"\aindices\x18\x02 \x03(\x04R\aindices\x12\x1c\n" +
+	"\taddresses\x18\x03 \x03(\tR\taddresses\x12\x1f\n" +
+	"\vpublic_keys\x18\x04 \x03(\fR\n" +
+	"publicKeys\x12#\n" +
+	"\rupdate_height\x18\x05 \x01(\x04R\fupdateHeight\"\xcb\x02\n" +
+	"\x10FrostVaultConfig\x12\x14\n" +
+	"\x05chain\x18\x01 \x01(\tR\x05chain\x12)\n" +
+	"\tsign_algo\x18\x02 \x01(\x0e2\f.pb.SignAlgoR\bsignAlgo\x12\x1f\n" +
+	"\vvault_count\x18\x03 \x01(\rR\n" +
+	"vaultCount\x12%\n" +
+	"\x0ecommittee_size\x18\x04 \x01(\rR\rcommitteeSize\x12'\n" +
+	"\x0fthreshold_ratio\x18\x05 \x01(\x02R\x0ethresholdRatio\x12.\n" +
+	"\x13selection_seed_rule\x18\x06 \x01(\tR\x11selectionSeedRule\x12\x1d\n" +
+	"\n" +
+	"vault_refs\x18\a \x03(\tR\tvaultRefs\x126\n" +
+	"\x17deposit_allocation_rule\x18\b \x01(\tR\x15depositAllocationRule*\xda\x01\n" +
 	"\bSignAlgo\x12\x19\n" +
 	"\x15SIGN_ALGO_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14SIGN_ALGO_ECDSA_P256\x10\x01\x12\x1a\n" +
@@ -6117,7 +6313,7 @@ func file_pb_data_proto_rawDescGZIP() []byte {
 }
 
 var file_pb_data_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 64)
+var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 66)
 var file_pb_data_proto_goTypes = []any{
 	(SignAlgo)(0),                           // 0: pb.SignAlgo
 	(OrderOp)(0),                            // 1: pb.OrderOp
@@ -6188,17 +6384,19 @@ var file_pb_data_proto_goTypes = []any{
 	(*FrostVaultDkgShare)(nil),              // 66: pb.FrostVaultDkgShare
 	(*FrostVaultDkgValidationSignedTx)(nil), // 67: pb.FrostVaultDkgValidationSignedTx
 	(*FrostVaultTransitionSignedTx)(nil),    // 68: pb.FrostVaultTransitionSignedTx
-	nil,                                     // 69: pb.TokenRegistry.TokensEntry
-	nil,                                     // 70: pb.PublicKeys.KeysEntry
-	nil,                                     // 71: pb.Account.BalancesEntry
+	(*FrostTop10000)(nil),                   // 69: pb.FrostTop10000
+	(*FrostVaultConfig)(nil),                // 70: pb.FrostVaultConfig
+	nil,                                     // 71: pb.TokenRegistry.TokensEntry
+	nil,                                     // 72: pb.PublicKeys.KeysEntry
+	nil,                                     // 73: pb.Account.BalancesEntry
 }
 var file_pb_data_proto_depIdxs = []int32{
-	69, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
-	70, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
+	71, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
+	72, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
 	10, // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
 	2,  // 3: pb.BaseMessage.status:type_name -> pb.Status
 	10, // 4: pb.Account.public_keys:type_name -> pb.PublicKeys
-	71, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	73, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
 	24, // 6: pb.Block.body:type_name -> pb.AnyTx
 	11, // 7: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
 	11, // 8: pb.FreezeTx.base:type_name -> pb.BaseMessage
@@ -6252,13 +6450,14 @@ var file_pb_data_proto_depIdxs = []int32{
 	7,  // 56: pb.FrostEnvelope.kind:type_name -> pb.FrostEnvelopeKind
 	0,  // 57: pb.FrostVaultDkgCommitTx.sign_algo:type_name -> pb.SignAlgo
 	0,  // 58: pb.FrostVaultDkgCommitment.sign_algo:type_name -> pb.SignAlgo
-	8,  // 59: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
-	13, // 60: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
-	61, // [61:61] is the sub-list for method output_type
-	61, // [61:61] is the sub-list for method input_type
-	61, // [61:61] is the sub-list for extension type_name
-	61, // [61:61] is the sub-list for extension extendee
-	0,  // [0:61] is the sub-list for field type_name
+	0,  // 59: pb.FrostVaultConfig.sign_algo:type_name -> pb.SignAlgo
+	8,  // 60: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
+	13, // 61: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
+	62, // [62:62] is the sub-list for method output_type
+	62, // [62:62] is the sub-list for method input_type
+	62, // [62:62] is the sub-list for extension type_name
+	62, // [62:62] is the sub-list for extension extendee
+	0,  // [0:62] is the sub-list for field type_name
 }
 
 func init() { file_pb_data_proto_init() }
@@ -6288,7 +6487,7 @@ func file_pb_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_data_proto_rawDesc), len(file_pb_data_proto_rawDesc)),
 			NumEnums:      8,
-			NumMessages:   64,
+			NumMessages:   66,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

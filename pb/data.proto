@@ -672,3 +672,24 @@ message FrostVaultTransitionSignedTx {
   bytes msg_hash = 5; // 迁移消息哈希
   bytes signature = 6; // 旧 Vault 群签名
 }
+
+// FrostTop10000 Top10000 矿工列表（用于 Vault 委员会分配）
+message FrostTop10000 {
+  uint64 height = 1; // 快照高度
+  repeated uint64 indices = 2; // 矿工索引列表（按 bit index 排序）
+  repeated string addresses = 3; // 矿工地址列表（与 indices 对应）
+  repeated bytes public_keys = 4; // 矿工公钥列表（与 indices 对应）
+  uint64 update_height = 5; // 最近更新高度
+}
+
+// FrostVaultConfig Vault 链级配置
+message FrostVaultConfig {
+  string chain = 1; // 链标识（btc/eth/bnb/trx/sol）
+  SignAlgo sign_algo = 2; // 签名算法
+  uint32 vault_count = 3; // Vault 数量 (M)
+  uint32 committee_size = 4; // 每个 Vault 委员会规模 (K)
+  float threshold_ratio = 5; // 门限比例（如 0.67）
+  string selection_seed_rule = 6; // 委员会选取种子规则
+  repeated string vault_refs = 7; // 各 Vault 的地址/合约
+  string deposit_allocation_rule = 8; // 入账分配策略
+}

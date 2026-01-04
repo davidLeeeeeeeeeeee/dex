@@ -425,6 +425,21 @@ func (s *fakeTxSubmitter) Submit(tx any) (txID string, err error) {
 	return "fake_tx_id", nil
 }
 
+func (s *fakeTxSubmitter) SubmitDkgCommitTx(ctx context.Context, tx *pb.FrostVaultDkgCommitTx) error {
+	s.submitted = append(s.submitted, tx)
+	return nil
+}
+
+func (s *fakeTxSubmitter) SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error {
+	s.submitted = append(s.submitted, tx)
+	return nil
+}
+
+func (s *fakeTxSubmitter) SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error {
+	s.submitted = append(s.submitted, tx)
+	return nil
+}
+
 func (s *fakeTxSubmitter) GetSubmitted() []any {
 	return s.submitted
 }
