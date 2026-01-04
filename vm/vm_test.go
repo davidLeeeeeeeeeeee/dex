@@ -12,6 +12,7 @@ import (
 	"dex/vm"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 )
 
 // ========== Mock数据库实现 ==========
@@ -908,4 +909,247 @@ func TestFrostFundsLedger(t *testing.T) {
 	requestID3, ok3 := vm.GetFundsLotAtHead(sv6, chain, asset, vaultID)
 	assert.True(t, ok3)
 	assert.Equal(t, "request_003", requestID3)
+}
+
+// ========== BTC 验签 + UTXO Lock 测试 ==========
+
+// TestFrostWithdrawSignedBTC_UTXOLock 测试 BTC UTXO 锁定防双花
+func TestFrostWithdrawSignedBTC_UTXOLock(t *testing.T) {
+	db := NewMockDB()
+
+	readFn := func(key string) ([]byte, error) {
+		return db.Get(key)
+	}
+	scanFn := func(prefix string) (map[string][]byte, error) {
+		return db.Scan(prefix)
+	}
+
+	// 创建 Registry 和注册 handler
+	reg := vm.NewHandlerRegistry()
+	vm.RegisterDefaultHandlers(reg)
+
+	// 准备测试数据：创建一个 QUEUED withdraw
+	withdrawID := "test_withdraw_btc_001"
+	chain := "btc"
+	asset := "native"
+
+	// 写入 withdraw
+	withdrawKey := keys.KeyFrostWithdraw(withdrawID)
+	withdrawState := &pb.FrostWithdrawState{
+		WithdrawId:    withdrawID,
+		TxId:          "orig_tx_001",
+		Seq:           1,
+		Chain:         chain,
+		Asset:         asset,
+		To:            "bc1qtest",
+		Amount:        "10000",
+		RequestHeight: 100,
+		Status:        "QUEUED",
+	}
+	withdrawData, _ := proto.Marshal(withdrawState)
+	db.mu.Lock()
+	db.data[withdrawKey] = withdrawData
+	db.mu.Unlock()
+
+	// 创建 FrostWithdrawSignedTx
+	jobID := "job_btc_001"
+	templateHash := make([]byte, 32)
+	for i := range templateHash {
+		templateHash[i] = byte(i)
+	}
+
+	signedTx := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawSignedTx{
+			FrostWithdrawSignedTx: &pb.FrostWithdrawSignedTx{
+				Base: &pb.BaseMessage{
+					TxId:           "signed_tx_001",
+					ExecutedHeight: 101,
+					FromAddress:    "signer_001",
+				},
+				JobId:              jobID,
+				SignedPackageBytes: []byte("dummy_signature"),
+				WithdrawIds:        []string{withdrawID},
+				VaultId:            1,
+				KeyEpoch:           1,
+				TemplateHash:       templateHash,
+				Chain:              chain,
+				Asset:              asset,
+				UtxoInputs: []*pb.UtxoInput{
+					{Txid: "prev_tx_001", Vout: 0, Amount: 50000},
+					{Txid: "prev_tx_002", Vout: 1, Amount: 30000},
+				},
+			},
+		},
+	}
+
+	// 执行 DryRun
+	sv := vm.NewStateView(readFn, scanFn)
+	handler, _ := reg.Get("frost_withdraw_signed")
+	ops, receipt, err := handler.DryRun(signedTx, sv)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "SUCCEED", receipt.Status)
+	assert.True(t, len(ops) > 0)
+
+	// 验证 UTXO lock 已写入
+	hasUtxoLock := false
+	for _, op := range ops {
+		if strings.Contains(op.Key, "frost_btc_locked_utxo") {
+			hasUtxoLock = true
+			assert.Equal(t, jobID, string(op.Value))
+		}
+	}
+	assert.True(t, hasUtxoLock, "should have UTXO lock ops")
+
+	// 模拟第二次提交（不同 job）尝试使用同一 UTXO - 应该失败
+	// 先应用第一次的结果
+	for _, op := range ops {
+		db.mu.Lock()
+		db.data[op.Key] = op.Value
+		db.mu.Unlock()
+	}
+
+	// 创建第二个 job 尝试使用同一 UTXO
+	signedTx2 := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawSignedTx{
+			FrostWithdrawSignedTx: &pb.FrostWithdrawSignedTx{
+				Base: &pb.BaseMessage{
+					TxId:           "signed_tx_002",
+					ExecutedHeight: 102,
+					FromAddress:    "signer_002",
+				},
+				JobId:              "job_btc_002", // 不同的 job
+				SignedPackageBytes: []byte("dummy_signature2"),
+				WithdrawIds:        []string{withdrawID},
+				VaultId:            1,
+				KeyEpoch:           1,
+				TemplateHash:       templateHash,
+				Chain:              chain,
+				Asset:              asset,
+				UtxoInputs: []*pb.UtxoInput{
+					{Txid: "prev_tx_001", Vout: 0, Amount: 50000}, // 同一 UTXO
+				},
+			},
+		},
+	}
+
+	// 重新准备 withdraw 状态为 QUEUED（因为已被第一个 job 改为 SIGNED）
+	withdrawState.Status = "QUEUED"
+	withdrawData2, _ := proto.Marshal(withdrawState)
+	db.mu.Lock()
+	db.data[withdrawKey] = withdrawData2
+	db.mu.Unlock()
+
+	sv2 := vm.NewStateView(readFn, scanFn)
+	_, receipt2, err2 := handler.DryRun(signedTx2, sv2)
+
+	// 应该失败因为 UTXO 已被锁定
+	assert.Error(t, err2)
+	assert.Equal(t, "FAILED", receipt2.Status)
+	assert.Contains(t, receipt2.Error, "UTXO already locked")
+}
+
+// TestFrostWithdrawSignedBTC_SameJobResubmit 测试同一 job 重复提交（幂等）
+func TestFrostWithdrawSignedBTC_SameJobResubmit(t *testing.T) {
+	db := NewMockDB()
+
+	readFn := func(key string) ([]byte, error) {
+		return db.Get(key)
+	}
+	scanFn := func(prefix string) (map[string][]byte, error) {
+		return db.Scan(prefix)
+	}
+
+	reg := vm.NewHandlerRegistry()
+	vm.RegisterDefaultHandlers(reg)
+
+	// 准备 QUEUED withdraw
+	withdrawID := "test_withdraw_btc_002"
+	chain := "btc"
+	asset := "native"
+	jobID := "job_btc_same_001"
+
+	withdrawKey := keys.KeyFrostWithdraw(withdrawID)
+	withdrawState := &pb.FrostWithdrawState{
+		WithdrawId: withdrawID,
+		Seq:        1,
+		Chain:      chain,
+		Asset:      asset,
+		Status:     "QUEUED",
+	}
+	withdrawData, _ := proto.Marshal(withdrawState)
+	db.mu.Lock()
+	db.data[withdrawKey] = withdrawData
+	db.mu.Unlock()
+
+	templateHash := make([]byte, 32)
+
+	signedTx := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawSignedTx{
+			FrostWithdrawSignedTx: &pb.FrostWithdrawSignedTx{
+				Base: &pb.BaseMessage{
+					TxId:           "signed_tx_same_001",
+					ExecutedHeight: 101,
+					FromAddress:    "signer",
+				},
+				JobId:              jobID,
+				SignedPackageBytes: []byte("sig1"),
+				WithdrawIds:        []string{withdrawID},
+				VaultId:            1,
+				TemplateHash:       templateHash,
+				Chain:              chain,
+				Asset:              asset,
+				UtxoInputs: []*pb.UtxoInput{
+					{Txid: "prev_tx_same", Vout: 0, Amount: 10000},
+				},
+			},
+		},
+	}
+
+	// 第一次提交
+	sv1 := vm.NewStateView(readFn, scanFn)
+	handler, _ := reg.Get("frost_withdraw_signed")
+	ops1, receipt1, err1 := handler.DryRun(signedTx, sv1)
+
+	assert.NoError(t, err1)
+	assert.Equal(t, "SUCCEED", receipt1.Status)
+
+	// 应用结果
+	for _, op := range ops1 {
+		db.mu.Lock()
+		db.data[op.Key] = op.Value
+		db.mu.Unlock()
+	}
+
+	// 同一 job 再次提交（幂等，应该只追加 receipt）
+	signedTx2 := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawSignedTx{
+			FrostWithdrawSignedTx: &pb.FrostWithdrawSignedTx{
+				Base: &pb.BaseMessage{
+					TxId:           "signed_tx_same_002",
+					ExecutedHeight: 102,
+					FromAddress:    "signer2",
+				},
+				JobId:              jobID, // 同一 job
+				SignedPackageBytes: []byte("sig2"),
+				WithdrawIds:        []string{withdrawID},
+				VaultId:            1,
+				TemplateHash:       templateHash,
+				Chain:              chain,
+				Asset:              asset,
+				UtxoInputs: []*pb.UtxoInput{
+					{Txid: "prev_tx_same", Vout: 0, Amount: 10000}, // 同一 UTXO
+				},
+			},
+		},
+	}
+
+	sv2 := vm.NewStateView(readFn, scanFn)
+	ops2, receipt2, err2 := handler.DryRun(signedTx2, sv2)
+
+	// 应该成功（幂等追加）
+	assert.NoError(t, err2)
+	assert.Equal(t, "SUCCEED", receipt2.Status)
+	// 只应该有 pkg + count 更新，没有新的 UTXO lock
+	assert.True(t, len(ops2) <= 2)
 }

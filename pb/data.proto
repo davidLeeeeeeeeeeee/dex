@@ -511,6 +511,19 @@ message FrostWithdrawSignedTx {
   string job_id = 2; // 签名任务 ID
   bytes signed_package_bytes = 3; // 签名包（可广播的交易数据）
   repeated string withdraw_ids = 4; // 被该 job 覆盖的 withdraw_id 列表
+  uint32 vault_id = 5; // Vault ID
+  uint64 key_epoch = 6; // 密钥版本
+  bytes template_hash = 7; // 交易模板哈希（用于验签绑定）
+  string chain = 8; // 链标识
+  string asset = 9; // 资产类型
+  repeated UtxoInput utxo_inputs = 10; // BTC 专用：使用的 UTXO 列表
+}
+
+// UTXO 输入（用于 FrostWithdrawSignedTx）
+message UtxoInput {
+  string txid = 1; // 前序交易 ID
+  uint32 vout = 2; // 输出索引
+  uint64 amount = 3; // 金额（satoshi）
 }
 
 // Frost 提现请求状态（链上存储）
@@ -535,4 +548,15 @@ message FrostSignedPackage {
   bytes signed_package_bytes = 3; // 签名包
   uint64 submit_height = 4; // 提交高度
   string submitter = 5; // 提交者地址
+}
+
+// Vault 状态（用于存储密钥和状态信息）
+message FrostVaultState {
+  uint32 vault_id = 1; // Vault ID
+  string chain = 2; // 链标识
+  uint64 key_epoch = 3; // 当前密钥版本
+  bytes group_pubkey = 4; // 群公钥（32 字节 x-only，用于 BTC BIP-340）
+  SignAlgo sign_algo = 5; // 签名算法
+  string status = 6; // PENDING | KEY_READY | ACTIVE | DEPRECATED
+  uint64 active_since_height = 7; // 激活高度
 }
