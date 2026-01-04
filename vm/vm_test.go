@@ -10,6 +10,8 @@ import (
 	"dex/keys"
 	"dex/pb"
 	"dex/vm"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // ========== Mock数据库实现 ==========
@@ -551,4 +553,59 @@ func BenchmarkPreExecute(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		executor.PreExecuteBlock(block)
 	}
+}
+
+// TestFrostKind 测试 Frost 交易类型的 kind 字符串识别
+func TestFrostKind(t *testing.T) {
+	// 测试 FrostWithdrawRequestTx
+	frostWithdrawRequestTx := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawRequestTx{
+			FrostWithdrawRequestTx: &pb.FrostWithdrawRequestTx{
+				Base: &pb.BaseMessage{
+					TxId:        "test-frost-withdraw-request-1",
+					FromAddress: "alice",
+				},
+				Chain:  "BTC",
+				Asset:  "native",
+				To:     "bc1qtest...",
+				Amount: "100000",
+			},
+		},
+	}
+
+	kind, err := vm.DefaultKindFn(frostWithdrawRequestTx)
+	assert.NoError(t, err)
+	assert.Equal(t, "frost_withdraw_request", kind)
+
+	// 测试 FrostWithdrawSignedTx
+	frostWithdrawSignedTx := &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawSignedTx{
+			FrostWithdrawSignedTx: &pb.FrostWithdrawSignedTx{
+				Base: &pb.BaseMessage{
+					TxId:        "test-frost-withdraw-signed-1",
+					FromAddress: "runtime",
+				},
+				JobId:              "job-123",
+				SignedPackageBytes: []byte("signed-package"),
+			},
+		},
+	}
+
+	kind, err = vm.DefaultKindFn(frostWithdrawSignedTx)
+	assert.NoError(t, err)
+	assert.Equal(t, "frost_withdraw_signed", kind)
+
+	// 测试 handler 注册
+	registry := vm.NewHandlerRegistry()
+	err = vm.RegisterDefaultHandlers(registry)
+	assert.NoError(t, err)
+
+	// 验证 Frost handler 已注册
+	h1, ok := registry.Get("frost_withdraw_request")
+	assert.True(t, ok)
+	assert.Equal(t, "frost_withdraw_request", h1.Kind())
+
+	h2, ok := registry.Get("frost_withdraw_signed")
+	assert.True(t, ok)
+	assert.Equal(t, "frost_withdraw_signed", h2.Kind())
 }

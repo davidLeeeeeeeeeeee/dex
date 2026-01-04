@@ -92,6 +92,11 @@ func DefaultKindFn(tx *pb.AnyTx) (string, error) {
 		return "arbitration_vote", nil
 	case *pb.AnyTx_WitnessClaimRewardTx:
 		return "witness_claim_reward", nil
+	// Frost 相关交易类型
+	case *pb.AnyTx_FrostWithdrawRequestTx:
+		return "frost_withdraw_request", nil
+	case *pb.AnyTx_FrostWithdrawSignedTx:
+		return "frost_withdraw_signed", nil
 	default:
 		return "", fmt.Errorf("unknown tx type: %v", tx.GetTxId())
 	}

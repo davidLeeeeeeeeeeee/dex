@@ -292,6 +292,48 @@ func KeyFrostWithdrawFIFOHead(chain, asset string) string {
 	return withVer(fmt.Sprintf("frost_withdraw_head_%s_%s", chain, asset))
 }
 
+// KeyFrostConfig Frost 全局配置
+// 例：v1_frost_cfg
+func KeyFrostConfig() string {
+	return withVer("frost_cfg")
+}
+
+// KeyFrostTop10000 Frost Top 10000 矿工列表
+// 例：v1_frost_top10000
+func KeyFrostTop10000() string {
+	return withVer("frost_top10000")
+}
+
+// KeyFrostVaultConfig Vault 配置
+// 例：v1_frost_vault_cfg_<chain>_<vault_id>
+func KeyFrostVaultConfig(chain string, vaultID uint32) string {
+	return withVer(fmt.Sprintf("frost_vault_cfg_%s_%d", chain, vaultID))
+}
+
+// KeyFrostVaultState Vault 状态（包含 key_epoch, group_pubkey 等）
+// 例：v1_frost_vault_state_<chain>_<vault_id>
+func KeyFrostVaultState(chain string, vaultID uint32) string {
+	return withVer(fmt.Sprintf("frost_vault_state_%s_%d", chain, vaultID))
+}
+
+// KeyFrostVaultTransition Vault 轮换状态
+// 例：v1_frost_vault_transition_<chain>_<vault_id>_<epoch_id>
+func KeyFrostVaultTransition(chain string, vaultID uint32, epochID uint64) string {
+	return withVer(fmt.Sprintf("frost_vault_transition_%s_%d_%s", chain, vaultID, padUint(epochID)))
+}
+
+// KeyFrostVaultDkgCommit Vault DKG 承诺点
+// 例：v1_frost_vault_dkg_commit_<chain>_<vault_id>_<epoch_id>_<participant>
+func KeyFrostVaultDkgCommit(chain string, vaultID uint32, epochID uint64, participant string) string {
+	return withVer(fmt.Sprintf("frost_vault_dkg_commit_%s_%d_%s_%s", chain, vaultID, padUint(epochID), participant))
+}
+
+// KeyFrostSignedPackage 签名产物记录
+// 例：v1_frost_signed_pkg_<job_id>_<idx>
+func KeyFrostSignedPackage(jobID string, idx uint64) string {
+	return withVer(fmt.Sprintf("frost_signed_pkg_%s_%s", jobID, padUint(idx)))
+}
+
 func padUint(v uint64) string {
 	return fmt.Sprintf("%020d", v)
 }

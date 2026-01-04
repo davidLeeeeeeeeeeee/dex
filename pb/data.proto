@@ -183,6 +183,9 @@ message AnyTx {
     WitnessChallengeTx witness_challenge_tx = 10; // 挑战
     ArbitrationVoteTx arbitration_vote_tx = 11; // 仲裁投票
     WitnessClaimRewardTx witness_claim_reward_tx = 12; // 领取奖励
+    // Frost 相关交易
+    FrostWithdrawRequestTx frost_withdraw_request_tx = 13; // Frost 提现请求
+    FrostWithdrawSignedTx frost_withdraw_signed_tx = 14; // Frost 提现签名完成
   }
 }
 // --------------------- 订单 & 状态相关 ---------------------
@@ -489,4 +492,22 @@ message WitnessConfig {
   uint32 initial_witness_count = 9; // 初始见证者数量
   uint32 expand_multiplier = 10; // 扩大范围倍数
   uint32 max_rounds = 11; // 最大轮次
+}
+
+// --------------------- Frost 相关消息 ---------------------
+
+// Frost 提现请求交易（用户发起）
+message FrostWithdrawRequestTx {
+  BaseMessage base = 1;
+  string chain = 2; // 目标链标识（如 "BTC", "ETH", "SOL"）
+  string asset = 3; // 资产类型（native 或 token address）
+  string to = 4; // 提现目标地址（目标链上的地址）
+  string amount = 5; // 提现金额
+}
+
+// Frost 提现签名完成交易（Runtime 回写）
+message FrostWithdrawSignedTx {
+  BaseMessage base = 1;
+  string job_id = 2; // 签名任务 ID
+  bytes signed_package_bytes = 3; // 签名包（可广播的交易数据）
 }

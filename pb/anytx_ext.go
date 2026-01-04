@@ -27,6 +27,11 @@ func (m *AnyTx) GetBase() *BaseMessage {
 		return tx.ArbitrationVoteTx.GetBase()
 	case *AnyTx_WitnessClaimRewardTx:
 		return tx.WitnessClaimRewardTx.GetBase()
+	// Frost 相关交易
+	case *AnyTx_FrostWithdrawRequestTx:
+		return tx.FrostWithdrawRequestTx.GetBase()
+	case *AnyTx_FrostWithdrawSignedTx:
+		return tx.FrostWithdrawSignedTx.GetBase()
 	default:
 		return nil
 	}
