@@ -652,3 +652,13 @@ message FrostVaultDkgShare {
   bytes ciphertext = 6;
   uint64 share_height = 7; // 提交高度
 }
+
+// FrostVaultDkgValidationSignedTx 验证签名推进到 KeyReady
+message FrostVaultDkgValidationSignedTx {
+  string chain = 1; // 链标识
+  uint32 vault_id = 2; // Vault ID
+  uint64 epoch_id = 3; // epoch 版本
+  bytes msg_hash = 4; // 验证消息哈希
+  bytes new_group_pubkey = 5; // 新群公钥
+  bytes signature = 6; // 群签名
+}

@@ -5413,6 +5413,91 @@ func (x *FrostVaultDkgShare) GetShareHeight() uint64 {
 	return 0
 }
 
+// FrostVaultDkgValidationSignedTx 验证签名推进到 KeyReady
+type FrostVaultDkgValidationSignedTx struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Chain          string                 `protobuf:"bytes,1,opt,name=chain,proto3" json:"chain,omitempty"`                                           // 链标识
+	VaultId        uint32                 `protobuf:"varint,2,opt,name=vault_id,json=vaultId,proto3" json:"vault_id,omitempty"`                       // Vault ID
+	EpochId        uint64                 `protobuf:"varint,3,opt,name=epoch_id,json=epochId,proto3" json:"epoch_id,omitempty"`                       // epoch 版本
+	MsgHash        []byte                 `protobuf:"bytes,4,opt,name=msg_hash,json=msgHash,proto3" json:"msg_hash,omitempty"`                        // 验证消息哈希
+	NewGroupPubkey []byte                 `protobuf:"bytes,5,opt,name=new_group_pubkey,json=newGroupPubkey,proto3" json:"new_group_pubkey,omitempty"` // 新群公钥
+	Signature      []byte                 `protobuf:"bytes,6,opt,name=signature,proto3" json:"signature,omitempty"`                                   // 群签名
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *FrostVaultDkgValidationSignedTx) Reset() {
+	*x = FrostVaultDkgValidationSignedTx{}
+	mi := &file_pb_data_proto_msgTypes[59]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostVaultDkgValidationSignedTx) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostVaultDkgValidationSignedTx) ProtoMessage() {}
+
+func (x *FrostVaultDkgValidationSignedTx) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[59]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostVaultDkgValidationSignedTx.ProtoReflect.Descriptor instead.
+func (*FrostVaultDkgValidationSignedTx) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{59}
+}
+
+func (x *FrostVaultDkgValidationSignedTx) GetChain() string {
+	if x != nil {
+		return x.Chain
+	}
+	return ""
+}
+
+func (x *FrostVaultDkgValidationSignedTx) GetVaultId() uint32 {
+	if x != nil {
+		return x.VaultId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgValidationSignedTx) GetEpochId() uint64 {
+	if x != nil {
+		return x.EpochId
+	}
+	return 0
+}
+
+func (x *FrostVaultDkgValidationSignedTx) GetMsgHash() []byte {
+	if x != nil {
+		return x.MsgHash
+	}
+	return nil
+}
+
+func (x *FrostVaultDkgValidationSignedTx) GetNewGroupPubkey() []byte {
+	if x != nil {
+		return x.NewGroupPubkey
+	}
+	return nil
+}
+
+func (x *FrostVaultDkgValidationSignedTx) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
 var File_pb_data_proto protoreflect.FileDescriptor
 
 const file_pb_data_proto_rawDesc = "" +
@@ -5866,7 +5951,14 @@ const file_pb_data_proto_rawDesc = "" +
 	"\n" +
 	"ciphertext\x18\x06 \x01(\fR\n" +
 	"ciphertext\x12!\n" +
-	"\fshare_height\x18\a \x01(\x04R\vshareHeight*\xda\x01\n" +
+	"\fshare_height\x18\a \x01(\x04R\vshareHeight\"\xd0\x01\n" +
+	"\x1fFrostVaultDkgValidationSignedTx\x12\x14\n" +
+	"\x05chain\x18\x01 \x01(\tR\x05chain\x12\x19\n" +
+	"\bvault_id\x18\x02 \x01(\rR\avaultId\x12\x19\n" +
+	"\bepoch_id\x18\x03 \x01(\x04R\aepochId\x12\x19\n" +
+	"\bmsg_hash\x18\x04 \x01(\fR\amsgHash\x12(\n" +
+	"\x10new_group_pubkey\x18\x05 \x01(\fR\x0enewGroupPubkey\x12\x1c\n" +
+	"\tsignature\x18\x06 \x01(\fR\tsignature*\xda\x01\n" +
 	"\bSignAlgo\x12\x19\n" +
 	"\x15SIGN_ALGO_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14SIGN_ALGO_ECDSA_P256\x10\x01\x12\x1a\n" +
@@ -5931,86 +6023,87 @@ func file_pb_data_proto_rawDescGZIP() []byte {
 }
 
 var file_pb_data_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
+var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 63)
 var file_pb_data_proto_goTypes = []any{
-	(SignAlgo)(0),                    // 0: pb.SignAlgo
-	(OrderOp)(0),                     // 1: pb.OrderOp
-	(Status)(0),                      // 2: pb.Status
-	(WitnessStatus)(0),               // 3: pb.WitnessStatus
-	(WitnessVoteType)(0),             // 4: pb.WitnessVoteType
-	(RechargeRequestStatus)(0),       // 5: pb.RechargeRequestStatus
-	(ChallengeStatus)(0),             // 6: pb.ChallengeStatus
-	(FrostEnvelopeKind)(0),           // 7: pb.FrostEnvelopeKind
-	(*Token)(nil),                    // 8: pb.Token
-	(*TokenRegistry)(nil),            // 9: pb.TokenRegistry
-	(*PublicKeys)(nil),               // 10: pb.PublicKeys
-	(*BaseMessage)(nil),              // 11: pb.BaseMessage
-	(*Account)(nil),                  // 12: pb.Account
-	(*TokenBalance)(nil),             // 13: pb.TokenBalance
-	(*Block)(nil),                    // 14: pb.Block
-	(*RewordInfo)(nil),               // 15: pb.RewordInfo
-	(*OrderPriceIndex)(nil),          // 16: pb.OrderPriceIndex
-	(*CandidateIndex)(nil),           // 17: pb.CandidateIndex
-	(*IssueTokenTx)(nil),             // 18: pb.IssueTokenTx
-	(*FreezeTx)(nil),                 // 19: pb.FreezeTx
-	(*Transaction)(nil),              // 20: pb.Transaction
-	(*OrderTx)(nil),                  // 21: pb.OrderTx
-	(*CandidateTx)(nil),              // 22: pb.CandidateTx
-	(*MinerTx)(nil),                  // 23: pb.MinerTx
-	(*AnyTx)(nil),                    // 24: pb.AnyTx
-	(*NodeInfo)(nil),                 // 25: pb.NodeInfo
-	(*NodeList)(nil),                 // 26: pb.NodeList
-	(*ClientInfo)(nil),               // 27: pb.ClientInfo
-	(*HandshakeRequest)(nil),         // 28: pb.HandshakeRequest
-	(*HandshakeResponse)(nil),        // 29: pb.HandshakeResponse
-	(*StatusRequest)(nil),            // 30: pb.StatusRequest
-	(*StatusResponse)(nil),           // 31: pb.StatusResponse
-	(*GetData)(nil),                  // 32: pb.GetData
-	(*GetBlockRequest)(nil),          // 33: pb.GetBlockRequest
-	(*GetBlockResponse)(nil),         // 34: pb.GetBlockResponse
-	(*BatchGetShortTxRequest)(nil),   // 35: pb.BatchGetShortTxRequest
-	(*BatchGetShortTxResponse)(nil),  // 36: pb.BatchGetShortTxResponse
-	(*CheckPointInfo)(nil),           // 37: pb.CheckPointInfo
-	(*GetConsensusStateRequest)(nil), // 38: pb.GetConsensusStateRequest
-	(*PushQuery)(nil),                // 39: pb.PushQuery
-	(*PullQuery)(nil),                // 40: pb.PullQuery
-	(*Chits)(nil),                    // 41: pb.Chits
-	(*HeightResponse)(nil),           // 42: pb.HeightResponse
-	(*GetBlockByIDRequest)(nil),      // 43: pb.GetBlockByIDRequest
-	(*WitnessInfo)(nil),              // 44: pb.WitnessInfo
-	(*WitnessStakeTx)(nil),           // 45: pb.WitnessStakeTx
-	(*WitnessRequestTx)(nil),         // 46: pb.WitnessRequestTx
-	(*WitnessVote)(nil),              // 47: pb.WitnessVote
-	(*WitnessVoteTx)(nil),            // 48: pb.WitnessVoteTx
-	(*RechargeRequest)(nil),          // 49: pb.RechargeRequest
-	(*WitnessChallengeTx)(nil),       // 50: pb.WitnessChallengeTx
-	(*ChallengeRecord)(nil),          // 51: pb.ChallengeRecord
-	(*ArbitrationVoteTx)(nil),        // 52: pb.ArbitrationVoteTx
-	(*WitnessClaimRewardTx)(nil),     // 53: pb.WitnessClaimRewardTx
-	(*WitnessConfig)(nil),            // 54: pb.WitnessConfig
-	(*FrostWithdrawRequestTx)(nil),   // 55: pb.FrostWithdrawRequestTx
-	(*FrostWithdrawSignedTx)(nil),    // 56: pb.FrostWithdrawSignedTx
-	(*UtxoInput)(nil),                // 57: pb.UtxoInput
-	(*FrostWithdrawState)(nil),       // 58: pb.FrostWithdrawState
-	(*FrostSignedPackage)(nil),       // 59: pb.FrostSignedPackage
-	(*FrostVaultState)(nil),          // 60: pb.FrostVaultState
-	(*VaultTransitionState)(nil),     // 61: pb.VaultTransitionState
-	(*FrostEnvelope)(nil),            // 62: pb.FrostEnvelope
-	(*FrostVaultDkgCommitTx)(nil),    // 63: pb.FrostVaultDkgCommitTx
-	(*FrostVaultDkgShareTx)(nil),     // 64: pb.FrostVaultDkgShareTx
-	(*FrostVaultDkgCommitment)(nil),  // 65: pb.FrostVaultDkgCommitment
-	(*FrostVaultDkgShare)(nil),       // 66: pb.FrostVaultDkgShare
-	nil,                              // 67: pb.TokenRegistry.TokensEntry
-	nil,                              // 68: pb.PublicKeys.KeysEntry
-	nil,                              // 69: pb.Account.BalancesEntry
+	(SignAlgo)(0),                           // 0: pb.SignAlgo
+	(OrderOp)(0),                            // 1: pb.OrderOp
+	(Status)(0),                             // 2: pb.Status
+	(WitnessStatus)(0),                      // 3: pb.WitnessStatus
+	(WitnessVoteType)(0),                    // 4: pb.WitnessVoteType
+	(RechargeRequestStatus)(0),              // 5: pb.RechargeRequestStatus
+	(ChallengeStatus)(0),                    // 6: pb.ChallengeStatus
+	(FrostEnvelopeKind)(0),                  // 7: pb.FrostEnvelopeKind
+	(*Token)(nil),                           // 8: pb.Token
+	(*TokenRegistry)(nil),                   // 9: pb.TokenRegistry
+	(*PublicKeys)(nil),                      // 10: pb.PublicKeys
+	(*BaseMessage)(nil),                     // 11: pb.BaseMessage
+	(*Account)(nil),                         // 12: pb.Account
+	(*TokenBalance)(nil),                    // 13: pb.TokenBalance
+	(*Block)(nil),                           // 14: pb.Block
+	(*RewordInfo)(nil),                      // 15: pb.RewordInfo
+	(*OrderPriceIndex)(nil),                 // 16: pb.OrderPriceIndex
+	(*CandidateIndex)(nil),                  // 17: pb.CandidateIndex
+	(*IssueTokenTx)(nil),                    // 18: pb.IssueTokenTx
+	(*FreezeTx)(nil),                        // 19: pb.FreezeTx
+	(*Transaction)(nil),                     // 20: pb.Transaction
+	(*OrderTx)(nil),                         // 21: pb.OrderTx
+	(*CandidateTx)(nil),                     // 22: pb.CandidateTx
+	(*MinerTx)(nil),                         // 23: pb.MinerTx
+	(*AnyTx)(nil),                           // 24: pb.AnyTx
+	(*NodeInfo)(nil),                        // 25: pb.NodeInfo
+	(*NodeList)(nil),                        // 26: pb.NodeList
+	(*ClientInfo)(nil),                      // 27: pb.ClientInfo
+	(*HandshakeRequest)(nil),                // 28: pb.HandshakeRequest
+	(*HandshakeResponse)(nil),               // 29: pb.HandshakeResponse
+	(*StatusRequest)(nil),                   // 30: pb.StatusRequest
+	(*StatusResponse)(nil),                  // 31: pb.StatusResponse
+	(*GetData)(nil),                         // 32: pb.GetData
+	(*GetBlockRequest)(nil),                 // 33: pb.GetBlockRequest
+	(*GetBlockResponse)(nil),                // 34: pb.GetBlockResponse
+	(*BatchGetShortTxRequest)(nil),          // 35: pb.BatchGetShortTxRequest
+	(*BatchGetShortTxResponse)(nil),         // 36: pb.BatchGetShortTxResponse
+	(*CheckPointInfo)(nil),                  // 37: pb.CheckPointInfo
+	(*GetConsensusStateRequest)(nil),        // 38: pb.GetConsensusStateRequest
+	(*PushQuery)(nil),                       // 39: pb.PushQuery
+	(*PullQuery)(nil),                       // 40: pb.PullQuery
+	(*Chits)(nil),                           // 41: pb.Chits
+	(*HeightResponse)(nil),                  // 42: pb.HeightResponse
+	(*GetBlockByIDRequest)(nil),             // 43: pb.GetBlockByIDRequest
+	(*WitnessInfo)(nil),                     // 44: pb.WitnessInfo
+	(*WitnessStakeTx)(nil),                  // 45: pb.WitnessStakeTx
+	(*WitnessRequestTx)(nil),                // 46: pb.WitnessRequestTx
+	(*WitnessVote)(nil),                     // 47: pb.WitnessVote
+	(*WitnessVoteTx)(nil),                   // 48: pb.WitnessVoteTx
+	(*RechargeRequest)(nil),                 // 49: pb.RechargeRequest
+	(*WitnessChallengeTx)(nil),              // 50: pb.WitnessChallengeTx
+	(*ChallengeRecord)(nil),                 // 51: pb.ChallengeRecord
+	(*ArbitrationVoteTx)(nil),               // 52: pb.ArbitrationVoteTx
+	(*WitnessClaimRewardTx)(nil),            // 53: pb.WitnessClaimRewardTx
+	(*WitnessConfig)(nil),                   // 54: pb.WitnessConfig
+	(*FrostWithdrawRequestTx)(nil),          // 55: pb.FrostWithdrawRequestTx
+	(*FrostWithdrawSignedTx)(nil),           // 56: pb.FrostWithdrawSignedTx
+	(*UtxoInput)(nil),                       // 57: pb.UtxoInput
+	(*FrostWithdrawState)(nil),              // 58: pb.FrostWithdrawState
+	(*FrostSignedPackage)(nil),              // 59: pb.FrostSignedPackage
+	(*FrostVaultState)(nil),                 // 60: pb.FrostVaultState
+	(*VaultTransitionState)(nil),            // 61: pb.VaultTransitionState
+	(*FrostEnvelope)(nil),                   // 62: pb.FrostEnvelope
+	(*FrostVaultDkgCommitTx)(nil),           // 63: pb.FrostVaultDkgCommitTx
+	(*FrostVaultDkgShareTx)(nil),            // 64: pb.FrostVaultDkgShareTx
+	(*FrostVaultDkgCommitment)(nil),         // 65: pb.FrostVaultDkgCommitment
+	(*FrostVaultDkgShare)(nil),              // 66: pb.FrostVaultDkgShare
+	(*FrostVaultDkgValidationSignedTx)(nil), // 67: pb.FrostVaultDkgValidationSignedTx
+	nil,                                     // 68: pb.TokenRegistry.TokensEntry
+	nil,                                     // 69: pb.PublicKeys.KeysEntry
+	nil,                                     // 70: pb.Account.BalancesEntry
 }
 var file_pb_data_proto_depIdxs = []int32{
-	67, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
-	68, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
+	68, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
+	69, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
 	10, // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
 	2,  // 3: pb.BaseMessage.status:type_name -> pb.Status
 	10, // 4: pb.Account.public_keys:type_name -> pb.PublicKeys
-	69, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	70, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
 	24, // 6: pb.Block.body:type_name -> pb.AnyTx
 	11, // 7: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
 	11, // 8: pb.FreezeTx.base:type_name -> pb.BaseMessage
@@ -6100,7 +6193,7 @@ func file_pb_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_data_proto_rawDesc), len(file_pb_data_proto_rawDesc)),
 			NumEnums:      8,
-			NumMessages:   62,
+			NumMessages:   63,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
