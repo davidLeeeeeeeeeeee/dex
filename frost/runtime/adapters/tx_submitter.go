@@ -3,8 +3,10 @@
 package adapters
 
 import (
+	"context"
 	"crypto/sha256"
 	"dex/frost/runtime"
+	"dex/pb"
 	"encoding/hex"
 	"errors"
 	"sync"
@@ -58,6 +60,24 @@ func (s *TxPoolSubmitter) Submit(tx any) (txID string, err error) {
 	}
 
 	return txID, nil
+}
+
+// SubmitDkgCommitTx 提交 DKG 承诺交易
+func (s *TxPoolSubmitter) SubmitDkgCommitTx(ctx context.Context, tx *pb.FrostVaultDkgCommitTx) error {
+	_, err := s.Submit(tx)
+	return err
+}
+
+// SubmitDkgShareTx 提交 DKG share 交易
+func (s *TxPoolSubmitter) SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error {
+	_, err := s.Submit(tx)
+	return err
+}
+
+// SubmitDkgValidationSignedTx 提交 DKG 验证签名交易
+func (s *TxPoolSubmitter) SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error {
+	_, err := s.Submit(tx)
+	return err
 }
 
 // Ensure TxPoolSubmitter implements runtime.TxSubmitter
@@ -130,6 +150,23 @@ func (s *FakeTxSubmitter) Reset() {
 	s.failErr = nil
 }
 
+// SubmitDkgCommitTx 提交 DKG 承诺交易（测试用）
+func (s *FakeTxSubmitter) SubmitDkgCommitTx(ctx context.Context, tx *pb.FrostVaultDkgCommitTx) error {
+	_, err := s.Submit(tx)
+	return err
+}
+
+// SubmitDkgShareTx 提交 DKG share 交易（测试用）
+func (s *FakeTxSubmitter) SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error {
+	_, err := s.Submit(tx)
+	return err
+}
+
+// SubmitDkgValidationSignedTx 提交 DKG 验证签名交易（测试用）
+func (s *FakeTxSubmitter) SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error {
+	_, err := s.Submit(tx)
+	return err
+}
+
 // Ensure FakeTxSubmitter implements runtime.TxSubmitter
 var _ runtime.TxSubmitter = (*FakeTxSubmitter)(nil)
-

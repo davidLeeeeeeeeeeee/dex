@@ -1,5 +1,11 @@
 package runtime
 
+import (
+	"context"
+
+	"dex/pb"
+)
+
 // NodeID 表示网络节点标识
 type NodeID string
 
@@ -20,7 +26,13 @@ type ChainStateReader interface {
 // TxSubmitter 提交"回写交易"（进入 txpool/广播/共识）
 type TxSubmitter interface {
 	Submit(tx any) (txID string, err error)
+	SubmitDkgCommitTx(ctx context.Context, tx *pb.FrostVaultDkgCommitTx) error
+	SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error
+	SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error
 }
+
+// StateReader 状态读取接口（ChainStateReader 的别名）
+type StateReader = ChainStateReader
 
 // FinalityNotifier 订阅最终化事件（仅作为唤醒，不是唯一触发源）
 type FinalityNotifier interface {
