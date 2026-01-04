@@ -10,6 +10,7 @@ import (
 	"dex/config"
 	"dex/consensus"
 	"dex/db"
+	frostrt "dex/frost/runtime"
 	"dex/handlers"
 	"dex/logs"
 	"dex/middleware"
@@ -49,6 +50,7 @@ type NodeInstance struct {
 	TxPool           *txpool.TxPool
 	SenderManager    *sender.SenderManager
 	HandlerManager   *handlers.HandlerManager
+	FrostRuntime     *frostrt.Manager // FROST 门限签名 Runtime（可选）
 }
 
 // TestValidator 简单的交易验证器
@@ -367,6 +369,39 @@ ContinueWithConsensus:
 			fmt.Printf("  ✓ Node %d consensus engine started\n", node.ID)
 		}
 	}
+
+	// 第3.6阶段：启动 FROST Runtime（如果配置开启）
+	if cfg.Frost.Enabled {
+		fmt.Println("🔐 Phase 3.6: Starting FROST Runtime...")
+		for _, node := range nodes {
+			if node == nil {
+				continue
+			}
+			// 创建 FROST Runtime Manager
+			frostCfg := frostrt.ManagerConfig{
+				NodeID: frostrt.NodeID(node.Address),
+			}
+			frostDeps := frostrt.ManagerDeps{
+				// 依赖注入 - 后续阶段实现具体适配器
+				StateReader:    nil,
+				TxSubmitter:    nil,
+				Notifier:       nil,
+				P2P:            nil,
+				SignerProvider: nil,
+				VaultProvider:  nil,
+				AdapterFactory: nil,
+			}
+			frostManager := frostrt.NewManager(frostCfg, frostDeps)
+			node.FrostRuntime = frostManager
+
+			// 启动 FROST Runtime
+			if err := frostManager.Start(context.Background()); err != nil {
+				logs.Error("Failed to start FROST Runtime for node %d: %v", node.ID, err)
+			} else {
+				fmt.Printf("  ✓ Node %d FROST Runtime started\n", node.ID)
+			}
+		}
+	}
 	// Create initial transactions
 	fmt.Println("📝 Creating initial transactions...")
 	for _, node := range nodes {
@@ -579,9 +614,13 @@ func initializeNode(node *NodeInstance) error {
 
 	// 保存节点信息到数据库
 	nodeInfo := &pb.NodeInfo{
-		PublicKey: keyMgr.GetPublicKey(),
-		Ip:        fmt.Sprintf("127.0.0.1:%s", node.Port),
-		IsOnline:  true,
+		PublicKeys: &pb.PublicKeys{
+			Keys: map[int32][]byte{
+				int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256): []byte(keyMgr.GetPublicKey()),
+			},
+		},
+		Ip:       fmt.Sprintf("127.0.0.1:%s", node.Port),
+		IsOnline: true,
 	}
 
 	if err := dbManager.SaveNodeInfo(nodeInfo); err != nil {
@@ -590,12 +629,16 @@ func initializeNode(node *NodeInstance) error {
 
 	// 创建账户
 	account := &pb.Account{
-		Address:   node.Address,
-		PublicKey: keyMgr.GetPublicKey(),
-		Ip:        fmt.Sprintf("127.0.0.1:%s", node.Port),
-		Index:     uint64(node.ID),
-		IsMiner:   true,
-		Balances:  make(map[string]*pb.TokenBalance),
+		Address: node.Address,
+		PublicKeys: &pb.PublicKeys{
+			Keys: map[int32][]byte{
+				int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256): []byte(keyMgr.GetPublicKey()),
+			},
+		},
+		Ip:       fmt.Sprintf("127.0.0.1:%s", node.Port),
+		Index:    uint64(node.ID),
+		IsMiner:  true,
+		Balances: make(map[string]*pb.TokenBalance),
 	}
 
 	// 初始化FB代币余额
@@ -668,12 +711,16 @@ func registerAllNodes(nodes []*NodeInstance) {
 
 			// 保存其他节点的账户信息
 			account := &pb.Account{
-				Address:   otherNode.Address,
-				PublicKey: utils.GetKeyManager().GetPublicKey(), // 这里简化处理
-				Ip:        fmt.Sprintf("127.0.0.1:%s", otherNode.Port),
-				Index:     uint64(j),
-				IsMiner:   true,
-				Balances:  make(map[string]*pb.TokenBalance),
+				Address: otherNode.Address,
+				PublicKeys: &pb.PublicKeys{
+					Keys: map[int32][]byte{
+						int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256): []byte(utils.GetKeyManager().GetPublicKey()),
+					},
+				},
+				Ip:       fmt.Sprintf("127.0.0.1:%s", otherNode.Port),
+				Index:    uint64(j),
+				IsMiner:  true,
+				Balances: make(map[string]*pb.TokenBalance),
 			}
 
 			account.Balances["FB"] = &pb.TokenBalance{
@@ -685,9 +732,13 @@ func registerAllNodes(nodes []*NodeInstance) {
 
 			// 保存节点信息
 			nodeInfo := &pb.NodeInfo{
-				PublicKey: fmt.Sprintf("node_%d_pub", j),
-				Ip:        fmt.Sprintf("127.0.0.1:%s", otherNode.Port),
-				IsOnline:  true,
+				PublicKeys: &pb.PublicKeys{
+					Keys: map[int32][]byte{
+						int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256): []byte(fmt.Sprintf("node_%d_pub", j)),
+					},
+				},
+				Ip:       fmt.Sprintf("127.0.0.1:%s", otherNode.Port),
+				IsOnline: true,
 			}
 			node.DBManager.SaveNodeInfo(nodeInfo)
 			// 保存索引映射
@@ -848,6 +899,11 @@ func shutdownAllNodes(nodes []*NodeInstance) {
 		wg.Add(1)
 		go func(n *NodeInstance) {
 			defer wg.Done()
+
+			// 停止 FROST Runtime
+			if n.FrostRuntime != nil {
+				n.FrostRuntime.Stop()
+			}
 
 			// 停止共识
 			if n.ConsensusManager != nil {

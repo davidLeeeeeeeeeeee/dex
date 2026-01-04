@@ -363,15 +363,14 @@ func ExtractAnyTxId(a *pb.AnyTx) string {
 		if content.OrderTx.Base != nil {
 			return content.OrderTx.Base.TxId
 		}
-	case *pb.AnyTx_AddressTx:
-		if content.AddressTx.Base != nil {
-			return content.AddressTx.Base.TxId
-		}
 	case *pb.AnyTx_CandidateTx:
 		if content.CandidateTx.Base != nil {
 			return content.CandidateTx.Base.TxId
 		}
-
+	case *pb.AnyTx_MinerTx:
+		if content.MinerTx.Base != nil {
+			return content.MinerTx.Base.TxId
+		}
 	}
 	return ""
 }

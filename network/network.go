@@ -27,7 +27,12 @@ func NewNetwork(dbMgr *db.Manager) *Network {
 		logs.Verbose("[Network] Failed to load nodes from DB: %v", err)
 	} else {
 		for _, node := range nodes {
-			n.nodes[node.PublicKey] = node
+			// 从 PublicKeys 中获取 ECDSA_P256 公钥作为 key
+			if node.PublicKeys != nil {
+				if pk, ok := node.PublicKeys.Keys[int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256)]; ok {
+					n.nodes[string(pk)] = node
+				}
+			}
 		}
 	}
 	return n
@@ -39,9 +44,13 @@ func (n *Network) AddOrUpdateNode(pubKey, ip string, isOnline bool) {
 	defer n.mu.Unlock()
 
 	info := &pb.NodeInfo{
-		PublicKey: pubKey,
-		Ip:        ip,
-		IsOnline:  isOnline,
+		PublicKeys: &pb.PublicKeys{
+			Keys: map[int32][]byte{
+				int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256): []byte(pubKey),
+			},
+		},
+		Ip:       ip,
+		IsOnline: isOnline,
 	}
 	n.nodes[pubKey] = info
 

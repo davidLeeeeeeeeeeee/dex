@@ -41,7 +41,17 @@ func (mgr *Manager) SaveNodeInfo(node *pb.NodeInfo) error {
 	if err != nil {
 		return err
 	}
-	key := KeyNode() + node.PublicKey
+	// 从 PublicKeys 中获取 ECDSA_P256 公钥作为 key，若不存在则使用 IP
+	var nodeKey string
+	if node.PublicKeys != nil && len(node.PublicKeys.Keys) > 0 {
+		if pk, ok := node.PublicKeys.Keys[int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256)]; ok {
+			nodeKey = string(pk)
+		}
+	}
+	if nodeKey == "" {
+		nodeKey = node.Ip // fallback to IP
+	}
+	key := KeyNode() + nodeKey
 	mgr.EnqueueSet(key, string(data))
 	return nil
 }

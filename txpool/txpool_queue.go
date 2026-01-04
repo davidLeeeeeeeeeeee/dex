@@ -88,7 +88,13 @@ func (tq *txPoolQueue) handleAddTx(incoming *pb.AnyTx, ip string, onAdded OnTxAd
 		return
 	}
 
-	pubKeyPem := base.PublicKey
+	// 从 PublicKeys 中获取 ECDSA_P256 公钥
+	var pubKeyPem string
+	if base.PublicKeys != nil {
+		if pk, ok := base.PublicKeys.Keys[int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256)]; ok {
+			pubKeyPem = string(pk)
+		}
+	}
 
 	// 检查是否为已知节点
 	isKnown := false

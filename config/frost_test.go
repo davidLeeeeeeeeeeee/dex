@@ -7,6 +7,11 @@ import (
 func TestDefaultFrostConfig(t *testing.T) {
 	cfg := DefaultFrostConfig()
 
+	// 测试 Enabled 默认为 false
+	if cfg.Enabled {
+		t.Error("Enabled should be false by default")
+	}
+
 	// 测试 Committee 默认值
 	if cfg.Committee.TopN != 10000 {
 		t.Errorf("Committee.TopN = %d, want 10000", cfg.Committee.TopN)
@@ -146,4 +151,3 @@ func TestDefaultConfigHasFrost(t *testing.T) {
 		t.Errorf("DefaultConfig().Frost.Chains count = %d, want 5", len(cfg.Frost.Chains))
 	}
 }
-

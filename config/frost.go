@@ -2,6 +2,7 @@ package config
 
 // FrostConfig FROST门限签名配置（参考 frost/design.md §10）
 type FrostConfig struct {
+	Enabled    bool                        `json:"enabled"` // 是否启用 FROST 模块（默认 false）
 	Committee  CommitteeConfig             `json:"committee"`
 	Vault      VaultConfig                 `json:"vault"`
 	Timeouts   TimeoutsConfig              `json:"timeouts"`
@@ -77,6 +78,7 @@ type ChainFrostConfig struct {
 // DefaultFrostConfig 返回 FrostConfig 默认值
 func DefaultFrostConfig() FrostConfig {
 	return FrostConfig{
+		Enabled: false, // 默认关闭
 		Committee: CommitteeConfig{
 			TopN:           10000,
 			ThresholdRatio: 0.8,

@@ -106,32 +106,32 @@ func HashTx(tx proto.Message) (string, error) {
 	case *pb.IssueTokenTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
-			t.Base.Signature = ""
+			t.Base.Signature = nil
 		}
 	case *pb.FreezeTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
-			t.Base.Signature = ""
+			t.Base.Signature = nil
 		}
 	case *pb.Transaction:
 		if t.Base != nil {
 			t.Base.TxId = ""
-			t.Base.Signature = ""
+			t.Base.Signature = nil
 		}
 	case *pb.OrderTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
-			t.Base.Signature = ""
+			t.Base.Signature = nil
 		}
 	case *pb.CandidateTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
-			t.Base.Signature = ""
+			t.Base.Signature = nil
 		}
 	case *pb.MinerTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
-			t.Base.Signature = ""
+			t.Base.Signature = nil
 		}
 
 	case *pb.AnyTx:
@@ -140,62 +140,62 @@ func HashTx(tx proto.Message) (string, error) {
 		case *pb.AnyTx_IssueTokenTx:
 			if content.IssueTokenTx.Base != nil {
 				content.IssueTokenTx.Base.TxId = ""
-				content.IssueTokenTx.Base.Signature = ""
+				content.IssueTokenTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_FreezeTx:
 			if content.FreezeTx.Base != nil {
 				content.FreezeTx.Base.TxId = ""
-				content.FreezeTx.Base.Signature = ""
+				content.FreezeTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_Transaction:
 			if content.Transaction.Base != nil {
 				content.Transaction.Base.TxId = ""
-				content.Transaction.Base.Signature = ""
+				content.Transaction.Base.Signature = nil
 			}
 		case *pb.AnyTx_OrderTx:
 			if content.OrderTx.Base != nil {
 				content.OrderTx.Base.TxId = ""
-				content.OrderTx.Base.Signature = ""
+				content.OrderTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_CandidateTx:
 			if content.CandidateTx.Base != nil {
 				content.CandidateTx.Base.TxId = ""
-				content.CandidateTx.Base.Signature = ""
+				content.CandidateTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_MinerTx:
 			if content.MinerTx.Base != nil {
 				content.MinerTx.Base.TxId = ""
-				content.MinerTx.Base.Signature = ""
+				content.MinerTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_WitnessStakeTx:
 			if content.WitnessStakeTx.Base != nil {
 				content.WitnessStakeTx.Base.TxId = ""
-				content.WitnessStakeTx.Base.Signature = ""
+				content.WitnessStakeTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_WitnessRequestTx:
 			if content.WitnessRequestTx.Base != nil {
 				content.WitnessRequestTx.Base.TxId = ""
-				content.WitnessRequestTx.Base.Signature = ""
+				content.WitnessRequestTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_WitnessVoteTx:
 			if content.WitnessVoteTx.Base != nil {
 				content.WitnessVoteTx.Base.TxId = ""
-				content.WitnessVoteTx.Base.Signature = ""
+				content.WitnessVoteTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_WitnessChallengeTx:
 			if content.WitnessChallengeTx.Base != nil {
 				content.WitnessChallengeTx.Base.TxId = ""
-				content.WitnessChallengeTx.Base.Signature = ""
+				content.WitnessChallengeTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_ArbitrationVoteTx:
 			if content.ArbitrationVoteTx.Base != nil {
 				content.ArbitrationVoteTx.Base.TxId = ""
-				content.ArbitrationVoteTx.Base.Signature = ""
+				content.ArbitrationVoteTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_WitnessClaimRewardTx:
 			if content.WitnessClaimRewardTx.Base != nil {
 				content.WitnessClaimRewardTx.Base.TxId = ""
-				content.WitnessClaimRewardTx.Base.Signature = ""
+				content.WitnessClaimRewardTx.Base.Signature = nil
 			}
 		default:
 			return "", fmt.Errorf("不支持的 AnyTx 内部类型")
