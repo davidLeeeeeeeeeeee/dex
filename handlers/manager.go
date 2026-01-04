@@ -87,6 +87,10 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/put", hm.HandlePut)
 	// Frost P2P
 	mux.HandleFunc("/frostmsg", hm.HandleFrostMsg)
+	// Frost 只读查询 API
+	mux.HandleFunc("/frost/config", hm.HandleGetFrostConfig)
+	mux.HandleFunc("/frost/withdraw/status", hm.HandleGetWithdrawStatus)
+	mux.HandleFunc("/frost/withdraws", hm.HandleListWithdraws)
 }
 
 // 添加身份验证方法
