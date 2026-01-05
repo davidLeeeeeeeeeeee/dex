@@ -35,9 +35,9 @@ func DefaultManagerConfig(nodeID NodeID) ManagerConfig {
 		NodeID:       nodeID,
 		ScanInterval: 5 * time.Second,
 		SupportedChains: []ChainAssetPair{
-			{Chain: "BTC", Asset: "BTC"},
-			{Chain: "ETH", Asset: "ETH"},
-			{Chain: "BNB", Asset: "BNB"},
+			{Chain: "btc", Asset: "BTC"},
+			{Chain: "eth", Asset: "ETH"},
+			{Chain: "bnb", Asset: "BNB"},
 		},
 	}
 }
@@ -88,6 +88,7 @@ type ManagerDeps struct {
 	SignerProvider SignerSetProvider
 	VaultProvider  VaultCommitteeProvider
 	AdapterFactory chain.ChainAdapterFactory
+	PubKeyProvider MinerPubKeyProvider
 }
 
 // NewManager 创建新的 Manager 实例
@@ -111,7 +112,7 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 	// 初始化子组件
 	m.scanner = NewScanner(deps.StateReader)
 	m.withdrawWorker = NewWithdrawWorker(deps.StateReader, deps.AdapterFactory, deps.TxSubmitter)
-	m.transitionWorker = NewTransitionWorker(deps.StateReader, deps.TxSubmitter, string(config.NodeID))
+	m.transitionWorker = NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, string(config.NodeID))
 	m.coordinator = NewCoordinator(config.NodeID, deps.P2P, deps.VaultProvider, nil)
 	m.participant = NewParticipant(config.NodeID, deps.P2P, deps.VaultProvider, sessionStore, nil)
 

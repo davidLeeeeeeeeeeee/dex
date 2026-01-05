@@ -288,8 +288,12 @@ message PushQuery {
   // Requesting peer's last accepted height
   uint64 requested_height = 6;
   string block_id = 7;
-  bytes signature = 8; // TODO：消息签名
-  uint64 nonce = 9; // TODO：防重放攻击
+  // 消息签名：使用发送方私钥对 (request_id || address || deadline || block_id || nonce) 签名
+  // 验证时使用发送方公钥验证，防止消息伪造
+  bytes signature = 8;
+  // 防重放 nonce：单调递增序列号，接收方维护每个发送方的最大已见 nonce
+  // 拒绝 nonce <= max_seen_nonce 的消息
+  uint64 nonce = 9;
 }
 
 // PullQuery requests the preferences of a remote peer given a container id.

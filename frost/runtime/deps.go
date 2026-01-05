@@ -34,6 +34,14 @@ type TxSubmitter interface {
 // StateReader 状态读取接口（ChainStateReader 的别名）
 type StateReader = ChainStateReader
 
+// MinerPubKeyProvider 矿工公钥提供者
+type MinerPubKeyProvider interface {
+	// GetMinerSigningPubKey 获取矿工的签名公钥
+	// minerID: 矿工地址
+	// signAlgo: 签名算法（决定返回哪种曲线的公钥）
+	GetMinerSigningPubKey(minerID string, signAlgo pb.SignAlgo) ([]byte, error)
+}
+
 // FinalityNotifier 订阅最终化事件（仅作为唤醒，不是唯一触发源）
 type FinalityNotifier interface {
 	SubscribeBlockFinalized(fn func(height uint64))
@@ -76,15 +84,11 @@ type VaultCommitteeProvider interface {
 	VaultGroupPubkey(chain string, vaultID uint32, epoch uint64) ([]byte, error)
 }
 
-// ChainAdapter 链适配器接口（定义在 frost/chain/adapter.go，这里仅声明依赖）
-type ChainAdapter interface {
-	// BuildTemplate 构建交易模板
-	BuildTemplate(params any) (templateHash []byte, templateData []byte, err error)
-	// AssembleSignedTx 组装签名后的交易
-	AssembleSignedTx(templateData []byte, signature []byte) (signedTx []byte, err error)
-}
-
-// ChainAdapterFactory 链适配器工厂
-type ChainAdapterFactory interface {
-	Adapter(chain string) (ChainAdapter, error)
-}
+// ChainAdapter 和 ChainAdapterFactory 接口定义在 frost/chain/adapter.go
+// 这里不再重复定义，直接使用 frost/chain 包中的类型：
+//   - chain.ChainAdapter
+//   - chain.ChainAdapterFactory
+//
+// 使用示例：
+//   import "dex/frost/chain"
+//   func NewWorker(factory chain.ChainAdapterFactory) { ... }

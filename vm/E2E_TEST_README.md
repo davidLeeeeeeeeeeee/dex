@@ -217,17 +217,18 @@ t.Logf("Trade events: %+v", tradeEvents)
 
 ### Q4: 余额没有更新
 
-**原因：** OrderHandler 的 `generateWriteOpsFromTrades` 函数中有一个 TODO，账户余额更新逻辑尚未实现
+**状态：** ✅ 已解决
 
-**状态：** 这是一个已知问题，需要在 `vm/order_handler.go` 的第 400-402 行实现账户余额更新逻辑。
+`OrderHandler` 的 `updateAccountBalances` 函数已完整实现账户余额更新逻辑（见 `vm/order_handler.go` 第 420-550 行）。
 
-**临时方案：** 当前测试主要验证：
-- VM 执行流程正确
-- 订单正确保存到数据库
-- StateDB 同步机制正常
-- 数据持久化正常
+撮合成交后会自动更新买卖双方的余额：
+- 卖单：减少 base_token，增加 quote_token
+- 买单：减少 quote_token，增加 base_token
 
-完整的撮合+余额更新功能需要额外实现。
+如果仍然遇到余额未更新的问题，请检查：
+1. 账户是否已正确初始化
+2. 撮合事件是否正确生成
+3. 余额是否足够（会检查余额不足的情况）
 
 ## 📚 相关文档
 

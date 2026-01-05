@@ -14,13 +14,35 @@ import (
 
 // 集中处理共识层与外部的所有数据转换
 type ConsensusAdapter struct {
-	dbManager *db.Manager
+	dbManager       *db.Manager
+	contactedNodes  map[string]bool // 追踪联系过的节点
+	contactedHeight uint64          // 当前追踪的区块高度
 }
 
 func NewConsensusAdapter(dbMgr *db.Manager) *ConsensusAdapter {
 	return &ConsensusAdapter{
-		dbManager: dbMgr,
+		dbManager:      dbMgr,
+		contactedNodes: make(map[string]bool),
 	}
+}
+
+// RecordContact 记录与某节点的通信
+func (a *ConsensusAdapter) RecordContact(nodeID string, height uint64) {
+	// 如果高度变化，重置追踪
+	if height != a.contactedHeight {
+		a.contactedNodes = make(map[string]bool)
+		a.contactedHeight = height
+	}
+	a.contactedNodes[nodeID] = true
+}
+
+// GetContactedNodes 获取联系过的节点列表
+func (a *ConsensusAdapter) GetContactedNodes() []string {
+	nodes := make([]string, 0, len(a.contactedNodes))
+	for node := range a.contactedNodes {
+		nodes = append(nodes, node)
+	}
+	return nodes
 }
 
 // ============================================
@@ -218,9 +240,25 @@ func (a *ConsensusAdapter) calculateDeadline(seconds int) uint64 {
 }
 
 func (a *ConsensusAdapter) generateBitmap() []byte {
-	// 实现位图生成逻辑
+	// 位图用于记录与哪些节点通信过
+	// 每个节点用一个 bit 表示，最多支持 1024 个节点 (128 bytes * 8 bits)
 	bitmap := make([]byte, 128)
-	// TODO: 实际的位图生成逻辑
+
+	// 将联系过的节点编码到位图中
+	// 使用节点地址的哈希值来确定位置
+	for nodeID := range a.contactedNodes {
+		// 计算节点在位图中的位置
+		hash := 0
+		for _, c := range nodeID {
+			hash = (hash*31 + int(c)) & 0x3FF // 取低 10 位 (0-1023)
+		}
+		byteIdx := hash / 8
+		bitIdx := uint(hash % 8)
+		if byteIdx < len(bitmap) {
+			bitmap[byteIdx] |= 1 << bitIdx
+		}
+	}
+
 	return bitmap
 }
 

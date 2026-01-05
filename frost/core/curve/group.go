@@ -27,5 +27,7 @@ type Group interface {
 	Add(P, Q Point) Point
 	ScalarBaseMultBytes(k []byte) Point
 	ScalarMultBytes(P Point, k []byte) Point
-}
 
+	// 从压缩格式解析点
+	DecompressPoint(data []byte) Point
+}

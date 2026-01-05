@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,29 @@ type ForceRescanResponse struct {
 }
 
 var startTime = time.Now()
+
+// RescanCallback 重扫回调函数
+type RescanCallback func(chain string, fromHeight uint64) error
+
+var (
+	rescanCallback     RescanCallback
+	rescanCallbackOnce sync.Once
+	rescanCallbackMu   sync.RWMutex
+)
+
+// SetRescanCallback 设置重扫回调函数
+func SetRescanCallback(cb RescanCallback) {
+	rescanCallbackMu.Lock()
+	defer rescanCallbackMu.Unlock()
+	rescanCallback = cb
+}
+
+// GetRescanCallback 获取重扫回调函数
+func GetRescanCallback() RescanCallback {
+	rescanCallbackMu.RLock()
+	defer rescanCallbackMu.RUnlock()
+	return rescanCallback
+}
 
 // HandleGetHealth 健康检查
 func (hm *HandlerManager) HandleGetHealth(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +111,12 @@ func (hm *HandlerManager) HandleGetMetrics(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(resp)
 }
 
+// ForceRescanRequest 强制重扫请求
+type ForceRescanRequest struct {
+	Chain      string `json:"chain"`       // 链标识（可选，空表示所有链）
+	FromHeight uint64 `json:"from_height"` // 起始高度（可选，0 表示从最新）
+}
+
 // HandleForceRescan 强制重扫
 func (hm *HandlerManager) HandleForceRescan(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("ForceRescan")
@@ -96,12 +126,41 @@ func (hm *HandlerManager) HandleForceRescan(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// TODO: 触发 Scanner 重扫
-	// 这里只是占位实现
+	// 解析请求
+	var req ForceRescanRequest
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// 获取重扫回调
+	callback := GetRescanCallback()
+	if callback == nil {
+		resp := ForceRescanResponse{
+			Success: false,
+			Message: "rescan callback not configured",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	// 触发重扫
+	if err := callback(req.Chain, req.FromHeight); err != nil {
+		resp := ForceRescanResponse{
+			Success: false,
+			Message: "rescan failed: " + err.Error(),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
 
 	resp := ForceRescanResponse{
 		Success: true,
-		Message: "rescan triggered",
+		Message: "rescan triggered for chain: " + req.Chain,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

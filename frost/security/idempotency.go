@@ -130,3 +130,68 @@ func (ic *IdempotencyChecker) Size() int {
 	return len(ic.seen)
 }
 
+// ========== 消息序号防重放 ==========
+
+// SeqReplayGuard 基于 (sender, seq) 的消息防重放验证器
+// 记录每个发送方的最大已见 seq，拒绝 seq <= maxSeen 的消息
+type SeqReplayGuard struct {
+	mu      sync.RWMutex
+	maxSeqs map[string]uint64 // key = sender address, value = max seen seq
+	window  uint64            // 允许的序号窗口（用于防止过大的 seq 跳跃）
+}
+
+// NewSeqReplayGuard 创建序号防重放验证器
+// window: 允许的最大 seq 跳跃范围（0 表示不限制）
+func NewSeqReplayGuard(window uint64) *SeqReplayGuard {
+	return &SeqReplayGuard{
+		maxSeqs: make(map[string]uint64),
+		window:  window,
+	}
+}
+
+// Check 检查消息序号是否有效（非重放）
+// 返回: valid, isReplay, error
+// - valid=true: 消息有效，已更新 maxSeq
+// - valid=false, isReplay=true: 重放攻击（seq <= maxSeen）
+// - valid=false, isReplay=false: 序号跳跃过大
+func (g *SeqReplayGuard) Check(sender string, seq uint64) (valid bool, isReplay bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	maxSeen := g.maxSeqs[sender]
+
+	// 检查是否为重放（seq <= maxSeen）
+	if seq <= maxSeen && maxSeen > 0 {
+		return false, true // 重放攻击
+	}
+
+	// 检查序号跳跃是否过大
+	if g.window > 0 && seq > maxSeen+g.window {
+		return false, false // 跳跃过大
+	}
+
+	// 更新 maxSeen
+	g.maxSeqs[sender] = seq
+	return true, false
+}
+
+// GetMaxSeq 获取发送方的最大已见序号
+func (g *SeqReplayGuard) GetMaxSeq(sender string) uint64 {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.maxSeqs[sender]
+}
+
+// Reset 重置发送方的序号（用于测试或节点重启）
+func (g *SeqReplayGuard) Reset(sender string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.maxSeqs, sender)
+}
+
+// ResetAll 重置所有序号记录
+func (g *SeqReplayGuard) ResetAll() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.maxSeqs = make(map[string]uint64)
+}

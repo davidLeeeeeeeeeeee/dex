@@ -14,19 +14,19 @@ import (
 // ============================================
 
 type MessageHandler struct {
-	nodeID           types.NodeID
-	node             *Node
-	isByzantine      bool
-	transport        interfaces.Transport
-	store            interfaces.BlockStore
-	engine           interfaces.ConsensusEngine
-	queryManager     *QueryManager
-	gossipManager    *GossipManager
-	syncManager      *SyncManager
-	snapshotManager  *SnapshotManager
-	events           interfaces.EventBus
-	config           *ConsensusConfig
-	proposalManager  *ProposalManager // 用于访问window计算和缓存
+	nodeID          types.NodeID
+	node            *Node
+	isByzantine     bool
+	transport       interfaces.Transport
+	store           interfaces.BlockStore
+	engine          interfaces.ConsensusEngine
+	queryManager    *QueryManager
+	gossipManager   *GossipManager
+	syncManager     *SyncManager
+	snapshotManager *SnapshotManager
+	events          interfaces.EventBus
+	config          *ConsensusConfig
+	proposalManager *ProposalManager // 用于访问window计算和缓存
 	// 存储待回复的PullQuery
 	pendingQueries   map[uint32]types.Message
 	pendingQueriesMu sync.RWMutex
@@ -293,8 +293,14 @@ func (h *MessageHandler) checkPendingQueries(requestId uint32) {
 		h.pendingQueriesMu.Unlock()
 
 		// 现在有了区块，可以回复chits
-		// TODO:排查为什么可能是nil
-		block, _ := h.store.Get(blockID)
+		block, found := h.store.Get(blockID)
+		if !found || block == nil {
+			// 区块可能已被清理或从未存储（例如：收到 PushQuery 后区块被拒绝）
+			// 这种情况下跳过回复，让请求方超时重试
+			logs.Debug("[checkPendingQueries] block %s not found for pending query %d",
+				blockID, requestId)
+			return
+		}
 		h.sendChits(types.NodeID(pendingMsg.From), pendingMsg.RequestID, block.Height)
 	} else {
 		h.pendingQueriesMu.Unlock()

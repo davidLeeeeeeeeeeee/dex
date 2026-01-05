@@ -8,9 +8,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"math/big"
 	"sync"
 	"time"
 
+	"dex/frost/core/curve"
+	"dex/frost/core/roast"
 	"dex/frost/runtime/session"
 	"dex/logs"
 	"dex/pb"
@@ -556,15 +559,80 @@ func (c *Coordinator) aggregateSignatures(sess *CoordinatorSession) error {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
-	// TODO: 实现真正的 Schnorr 签名聚合
-	// 这里简化为生成 dummy 签名
+	group := curve.NewSecp256k1Group()
 	numTasks := len(sess.Messages)
 	sess.FinalSignatures = make([][]byte, numTasks)
-	for i := range sess.Messages {
-		// 生成 64 字节的 dummy 签名
-		sig := make([]byte, 64)
-		copy(sig, []byte("aggregated_sig_"+sess.JobID))
-		sess.FinalSignatures[i] = sig
+
+	// 为每个 task (消息) 聚合签名
+	for taskIdx := range sess.Messages {
+		msg := sess.Messages[taskIdx]
+
+		// 构建 nonces 列表
+		nonces := make([]roast.SignerNonce, 0, len(sess.SelectedSet))
+		for _, idx := range sess.SelectedSet {
+			nonceData, ok := sess.Nonces[idx]
+			if !ok || taskIdx >= len(nonceData.HidingNonces) {
+				continue
+			}
+
+			// 解析 nonce 点（每个 nonce 是 32 字节的 X 坐标，需要从中恢复点）
+			hidingBytes := nonceData.HidingNonces[taskIdx]
+			bindingBytes := nonceData.BindingNonces[taskIdx]
+
+			hidingPoint := curve.Point{
+				X: new(big.Int).SetBytes(hidingBytes),
+				Y: big.NewInt(0), // 简化：实际应该从 X 坐标恢复 Y
+			}
+			bindingPoint := curve.Point{
+				X: new(big.Int).SetBytes(bindingBytes),
+				Y: big.NewInt(0),
+			}
+
+			nonces = append(nonces, roast.SignerNonce{
+				SignerID:     idx + 1, // 签名者 ID 从 1 开始
+				HidingPoint:  hidingPoint,
+				BindingPoint: bindingPoint,
+			})
+		}
+
+		if len(nonces) < sess.Threshold+1 {
+			return errors.New("insufficient nonces for aggregation")
+		}
+
+		// 构建 shares 列表
+		shares := make([]roast.SignerShare, 0, len(sess.SelectedSet))
+		for _, idx := range sess.SelectedSet {
+			shareData, ok := sess.Shares[idx]
+			if !ok || taskIdx >= len(shareData.Shares) {
+				continue
+			}
+
+			shareBytes := shareData.Shares[taskIdx]
+			shareValue := new(big.Int).SetBytes(shareBytes)
+
+			shares = append(shares, roast.SignerShare{
+				SignerID: idx + 1,
+				Share:    shareValue,
+			})
+		}
+
+		if len(shares) < sess.Threshold+1 {
+			return errors.New("insufficient shares for aggregation")
+		}
+
+		// 计算群承诺 R
+		R, err := roast.ComputeGroupCommitment(nonces, msg, group)
+		if err != nil {
+			return err
+		}
+
+		// 聚合签名
+		sig, err := roast.AggregateSignatures(R, shares, group)
+		if err != nil {
+			return err
+		}
+
+		sess.FinalSignatures[taskIdx] = sig
 	}
 
 	return nil

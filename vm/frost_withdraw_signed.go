@@ -3,6 +3,7 @@
 package vm
 
 import (
+	"dex/frost/chain"
 	"dex/frost/chain/btc"
 	"dex/frost/core/frost"
 	"dex/keys"
@@ -68,14 +69,14 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse withdraw"}, err
 	}
 
-	chain := firstWithdraw.Chain
+	chainName := chain.NormalizeChain(firstWithdraw.Chain)
 	asset := firstWithdraw.Asset
 
 	// ===== P0-1: FIFO 队首验证（首次提交时必须验证）=====
 	// 只有首次提交需要验证 FIFO 顺序，追加产物时跳过
 	if currentCount == 0 {
 		// 验证 withdraw_ids 是否从队首开始连续
-		if err := h.validateFIFOOrder(sv, chain, asset, withdrawIDs); err != nil {
+		if err := h.validateFIFOOrder(sv, chainName, asset, withdrawIDs); err != nil {
 			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: err.Error()}, err
 		}
 	}
@@ -120,7 +121,7 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	}
 
 	// BTC 验签（如果是 BTC 链）
-	if chain == "btc" {
+	if chainName == chain.ChainBTC {
 		vaultID := signed.VaultId
 		templateData := signed.TemplateData
 		inputSigs := signed.InputSigs
@@ -161,7 +162,7 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		}
 
 		// 获取 Vault 公钥（用于验签）
-		vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
+		vaultStateKey := keys.KeyFrostVaultState(chainName, vaultID)
 		vaultStateData, vaultExists, vaultErr := sv.Get(vaultStateKey)
 		if vaultErr != nil || !vaultExists || len(vaultStateData) == 0 {
 			// Vault 状态不存在，生产环境应报错
@@ -236,7 +237,7 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		}
 
 		// 验证 chain/asset 一致性
-		if withdraw.Chain != chain || withdraw.Asset != asset {
+		if chain.NormalizeChain(withdraw.Chain) != chainName || withdraw.Asset != asset {
 			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "inconsistent chain/asset"}, errors.New("inconsistent chain/asset")
 		}
 
@@ -246,7 +247,7 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		}
 
 		// 验证 template_hash 绑定（BTC）
-		if chain == "btc" && len(signed.TemplateHash) > 0 {
+		if chainName == chain.ChainBTC && len(signed.TemplateHash) > 0 {
 			// template_hash 必须与 job_id 的一部分匹配（确定性验证）
 			// job_id = H(chain || asset || vault_id || first_seq || template_hash || key_epoch)
 			// 这里简化：只验证 template_hash 非空
@@ -312,7 +313,7 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	}
 
 	// head 指向下一个待处理的 seq（maxSeq + 1）
-	headKey := keys.KeyFrostWithdrawFIFOHead(chain, asset)
+	headKey := keys.KeyFrostWithdrawFIFOHead(chainName, asset)
 	ops = append(ops, WriteOp{
 		Key:         headKey,
 		Value:       []byte(strconv.FormatUint(maxSeq+1, 10)),
@@ -337,13 +338,13 @@ func (h *FrostWithdrawSignedTxHandler) Apply(tx *pb.AnyTx) error {
 // 1. withdraw_ids[0].seq == 当前 head（队首）
 // 2. withdraw_ids[i].seq == head + i（连续递增）
 // 3. 所有 withdraw 状态必须为 QUEUED
-func (h *FrostWithdrawSignedTxHandler) validateFIFOOrder(sv StateView, chain, asset string, withdrawIDs []string) error {
+func (h *FrostWithdrawSignedTxHandler) validateFIFOOrder(sv StateView, chainName, asset string, withdrawIDs []string) error {
 	if len(withdrawIDs) == 0 {
 		return errors.New("FIFO: empty withdraw_ids")
 	}
 
 	// 1. 读取当前队首指针 head
-	headKey := keys.KeyFrostWithdrawFIFOHead(chain, asset)
+	headKey := keys.KeyFrostWithdrawFIFOHead(chainName, asset)
 	currentHead := readUint64FromState(sv, headKey)
 	if currentHead == 0 {
 		// head 未初始化，默认从 1 开始
@@ -369,8 +370,8 @@ func (h *FrostWithdrawSignedTxHandler) validateFIFOOrder(sv StateView, chain, as
 			return errors.New("FIFO: withdraw not in QUEUED status: " + wid)
 		}
 
-		// 验证 chain/asset 一致性
-		if withdraw.Chain != chain || withdraw.Asset != asset {
+		// 验证 chain/asset 一致性（规范化比较）
+		if chain.NormalizeChain(withdraw.Chain) != chainName || withdraw.Asset != asset {
 			return errors.New("FIFO: inconsistent chain/asset in withdraw: " + wid)
 		}
 

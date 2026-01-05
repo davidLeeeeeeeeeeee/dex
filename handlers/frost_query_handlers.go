@@ -4,6 +4,8 @@
 package handlers
 
 import (
+	"dex/config"
+	"dex/keys"
 	"dex/pb"
 	"encoding/json"
 	"net/http"
@@ -14,10 +16,20 @@ import (
 
 // GetFrostConfigResponse Frost 配置响应
 type GetFrostConfigResponse struct {
-	SupportedChains  []string `json:"supported_chains"`
-	DefaultThreshold int      `json:"default_threshold"`
-	VaultCount       int      `json:"vault_count"`
-	MinWithdraw      string   `json:"min_withdraw"`
+	Enabled          bool                `json:"enabled"`
+	SupportedChains  []string            `json:"supported_chains"`
+	DefaultThreshold float64             `json:"default_threshold"`
+	VaultCount       int                 `json:"vault_count"`
+	CommitteeSize    int                 `json:"committee_size"`
+	MinWithdraw      string              `json:"min_withdraw"`
+	Chains           map[string]ChainCfg `json:"chains,omitempty"`
+}
+
+// ChainCfg 链级别配置
+type ChainCfg struct {
+	SignAlgo       string `json:"sign_algo"`
+	FrostVariant   string `json:"frost_variant,omitempty"`
+	VaultsPerChain int    `json:"vaults_per_chain"`
 }
 
 // GetWithdrawStatusResponse 提现状态响应
@@ -41,12 +53,46 @@ type ListWithdrawsResponse struct {
 func (hm *HandlerManager) HandleGetFrostConfig(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("GetFrostConfig")
 
-	// TODO: 从配置/DB 读取真实值
+	// 先尝试从 DB 读取配置
+	var frostCfg config.FrostConfig
+	cfgKey := keys.KeyFrostConfig()
+	data, err := hm.dbManager.Get(cfgKey)
+	if err != nil || data == nil {
+		// DB 没有配置，使用默认配置
+		frostCfg = config.DefaultFrostConfig()
+	} else {
+		// 尝试反序列化
+		if err := json.Unmarshal(data, &frostCfg); err != nil {
+			frostCfg = config.DefaultFrostConfig()
+		}
+	}
+
+	// 构建支持的链列表
+	supportedChains := make([]string, 0, len(frostCfg.Chains))
+	chainCfgs := make(map[string]ChainCfg)
+	for chainName, chainCfg := range frostCfg.Chains {
+		supportedChains = append(supportedChains, chainName)
+		chainCfgs[chainName] = ChainCfg{
+			SignAlgo:       chainCfg.SignAlgo,
+			FrostVariant:   chainCfg.FrostVariant,
+			VaultsPerChain: chainCfg.VaultsPerChain,
+		}
+	}
+
+	// 计算总 vault 数量
+	totalVaults := 0
+	for _, c := range frostCfg.Chains {
+		totalVaults += c.VaultsPerChain
+	}
+
 	resp := GetFrostConfigResponse{
-		SupportedChains:  []string{"BTC", "ETH", "SOL", "TRX"},
-		DefaultThreshold: 7,
-		VaultCount:       10,
-		MinWithdraw:      "0.001",
+		Enabled:          frostCfg.Enabled,
+		SupportedChains:  supportedChains,
+		DefaultThreshold: frostCfg.Vault.ThresholdRatio,
+		VaultCount:       totalVaults,
+		CommitteeSize:    frostCfg.Vault.DefaultK,
+		MinWithdraw:      "0.001", // TODO: 从配置读取
+		Chains:           chainCfgs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -57,14 +103,18 @@ func (hm *HandlerManager) HandleGetFrostConfig(w http.ResponseWriter, r *http.Re
 func (hm *HandlerManager) HandleGetWithdrawStatus(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("GetWithdrawStatus")
 
-	lotID := r.URL.Query().Get("lot_id")
-	if lotID == "" {
-		http.Error(w, "missing lot_id", http.StatusBadRequest)
+	withdrawID := r.URL.Query().Get("withdraw_id")
+	if withdrawID == "" {
+		// 兼容旧参数名
+		withdrawID = r.URL.Query().Get("lot_id")
+	}
+	if withdrawID == "" {
+		http.Error(w, "missing withdraw_id", http.StatusBadRequest)
 		return
 	}
 
-	// 从 DB 读取 WithdrawState
-	key := "v1_frost_withdraw_" + lotID
+	// 从 DB 读取 WithdrawState（使用统一的 key 格式）
+	key := keys.KeyFrostWithdraw(withdrawID)
 	data, err := hm.dbManager.Get(key)
 	if err != nil || data == nil {
 		http.Error(w, "withdraw not found", http.StatusNotFound)
@@ -106,11 +156,9 @@ func (hm *HandlerManager) HandleListWithdraws(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	// 扫描所有 lot
-	prefix := "v1_frost_lot_"
-	if chain != "" {
-		prefix = "v1_frost_lot_" + chain + "_"
-	}
+	// 扫描所有提现（使用统一的 key 前缀）
+	// v1_frost_withdraw_ 前缀
+	prefix := "v1_frost_withdraw_"
 
 	results, err := hm.dbManager.Scan(prefix)
 	if err != nil {
@@ -122,6 +170,11 @@ func (hm *HandlerManager) HandleListWithdraws(w http.ResponseWriter, r *http.Req
 	for _, data := range results {
 		var state pb.FrostWithdrawState
 		if err := proto.Unmarshal(data, &state); err != nil {
+			continue
+		}
+
+		// 过滤 chain
+		if chain != "" && state.Chain != chain {
 			continue
 		}
 

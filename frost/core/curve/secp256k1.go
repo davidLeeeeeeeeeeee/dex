@@ -54,3 +54,21 @@ func (g *Secp256k1Group) ScalarMultBytes(P Point, k []byte) Point {
 	return Point{X: x, Y: y}
 }
 
+// DecompressPoint 从压缩格式解析点
+// 压缩格式：1 字节前缀 (0x02/0x03) + 32 字节 X 坐标
+func (g *Secp256k1Group) DecompressPoint(data []byte) Point {
+	if len(data) != 33 {
+		return Point{}
+	}
+
+	// 使用 btcec 解析压缩公钥
+	pubKey, err := btcec.ParsePubKey(data)
+	if err != nil {
+		return Point{}
+	}
+
+	return Point{
+		X: pubKey.X(),
+		Y: pubKey.Y(),
+	}
+}

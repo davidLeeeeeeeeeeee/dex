@@ -1,6 +1,7 @@
 package frost
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"math/big"
 	"testing"
@@ -188,4 +189,152 @@ func TestVerifyAPI(t *testing.T) {
 			t.Errorf("期望 ErrUnsupportedSignAlgo, 得到 %v", err)
 		}
 	})
+}
+
+// TestVerifyEd25519 测试 Ed25519 验签
+func TestVerifyEd25519(t *testing.T) {
+	// 使用 Go 标准库生成密钥和签名
+	pubKey, privKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("生成密钥对失败: %v", err)
+	}
+
+	msg := []byte("test message for Ed25519 verification")
+
+	// 签名
+	sig := ed25519.Sign(privKey, msg)
+
+	t.Run("ValidSignature", func(t *testing.T) {
+		valid, err := VerifyEd25519(pubKey, msg, sig)
+		if err != nil {
+			t.Fatalf("验签返回错误: %v", err)
+		}
+		if !valid {
+			t.Error("正确签名应该通过验证")
+		}
+	})
+
+	t.Run("WrongMessage", func(t *testing.T) {
+		wrongMsg := []byte("wrong message")
+		valid, err := VerifyEd25519(pubKey, wrongMsg, sig)
+		if err != nil {
+			t.Fatalf("验签返回错误: %v", err)
+		}
+		if valid {
+			t.Error("错误消息的签名不应该通过验证")
+		}
+	})
+
+	t.Run("InvalidPubkeyLength", func(t *testing.T) {
+		_, err := VerifyEd25519([]byte{0x01, 0x02}, msg, sig)
+		if err != ErrInvalidPublicKey {
+			t.Errorf("期望 ErrInvalidPublicKey, 得到 %v", err)
+		}
+	})
+
+	t.Run("InvalidSignatureLength", func(t *testing.T) {
+		_, err := VerifyEd25519(pubKey, msg, []byte{0x01, 0x02})
+		if err != ErrInvalidSignature {
+			t.Errorf("期望 ErrInvalidSignature, 得到 %v", err)
+		}
+	})
+
+	// 测试通过 Verify API
+	t.Run("ViaVerifyAPI", func(t *testing.T) {
+		valid, err := Verify(pb.SignAlgo_SIGN_ALGO_ED25519, pubKey, msg, sig)
+		if err != nil {
+			t.Fatalf("验签返回错误: %v", err)
+		}
+		if !valid {
+			t.Error("正确签名应该通过验证")
+		}
+	})
+}
+
+// TestVerifyBN128 测试 BN128 Schnorr 验签
+func TestVerifyBN128(t *testing.T) {
+	grp := &curve.BN256Group{}
+
+	// 生成随机私钥
+	privKey := dkg.RandomScalar(grp.Order())
+
+	// 计算公钥
+	pubPoint := grp.ScalarBaseMult(privKey)
+	pubKey := make([]byte, 64)
+	copy(pubKey[:32], pad32(pubPoint.X))
+	copy(pubKey[32:], pad32(pubPoint.Y))
+
+	// 消息
+	msg := []byte("test message for BN128 Schnorr verification")
+
+	// 生成签名（简化版，使用确定性 nonce）
+	k := dkg.RandomScalar(grp.Order())
+	R := grp.ScalarBaseMult(k)
+
+	// challenge: e = keccak256(Rx || Px || msg) mod n
+	e := bn128Challenge(R.X, pubPoint.X, msg, grp)
+
+	// s = k + e * privKey mod n
+	s := new(big.Int).Mul(e, privKey)
+	s.Add(s, k)
+	s.Mod(s, grp.Order())
+
+	// 构造 64 字节签名 (R.x || s)
+	sig := make([]byte, 64)
+	copy(sig[:32], pad32(R.X))
+	copy(sig[32:], pad32(s))
+
+	t.Run("ValidSignature", func(t *testing.T) {
+		valid, err := VerifyBN128(pubKey, msg, sig)
+		if err != nil {
+			t.Fatalf("验签返回错误: %v", err)
+		}
+		if !valid {
+			t.Error("正确签名应该通过验证")
+		}
+	})
+
+	t.Run("WrongMessage", func(t *testing.T) {
+		wrongMsg := []byte("wrong message")
+		valid, err := VerifyBN128(pubKey, wrongMsg, sig)
+		if err != nil {
+			t.Fatalf("验签返回错误: %v", err)
+		}
+		if valid {
+			t.Error("错误消息的签名不应该通过验证")
+		}
+	})
+
+	t.Run("InvalidPubkeyLength", func(t *testing.T) {
+		_, err := VerifyBN128([]byte{0x01, 0x02}, msg, sig)
+		if err != ErrInvalidPublicKey {
+			t.Errorf("期望 ErrInvalidPublicKey, 得到 %v", err)
+		}
+	})
+
+	t.Run("InvalidSignatureLength", func(t *testing.T) {
+		_, err := VerifyBN128(pubKey, msg, []byte{0x01, 0x02})
+		if err != ErrInvalidSignature {
+			t.Errorf("期望 ErrInvalidSignature, 得到 %v", err)
+		}
+	})
+
+	// 测试通过 Verify API
+	t.Run("ViaVerifyAPI", func(t *testing.T) {
+		valid, err := Verify(pb.SignAlgo_SIGN_ALGO_SCHNORR_ALT_BN128, pubKey, msg, sig)
+		if err != nil {
+			t.Fatalf("验签返回错误: %v", err)
+		}
+		if !valid {
+			t.Error("正确签名应该通过验证")
+		}
+	})
+}
+
+// pad32 填充 big.Int 到 32 字节
+func pad32(x *big.Int) []byte {
+	out := make([]byte, 32)
+	b := x.Bytes()
+	copy(out[32-len(b):], b)
+	return out
 }

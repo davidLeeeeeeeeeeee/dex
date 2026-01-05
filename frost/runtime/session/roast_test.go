@@ -5,6 +5,7 @@ package session
 
 import (
 	"testing"
+	"time"
 )
 
 func createTestParticipants() []Participant {
@@ -171,3 +172,135 @@ func TestROASTSession_SwitchAggregator(t *testing.T) {
 	}
 }
 
+// ========== Recovery Tests ==========
+
+func TestRecoveryManager_PersistAndRecover(t *testing.T) {
+	storage := NewMemorySessionStorage()
+	rm := NewRecoveryManager(storage, nil)
+
+	// 创建会话
+	participants := createTestParticipants()
+	config := DefaultSignSessionConfig()
+	session := NewROASTSession("job1", 1, []byte("test message"), participants, 1, config)
+
+	// 启动会话
+	if err := session.Start(); err != nil {
+		t.Fatalf("Failed to start session: %v", err)
+	}
+
+	// 持久化
+	if err := rm.PersistSession(session); err != nil {
+		t.Fatalf("Failed to persist session: %v", err)
+	}
+
+	// 检查持久化成功
+	count, err := rm.GetPendingCount()
+	if err != nil {
+		t.Fatalf("Failed to get pending count: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 pending session, got %d", count)
+	}
+
+	// 恢复会话
+	recovered, expired, err := rm.RecoverSessions()
+	if err != nil {
+		t.Fatalf("Failed to recover sessions: %v", err)
+	}
+	if len(expired) != 0 {
+		t.Errorf("Expected no expired sessions, got %d", len(expired))
+	}
+	if len(recovered) != 1 {
+		t.Fatalf("Expected 1 recovered session, got %d", len(recovered))
+	}
+
+	// 验证恢复的会话
+	recoveredSession := recovered[0]
+	if recoveredSession.JobID != "job1" {
+		t.Errorf("Expected JobID 'job1', got '%s'", recoveredSession.JobID)
+	}
+	if string(recoveredSession.Message) != "test message" {
+		t.Errorf("Expected message 'test message', got '%s'", string(recoveredSession.Message))
+	}
+	// 恢复后状态应该重置为 INIT
+	if recoveredSession.State != SignSessionStateInit {
+		t.Errorf("Expected state INIT after recovery, got %s", recoveredSession.State)
+	}
+}
+
+func TestRecoveryManager_ExpiredSessions(t *testing.T) {
+	storage := NewMemorySessionStorage()
+	config := &RecoveryConfig{
+		MaxRecoveryAge: 1 * time.Millisecond, // 极短的过期时间
+		RetryDelay:     1 * time.Second,
+	}
+	rm := NewRecoveryManager(storage, config)
+
+	// 创建并持久化会话
+	participants := createTestParticipants()
+	sessionConfig := DefaultSignSessionConfig()
+	session := NewROASTSession("job1", 1, []byte("msg"), participants, 1, sessionConfig)
+	if err := session.Start(); err != nil {
+		t.Fatalf("Failed to start session: %v", err)
+	}
+	if err := rm.PersistSession(session); err != nil {
+		t.Fatalf("Failed to persist session: %v", err)
+	}
+
+	// 等待过期
+	time.Sleep(10 * time.Millisecond)
+
+	// 恢复会话
+	recovered, expired, err := rm.RecoverSessions()
+	if err != nil {
+		t.Fatalf("Failed to recover sessions: %v", err)
+	}
+	if len(recovered) != 0 {
+		t.Errorf("Expected no recovered sessions, got %d", len(recovered))
+	}
+	if len(expired) != 1 {
+		t.Errorf("Expected 1 expired session, got %d", len(expired))
+	}
+	if expired[0] != "job1" {
+		t.Errorf("Expected expired job 'job1', got '%s'", expired[0])
+	}
+}
+
+func TestMemorySessionStorage(t *testing.T) {
+	storage := NewMemorySessionStorage()
+
+	// 保存会话
+	session := &PersistedSession{
+		JobID:    "job1",
+		KeyEpoch: 1,
+		Message:  []byte("test"),
+		State:    SignSessionStateCollectingNonces,
+	}
+	if err := storage.SaveSession(session); err != nil {
+		t.Fatalf("Failed to save session: %v", err)
+	}
+
+	// 加载会话
+	loaded, err := storage.LoadSession("job1")
+	if err != nil {
+		t.Fatalf("Failed to load session: %v", err)
+	}
+	if loaded.JobID != "job1" {
+		t.Errorf("Expected JobID 'job1', got '%s'", loaded.JobID)
+	}
+
+	// 加载不存在的会话
+	_, err = storage.LoadSession("nonexistent")
+	if err != ErrSessionNotFound {
+		t.Errorf("Expected ErrSessionNotFound, got %v", err)
+	}
+
+	// 删除会话
+	if err := storage.DeleteSession("job1"); err != nil {
+		t.Fatalf("Failed to delete session: %v", err)
+	}
+	_, err = storage.LoadSession("job1")
+	if err != ErrSessionNotFound {
+		t.Errorf("Expected ErrSessionNotFound after delete, got %v", err)
+	}
+}

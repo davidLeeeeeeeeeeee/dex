@@ -7,9 +7,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"math/big"
 	"sync"
 	"time"
 
+	"dex/frost/core/curve"
+	"dex/frost/core/roast"
 	"dex/frost/runtime/session"
 	"dex/logs"
 	"dex/pb"
@@ -348,20 +351,151 @@ func (p *Participant) HandleSignRequest(env *FrostEnvelope) error {
 }
 
 // computeSignatureShares 计算签名份额
+// z_i = k_i + ρ_i * k'_i + λ_i * e * s_i
 func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte, error) {
 	numTasks := len(sess.HidingNonces)
 	shares := make([][]byte, numTasks)
 
+	group := curve.NewSecp256k1Group()
+	order := group.Order()
+
+	// 解析本地密钥份额
+	myShare := new(big.Int).SetBytes(sess.MyShare)
+
+	// 解析聚合的 nonces 获取所有参与者的 nonce 承诺
+	// 格式：每个参与者 64 字节（hiding 32 + binding 32）
+	allNonces := parseAggregatedNonces(sess.AggregatedNonces, numTasks)
+
 	for i := 0; i < numTasks; i++ {
-		// TODO: 实现真正的 FROST 签名份额计算
-		// z_i = k_i + λ_i * e * s_i
-		// 这里简化为 dummy 实现
-		share := make([]byte, 32)
-		copy(share, sess.HidingNonces[i])
-		shares[i] = share
+		// 解析本地 nonce
+		hidingNonce := new(big.Int).SetBytes(sess.HidingNonces[i])
+		bindingNonce := new(big.Int).SetBytes(sess.BindingNonces[i])
+
+		// 计算 nonce 承诺点
+		hidingPoint := group.ScalarBaseMult(hidingNonce)
+		bindingPoint := group.ScalarBaseMult(bindingNonce)
+
+		// 构建当前任务的 nonces
+		taskNonces := allNonces[i]
+		if len(taskNonces) == 0 {
+			// 至少包含本节点的 nonce
+			taskNonces = []roast.SignerNonce{{
+				SignerID:     sess.MyIndex + 1,
+				HidingNonce:  hidingNonce,
+				BindingNonce: bindingNonce,
+				HidingPoint:  hidingPoint,
+				BindingPoint: bindingPoint,
+			}}
+		}
+
+		// 构建签名者 ID 列表
+		signerIDs := make([]int, len(taskNonces))
+		for j, n := range taskNonces {
+			signerIDs[j] = n.SignerID
+		}
+
+		// 计算绑定系数 ρ_i
+		var msg []byte
+		if i < len(sess.Messages) {
+			msg = sess.Messages[i]
+		}
+		if msg == nil {
+			msg = []byte(sess.JobID) // 默认使用 jobID 作为消息
+		}
+		rho := roast.ComputeBindingCoefficient(sess.MyIndex+1, msg, taskNonces, group)
+
+		// 计算拉格朗日系数 λ_i
+		lambdas := roast.ComputeLagrangeCoefficientsForSet(signerIDs, order)
+		lambda := lambdas[sess.MyIndex+1]
+		if lambda == nil {
+			lambda = big.NewInt(1)
+		}
+
+		// 计算群承诺 R
+		R, err := roast.ComputeGroupCommitment(taskNonces, msg, group)
+		if err != nil {
+			return nil, err
+		}
+
+		// 从 vaultProvider 获取群公钥
+		groupPubX := big.NewInt(0)
+		if p.vaultProvider != nil {
+			groupPubBytes, err := p.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch)
+			if err == nil && len(groupPubBytes) >= 32 {
+				// 解析群公钥 X 坐标（假设压缩格式：1 字节前缀 + 32 字节 X）
+				if len(groupPubBytes) == 33 {
+					groupPubX = new(big.Int).SetBytes(groupPubBytes[1:33])
+				} else if len(groupPubBytes) >= 32 {
+					groupPubX = new(big.Int).SetBytes(groupPubBytes[:32])
+				}
+			}
+		}
+
+		// 计算挑战值 e
+		e := roast.ComputeChallenge(R, groupPubX, msg, group)
+
+		// 计算部分签名 z_i = k_i + ρ_i * k'_i + λ_i * e * s_i
+		z := roast.ComputePartialSignature(
+			sess.MyIndex+1,
+			hidingNonce,
+			bindingNonce,
+			myShare,
+			rho,
+			lambda,
+			e,
+			group,
+		)
+
+		// 序列化份额（32 字节）
+		shareBytes := make([]byte, 32)
+		z.FillBytes(shareBytes)
+		shares[i] = shareBytes
 	}
 
 	return shares, nil
+}
+
+// parseAggregatedNonces 解析聚合的 nonces
+func parseAggregatedNonces(data []byte, numTasks int) [][]roast.SignerNonce {
+	result := make([][]roast.SignerNonce, numTasks)
+	for i := range result {
+		result[i] = []roast.SignerNonce{}
+	}
+
+	if len(data) == 0 {
+		return result
+	}
+
+	// 简化实现：假设 data 格式为 [task0_nonces...][task1_nonces...]
+	// 每个 nonce 为 64 字节（hiding 32 + binding 32）
+	nonceSize := 64
+	noncesPerTask := len(data) / (nonceSize * numTasks)
+	if noncesPerTask == 0 {
+		noncesPerTask = 1
+	}
+
+	offset := 0
+	for taskIdx := 0; taskIdx < numTasks && offset < len(data); taskIdx++ {
+		for j := 0; j < noncesPerTask && offset+nonceSize <= len(data); j++ {
+			hiding := data[offset : offset+32]
+			binding := data[offset+32 : offset+64]
+			offset += nonceSize
+
+			result[taskIdx] = append(result[taskIdx], roast.SignerNonce{
+				SignerID: j + 1,
+				HidingPoint: curve.Point{
+					X: new(big.Int).SetBytes(hiding),
+					Y: big.NewInt(0),
+				},
+				BindingPoint: curve.Point{
+					X: new(big.Int).SetBytes(binding),
+					Y: big.NewInt(0),
+				},
+			})
+		}
+	}
+
+	return result
 }
 
 // sendSignatureShares 发送签名份额

@@ -219,7 +219,7 @@ func AggregateSignatures(
 // SelectSubset 选择签名者子集
 // 使用确定性算法选择 t+1 个签名者
 func SelectSubset(signerIDs []int, threshold int, seed []byte, retryCount int) []int {
-	if len(signerIDs) <= threshold {
+	if len(signerIDs) <= threshold+1 {
 		return signerIDs
 	}
 
@@ -231,7 +231,11 @@ func SelectSubset(signerIDs []int, threshold int, seed []byte, retryCount int) [
 	for i := len(permuted) - 1; i > 0; i-- {
 		seedWithRetry := append(seed, byte(retryCount), byte(i))
 		hash := sha256.Sum256(seedWithRetry)
-		j := int(new(big.Int).SetBytes(hash[:]).Uint64()) % (i + 1)
+		// 使用模运算确保 j 在有效范围内（0 到 i）
+		hashInt := new(big.Int).SetBytes(hash[:])
+		modulus := big.NewInt(int64(i + 1))
+		jBig := new(big.Int).Mod(hashInt, modulus)
+		j := int(jBig.Int64())
 		permuted[i], permuted[j] = permuted[j], permuted[i]
 	}
 

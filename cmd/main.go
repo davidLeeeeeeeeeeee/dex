@@ -10,7 +10,10 @@ import (
 	"dex/config"
 	"dex/consensus"
 	"dex/db"
+	"dex/frost/chain"
+	"dex/frost/chain/btc"
 	frostrt "dex/frost/runtime"
+	"dex/frost/runtime/adapters"
 	"dex/handlers"
 	"dex/logs"
 	"dex/middleware"
@@ -377,19 +380,29 @@ ContinueWithConsensus:
 			if node == nil {
 				continue
 			}
+
+			// 创建真实的依赖适配器
+			var stateReader frostrt.ChainStateReader
+			if node.DBManager != nil {
+				stateReader = adapters.NewStateDBReader(node.DBManager)
+			}
+
+			// 创建 ChainAdapterFactory 并注册链适配器
+			adapterFactory := chain.NewDefaultAdapterFactory()
+			adapterFactory.RegisterAdapter(btc.NewBTCAdapter("mainnet")) // BTC 适配器
+
 			// 创建 FROST Runtime Manager
 			frostCfg := frostrt.ManagerConfig{
 				NodeID: frostrt.NodeID(node.Address),
 			}
 			frostDeps := frostrt.ManagerDeps{
-				// 依赖注入 - 后续阶段实现具体适配器
-				StateReader:    nil,
-				TxSubmitter:    nil,
-				Notifier:       nil,
-				P2P:            nil,
-				SignerProvider: nil,
-				VaultProvider:  nil,
-				AdapterFactory: nil,
+				StateReader:    stateReader,
+				TxSubmitter:    nil, // TODO: 需要适配 txpool
+				Notifier:       nil, // TODO: 需要实现 FinalityNotifier
+				P2P:            nil, // TODO: 需要适配 P2P 层
+				SignerProvider: nil, // TODO: 从 consensus 获取 signer set
+				VaultProvider:  nil, // TODO: 实现 VaultCommitteeProvider
+				AdapterFactory: adapterFactory,
 			}
 			frostManager := frostrt.NewManager(frostCfg, frostDeps)
 			node.FrostRuntime = frostManager
@@ -398,7 +411,8 @@ ContinueWithConsensus:
 			if err := frostManager.Start(context.Background()); err != nil {
 				logs.Error("Failed to start FROST Runtime for node %d: %v", node.ID, err)
 			} else {
-				fmt.Printf("  ✓ Node %d FROST Runtime started\n", node.ID)
+				fmt.Printf("  ✓ Node %d FROST Runtime started (StateReader=%v, AdapterFactory=%v)\n",
+					node.ID, stateReader != nil, adapterFactory != nil)
 			}
 		}
 	}

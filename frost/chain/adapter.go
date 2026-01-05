@@ -2,12 +2,43 @@ package chain
 
 import (
 	"errors"
+	"strings"
 
 	"dex/pb"
 )
 
+// ========== 链名常量（统一使用小写）==========
+
+const (
+	ChainBTC = "btc" // Bitcoin
+	ChainETH = "eth" // Ethereum
+	ChainBNB = "bnb" // BNB Smart Chain
+	ChainTRX = "trx" // Tron
+	ChainSOL = "sol" // Solana
+)
+
+// SupportedChains 支持的链列表
+var SupportedChains = []string{ChainBTC, ChainETH, ChainBNB, ChainTRX, ChainSOL}
+
 // ErrUnsupportedChain 不支持的链
 var ErrUnsupportedChain = errors.New("unsupported chain")
+
+// NormalizeChain 规范化链名（统一转小写）
+// 所有入口处应调用此函数确保链名一致性
+func NormalizeChain(chain string) string {
+	return strings.ToLower(strings.TrimSpace(chain))
+}
+
+// IsValidChain 检查是否为有效的链名
+func IsValidChain(chain string) bool {
+	normalized := NormalizeChain(chain)
+	for _, c := range SupportedChains {
+		if c == normalized {
+			return true
+		}
+	}
+	return false
+}
 
 // 直接使用 pb.SignAlgo，避免多层映射
 // 常用值的别名（方便使用）
@@ -117,7 +148,9 @@ func NewDefaultAdapterFactory() *DefaultAdapterFactory {
 
 // Adapter 获取指定链的适配器
 func (f *DefaultAdapterFactory) Adapter(chain string) (ChainAdapter, error) {
-	adapter, ok := f.adapters[chain]
+	// 规范化链名
+	normalized := NormalizeChain(chain)
+	adapter, ok := f.adapters[normalized]
 	if !ok {
 		return nil, ErrUnsupportedChain
 	}

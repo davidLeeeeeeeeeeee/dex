@@ -80,9 +80,10 @@
   - 出处：`frost/design.md` 3, 5.3.2, 5.3.3
   - 参考：`frost/chain/btc/*`、`frost/chain/evm/*`、`frost/chain/solana/*`、`frost/chain/tron/*`
 
-- [ ] **多曲线验签缺失（bn128/ed25519）**
+- [x] **多曲线验签缺失（bn128/ed25519）** ✅ 已完成
   - 需求：补齐 `frost/core/frost/api.go` 的验签实现。
   - 出处：`frost/design.md` 0, 5.5.1
+  - 实现：`VerifyBN128()` (ETH/BNB Schnorr) 和 `VerifyEd25519()` (SOL) 已实现并测试通过
 
 - [ ] **Power Transition/DKG Runtime 仍是 dummy**
   - 需求：真实 DKG commitment/share/resolve、validation 签名与迁移 job 规划。
@@ -94,28 +95,37 @@
   - 出处：`frost/design.md` 2, 3, 7
   - 参考：`frost/core/roast/roast.go`
 
-- [ ] **Runtime Manager 未驱动实际扫描/签名流程，依赖未接入**
+- [/] **Runtime Manager 未驱动实际扫描/签名流程，依赖未接入** 🔄 部分完成
   - 需求：Manager 主循环驱动 scanner/workers；`cmd/main.go` 注入真实 `StateReader/TxSubmitter/Notifier/P2P/...`。
   - 出处：`frost/design.md` 2, 8.1, 8.3
   - 参考：`frost/runtime/manager.go`、`cmd/main.go`
+  - 已完成：StateReader (adapters.StateDBReader) 和 AdapterFactory (chain.DefaultAdapterFactory + BTCAdapter)
+  - 待完成：TxSubmitter, FinalityNotifier, P2P, SignerProvider, VaultProvider
 
-- [ ] **ChainAdapter 接口重复/不一致**
+- [x] **ChainAdapter 接口重复/不一致** ✅ 已完成
   - 需求：统一 `frost/runtime/deps.go` 与 `frost/chain/adapter.go` 的接口定义。
   - 出处：`frost/design.md` 8.1（接口定义的单一性）
+  - 实现：删除 deps.go 中的冗余接口定义，统一使用 frost/chain.ChainAdapter 和 frost/chain.ChainAdapterFactory
 
 ---
 
 ## P2：工程化/可观测性/运维体验（建议补齐）
 
-- [ ] **FrostEnvelope 签名校验与防重放未落地**
+- [x] **FrostEnvelope 签名校验与防重放未落地** ✅ 已完成
   - 需求：`/frostmsg` 收包与 P2P 侧做签名校验与 seq/nonce 去重。
   - 出处：`frost/design.md` 8.2, 12.1
   - 参考：`handlers/handleFrostMsg.go`
+  - 已实现：FrostMsgVerifier 验证器、SeqReplayGuard 防重放、VerifyFrostEnvelope 签名验证
+  - 注意：生产环境需要设置 EnableSigVerify=true 和 EnableReplayGuard=true
 
-- [ ] **对外查询/运维 API 仍是占位**
+- [x] **对外查询/运维 API 仍是占位** ✅ 已完成
   - 需求：`/frost/config` 读真实配置；`/frost/withdraws` 前缀修正；`/frost/rescan` 触发 runtime 重扫。
   - 出处：`frost/design.md` 9.1, 9.2
   - 参考：`handlers/frost_query_handlers.go`、`handlers/frost_admin_handlers.go`
+  - 已实现：
+    - `/frost/config` 从配置/DB 读取真实值
+    - `/frost/withdraws` 使用统一 key 前缀 `v1_frost_withdraw_`
+    - `/frost/rescan` 支持 RescanCallback 回调机制
 
 - [ ] **`config/frost_default.json` 仍为空**
   - 需求：给出 v1 的 gas/fee 默认值（按年均 300% 规则）。

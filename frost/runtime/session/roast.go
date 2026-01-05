@@ -4,7 +4,10 @@
 package session
 
 import (
+	"dex/frost/core/curve"
+	"dex/frost/core/roast"
 	"errors"
+	"math/big"
 	"sync"
 	"time"
 )
@@ -184,9 +187,19 @@ func (s *ROASTSession) AddShare(participantIndex uint16, share []byte) error {
 
 	// 检查是否收集够了
 	if s.hasEnoughShares() {
-		// TODO: 聚合签名
+		// 聚合签名
+		if err := s.aggregateSignature(); err != nil {
+			s.State = SignSessionStateFailed
+			if s.OnFailed != nil {
+				s.OnFailed(err)
+			}
+			return err
+		}
 		s.State = SignSessionStateComplete
 		s.CompletedAt = time.Now()
+		if s.OnComplete != nil {
+			s.OnComplete(s.FinalSignature)
+		}
 	}
 
 	return nil
@@ -270,4 +283,110 @@ func (s *ROASTSession) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+}
+
+// aggregateSignature 聚合签名份额
+func (s *ROASTSession) aggregateSignature() error {
+	group := curve.NewSecp256k1Group()
+
+	// 计算群组承诺 R = Σ (D_i + ρ_i * E_i)
+	R := s.computeGroupCommitment(group)
+
+	// 收集签名份额
+	var signerShares []roast.SignerShare
+	for _, idx := range s.SelectedSet {
+		share, ok := s.Shares[idx]
+		if !ok {
+			continue
+		}
+		shareInt := new(big.Int).SetBytes(share.Share)
+		signerShares = append(signerShares, roast.SignerShare{
+			SignerID: int(idx),
+			Share:    shareInt,
+		})
+	}
+
+	// 聚合签名
+	sig, err := roast.AggregateSignatures(R, signerShares, group)
+	if err != nil {
+		return err
+	}
+
+	s.FinalSignature = sig
+	return nil
+}
+
+// computeGroupCommitment 计算群组承诺 R
+func (s *ROASTSession) computeGroupCommitment(group curve.Group) curve.Point {
+	// R = Σ (D_i + ρ_i * E_i)
+	// 其中 D_i = hiding nonce point, E_i = binding nonce point
+	// ρ_i = binding coefficient
+
+	var R curve.Point
+	first := true
+
+	for _, idx := range s.SelectedSet {
+		nonce, ok := s.Nonces[idx]
+		if !ok {
+			continue
+		}
+
+		// 解析 nonce 点
+		D := parsePoint(nonce.HidingNonce, group)
+		E := parsePoint(nonce.BindingNonce, group)
+
+		// 计算 binding coefficient
+		rho := roast.ComputeBindingCoefficient(int(idx), s.Message, s.collectSignerNonces(), group)
+
+		// D_i + ρ_i * E_i
+		rhoE := group.ScalarMult(E, rho)
+		contribution := group.Add(D, rhoE)
+
+		if first {
+			R = contribution
+			first = false
+		} else {
+			R = group.Add(R, contribution)
+		}
+	}
+
+	return R
+}
+
+// collectSignerNonces 收集签名者 nonce 用于计算 binding coefficient
+func (s *ROASTSession) collectSignerNonces() []roast.SignerNonce {
+	var nonces []roast.SignerNonce
+	for _, idx := range s.SelectedSet {
+		nonce, ok := s.Nonces[idx]
+		if !ok {
+			continue
+		}
+		nonces = append(nonces, roast.SignerNonce{
+			SignerID:     int(idx),
+			HidingPoint:  parsePoint(nonce.HidingNonce, s.getGroup()),
+			BindingPoint: parsePoint(nonce.BindingNonce, s.getGroup()),
+		})
+	}
+	return nonces
+}
+
+// getGroup 获取椭圆曲线群
+func (s *ROASTSession) getGroup() curve.Group {
+	return curve.NewSecp256k1Group()
+}
+
+// parsePoint 解析压缩格式的点
+func parsePoint(data []byte, group curve.Group) curve.Point {
+	if len(data) == 33 {
+		// 压缩格式
+		return group.DecompressPoint(data)
+	} else if len(data) == 65 {
+		// 非压缩格式
+		x := new(big.Int).SetBytes(data[1:33])
+		y := new(big.Int).SetBytes(data[33:65])
+		return curve.Point{X: x, Y: y}
+	}
+	// 假设是 32 字节的标量，转换为点
+	scalar := new(big.Int).SetBytes(data)
+	return group.ScalarBaseMult(scalar)
 }
