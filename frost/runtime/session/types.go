@@ -3,25 +3,6 @@
 
 package session
 
-import (
-	"time"
-)
-
-// ========== 常量 ==========
-
-const (
-	// DefaultNonceTimeout nonce 收集超时
-	DefaultNonceTimeout = 5 * time.Second
-	// DefaultShareTimeout 签名份额收集超时
-	DefaultShareTimeout = 5 * time.Second
-	// DefaultMaxRetries 最大重试次数
-	DefaultMaxRetries = 3
-	// DefaultMinSigners 最小签名者数量（t+1）
-	DefaultMinSigners = 2
-)
-
-// ========== 状态定义 ==========
-
 // SignSessionState 签名会话状态
 type SignSessionState int
 
@@ -32,6 +13,8 @@ const (
 	SignSessionStateCollectingNonces
 	// SignSessionStateCollectingShares 收集签名份额
 	SignSessionStateCollectingShares
+	// SignSessionStateAggregating 聚合签名
+	SignSessionStateAggregating
 	// SignSessionStateComplete 签名完成
 	SignSessionStateComplete
 	// SignSessionStateFailed 签名失败
@@ -46,6 +29,8 @@ func (s SignSessionState) String() string {
 		return "COLLECTING_NONCES"
 	case SignSessionStateCollectingShares:
 		return "COLLECTING_SHARES"
+	case SignSessionStateAggregating:
+		return "AGGREGATING"
 	case SignSessionStateComplete:
 		return "COMPLETE"
 	case SignSessionStateFailed:
@@ -59,59 +44,10 @@ func (s SignSessionState) String() string {
 
 // Participant 签名参与者
 type Participant struct {
-	Index   uint16 // 参与者索引（1-based）
-	Address string // 节点地址
-	IP      string // 节点 IP
-}
-
-// ========== Nonce 承诺 ==========
-
-// NonceCommitment nonce 承诺
-type NonceCommitment struct {
-	ParticipantIndex uint16
-	HidingNonce      []byte // 32 bytes
-	BindingNonce     []byte // 32 bytes
-	ReceivedAt       time.Time
-}
-
-// ========== 签名份额 ==========
-
-// SignatureShare 签名份额
-type SignatureShare struct {
-	ParticipantIndex uint16
-	Share            []byte // 32 bytes
-	ReceivedAt       time.Time
-}
-
-// ========== 会话配置 ==========
-
-// SignSessionConfig 签名会话配置
-type SignSessionConfig struct {
-	// 超时配置
-	NonceTimeout time.Duration
-	ShareTimeout time.Duration
-	MaxRetries   int
-
-	// 阈值配置
-	Threshold  int // t
-	MinSigners int // t+1
-	TotalNodes int // n
-
-	// 聚合者配置
-	AggregatorIndex uint16 // 当前聚合者索引
-}
-
-// DefaultSignSessionConfig 默认配置
-func DefaultSignSessionConfig() *SignSessionConfig {
-	return &SignSessionConfig{
-		NonceTimeout:    DefaultNonceTimeout,
-		ShareTimeout:    DefaultShareTimeout,
-		MaxRetries:      DefaultMaxRetries,
-		Threshold:       1,
-		MinSigners:      DefaultMinSigners,
-		TotalNodes:      3,
-		AggregatorIndex: 1,
-	}
+	ID      string // 节点 ID（用于会话标识与路由）
+	Index   int    // 参与者索引（0-based，等同于 committee 下标）
+	Address string // 节点地址（可选）
+	IP      string // 节点 IP（可选）
 }
 
 // ========== 会话事件 ==========

@@ -37,6 +37,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	"google.golang.org/protobuf/proto"
 )
 
 // 表示一个节点实例
@@ -395,17 +396,38 @@ ContinueWithConsensus:
 			frostCfg := frostrt.ManagerConfig{
 				NodeID: frostrt.NodeID(node.Address),
 			}
+			var roastMessenger frostrt.RoastMessenger
+			if node.SenderManager != nil {
+				roastMessenger = adapters.NewSenderRoastMessenger(node.SenderManager)
+			}
 			frostDeps := frostrt.ManagerDeps{
 				StateReader:    stateReader,
 				TxSubmitter:    nil, // TODO: 需要适配 txpool
 				Notifier:       nil, // TODO: 需要实现 FinalityNotifier
 				P2P:            nil, // TODO: 需要适配 P2P 层
+				RoastMessenger: roastMessenger,
 				SignerProvider: nil, // TODO: 从 consensus 获取 signer set
 				VaultProvider:  nil, // TODO: 实现 VaultCommitteeProvider
 				AdapterFactory: adapterFactory,
 			}
 			frostManager := frostrt.NewManager(frostCfg, frostDeps)
 			node.FrostRuntime = frostManager
+
+			if node.HandlerManager != nil {
+				node.HandlerManager.SetFrostMsgHandler(func(msg types.Message) error {
+					if node.FrostRuntime == nil {
+						return nil
+					}
+					if len(msg.FrostPayload) == 0 {
+						return fmt.Errorf("empty frost payload")
+					}
+					var env pb.FrostEnvelope
+					if err := proto.Unmarshal(msg.FrostPayload, &env); err != nil {
+						return err
+					}
+					return node.FrostRuntime.HandlePBEnvelope(&env)
+				})
+			}
 
 			// 启动 FROST Runtime
 			if err := frostManager.Start(context.Background()); err != nil {

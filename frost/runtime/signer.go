@@ -14,6 +14,7 @@ import (
 	"dex/frost/core/curve"
 	"dex/frost/core/dkg"
 	"dex/frost/core/roast"
+	roastsession "dex/frost/runtime/session"
 	"dex/logs"
 	"dex/pb"
 )
@@ -182,15 +183,13 @@ func (s *SignerService) waitForSignature(ctx context.Context, jobID string) *Sig
 			if sess == nil {
 				continue
 			}
-			sess.mu.RLock()
-			state := sess.State
-			sigs := sess.FinalSignatures
-			sess.mu.RUnlock()
+			state := sess.GetState()
+			sigs := sess.GetFinalSignatures()
 
-			if state == CoordStateComplete {
+			if state == roastsession.SignSessionStateComplete {
 				return &SignResult{JobID: jobID, Signatures: sigs, Success: true}
 			}
-			if state == CoordStateFailed {
+			if state == roastsession.SignSessionStateFailed {
 				return &SignResult{JobID: jobID, Success: false, Error: ErrSigningFailed}
 			}
 		}

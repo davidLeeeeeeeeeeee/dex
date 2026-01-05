@@ -12,9 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"dex/frost/core/curve"
-	"dex/frost/core/roast"
-	"dex/frost/runtime/session"
+	roastsession "dex/frost/runtime/session"
 	"dex/logs"
 	"dex/pb"
 )
@@ -30,6 +28,14 @@ var (
 	ErrSessionAlreadyExists = errors.New("session already exists")
 	// ErrInsufficientParticipants 参与者不足
 	ErrInsufficientParticipants = errors.New("insufficient participants")
+	// ErrInvalidRoastPayload indicates a malformed ROAST payload.
+	ErrInvalidRoastPayload = errors.New("invalid roast payload")
+	// ErrParticipantNotFound indicates the sender is not in the committee.
+	ErrParticipantNotFound = errors.New("participant not found")
+	// ErrInsufficientNonces indicates not enough nonces for aggregation.
+	ErrInsufficientNonces = errors.New("insufficient nonces for aggregation")
+	// ErrInsufficientShares indicates not enough shares for aggregation.
+	ErrInsufficientShares = errors.New("insufficient shares for aggregation")
 )
 
 // ========== 配置 ==========
@@ -67,112 +73,29 @@ type Coordinator struct {
 	nodeID NodeID
 
 	// 会话管理
-	sessions map[string]*CoordinatorSession // jobID -> session
+	sessions map[string]*roastsession.Session // jobID -> session
 
 	// 依赖
-	p2p           P2P
+	messenger     RoastMessenger
 	vaultProvider VaultCommitteeProvider
+	cryptoFactory CryptoExecutorFactory // 密码学执行器工厂
 
 	// 当前区块高度（用于协调者选举）
 	currentHeight uint64
 }
 
-// CoordinatorSession 协调者管理的签名会话
-type CoordinatorSession struct {
-	mu sync.RWMutex
-
-	// 会话标识
-	JobID    string
-	VaultID  uint32
-	Chain    string
-	KeyEpoch uint64
-	SignAlgo pb.SignAlgo
-
-	// 待签名的消息（可能多个，如 BTC 多 input）
-	Messages [][]byte // 每个 task 的消息哈希
-
-	// 参与者信息
-	Committee []SignerInfo // 委员会成员
-	Threshold int          // 门限 t
-	MyIndex   int          // 本节点在委员会中的索引（-1 表示不在）
-
-	// 当前选中的参与者子集
-	SelectedSet []int // 索引（指向 Committee）
-
-	// 收集的 nonce 承诺
-	Nonces map[int]*NonceData // 参与者索引 -> nonce
-
-	// 收集的签名份额
-	Shares map[int]*ShareData // 参与者索引 -> share
-
-	// 状态
-	State       CoordinatorSessionState
-	RetryCount  int
-	StartHeight uint64 // 会话开始高度（用于协调者选举）
-	StartedAt   time.Time
-	CompletedAt time.Time
-
-	// 结果
-	FinalSignatures [][]byte // 每个 task 的最终签名
-}
-
-// CoordinatorSessionState 协调者会话状态
-type CoordinatorSessionState int
-
-const (
-	CoordStateInit CoordinatorSessionState = iota
-	CoordStateCollectingNonces
-	CoordStateCollectingShares
-	CoordStateAggregating
-	CoordStateComplete
-	CoordStateFailed
-)
-
-func (s CoordinatorSessionState) String() string {
-	switch s {
-	case CoordStateInit:
-		return "INIT"
-	case CoordStateCollectingNonces:
-		return "COLLECTING_NONCES"
-	case CoordStateCollectingShares:
-		return "COLLECTING_SHARES"
-	case CoordStateAggregating:
-		return "AGGREGATING"
-	case CoordStateComplete:
-		return "COMPLETE"
-	case CoordStateFailed:
-		return "FAILED"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-// NonceData nonce 承诺数据
-type NonceData struct {
-	ParticipantIndex int
-	HidingNonces     [][]byte // 每个 task 一个 hiding nonce (32 bytes)
-	BindingNonces    [][]byte // 每个 task 一个 binding nonce (32 bytes)
-	ReceivedAt       time.Time
-}
-
-// ShareData 签名份额数据
-type ShareData struct {
-	ParticipantIndex int
-	Shares           [][]byte // 每个 task 一个 share (32 bytes)
-	ReceivedAt       time.Time
-}
-
 // NewCoordinator 创建协调者
-func NewCoordinator(nodeID NodeID, p2p P2P, vaultProvider VaultCommitteeProvider, config *CoordinatorConfig) *Coordinator {
+func NewCoordinator(nodeID NodeID, messenger RoastMessenger, vaultProvider VaultCommitteeProvider, cryptoFactory CryptoExecutorFactory, config *CoordinatorConfig) *Coordinator {
 	if config == nil {
 		config = DefaultCoordinatorConfig()
 	}
 	return &Coordinator{
 		config:        config,
 		nodeID:        nodeID,
-		sessions:      make(map[string]*CoordinatorSession),
-		p2p:           p2p,
+		sessions:      make(map[string]*roastsession.Session),
+		messenger:     messenger,
 		vaultProvider: vaultProvider,
+		cryptoFactory: cryptoFactory,
 	}
 }
 
@@ -193,48 +116,49 @@ func (c *Coordinator) StartSession(ctx context.Context, params *StartSessionPara
 	}
 
 	// 获取 Vault 委员会
-	committee, err := c.vaultProvider.VaultCommittee(params.Chain, params.VaultID, params.KeyEpoch)
+	committeeInfo, err := c.vaultProvider.VaultCommittee(params.Chain, params.VaultID, params.KeyEpoch)
 	if err != nil {
 		return err
 	}
 
-	if len(committee) < params.Threshold {
+	if len(committeeInfo) < params.Threshold {
 		return ErrInsufficientParticipants
 	}
 
 	// 查找本节点在委员会中的索引
 	myIndex := -1
-	for i, member := range committee {
+	committee := make([]roastsession.Participant, len(committeeInfo))
+	for i, member := range committeeInfo {
+		committee[i] = roastsession.Participant{
+			ID:    string(member.ID),
+			Index: i,
+		}
 		if member.ID == c.nodeID {
 			myIndex = i
-			break
 		}
 	}
 
 	// 创建会话
-	sess := &CoordinatorSession{
+	sess := roastsession.NewSession(roastsession.SessionParams{
 		JobID:       params.JobID,
 		VaultID:     params.VaultID,
 		Chain:       params.Chain,
 		KeyEpoch:    params.KeyEpoch,
-		SignAlgo:    params.SignAlgo,
+		SignAlgo:    int32(params.SignAlgo),
 		Messages:    params.Messages,
 		Committee:   committee,
 		Threshold:   params.Threshold,
 		MyIndex:     myIndex,
-		Nonces:      make(map[int]*NonceData),
-		Shares:      make(map[int]*ShareData),
-		State:       CoordStateInit,
 		StartHeight: c.currentHeight,
-		StartedAt:   time.Now(),
-	}
+	})
 
 	c.sessions[params.JobID] = sess
 
 	// 如果本节点是协调者，开始收集 nonce
 	if c.isCurrentCoordinator(sess) {
-		sess.selectInitialSet()
-		sess.State = CoordStateCollectingNonces
+		if err := sess.Start(); err != nil {
+			return err
+		}
 		go c.runCoordinatorLoop(ctx, sess)
 	}
 
@@ -253,7 +177,7 @@ type StartSessionParams struct {
 }
 
 // isCurrentCoordinator 检查本节点是否是当前协调者
-func (c *Coordinator) isCurrentCoordinator(sess *CoordinatorSession) bool {
+func (c *Coordinator) isCurrentCoordinator(sess *roastsession.Session) bool {
 	if len(sess.Committee) == 0 {
 		return false
 	}
@@ -265,7 +189,7 @@ func (c *Coordinator) isCurrentCoordinator(sess *CoordinatorSession) bool {
 
 // computeCoordinatorIndex 计算当前协调者索引
 // 确定性算法：基于 session_id 和区块高度
-func (c *Coordinator) computeCoordinatorIndex(sess *CoordinatorSession) int {
+func (c *Coordinator) computeCoordinatorIndex(sess *roastsession.Session) int {
 	if len(sess.Committee) == 0 {
 		return 0
 	}
@@ -299,8 +223,8 @@ func computeAggregatorSeed(jobID string, keyEpoch uint64) []byte {
 }
 
 // permuteCommittee 确定性排列委员会
-func permuteCommittee(committee []SignerInfo, seed []byte) []SignerInfo {
-	result := make([]SignerInfo, len(committee))
+func permuteCommittee(committee []roastsession.Participant, seed []byte) []roastsession.Participant {
+	result := make([]roastsession.Participant, len(committee))
 	copy(result, committee)
 
 	// 使用 Fisher-Yates 洗牌，种子决定随机序列
@@ -314,21 +238,8 @@ func permuteCommittee(committee []SignerInfo, seed []byte) []SignerInfo {
 	return result
 }
 
-// selectInitialSet 选择初始参与者集合
-func (s *CoordinatorSession) selectInitialSet() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// 选择前 t+1 个参与者
-	minSigners := s.Threshold + 1
-	s.SelectedSet = make([]int, 0, minSigners)
-	for i := 0; i < len(s.Committee) && len(s.SelectedSet) < minSigners; i++ {
-		s.SelectedSet = append(s.SelectedSet, i)
-	}
-}
-
 // runCoordinatorLoop 协调者主循环
-func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *CoordinatorSession) {
+func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession.Session) {
 	logs.Info("[Coordinator] starting session %s", sess.JobID)
 
 	for {
@@ -338,105 +249,91 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *CoordinatorS
 		default:
 		}
 
-		sess.mu.RLock()
-		state := sess.State
-		sess.mu.RUnlock()
+		state := sess.GetState()
 
 		switch state {
-		case CoordStateCollectingNonces:
+		case roastsession.SignSessionStateCollectingNonces:
 			// 广播 nonce 请求
 			c.broadcastNonceRequest(sess)
 
 			// 等待收集或超时
 			if c.waitForNonces(ctx, sess) {
-				sess.mu.Lock()
-				sess.State = CoordStateCollectingShares
-				sess.mu.Unlock()
+				sess.SetState(roastsession.SignSessionStateCollectingShares)
 			} else {
 				// 超时，尝试重试
 				if !c.retryWithNewSet(sess) {
-					sess.mu.Lock()
-					sess.State = CoordStateFailed
-					sess.mu.Unlock()
+					sess.SetState(roastsession.SignSessionStateFailed)
 					return
 				}
 			}
 
-		case CoordStateCollectingShares:
+		case roastsession.SignSessionStateCollectingShares:
 			// 广播签名请求（包含聚合的 nonce）
 			c.broadcastSignRequest(sess)
 
 			// 等待收集或超时
 			if c.waitForShares(ctx, sess) {
-				sess.mu.Lock()
-				sess.State = CoordStateAggregating
-				sess.mu.Unlock()
+				sess.SetState(roastsession.SignSessionStateAggregating)
 			} else {
 				// 超时，尝试重试
 				if !c.retryWithNewSet(sess) {
-					sess.mu.Lock()
-					sess.State = CoordStateFailed
-					sess.mu.Unlock()
+					sess.SetState(roastsession.SignSessionStateFailed)
 					return
 				}
 			}
 
-		case CoordStateAggregating:
+		case roastsession.SignSessionStateAggregating:
 			// 聚合签名
 			if err := c.aggregateSignatures(sess); err != nil {
 				logs.Error("[Coordinator] aggregate failed: %v", err)
 				if !c.retryWithNewSet(sess) {
-					sess.mu.Lock()
-					sess.State = CoordStateFailed
-					sess.mu.Unlock()
+					sess.SetState(roastsession.SignSessionStateFailed)
 					return
 				}
 			} else {
-				sess.mu.Lock()
-				sess.State = CoordStateComplete
-				sess.CompletedAt = time.Now()
-				sess.mu.Unlock()
 				logs.Info("[Coordinator] session %s completed", sess.JobID)
 				return
 			}
 
-		case CoordStateComplete, CoordStateFailed:
+		case roastsession.SignSessionStateComplete, roastsession.SignSessionStateFailed:
 			return
 		}
 	}
 }
 
 // broadcastNonceRequest 广播 nonce 请求
-func (c *Coordinator) broadcastNonceRequest(sess *CoordinatorSession) {
-	sess.mu.RLock()
-	selectedSet := sess.SelectedSet
-	sess.mu.RUnlock()
-
+func (c *Coordinator) broadcastNonceRequest(sess *roastsession.Session) {
+	if c.messenger == nil {
+		return
+	}
+	selectedSet := sess.SelectedSetSnapshot()
+	peers := make([]NodeID, 0, len(selectedSet))
 	for _, idx := range selectedSet {
 		if idx >= len(sess.Committee) {
 			continue
 		}
-		member := sess.Committee[idx]
-
-		env := &FrostEnvelope{
-			SessionID: sess.JobID,
-			Kind:      "NonceRequest",
-			From:      c.nodeID,
-			Chain:     sess.Chain,
-			VaultID:   sess.VaultID,
-			SignAlgo:  int32(sess.SignAlgo),
-			Epoch:     sess.KeyEpoch,
-			Round:     1,
-		}
-
-		if c.p2p != nil {
-			_ = c.p2p.Send(member.ID, env)
-		}
+		peers = append(peers, NodeID(sess.Committee[idx].ID))
 	}
+	if len(peers) == 0 {
+		return
+	}
+
+	msg := &RoastEnvelope{
+		SessionID: sess.JobID,
+		Kind:      "NonceRequest",
+		From:      c.nodeID,
+		Chain:     sess.Chain,
+		VaultID:   sess.VaultID,
+		SignAlgo:  pb.SignAlgo(sess.SignAlgo),
+		Epoch:     sess.KeyEpoch,
+		Round:     1,
+	}
+
+	_ = c.messenger.Broadcast(peers, msg)
 }
 
 // waitForNonces 等待收集 nonce
-func (c *Coordinator) waitForNonces(ctx context.Context, sess *CoordinatorSession) bool {
+func (c *Coordinator) waitForNonces(ctx context.Context, sess *roastsession.Session) bool {
 	deadline := time.After(c.config.NonceCollectTimeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -448,69 +345,55 @@ func (c *Coordinator) waitForNonces(ctx context.Context, sess *CoordinatorSessio
 		case <-deadline:
 			return false
 		case <-ticker.C:
-			if c.hasEnoughNonces(sess) {
+			if sess.HasEnoughNonces() {
 				return true
 			}
 		}
 	}
 }
 
-// hasEnoughNonces 检查是否收集够 nonce
-func (c *Coordinator) hasEnoughNonces(sess *CoordinatorSession) bool {
-	sess.mu.RLock()
-	defer sess.mu.RUnlock()
-
-	count := 0
-	for _, idx := range sess.SelectedSet {
-		if _, ok := sess.Nonces[idx]; ok {
-			count++
-		}
-	}
-	return count >= sess.Threshold+1
-}
-
 // broadcastSignRequest 广播签名请求
-func (c *Coordinator) broadcastSignRequest(sess *CoordinatorSession) {
-	sess.mu.RLock()
-	selectedSet := sess.SelectedSet
-	sess.mu.RUnlock()
+func (c *Coordinator) broadcastSignRequest(sess *roastsession.Session) {
+	if c.messenger == nil {
+		return
+	}
+	selectedSet := sess.SelectedSetSnapshot()
 
 	// 聚合 nonce 承诺
 	aggregatedNonces := c.aggregateNonces(sess)
-
+	peers := make([]NodeID, 0, len(selectedSet))
 	for _, idx := range selectedSet {
 		if idx >= len(sess.Committee) {
 			continue
 		}
-		member := sess.Committee[idx]
-
-		env := &FrostEnvelope{
-			SessionID: sess.JobID,
-			Kind:      "SignRequest",
-			From:      c.nodeID,
-			Chain:     sess.Chain,
-			VaultID:   sess.VaultID,
-			SignAlgo:  int32(sess.SignAlgo),
-			Epoch:     sess.KeyEpoch,
-			Round:     2,
-			Payload:   aggregatedNonces,
-		}
-
-		if c.p2p != nil {
-			_ = c.p2p.Send(member.ID, env)
-		}
+		peers = append(peers, NodeID(sess.Committee[idx].ID))
 	}
+	if len(peers) == 0 {
+		return
+	}
+
+	msg := &RoastEnvelope{
+		SessionID: sess.JobID,
+		Kind:      "SignRequest",
+		From:      c.nodeID,
+		Chain:     sess.Chain,
+		VaultID:   sess.VaultID,
+		SignAlgo:  pb.SignAlgo(sess.SignAlgo),
+		Epoch:     sess.KeyEpoch,
+		Round:     2,
+		Payload:   aggregatedNonces,
+	}
+
+	_ = c.messenger.Broadcast(peers, msg)
 }
 
 // aggregateNonces 聚合 nonce 承诺
-func (c *Coordinator) aggregateNonces(sess *CoordinatorSession) []byte {
-	sess.mu.RLock()
-	defer sess.mu.RUnlock()
-
-	// 简化实现：将所有 nonce 序列化
+func (c *Coordinator) aggregateNonces(sess *roastsession.Session) []byte {
+	// Simplified: concatenate all nonce commitments.
 	var buf bytes.Buffer
-	for _, idx := range sess.SelectedSet {
-		if nonce, ok := sess.Nonces[idx]; ok {
+	selectedSet := sess.SelectedSetSnapshot()
+	for _, idx := range selectedSet {
+		if nonce, ok := sess.GetNonce(idx); ok {
 			for i := range nonce.HidingNonces {
 				buf.Write(nonce.HidingNonces[i])
 				buf.Write(nonce.BindingNonces[i])
@@ -521,7 +404,7 @@ func (c *Coordinator) aggregateNonces(sess *CoordinatorSession) []byte {
 }
 
 // waitForShares 等待收集签名份额
-func (c *Coordinator) waitForShares(ctx context.Context, sess *CoordinatorSession) bool {
+func (c *Coordinator) waitForShares(ctx context.Context, sess *roastsession.Session) bool {
 	deadline := time.After(c.config.ShareCollectTimeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -533,146 +416,113 @@ func (c *Coordinator) waitForShares(ctx context.Context, sess *CoordinatorSessio
 		case <-deadline:
 			return false
 		case <-ticker.C:
-			if c.hasEnoughShares(sess) {
+			if sess.HasEnoughShares() {
 				return true
 			}
 		}
 	}
 }
 
-// hasEnoughShares 检查是否收集够签名份额
-func (c *Coordinator) hasEnoughShares(sess *CoordinatorSession) bool {
-	sess.mu.RLock()
-	defer sess.mu.RUnlock()
-
-	count := 0
-	for _, idx := range sess.SelectedSet {
-		if _, ok := sess.Shares[idx]; ok {
-			count++
-		}
+// aggregateSignatures 聚合签名
+func (c *Coordinator) aggregateSignatures(sess *roastsession.Session) error {
+	signatures, err := c.aggregateSessionSignatures(sess)
+	if err != nil {
+		return err
 	}
-	return count >= sess.Threshold+1
+	sess.MarkCompleted(signatures)
+	return nil
 }
 
-// aggregateSignatures 聚合签名
-func (c *Coordinator) aggregateSignatures(sess *CoordinatorSession) error {
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
+func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([][]byte, error) {
+	if sess == nil {
+		return nil, ErrInvalidRoastPayload
+	}
+	if len(sess.Messages) == 0 {
+		return nil, errors.New("no messages to sign")
+	}
 
-	group := curve.NewSecp256k1Group()
-	numTasks := len(sess.Messages)
-	sess.FinalSignatures = make([][]byte, numTasks)
+	// 通过工厂获取执行器
+	roastExec, err := c.cryptoFactory.NewROASTExecutor(sess.SignAlgo)
+	if err != nil {
+		return nil, err
+	}
 
-	// 为每个 task (消息) 聚合签名
-	for taskIdx := range sess.Messages {
-		msg := sess.Messages[taskIdx]
+	minSigners := sess.Threshold + 1
+	if minSigners <= 0 {
+		minSigners = 1
+	}
 
-		// 构建 nonces 列表
-		nonces := make([]roast.SignerNonce, 0, len(sess.SelectedSet))
-		for _, idx := range sess.SelectedSet {
-			nonceData, ok := sess.Nonces[idx]
-			if !ok || taskIdx >= len(nonceData.HidingNonces) {
+	selectedSet := sess.SelectedSetSnapshot()
+	signatures := make([][]byte, len(sess.Messages))
+
+	for taskIdx, msg := range sess.Messages {
+		nonces := make([]NonceInput, 0, len(selectedSet))
+		for _, idx := range selectedSet {
+			nonceData, ok := sess.GetNonce(idx)
+			if !ok || taskIdx >= len(nonceData.HidingNonces) || taskIdx >= len(nonceData.BindingNonces) {
 				continue
 			}
 
-			// 解析 nonce 点（每个 nonce 是 32 字节的 X 坐标，需要从中恢复点）
 			hidingBytes := nonceData.HidingNonces[taskIdx]
 			bindingBytes := nonceData.BindingNonces[taskIdx]
-
-			hidingPoint := curve.Point{
-				X: new(big.Int).SetBytes(hidingBytes),
-				Y: big.NewInt(0), // 简化：实际应该从 X 坐标恢复 Y
-			}
-			bindingPoint := curve.Point{
-				X: new(big.Int).SetBytes(bindingBytes),
-				Y: big.NewInt(0),
-			}
-
-			nonces = append(nonces, roast.SignerNonce{
-				SignerID:     idx + 1, // 签名者 ID 从 1 开始
-				HidingPoint:  hidingPoint,
-				BindingPoint: bindingPoint,
+			nonces = append(nonces, NonceInput{
+				SignerID: idx + 1,
+				HidingPoint: CurvePoint{
+					X: new(big.Int).SetBytes(hidingBytes),
+					Y: big.NewInt(0),
+				},
+				BindingPoint: CurvePoint{
+					X: new(big.Int).SetBytes(bindingBytes),
+					Y: big.NewInt(0),
+				},
 			})
 		}
 
-		if len(nonces) < sess.Threshold+1 {
-			return errors.New("insufficient nonces for aggregation")
+		if len(nonces) < minSigners {
+			return nil, ErrInsufficientNonces
 		}
 
-		// 构建 shares 列表
-		shares := make([]roast.SignerShare, 0, len(sess.SelectedSet))
-		for _, idx := range sess.SelectedSet {
-			shareData, ok := sess.Shares[idx]
+		shares := make([]ShareInput, 0, len(selectedSet))
+		for _, idx := range selectedSet {
+			shareData, ok := sess.GetShare(idx)
 			if !ok || taskIdx >= len(shareData.Shares) {
 				continue
 			}
 
-			shareBytes := shareData.Shares[taskIdx]
-			shareValue := new(big.Int).SetBytes(shareBytes)
-
-			shares = append(shares, roast.SignerShare{
+			shareValue := new(big.Int).SetBytes(shareData.Shares[taskIdx])
+			shares = append(shares, ShareInput{
 				SignerID: idx + 1,
 				Share:    shareValue,
 			})
 		}
 
-		if len(shares) < sess.Threshold+1 {
-			return errors.New("insufficient shares for aggregation")
+		if len(shares) < minSigners {
+			return nil, ErrInsufficientShares
 		}
 
-		// 计算群承诺 R
-		R, err := roast.ComputeGroupCommitment(nonces, msg, group)
+		// 通过接口调用密码学操作
+		R, err := roastExec.ComputeGroupCommitment(nonces, msg)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		// 聚合签名
-		sig, err := roast.AggregateSignatures(R, shares, group)
+		sig, err := roastExec.AggregateSignatures(R, shares)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		sess.FinalSignatures[taskIdx] = sig
+		signatures[taskIdx] = sig
 	}
 
-	return nil
+	return signatures, nil
 }
-
-// retryWithNewSet 使用新的参与者子集重试
-func (c *Coordinator) retryWithNewSet(sess *CoordinatorSession) bool {
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
-
-	sess.RetryCount++
-	if sess.RetryCount > c.config.MaxRetries {
-		return false
+func (c *Coordinator) retryWithNewSet(sess *roastsession.Session) bool {
+	ok := sess.ResetForRetry(c.config.MaxRetries)
+	if ok {
+		logs.Info("[Coordinator] session %s retry %d", sess.JobID, sess.RetryCount)
 	}
-
-	// 选择新的子集
-	sess.selectAlternativeSetLocked()
-
-	// 清空之前收集的数据
-	sess.Nonces = make(map[int]*NonceData)
-	sess.Shares = make(map[int]*ShareData)
-	sess.State = CoordStateCollectingNonces
-
-	logs.Info("[Coordinator] session %s retry %d", sess.JobID, sess.RetryCount)
-	return true
+	return ok
 }
-
-// selectAlternativeSetLocked 选择替代参与者集合（需要持有锁）
-func (s *CoordinatorSession) selectAlternativeSetLocked() {
-	minSigners := s.Threshold + 1
-	offset := s.RetryCount % len(s.Committee)
-	s.SelectedSet = make([]int, 0, minSigners)
-
-	for i := 0; i < len(s.Committee) && len(s.SelectedSet) < minSigners; i++ {
-		idx := (i + offset) % len(s.Committee)
-		s.SelectedSet = append(s.SelectedSet, idx)
-	}
-}
-
-// AddNonce 添加 nonce 承诺
 func (c *Coordinator) AddNonce(jobID string, participantIndex int, hidingNonces, bindingNonces [][]byte) error {
 	c.mu.RLock()
 	sess, exists := c.sessions[jobID]
@@ -682,21 +532,7 @@ func (c *Coordinator) AddNonce(jobID string, participantIndex int, hidingNonces,
 		return ErrSessionNotFound
 	}
 
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
-
-	if sess.State != CoordStateCollectingNonces {
-		return session.ErrInvalidState
-	}
-
-	sess.Nonces[participantIndex] = &NonceData{
-		ParticipantIndex: participantIndex,
-		HidingNonces:     hidingNonces,
-		BindingNonces:    bindingNonces,
-		ReceivedAt:       time.Now(),
-	}
-
-	return nil
+	return sess.AddNonce(participantIndex, hidingNonces, bindingNonces)
 }
 
 // AddShare 添加签名份额
@@ -709,24 +545,75 @@ func (c *Coordinator) AddShare(jobID string, participantIndex int, shares [][]by
 		return ErrSessionNotFound
 	}
 
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
+	return sess.AddShare(participantIndex, shares)
+}
 
-	if sess.State != CoordStateCollectingShares {
-		return session.ErrInvalidState
+// HandleNonceCommit handles nonce commitments from participants.
+func (c *Coordinator) HandleNonceCommit(env *FrostEnvelope) error {
+	return c.HandleRoastNonceCommit(FromFrostEnvelope(env))
+}
+
+// HandleRoastNonceCommit handles nonce commitments from a RoastEnvelope.
+func (c *Coordinator) HandleRoastNonceCommit(env *RoastEnvelope) error {
+	if env == nil {
+		return ErrInvalidRoastPayload
 	}
 
-	sess.Shares[participantIndex] = &ShareData{
-		ParticipantIndex: participantIndex,
-		Shares:           shares,
-		ReceivedAt:       time.Now(),
+	c.mu.RLock()
+	sess, exists := c.sessions[env.SessionID]
+	c.mu.RUnlock()
+
+	if !exists {
+		return ErrSessionNotFound
 	}
 
-	return nil
+	participantIndex, ok := participantIndexFor(sess, env.From)
+	if !ok {
+		return ErrParticipantNotFound
+	}
+
+	hiding, binding, err := splitNonceCommitPayload(env.Payload)
+	if err != nil {
+		return err
+	}
+
+	return sess.AddNonce(participantIndex, hiding, binding)
+}
+
+// HandleSigShare handles signature shares from participants.
+func (c *Coordinator) HandleSigShare(env *FrostEnvelope) error {
+	return c.HandleRoastSigShare(FromFrostEnvelope(env))
+}
+
+// HandleRoastSigShare handles signature shares from a RoastEnvelope.
+func (c *Coordinator) HandleRoastSigShare(env *RoastEnvelope) error {
+	if env == nil {
+		return ErrInvalidRoastPayload
+	}
+
+	c.mu.RLock()
+	sess, exists := c.sessions[env.SessionID]
+	c.mu.RUnlock()
+
+	if !exists {
+		return ErrSessionNotFound
+	}
+
+	participantIndex, ok := participantIndexFor(sess, env.From)
+	if !ok {
+		return ErrParticipantNotFound
+	}
+
+	shares, err := splitSignatureShares(env.Payload)
+	if err != nil {
+		return err
+	}
+
+	return sess.AddShare(participantIndex, shares)
 }
 
 // GetSession 获取会话
-func (c *Coordinator) GetSession(jobID string) *CoordinatorSession {
+func (c *Coordinator) GetSession(jobID string) *roastsession.Session {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.sessions[jobID]
@@ -742,14 +629,11 @@ func (c *Coordinator) GetFinalSignatures(jobID string) ([][]byte, error) {
 		return nil, ErrSessionNotFound
 	}
 
-	sess.mu.RLock()
-	defer sess.mu.RUnlock()
-
-	if sess.State != CoordStateComplete {
+	if sess.GetState() != roastsession.SignSessionStateComplete {
 		return nil, errors.New("session not complete")
 	}
 
-	return sess.FinalSignatures, nil
+	return sess.GetFinalSignatures(), nil
 }
 
 // CloseSession 关闭会话
@@ -757,4 +641,50 @@ func (c *Coordinator) CloseSession(jobID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.sessions, jobID)
+}
+
+func participantIndexFor(sess *roastsession.Session, nodeID NodeID) (int, bool) {
+	if sess == nil {
+		return -1, false
+	}
+	for i, member := range sess.Committee {
+		if member.ID == string(nodeID) {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+func splitNonceCommitPayload(payload []byte) ([][]byte, [][]byte, error) {
+	chunks, err := splitFixedPayload(payload, 64)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	hiding := make([][]byte, len(chunks))
+	binding := make([][]byte, len(chunks))
+	for i, chunk := range chunks {
+		hiding[i] = chunk[:32]
+		binding[i] = chunk[32:]
+	}
+	return hiding, binding, nil
+}
+
+func splitSignatureShares(payload []byte) ([][]byte, error) {
+	return splitFixedPayload(payload, 32)
+}
+
+func splitFixedPayload(payload []byte, chunkSize int) ([][]byte, error) {
+	if chunkSize <= 0 || len(payload) == 0 || len(payload)%chunkSize != 0 {
+		return nil, ErrInvalidRoastPayload
+	}
+	count := len(payload) / chunkSize
+	result := make([][]byte, 0, count)
+	for i := 0; i < count; i++ {
+		start := i * chunkSize
+		chunk := make([]byte, chunkSize)
+		copy(chunk, payload[start:start+chunkSize])
+		result = append(result, chunk)
+	}
+	return result, nil
 }

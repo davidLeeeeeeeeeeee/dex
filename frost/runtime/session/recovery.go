@@ -25,16 +25,20 @@ var (
 
 // PersistedSession 可持久化的会话数据
 type PersistedSession struct {
-	JobID        string            `json:"job_id"`
-	KeyEpoch     uint64            `json:"key_epoch"`
-	Message      []byte            `json:"message"`
-	State        SignSessionState  `json:"state"`
-	RetryCount   int               `json:"retry_count"`
-	StartedAt    time.Time         `json:"started_at"`
-	Participants []Participant     `json:"participants"`
-	MyIndex      uint16            `json:"my_index"`
-	SelectedSet  []uint16          `json:"selected_set"`
-	Config       SignSessionConfig `json:"config"`
+	JobID       string           `json:"job_id"`
+	VaultID     uint32           `json:"vault_id"`
+	Chain       string           `json:"chain"`
+	KeyEpoch    uint64           `json:"key_epoch"`
+	SignAlgo    int32            `json:"sign_algo"`
+	Messages    [][]byte         `json:"messages"`
+	State       SignSessionState `json:"state"`
+	RetryCount  int              `json:"retry_count"`
+	StartedAt   time.Time        `json:"started_at"`
+	Committee   []Participant    `json:"committee"`
+	Threshold   int              `json:"threshold"`
+	MyIndex     int              `json:"my_index"`
+	SelectedSet []int            `json:"selected_set"`
+	StartHeight uint64           `json:"start_height"`
 	// 收集的 nonce 和 share 不持久化（需要重新收集）
 }
 
@@ -152,7 +156,7 @@ func NewRecoveryManager(storage SessionStorage, config *RecoveryConfig) *Recover
 
 // RecoverSessions 恢复所有未完成的会话
 // 返回可恢复的会话列表和过期的会话 ID 列表
-func (r *RecoveryManager) RecoverSessions() ([]*ROASTSession, []string, error) {
+func (r *RecoveryManager) RecoverSessions() ([]*Session, []string, error) {
 	persisted, err := r.storage.LoadAllSessions()
 	if err != nil {
 		return nil, nil, err
@@ -163,7 +167,7 @@ func (r *RecoveryManager) RecoverSessions() ([]*ROASTSession, []string, error) {
 	}
 
 	now := time.Now()
-	recovered := make([]*ROASTSession, 0)
+	recovered := make([]*Session, 0)
 	expired := make([]string, 0)
 
 	for _, p := range persisted {
@@ -195,41 +199,47 @@ func (r *RecoveryManager) RecoverSessions() ([]*ROASTSession, []string, error) {
 }
 
 // restoreSession 从持久化数据恢复会话
-func (r *RecoveryManager) restoreSession(p *PersistedSession) *ROASTSession {
-	session := &ROASTSession{
-		JobID:        p.JobID,
-		KeyEpoch:     p.KeyEpoch,
-		Message:      p.Message,
-		State:        SignSessionStateInit, // 重置为初始状态，需要重新开始
-		RetryCount:   p.RetryCount,
-		StartedAt:    p.StartedAt,
-		Participants: p.Participants,
-		MyIndex:      p.MyIndex,
-		SelectedSet:  p.SelectedSet,
-		Config:       &p.Config,
-		Nonces:       make(map[uint16]*NonceCommitment),
-		Shares:       make(map[uint16]*SignatureShare),
-	}
+func (r *RecoveryManager) restoreSession(p *PersistedSession) *Session {
+	session := NewSession(SessionParams{
+		JobID:       p.JobID,
+		VaultID:     p.VaultID,
+		Chain:       p.Chain,
+		KeyEpoch:    p.KeyEpoch,
+		SignAlgo:    p.SignAlgo,
+		Messages:    p.Messages,
+		Committee:   p.Committee,
+		Threshold:   p.Threshold,
+		MyIndex:     p.MyIndex,
+		StartHeight: p.StartHeight,
+		StartedAt:   p.StartedAt,
+	})
 
+	session.State = SignSessionStateInit // 重置为初始状态，需要重新开始
+	session.RetryCount = p.RetryCount
+	session.SelectedSet = append([]int(nil), p.SelectedSet...)
 	return session
 }
 
 // PersistSession 持久化会话
-func (r *RecoveryManager) PersistSession(session *ROASTSession) error {
+func (r *RecoveryManager) PersistSession(session *Session) error {
 	session.mu.RLock()
 	defer session.mu.RUnlock()
 
 	p := &PersistedSession{
-		JobID:        session.JobID,
-		KeyEpoch:     session.KeyEpoch,
-		Message:      session.Message,
-		State:        session.State,
-		RetryCount:   session.RetryCount,
-		StartedAt:    session.StartedAt,
-		Participants: session.Participants,
-		MyIndex:      session.MyIndex,
-		SelectedSet:  session.SelectedSet,
-		Config:       *session.Config,
+		JobID:       session.JobID,
+		VaultID:     session.VaultID,
+		Chain:       session.Chain,
+		KeyEpoch:    session.KeyEpoch,
+		SignAlgo:    session.SignAlgo,
+		Messages:    session.Messages,
+		State:       session.State,
+		RetryCount:  session.RetryCount,
+		StartedAt:   session.StartedAt,
+		Committee:   session.Committee,
+		Threshold:   session.Threshold,
+		MyIndex:     session.MyIndex,
+		SelectedSet: append([]int(nil), session.SelectedSet...),
+		StartHeight: session.StartHeight,
 	}
 
 	return r.storage.SaveSession(p)

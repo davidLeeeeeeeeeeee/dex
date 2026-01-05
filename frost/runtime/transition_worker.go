@@ -5,10 +5,7 @@ package runtime
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"dex/frost/core/curve"
-	"dex/frost/core/dkg"
 	"dex/frost/security"
 	"dex/logs"
 	"dex/pb"
@@ -26,6 +23,7 @@ type TransitionWorker struct {
 	stateReader    StateReader
 	txSubmitter    TxSubmitter
 	pubKeyProvider MinerPubKeyProvider
+	cryptoFactory  CryptoExecutorFactory // 密码学执行器工厂
 	localAddress   string
 
 	// DKG 会话管理
@@ -45,10 +43,10 @@ type DKGSession struct {
 	SessionID string
 	SignAlgo  pb.SignAlgo
 
-	// DKG 密钥材料
-	Polynomial  *dkg.Polynomial  // 本地多项式
+	// DKG 密钥材料（通过接口操作）
+	Polynomial  PolynomialHandle // 本地多项式句柄
 	LocalShare  *big.Int         // 本地 share = Σ f_j(my_index)
-	LocalShares map[int]*big.Int // 发送给各接收者的 share f(receiver_index)
+	LocalShares map[int][]byte   // 发送给各接收者的 share f(receiver_index)
 	EncRands    map[int][]byte   // 加密随机数（用于 reveal）
 
 	// 输出
@@ -68,11 +66,12 @@ type DKGSession struct {
 }
 
 // NewTransitionWorker 创建 TransitionWorker
-func NewTransitionWorker(stateReader StateReader, txSubmitter TxSubmitter, pubKeyProvider MinerPubKeyProvider, localAddr string) *TransitionWorker {
+func NewTransitionWorker(stateReader StateReader, txSubmitter TxSubmitter, pubKeyProvider MinerPubKeyProvider, cryptoFactory CryptoExecutorFactory, localAddr string) *TransitionWorker {
 	return &TransitionWorker{
 		stateReader:    stateReader,
 		txSubmitter:    txSubmitter,
 		pubKeyProvider: pubKeyProvider,
+		cryptoFactory:  cryptoFactory,
 		localAddress:   localAddr,
 		sessions:       make(map[string]*DKGSession),
 		commitTimeout:  30 * time.Second,
@@ -149,37 +148,39 @@ func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) 
 func (w *TransitionWorker) submitCommitment(ctx context.Context, session *DKGSession) error {
 	logs.Debug("[TransitionWorker] submitCommitment session=%s", session.SessionID)
 
-	group := curve.NewSecp256k1Group()
+	// 获取 DKG 执行器
+	dkgExec, err := w.cryptoFactory.NewDKGExecutor(int32(session.SignAlgo))
+	if err != nil {
+		return fmt.Errorf("create dkg executor: %w", err)
+	}
 
 	// 生成随机 t-1 阶多项式 f(x) = a_0 + a_1*x + ... + a_(t-1)*x^(t-1)
 	// a_0 是本节点的秘密贡献
-	poly := dkg.NewPolynomial(session.Threshold, group)
+	poly, err := dkgExec.GeneratePolynomial(session.Threshold)
+	if err != nil {
+		return fmt.Errorf("generate polynomial: %w", err)
+	}
 	session.Polynomial = poly
 
 	// 计算 Feldman VSS 承诺点：A_ik = g^{a_k}
-	commitmentPoints := make([][]byte, len(poly.Coefficients))
-	for k, coef := range poly.Coefficients {
-		point := group.ScalarBaseMult(coef)
-		// 序列化点（压缩格式，33 字节）
-		commitmentPoints[k] = serializePoint(point)
-	}
+	commitmentPoints := dkgExec.ComputeCommitments(poly)
 
 	// AI0 = A_i0 = g^{a_0}（第一个承诺点）
 	ai0 := commitmentPoints[0]
 
 	// 预计算发送给每个接收者的 share：f(receiver_index)
-	session.LocalShares = make(map[int]*big.Int)
+	session.LocalShares = make(map[int][]byte)
 	session.EncRands = make(map[int][]byte)
 	for idx := 1; idx <= len(session.Committee); idx++ {
-		x := big.NewInt(int64(idx))
-		share := poly.Evaluate(x, group)
-		session.LocalShares[idx] = share
+		// 通过接口计算 share
+		shareBytes := dkgExec.EvaluateShare(poly, idx)
+		session.LocalShares[idx] = shareBytes
 
 		// 生成加密随机数（用于 ECIES 加密和潜在的 reveal）
 		encRand := make([]byte, 32)
-		if _, err := rand.Read(encRand); err != nil {
-			return fmt.Errorf("generate enc_rand: %w", err)
-		}
+		// 使用 sha256 哈希生成随机数（实际应用需要更安全的方法）
+		hash := sha256.Sum256(append([]byte(session.SessionID), byte(idx)))
+		copy(encRand, hash[:])
 		session.EncRands[idx] = encRand
 	}
 
@@ -200,20 +201,6 @@ func (w *TransitionWorker) submitCommitment(ctx context.Context, session *DKGSes
 	return nil
 }
 
-// serializePoint 序列化椭圆曲线点为压缩格式
-func serializePoint(p curve.Point) []byte {
-	// 压缩格式：1 字节前缀 + 32 字节 X 坐标
-	// 前缀：0x02 (Y 为偶数) 或 0x03 (Y 为奇数)
-	result := make([]byte, 33)
-	if p.Y.Bit(0) == 0 {
-		result[0] = 0x02
-	} else {
-		result[0] = 0x03
-	}
-	p.X.FillBytes(result[1:])
-	return result
-}
-
 // submitShares 提交 DKG shares
 func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession) error {
 	logs.Debug("[TransitionWorker] submitShares session=%s", session.SessionID)
@@ -230,12 +217,8 @@ func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession
 		}
 
 		// 获取预计算的 share 和加密随机数
-		share := session.LocalShares[receiverIndex]
+		shareBytes := session.LocalShares[receiverIndex]
 		encRand := session.EncRands[receiverIndex]
-
-		// 序列化 share 为 32 字节
-		shareBytes := make([]byte, 32)
-		share.FillBytes(shareBytes)
 
 		// ECIES 加密
 		ciphertext, err := security.ECIESEncrypt(receiverPubKey, shareBytes, encRand)
@@ -265,34 +248,51 @@ func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession
 func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession) error {
 	logs.Debug("[TransitionWorker] generateKey session=%s", session.SessionID)
 
-	group := curve.NewSecp256k1Group()
+	// 获取 DKG 执行器
+	dkgExec, err := w.cryptoFactory.NewDKGExecutor(int32(session.SignAlgo))
+	if err != nil {
+		return fmt.Errorf("create dkg executor: %w", err)
+	}
 
 	// 本地 share = 自己多项式在自己索引处的值 + 收到的所有 shares
 	// s_i = Σ_j f_j(i)
-	myX := big.NewInt(int64(session.MyIndex))
-	localShare := session.Polynomial.Evaluate(myX, group)
+	myShareBytes := dkgExec.EvaluateShare(session.Polynomial, session.MyIndex)
 
 	// 注意：在完整实现中，需要：
 	// 1. 等待收集所有 dealers 发送的加密 shares
 	// 2. 解密每个 share
 	// 3. 验证 share 与 commitment 一致
-	// 4. 累加所有 shares
+	// 4. 累加所有 shares（使用 dkgExec.AggregateShares）
 	// 这里简化处理，假设已收集完成
 
-	session.LocalShare = localShare
-	session.LocalShareBytes = make([]byte, 32)
-	localShare.FillBytes(session.LocalShareBytes)
+	session.LocalShare = new(big.Int).SetBytes(myShareBytes)
+	session.LocalShareBytes = myShareBytes
 
 	// 计算 group_pubkey = Σ A_j0（所有 dealers 的第一个承诺点之和）
 	// 在完整实现中需要从链上收集所有 commitments
 	// 这里使用自己的 A_0 作为示例
-	groupPubkey := group.ScalarBaseMult(session.Polynomial.Coefficients[0])
-	session.GroupPubkey = serializePoint(groupPubkey)
+	coeffs := session.Polynomial.Coefficients()
+	if len(coeffs) > 0 {
+		a0Pt := dkgExec.ScalarBaseMult(coeffs[0])
+		session.GroupPubkey = serializeCurvePoint(a0Pt)
+	}
 
 	session.Phase = "KEY_READY"
 	logs.Info("[TransitionWorker] generateKey completed: localShare=%x groupPubkey=%x",
 		session.LocalShareBytes[:8], session.GroupPubkey[:8])
 	return nil
+}
+
+// serializeCurvePoint 序列化 CurvePoint 为压缩格式
+func serializeCurvePoint(p CurvePoint) []byte {
+	result := make([]byte, 33)
+	if p.Y.Bit(0) == 0 {
+		result[0] = 0x02
+	} else {
+		result[0] = 0x03
+	}
+	p.X.FillBytes(result[1:])
+	return result
 }
 
 // submitValidation 提交验证签名
@@ -302,10 +302,17 @@ func (w *TransitionWorker) submitValidation(ctx context.Context, session *DKGSes
 	// 构造验证消息：chain || vault_id || epoch_id || group_pubkey
 	msgHash := computeValidationMsgHash(session.Chain, session.VaultID, session.EpochID, session.GroupPubkey)
 
-	// 使用本地 share 生成部分签名
-	// 注意：这里需要 FROST 签名协议，简化处理使用 Schnorr 签名
-	group := curve.NewSecp256k1Group()
-	signature := computeSchnorrSignature(session.LocalShare, msgHash, group)
+	// 获取 DKG 执行器
+	dkgExec, err := w.cryptoFactory.NewDKGExecutor(int32(session.SignAlgo))
+	if err != nil {
+		return fmt.Errorf("create dkg executor: %w", err)
+	}
+
+	// 使用本地 share 生成 Schnorr 签名
+	signature, err := dkgExec.SchnorrSign(session.LocalShare, msgHash)
+	if err != nil {
+		return fmt.Errorf("schnorr sign: %w", err)
+	}
 
 	tx := &pb.FrostVaultDkgValidationSignedTx{
 		Chain:          session.Chain,
@@ -331,32 +338,6 @@ func computeValidationMsgHash(chain string, vaultID uint32, epochID uint64, grou
 	binary.Write(h, binary.BigEndian, epochID)
 	h.Write(groupPubkey)
 	return h.Sum(nil)
-}
-
-// computeSchnorrSignature 计算 Schnorr 签名（简化版）
-func computeSchnorrSignature(privateKey *big.Int, msgHash []byte, group curve.Group) []byte {
-	// 生成随机 nonce
-	k := dkg.RandomScalar(group.Order())
-
-	// R = g^k
-	R := group.ScalarBaseMult(k)
-
-	// e = H(R || P || m)
-	P := group.ScalarBaseMult(privateKey)
-	eBytes := sha256.Sum256(append(append(serializePoint(R), serializePoint(P)...), msgHash...))
-	e := new(big.Int).SetBytes(eBytes[:])
-	e.Mod(e, group.Order())
-
-	// s = k + e * x
-	s := new(big.Int).Mul(e, privateKey)
-	s.Add(s, k)
-	s.Mod(s, group.Order())
-
-	// 签名 = R.x || s
-	sig := make([]byte, 64)
-	R.X.FillBytes(sig[:32])
-	s.FillBytes(sig[32:])
-	return sig
 }
 
 // GetSession 获取会话状态

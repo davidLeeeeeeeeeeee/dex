@@ -4,15 +4,11 @@
 package runtime
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"math/big"
 	"sync"
 	"time"
 
-	"dex/frost/core/curve"
-	"dex/frost/core/roast"
 	"dex/frost/runtime/session"
 	"dex/logs"
 	"dex/pb"
@@ -61,8 +57,9 @@ type Participant struct {
 	sessions map[string]*ParticipantSession // jobID -> session
 
 	// 依赖
-	p2p           P2P
+	messenger     RoastMessenger
 	vaultProvider VaultCommitteeProvider
+	cryptoFactory CryptoExecutorFactory // 密码学执行器工厂
 	sessionStore  *session.SessionStore
 
 	// 本地密钥份额（按 vault 和 epoch 存储）
@@ -133,7 +130,7 @@ func (s ParticipantSessionState) String() string {
 }
 
 // NewParticipant 创建参与者
-func NewParticipant(nodeID NodeID, p2p P2P, vaultProvider VaultCommitteeProvider, sessionStore *session.SessionStore, config *ParticipantConfig) *Participant {
+func NewParticipant(nodeID NodeID, messenger RoastMessenger, vaultProvider VaultCommitteeProvider, cryptoFactory CryptoExecutorFactory, sessionStore *session.SessionStore, config *ParticipantConfig) *Participant {
 	if config == nil {
 		config = DefaultParticipantConfig()
 	}
@@ -144,8 +141,9 @@ func NewParticipant(nodeID NodeID, p2p P2P, vaultProvider VaultCommitteeProvider
 		config:        config,
 		nodeID:        nodeID,
 		sessions:      make(map[string]*ParticipantSession),
-		p2p:           p2p,
+		messenger:     messenger,
 		vaultProvider: vaultProvider,
+		cryptoFactory: cryptoFactory,
 		sessionStore:  sessionStore,
 		shares:        make(map[string][]byte),
 	}
@@ -173,6 +171,14 @@ func shareKey(chain string, vaultID uint32, epoch uint64) string {
 
 // HandleNonceRequest 处理 nonce 请求
 func (p *Participant) HandleNonceRequest(env *FrostEnvelope) error {
+	return p.HandleRoastNonceRequest(FromFrostEnvelope(env))
+}
+
+// HandleRoastNonceRequest handles nonce requests using RoastEnvelope.
+func (p *Participant) HandleRoastNonceRequest(env *RoastEnvelope) error {
+	if env == nil {
+		return ErrInvalidNonceRequest
+	}
 	logs.Debug("[Participant] received nonce request from %s for job %s", env.From, env.SessionID)
 
 	// 检查是否在委员会中
@@ -199,7 +205,7 @@ func (p *Participant) HandleNonceRequest(env *FrostEnvelope) error {
 	}
 
 	// 创建或获取会话
-	sess := p.getOrCreateSession(env.SessionID, env.Chain, env.VaultID, env.Epoch, pb.SignAlgo(env.SignAlgo), myIndex, myShare)
+	sess := p.getOrCreateSession(env.SessionID, env.Chain, env.VaultID, env.Epoch, env.SignAlgo, myIndex, myShare)
 
 	// 生成 nonce
 	numTasks := 1 // 默认单任务，实际应从请求中获取
@@ -208,7 +214,7 @@ func (p *Participant) HandleNonceRequest(env *FrostEnvelope) error {
 	}
 
 	// 发送 nonce 承诺给协调者
-	return p.sendNonceCommitment(sess, NodeID(env.From))
+	return p.sendNonceCommitment(sess, env.From)
 }
 
 // getOrCreateSession 获取或创建会话
@@ -245,35 +251,44 @@ func (p *Participant) generateNonces(sess *ParticipantSession, numTasks int) err
 		return nil // 已生成
 	}
 
+	// 获取密码学执行器
+	roastExec, err := p.cryptoFactory.NewROASTExecutor(int32(sess.SignAlgo))
+	if err != nil {
+		return err
+	}
+
 	sess.HidingNonces = make([][]byte, numTasks)
 	sess.BindingNonces = make([][]byte, numTasks)
 	sess.HidingPoints = make([][]byte, numTasks)
 	sess.BindingPoints = make([][]byte, numTasks)
 
 	for i := 0; i < numTasks; i++ {
-		// 生成随机 nonce
-		hiding := make([]byte, 32)
-		binding := make([]byte, 32)
-		if _, err := rand.Read(hiding); err != nil {
-			return err
-		}
-		if _, err := rand.Read(binding); err != nil {
+		// 通过接口生成 nonce
+		hiding, binding, hidingPt, bindingPt, err := roastExec.GenerateNoncePair()
+		if err != nil {
 			return err
 		}
 
-		sess.HidingNonces[i] = hiding
-		sess.BindingNonces[i] = binding
+		// 序列化 nonce 标量
+		hidingBytes := make([]byte, 32)
+		bindingBytes := make([]byte, 32)
+		hiding.FillBytes(hidingBytes)
+		binding.FillBytes(bindingBytes)
 
-		// 计算承诺点 (简化实现：实际应该是椭圆曲线点)
-		// R_i = k_i * G
-		hidingPoint := sha256.Sum256(hiding)
-		bindingPoint := sha256.Sum256(binding)
-		sess.HidingPoints[i] = hidingPoint[:]
-		sess.BindingPoints[i] = bindingPoint[:]
+		sess.HidingNonces[i] = hidingBytes
+		sess.BindingNonces[i] = bindingBytes
+
+		// 序列化承诺点
+		hidingPointBytes := make([]byte, 32)
+		bindingPointBytes := make([]byte, 32)
+		hidingPt.X.FillBytes(hidingPointBytes)
+		bindingPt.X.FillBytes(bindingPointBytes)
+		sess.HidingPoints[i] = hidingPointBytes
+		sess.BindingPoints[i] = bindingPointBytes
 
 		// 绑定 nonce 到会话
 		msg := []byte(sess.JobID)
-		if err := p.sessionStore.BindNonce(hiding, msg, sess.KeyEpoch); err != nil {
+		if err := p.sessionStore.BindNonce(hidingBytes, msg, sess.KeyEpoch); err != nil {
 			return err
 		}
 	}
@@ -287,20 +302,20 @@ func (p *Participant) sendNonceCommitment(sess *ParticipantSession, coordinator 
 	sess.mu.RLock()
 	defer sess.mu.RUnlock()
 
-	env := &FrostEnvelope{
+	msg := &RoastEnvelope{
 		SessionID: sess.JobID,
 		Kind:      "NonceCommit",
 		From:      p.nodeID,
 		Chain:     sess.Chain,
 		VaultID:   sess.VaultID,
-		SignAlgo:  int32(sess.SignAlgo),
+		SignAlgo:  sess.SignAlgo,
 		Epoch:     sess.KeyEpoch,
 		Round:     1,
 		Payload:   p.serializeNonces(sess),
 	}
 
-	if p.p2p != nil {
-		return p.p2p.Send(coordinator, env)
+	if p.messenger != nil {
+		return p.messenger.Send(coordinator, msg)
 	}
 	return nil
 }
@@ -317,6 +332,14 @@ func (p *Participant) serializeNonces(sess *ParticipantSession) []byte {
 
 // HandleSignRequest 处理签名请求
 func (p *Participant) HandleSignRequest(env *FrostEnvelope) error {
+	return p.HandleRoastSignRequest(FromFrostEnvelope(env))
+}
+
+// HandleRoastSignRequest handles sign requests using RoastEnvelope.
+func (p *Participant) HandleRoastSignRequest(env *RoastEnvelope) error {
+	if env == nil {
+		return ErrInvalidSignRequest
+	}
 	logs.Debug("[Participant] received sign request from %s for job %s", env.From, env.SessionID)
 
 	p.mu.RLock()
@@ -347,7 +370,7 @@ func (p *Participant) HandleSignRequest(env *FrostEnvelope) error {
 	sess.State = ParticipantStateShareGenerated
 
 	// 发送签名份额
-	return p.sendSignatureShares(sess, NodeID(env.From), shares)
+	return p.sendSignatureShares(sess, env.From, shares)
 }
 
 // computeSignatureShares 计算签名份额
@@ -356,14 +379,16 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 	numTasks := len(sess.HidingNonces)
 	shares := make([][]byte, numTasks)
 
-	group := curve.NewSecp256k1Group()
-	order := group.Order()
+	// 获取密码学执行器
+	roastExec, err := p.cryptoFactory.NewROASTExecutor(int32(sess.SignAlgo))
+	if err != nil {
+		return nil, err
+	}
 
 	// 解析本地密钥份额
 	myShare := new(big.Int).SetBytes(sess.MyShare)
 
 	// 解析聚合的 nonces 获取所有参与者的 nonce 承诺
-	// 格式：每个参与者 64 字节（hiding 32 + binding 32）
 	allNonces := parseAggregatedNonces(sess.AggregatedNonces, numTasks)
 
 	for i := 0; i < numTasks; i++ {
@@ -371,20 +396,20 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		hidingNonce := new(big.Int).SetBytes(sess.HidingNonces[i])
 		bindingNonce := new(big.Int).SetBytes(sess.BindingNonces[i])
 
-		// 计算 nonce 承诺点
-		hidingPoint := group.ScalarBaseMult(hidingNonce)
-		bindingPoint := group.ScalarBaseMult(bindingNonce)
+		// 计算 nonce 承诺点（通过接口）
+		hidingPt := roastExec.ScalarBaseMult(hidingNonce)
+		bindingPt := roastExec.ScalarBaseMult(bindingNonce)
 
 		// 构建当前任务的 nonces
 		taskNonces := allNonces[i]
 		if len(taskNonces) == 0 {
 			// 至少包含本节点的 nonce
-			taskNonces = []roast.SignerNonce{{
+			taskNonces = []NonceInput{{
 				SignerID:     sess.MyIndex + 1,
 				HidingNonce:  hidingNonce,
 				BindingNonce: bindingNonce,
-				HidingPoint:  hidingPoint,
-				BindingPoint: bindingPoint,
+				HidingPoint:  hidingPt,
+				BindingPoint: bindingPt,
 			}}
 		}
 
@@ -402,17 +427,17 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		if msg == nil {
 			msg = []byte(sess.JobID) // 默认使用 jobID 作为消息
 		}
-		rho := roast.ComputeBindingCoefficient(sess.MyIndex+1, msg, taskNonces, group)
+		rho := roastExec.ComputeBindingCoefficient(sess.MyIndex+1, msg, taskNonces)
 
 		// 计算拉格朗日系数 λ_i
-		lambdas := roast.ComputeLagrangeCoefficientsForSet(signerIDs, order)
+		lambdas := roastExec.ComputeLagrangeCoefficients(signerIDs)
 		lambda := lambdas[sess.MyIndex+1]
 		if lambda == nil {
 			lambda = big.NewInt(1)
 		}
 
 		// 计算群承诺 R
-		R, err := roast.ComputeGroupCommitment(taskNonces, msg, group)
+		R, err := roastExec.ComputeGroupCommitment(taskNonces, msg)
 		if err != nil {
 			return nil, err
 		}
@@ -432,19 +457,18 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		}
 
 		// 计算挑战值 e
-		e := roast.ComputeChallenge(R, groupPubX, msg, group)
+		e := roastExec.ComputeChallenge(R, groupPubX, msg)
 
 		// 计算部分签名 z_i = k_i + ρ_i * k'_i + λ_i * e * s_i
-		z := roast.ComputePartialSignature(
-			sess.MyIndex+1,
-			hidingNonce,
-			bindingNonce,
-			myShare,
-			rho,
-			lambda,
-			e,
-			group,
-		)
+		z := roastExec.ComputePartialSignature(PartialSignParams{
+			SignerID:     sess.MyIndex + 1,
+			HidingNonce:  hidingNonce,
+			BindingNonce: bindingNonce,
+			SecretShare:  myShare,
+			Rho:          rho,
+			Lambda:       lambda,
+			Challenge:    e,
+		})
 
 		// 序列化份额（32 字节）
 		shareBytes := make([]byte, 32)
@@ -456,10 +480,10 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 }
 
 // parseAggregatedNonces 解析聚合的 nonces
-func parseAggregatedNonces(data []byte, numTasks int) [][]roast.SignerNonce {
-	result := make([][]roast.SignerNonce, numTasks)
+func parseAggregatedNonces(data []byte, numTasks int) [][]NonceInput {
+	result := make([][]NonceInput, numTasks)
 	for i := range result {
-		result[i] = []roast.SignerNonce{}
+		result[i] = []NonceInput{}
 	}
 
 	if len(data) == 0 {
@@ -481,13 +505,13 @@ func parseAggregatedNonces(data []byte, numTasks int) [][]roast.SignerNonce {
 			binding := data[offset+32 : offset+64]
 			offset += nonceSize
 
-			result[taskIdx] = append(result[taskIdx], roast.SignerNonce{
+			result[taskIdx] = append(result[taskIdx], NonceInput{
 				SignerID: j + 1,
-				HidingPoint: curve.Point{
+				HidingPoint: CurvePoint{
 					X: new(big.Int).SetBytes(hiding),
 					Y: big.NewInt(0),
 				},
-				BindingPoint: curve.Point{
+				BindingPoint: CurvePoint{
 					X: new(big.Int).SetBytes(binding),
 					Y: big.NewInt(0),
 				},
@@ -505,20 +529,20 @@ func (p *Participant) sendSignatureShares(sess *ParticipantSession, coordinator 
 		payload = append(payload, share...)
 	}
 
-	env := &FrostEnvelope{
+	msg := &RoastEnvelope{
 		SessionID: sess.JobID,
 		Kind:      "SigShare",
 		From:      p.nodeID,
 		Chain:     sess.Chain,
 		VaultID:   sess.VaultID,
-		SignAlgo:  int32(sess.SignAlgo),
+		SignAlgo:  sess.SignAlgo,
 		Epoch:     sess.KeyEpoch,
 		Round:     2,
 		Payload:   payload,
 	}
 
-	if p.p2p != nil {
-		return p.p2p.Send(coordinator, env)
+	if p.messenger != nil {
+		return p.messenger.Send(coordinator, msg)
 	}
 	return nil
 }

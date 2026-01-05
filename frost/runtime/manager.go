@@ -2,13 +2,16 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"dex/frost/chain"
+	frostrtnet "dex/frost/runtime/net"
 	"dex/frost/runtime/session"
+	"dex/pb"
 )
 
 // ManagerConfig 管理器配置
@@ -61,6 +64,8 @@ type Manager struct {
 	transitionWorker *TransitionWorker
 	coordinator      *Coordinator
 	participant      *Participant
+	roastDispatcher  *RoastDispatcher
+	frostRouter      *frostrtnet.Router
 	sessionStore     *session.SessionStore
 
 	// 状态
@@ -85,10 +90,13 @@ type ManagerDeps struct {
 	TxSubmitter    TxSubmitter
 	Notifier       FinalityNotifier
 	P2P            P2P
+	RoastMessenger RoastMessenger
+	FrostRouter    *frostrtnet.Router
 	SignerProvider SignerSetProvider
 	VaultProvider  VaultCommitteeProvider
 	AdapterFactory chain.ChainAdapterFactory
 	PubKeyProvider MinerPubKeyProvider
+	CryptoFactory  CryptoExecutorFactory // 密码学执行器工厂
 }
 
 // NewManager 创建新的 Manager 实例
@@ -109,12 +117,24 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 		finalizedCh:    make(chan uint64, 100),
 	}
 
+	roastMessenger := deps.RoastMessenger
+	if roastMessenger == nil && deps.P2P != nil {
+		roastMessenger = NewP2PRoastMessenger(deps.P2P)
+	}
+	frostRouter := deps.FrostRouter
+	if frostRouter == nil {
+		frostRouter = frostrtnet.NewRouter()
+		frostrtnet.RegisterDefaultHandlers(frostRouter)
+	}
+
 	// 初始化子组件
 	m.scanner = NewScanner(deps.StateReader)
 	m.withdrawWorker = NewWithdrawWorker(deps.StateReader, deps.AdapterFactory, deps.TxSubmitter)
-	m.transitionWorker = NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, string(config.NodeID))
-	m.coordinator = NewCoordinator(config.NodeID, deps.P2P, deps.VaultProvider, nil)
-	m.participant = NewParticipant(config.NodeID, deps.P2P, deps.VaultProvider, sessionStore, nil)
+	m.transitionWorker = NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, string(config.NodeID))
+	m.coordinator = NewCoordinator(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, nil)
+	m.participant = NewParticipant(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, sessionStore, nil)
+	m.roastDispatcher = NewRoastDispatcher(m.coordinator, m.participant)
+	m.frostRouter = frostRouter
 
 	return m
 }
@@ -267,6 +287,50 @@ func (m *Manager) GetCoordinator() *Coordinator {
 // GetParticipant 获取参与者（用于测试）
 func (m *Manager) GetParticipant() *Participant {
 	return m.participant
+}
+
+// HandleRoastEnvelope routes a ROAST message to coordinator/participant.
+func (m *Manager) HandleRoastEnvelope(env *RoastEnvelope) error {
+	if m.roastDispatcher == nil {
+		return nil
+	}
+	return m.roastDispatcher.Handle(env)
+}
+
+// HandleFrostEnvelope routes a transport envelope to ROAST handlers.
+func (m *Manager) HandleFrostEnvelope(env *FrostEnvelope) error {
+	if m.roastDispatcher == nil {
+		return nil
+	}
+	return m.roastDispatcher.HandleFrostEnvelope(env)
+}
+
+// HandlePBEnvelope routes a protobuf envelope to ROAST or other handlers.
+func (m *Manager) HandlePBEnvelope(env *pb.FrostEnvelope) error {
+	if env == nil {
+		return ErrInvalidPBEnvelope
+	}
+
+	switch env.Kind {
+	case pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_REQUEST,
+		pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_RESPONSE:
+		roastEnv, err := RoastEnvelopeFromPB(env)
+		if err != nil {
+			return err
+		}
+		return m.HandleRoastEnvelope(roastEnv)
+	default:
+		if m.frostRouter == nil {
+			return nil
+		}
+		if err := m.frostRouter.Route(env); err != nil {
+			if errors.Is(err, frostrtnet.ErrNoHandlerRegistered) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
 }
 
 // GetTransitionWorker 获取 TransitionWorker（用于测试）
