@@ -653,6 +653,40 @@ message FrostVaultDkgShare {
   uint64 share_height = 7; // 提交高度
 }
 
+// FrostVaultDkgComplaintTx 链上裁决/举证
+message FrostVaultDkgComplaintTx {
+  string chain = 1; // 链标识
+  uint32 vault_id = 2; // Vault ID
+  uint64 epoch_id = 3; // epoch 版本
+  string dealer_id = 4; // 被投诉的 dealer
+  string receiver_id = 5; // 接收该碎片的参与者
+  string bond = 6; // 保证金（防止滥用）
+}
+
+// FrostVaultDkgRevealTx dealer 公开 share + 随机数
+message FrostVaultDkgRevealTx {
+  string chain = 1; // 链标识
+  uint32 vault_id = 2; // Vault ID
+  uint64 epoch_id = 3; // epoch 版本
+  string dealer_id = 4; // dealer 地址
+  string receiver_id = 5; // 接收者地址
+  bytes share = 6; // f_dealer(x_receiver)（标量）
+  bytes enc_rand = 7; // 加密随机数
+}
+
+// FrostVaultDkgComplaint 投诉存储
+message FrostVaultDkgComplaint {
+  string chain = 1;
+  uint32 vault_id = 2;
+  uint64 epoch_id = 3;
+  string dealer_id = 4;
+  string receiver_id = 5;
+  string bond = 6;
+  uint64 complaint_height = 7; // 投诉高度
+  uint64 reveal_deadline = 8; // reveal 截止高度
+  string status = 9; // PENDING / RESOLVED / DISQUALIFIED
+}
+
 // FrostVaultDkgValidationSignedTx 验证签名推进到 KeyReady
 message FrostVaultDkgValidationSignedTx {
   string chain = 1; // 链标识

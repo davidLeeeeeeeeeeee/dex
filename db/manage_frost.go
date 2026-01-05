@@ -108,3 +108,28 @@ func (mgr *Manager) SetFrostVaultState(key string, state *pb.FrostVaultState) er
 	mgr.EnqueueSet(key, string(data))
 	return nil
 }
+
+// ========== DKG Complaint ==========
+
+// GetFrostDkgComplaint 获取 DKG 投诉
+func (mgr *Manager) GetFrostDkgComplaint(key string) (*pb.FrostVaultDkgComplaint, error) {
+	val, err := mgr.Read(key)
+	if err != nil {
+		return nil, err
+	}
+	var complaint pb.FrostVaultDkgComplaint
+	if err := proto.Unmarshal([]byte(val), &complaint); err != nil {
+		return nil, err
+	}
+	return &complaint, nil
+}
+
+// SetFrostDkgComplaint 设置 DKG 投诉
+func (mgr *Manager) SetFrostDkgComplaint(key string, complaint *pb.FrostVaultDkgComplaint) error {
+	data, err := proto.Marshal(complaint)
+	if err != nil {
+		return err
+	}
+	mgr.EnqueueSet(key, string(data))
+	return nil
+}

@@ -64,6 +64,9 @@ type DBManager interface {
 	// Vault 状态
 	GetFrostVaultState(key string) (*pb.FrostVaultState, error)
 	SetFrostVaultState(key string, state *pb.FrostVaultState) error
+	// DKG 投诉
+	GetFrostDkgComplaint(key string) (*pb.FrostVaultDkgComplaint, error)
+	SetFrostDkgComplaint(key string, complaint *pb.FrostVaultDkgComplaint) error
 }
 
 // （读穿函数）

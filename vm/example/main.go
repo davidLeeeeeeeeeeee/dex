@@ -136,6 +136,24 @@ func (db *SimpleDB) SetFrostVaultState(key string, state *pb.FrostVaultState) er
 	return nil
 }
 
+func (db *SimpleDB) GetFrostDkgComplaint(key string) (*pb.FrostVaultDkgComplaint, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var complaint pb.FrostVaultDkgComplaint
+	if err := json.Unmarshal(data, &complaint); err != nil {
+		return nil, err
+	}
+	return &complaint, nil
+}
+
+func (db *SimpleDB) SetFrostDkgComplaint(key string, complaint *pb.FrostVaultDkgComplaint) error {
+	data, _ := json.Marshal(complaint)
+	db.data[key] = data
+	return nil
+}
+
 // CustomHandler 自定义Handler示例
 type CustomHandler struct {
 	name string

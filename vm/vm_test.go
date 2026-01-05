@@ -102,6 +102,108 @@ func (db *MockDB) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byt
 	return result, nil
 }
 
+// ========== Frost 相关方法（满足 DBManager 接口）==========
+
+func (db *MockDB) GetFrostVaultTransition(key string) (*pb.VaultTransitionState, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var state pb.VaultTransitionState
+	if err := proto.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func (db *MockDB) SetFrostVaultTransition(key string, state *pb.VaultTransitionState) error {
+	data, _ := proto.Marshal(state)
+	db.mu.Lock()
+	db.data[key] = data
+	db.mu.Unlock()
+	return nil
+}
+
+func (db *MockDB) GetFrostDkgCommitment(key string) (*pb.FrostVaultDkgCommitment, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var commitment pb.FrostVaultDkgCommitment
+	if err := proto.Unmarshal(data, &commitment); err != nil {
+		return nil, err
+	}
+	return &commitment, nil
+}
+
+func (db *MockDB) SetFrostDkgCommitment(key string, commitment *pb.FrostVaultDkgCommitment) error {
+	data, _ := proto.Marshal(commitment)
+	db.mu.Lock()
+	db.data[key] = data
+	db.mu.Unlock()
+	return nil
+}
+
+func (db *MockDB) GetFrostDkgShare(key string) (*pb.FrostVaultDkgShare, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var share pb.FrostVaultDkgShare
+	if err := proto.Unmarshal(data, &share); err != nil {
+		return nil, err
+	}
+	return &share, nil
+}
+
+func (db *MockDB) SetFrostDkgShare(key string, share *pb.FrostVaultDkgShare) error {
+	data, _ := proto.Marshal(share)
+	db.mu.Lock()
+	db.data[key] = data
+	db.mu.Unlock()
+	return nil
+}
+
+func (db *MockDB) GetFrostVaultState(key string) (*pb.FrostVaultState, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var state pb.FrostVaultState
+	if err := proto.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func (db *MockDB) SetFrostVaultState(key string, state *pb.FrostVaultState) error {
+	data, _ := proto.Marshal(state)
+	db.mu.Lock()
+	db.data[key] = data
+	db.mu.Unlock()
+	return nil
+}
+
+func (db *MockDB) GetFrostDkgComplaint(key string) (*pb.FrostVaultDkgComplaint, error) {
+	data, err := db.Get(key)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	var complaint pb.FrostVaultDkgComplaint
+	if err := proto.Unmarshal(data, &complaint); err != nil {
+		return nil, err
+	}
+	return &complaint, nil
+}
+
+func (db *MockDB) SetFrostDkgComplaint(key string, complaint *pb.FrostVaultDkgComplaint) error {
+	data, _ := proto.Marshal(complaint)
+	db.mu.Lock()
+	db.data[key] = data
+	db.mu.Unlock()
+	return nil
+}
+
 // ========== 测试用例 ==========
 
 func TestBasicExecution(t *testing.T) {
