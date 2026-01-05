@@ -340,6 +340,18 @@ func KeyFrostVaultDkgCommit(chain string, vaultID uint32, epochID uint64, partic
 	return withVer(fmt.Sprintf("frost_vault_dkg_commit_%s_%d_%s_%s", chain, vaultID, padUint(epochID), participant))
 }
 
+// KeyFrostVaultDkgShare Vault DKG share（加密）
+// 例：v1_frost_vault_dkg_share_<chain>_<vault_id>_<epoch_id>_<dealer>_<receiver>
+func KeyFrostVaultDkgShare(chain string, vaultID uint32, epochID uint64, dealer, receiver string) string {
+	return withVer(fmt.Sprintf("frost_vault_dkg_share_%s_%d_%s_%s_%s", chain, vaultID, padUint(epochID), dealer, receiver))
+}
+
+// KeyFrostVaultDkgComplaint Vault DKG 投诉
+// 例：v1_frost_vault_dkg_complaint_<chain>_<vault_id>_<epoch_id>_<dealer>_<receiver>
+func KeyFrostVaultDkgComplaint(chain string, vaultID uint32, epochID uint64, dealer, receiver string) string {
+	return withVer(fmt.Sprintf("frost_vault_dkg_complaint_%s_%d_%s_%s_%s", chain, vaultID, padUint(epochID), dealer, receiver))
+}
+
 // KeyFrostSignedPackage 签名产物记录
 // 例：v1_frost_signed_pkg_<job_id>_<idx>
 func KeyFrostSignedPackage(jobID string, idx uint64) string {

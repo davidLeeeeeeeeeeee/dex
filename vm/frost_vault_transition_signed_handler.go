@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"dex/frost/core/frost"
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"fmt"
@@ -29,14 +30,14 @@ func (e *Executor) HandleFrostVaultTransitionSignedTx(sender string, tx *pb.Fros
 		sender, chain, oldVaultID, newVaultID, epochID)
 
 	// 1. 获取旧 Vault 状态
-	oldVaultKey := KeyFrostVaultState(chain, oldVaultID)
+	oldVaultKey := keys.KeyFrostVaultState(chain, oldVaultID)
 	oldVault, err := e.DB.GetFrostVaultState(oldVaultKey)
 	if err != nil {
 		return fmt.Errorf("TransitionSigned: old vault not found: %w", err)
 	}
 
 	// 2. 获取 VaultTransitionState
-	transitionKey := KeyFrostVaultTransition(chain, newVaultID, epochID)
+	transitionKey := keys.KeyFrostVaultTransition(chain, newVaultID, epochID)
 	transition, err := e.DB.GetFrostVaultTransition(transitionKey)
 	if err != nil {
 		return fmt.Errorf("TransitionSigned: transition not found: %w", err)
@@ -78,7 +79,7 @@ func (e *Executor) HandleFrostVaultTransitionSignedTx(sender string, tx *pb.Fros
 	}
 
 	// 7. 获取新 Vault 状态并更新为 ACTIVE
-	newVaultKey := KeyFrostVaultState(chain, newVaultID)
+	newVaultKey := keys.KeyFrostVaultState(chain, newVaultID)
 	newVault, err := e.DB.GetFrostVaultState(newVaultKey)
 	if err != nil {
 		return fmt.Errorf("TransitionSigned: new vault not found: %w", err)
@@ -123,4 +124,3 @@ func verifyTransitionSignature(signAlgo pb.SignAlgo, pubkey, msg, sig []byte) (b
 		return false, fmt.Errorf("unsupported sign_algo: %v", signAlgo)
 	}
 }
-

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"dex/frost/core/frost"
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"fmt"
@@ -26,7 +27,7 @@ func (e *Executor) HandleFrostVaultDkgValidationSignedTx(sender string, tx *pb.F
 		sender, chain, vaultID, epochID)
 
 	// 1. 获取 VaultTransitionState
-	transitionKey := KeyFrostVaultTransition(chain, vaultID, epochID)
+	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 	transition, err := e.DB.GetFrostVaultTransition(transitionKey)
 	if err != nil {
 		return fmt.Errorf("DKGValidationSigned: transition not found: %w", err)
@@ -76,7 +77,7 @@ func (e *Executor) HandleFrostVaultDkgValidationSignedTx(sender string, tx *pb.F
 	}
 
 	// 6. 更新 VaultState（激活新密钥）
-	vaultStateKey := KeyFrostVaultState(chain, vaultID)
+	vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
 	vaultState, err := e.DB.GetFrostVaultState(vaultStateKey)
 	if err != nil {
 		// 首次创建
@@ -123,9 +124,4 @@ func verifyDkgValidationSignature(signAlgo pb.SignAlgo, pubkey, msg, sig []byte)
 		// 其他算法暂不支持
 		return false, fmt.Errorf("unsupported sign_algo: %v", signAlgo)
 	}
-}
-
-// KeyFrostVaultState 生成 Vault 状态 key
-func KeyFrostVaultState(chain string, vaultID uint32) string {
-	return fmt.Sprintf("v1_frost_vault_%s_%d", chain, vaultID)
 }

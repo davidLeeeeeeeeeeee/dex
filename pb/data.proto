@@ -186,6 +186,13 @@ message AnyTx {
     // Frost 相关交易
     FrostWithdrawRequestTx frost_withdraw_request_tx = 13; // Frost 提现请求
     FrostWithdrawSignedTx frost_withdraw_signed_tx = 14; // Frost 提现签名完成
+    // Frost DKG/轮换相关交易
+    FrostVaultDkgCommitTx frost_vault_dkg_commit_tx = 15; // DKG 承诺点上链
+    FrostVaultDkgShareTx frost_vault_dkg_share_tx = 16; // DKG 加密 share 上链
+    FrostVaultDkgComplaintTx frost_vault_dkg_complaint_tx = 17; // DKG 投诉
+    FrostVaultDkgRevealTx frost_vault_dkg_reveal_tx = 18; // DKG reveal
+    FrostVaultDkgValidationSignedTx frost_vault_dkg_validation_signed_tx = 19; // DKG 验证签名
+    FrostVaultTransitionSignedTx frost_vault_transition_signed_tx = 20; // Vault 迁移签名
   }
 }
 // --------------------- 订单 & 状态相关 ---------------------
@@ -516,7 +523,11 @@ message FrostWithdrawSignedTx {
   bytes template_hash = 7; // 交易模板哈希（用于验签绑定）
   string chain = 8; // 链标识
   string asset = 9; // 资产类型
-  repeated UtxoInput utxo_inputs = 10; // BTC 专用：使用的 UTXO 列表
+  repeated UtxoInput utxo_inputs = 10; // BTC 专用：使用的 UTXO 列表（deprecated，用 template_data 代替）
+  // BTC 专用：完整模板数据 + 每个 input 的签名（用于 VM 端复算验签）
+  bytes template_data = 11; // BTC 交易模板 JSON（含 inputs/outputs/fee/change）
+  repeated bytes input_sigs = 12; // 每个 input 的 Schnorr 签名（64 字节，按 input 顺序）
+  repeated bytes script_pubkeys = 13; // 每个 input 的 scriptPubKey（用于 sighash 计算）
 }
 
 // UTXO 输入（用于 FrostWithdrawSignedTx）
@@ -524,6 +535,7 @@ message UtxoInput {
   string txid = 1; // 前序交易 ID
   uint32 vout = 2; // 输出索引
   uint64 amount = 3; // 金额（satoshi）
+  bytes script_pubkey = 4; // scriptPubKey（用于 sighash 计算）
 }
 
 // Frost 提现请求状态（链上存储）
@@ -612,22 +624,24 @@ enum FrostEnvelopeKind {
 
 // FrostVaultDkgCommitTx DKG 承诺点上链
 message FrostVaultDkgCommitTx {
-  string chain = 1; // 链标识
-  uint32 vault_id = 2; // Vault ID
-  uint64 epoch_id = 3; // epoch 版本
-  SignAlgo sign_algo = 4; // 签名算法（决定曲线）
-  repeated bytes commitment_points = 5; // 承诺点集合（Feldman VSS A_ik）
-  bytes a_i0 = 6; // 常数项承诺点（用于计算 group_pubkey）
+  BaseMessage base = 1; // 基础消息（含 tx_id, from_address, executed_height）
+  string chain = 2; // 链标识
+  uint32 vault_id = 3; // Vault ID
+  uint64 epoch_id = 4; // epoch 版本
+  SignAlgo sign_algo = 5; // 签名算法（决定曲线）
+  repeated bytes commitment_points = 6; // 承诺点集合（Feldman VSS A_ik）
+  bytes a_i0 = 7; // 常数项承诺点（用于计算 group_pubkey）
 }
 
 // FrostVaultDkgShareTx 加密 share 上链
 message FrostVaultDkgShareTx {
-  string chain = 1; // 链标识
-  uint32 vault_id = 2; // Vault ID
-  uint64 epoch_id = 3; // epoch 版本
-  string dealer_id = 4; // share 提供者地址
-  string receiver_id = 5; // share 接收者地址
-  bytes ciphertext = 6; // 加密的 share
+  BaseMessage base = 1; // 基础消息
+  string chain = 2; // 链标识
+  uint32 vault_id = 3; // Vault ID
+  uint64 epoch_id = 4; // epoch 版本
+  string dealer_id = 5; // share 提供者地址
+  string receiver_id = 6; // share 接收者地址
+  bytes ciphertext = 7; // 加密的 share
 }
 
 // FrostVaultDkgCommitment DKG 承诺存储
@@ -655,23 +669,25 @@ message FrostVaultDkgShare {
 
 // FrostVaultDkgComplaintTx 链上裁决/举证
 message FrostVaultDkgComplaintTx {
-  string chain = 1; // 链标识
-  uint32 vault_id = 2; // Vault ID
-  uint64 epoch_id = 3; // epoch 版本
-  string dealer_id = 4; // 被投诉的 dealer
-  string receiver_id = 5; // 接收该碎片的参与者
-  string bond = 6; // 保证金（防止滥用）
+  BaseMessage base = 1; // 基础消息
+  string chain = 2; // 链标识
+  uint32 vault_id = 3; // Vault ID
+  uint64 epoch_id = 4; // epoch 版本
+  string dealer_id = 5; // 被投诉的 dealer
+  string receiver_id = 6; // 接收该碎片的参与者
+  string bond = 7; // 保证金（防止滥用）
 }
 
 // FrostVaultDkgRevealTx dealer 公开 share + 随机数
 message FrostVaultDkgRevealTx {
-  string chain = 1; // 链标识
-  uint32 vault_id = 2; // Vault ID
-  uint64 epoch_id = 3; // epoch 版本
-  string dealer_id = 4; // dealer 地址
-  string receiver_id = 5; // 接收者地址
-  bytes share = 6; // f_dealer(x_receiver)（标量）
-  bytes enc_rand = 7; // 加密随机数
+  BaseMessage base = 1; // 基础消息
+  string chain = 2; // 链标识
+  uint32 vault_id = 3; // Vault ID
+  uint64 epoch_id = 4; // epoch 版本
+  string dealer_id = 5; // dealer 地址
+  string receiver_id = 6; // 接收者地址
+  bytes share = 7; // f_dealer(x_receiver)（标量）
+  bytes enc_rand = 8; // 加密随机数
 }
 
 // FrostVaultDkgComplaint 投诉存储
@@ -689,22 +705,24 @@ message FrostVaultDkgComplaint {
 
 // FrostVaultDkgValidationSignedTx 验证签名推进到 KeyReady
 message FrostVaultDkgValidationSignedTx {
-  string chain = 1; // 链标识
-  uint32 vault_id = 2; // Vault ID
-  uint64 epoch_id = 3; // epoch 版本
-  bytes msg_hash = 4; // 验证消息哈希
-  bytes new_group_pubkey = 5; // 新群公钥
-  bytes signature = 6; // 群签名
+  BaseMessage base = 1; // 基础消息
+  string chain = 2; // 链标识
+  uint32 vault_id = 3; // Vault ID
+  uint64 epoch_id = 4; // epoch 版本
+  bytes msg_hash = 5; // 验证消息哈希
+  bytes new_group_pubkey = 6; // 新群公钥
+  bytes signature = 7; // 群签名
 }
 
 // FrostVaultTransitionSignedTx 迁移签名产物上链
 message FrostVaultTransitionSignedTx {
-  string chain = 1; // 链标识
-  uint32 old_vault_id = 2; // 旧 Vault ID
-  uint32 new_vault_id = 3; // 新 Vault ID
-  uint64 epoch_id = 4; // epoch 版本
-  bytes msg_hash = 5; // 迁移消息哈希
-  bytes signature = 6; // 旧 Vault 群签名
+  BaseMessage base = 1; // 基础消息
+  string chain = 2; // 链标识
+  uint32 old_vault_id = 3; // 旧 Vault ID
+  uint32 new_vault_id = 4; // 新 Vault ID
+  uint64 epoch_id = 5; // epoch 版本
+  bytes msg_hash = 6; // 迁移消息哈希
+  bytes signature = 7; // 旧 Vault 群签名
 }
 
 // FrostTop10000 Top10000 矿工列表（用于 Vault 委员会分配）

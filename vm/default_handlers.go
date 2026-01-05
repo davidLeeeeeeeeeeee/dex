@@ -19,6 +19,13 @@ func RegisterDefaultHandlers(reg *HandlerRegistry) error {
 		// Frost 相关交易处理器
 		&FrostWithdrawRequestTxHandler{}, // Frost 提现请求
 		&FrostWithdrawSignedTxHandler{},  // Frost 提现签名完成
+		// Frost DKG/轮换相关交易处理器
+		&FrostVaultDkgCommitTxHandler{},           // DKG 承诺点上链
+		&FrostVaultDkgShareTxHandler{},            // DKG 加密 share 上链
+		&FrostVaultDkgComplaintTxHandler{},        // DKG 投诉
+		&FrostVaultDkgRevealTxHandler{},           // DKG reveal
+		&FrostVaultDkgValidationSignedTxHandler{}, // DKG 验证签名
+		&FrostVaultTransitionSignedTxHandler{},    // Vault 迁移签名
 	}
 
 	for _, h := range handlers {

@@ -1015,6 +1015,36 @@ func TestFrostFundsLedger(t *testing.T) {
 
 // ========== BTC 验签 + UTXO Lock 测试 ==========
 
+// createTestBTCTemplateData 创建测试用的 BTC 模板数据
+func createTestBTCTemplateData(inputs []struct {
+	TxID   string
+	Vout   uint32
+	Amount uint64
+}, outputAmount uint64, withdrawID string) []byte {
+	// 简化的 BTC 模板 JSON
+	template := map[string]interface{}{
+		"version":   2,
+		"lock_time": 0,
+		"vault_id":  1,
+		"key_epoch": 1,
+		"inputs":    make([]map[string]interface{}, len(inputs)),
+		"outputs": []map[string]interface{}{
+			{"address": "bc1qtest", "amount": outputAmount},
+		},
+		"withdraw_ids": []string{withdrawID},
+	}
+	for i, in := range inputs {
+		template["inputs"].([]map[string]interface{})[i] = map[string]interface{}{
+			"txid":     in.TxID,
+			"vout":     in.Vout,
+			"amount":   in.Amount,
+			"sequence": 0xffffffff,
+		}
+	}
+	data, _ := json.Marshal(template)
+	return data
+}
+
 // TestFrostWithdrawSignedBTC_UTXOLock 测试 BTC UTXO 锁定防双花
 func TestFrostWithdrawSignedBTC_UTXOLock(t *testing.T) {
 	db := NewMockDB()
@@ -1053,12 +1083,29 @@ func TestFrostWithdrawSignedBTC_UTXOLock(t *testing.T) {
 	db.data[withdrawKey] = withdrawData
 	db.mu.Unlock()
 
+	// 创建 BTC 模板数据
+	inputs := []struct {
+		TxID   string
+		Vout   uint32
+		Amount uint64
+	}{
+		{"prev_tx_001", 0, 50000},
+		{"prev_tx_002", 1, 30000},
+	}
+	templateData := createTestBTCTemplateData(inputs, 10000, withdrawID)
+
+	// 创建虚拟签名（每个 input 64 字节）
+	inputSigs := [][]byte{
+		make([]byte, 64),
+		make([]byte, 64),
+	}
+	scriptPubkeys := [][]byte{
+		make([]byte, 34), // P2TR scriptPubKey
+		make([]byte, 34),
+	}
+
 	// 创建 FrostWithdrawSignedTx
 	jobID := "job_btc_001"
-	templateHash := make([]byte, 32)
-	for i := range templateHash {
-		templateHash[i] = byte(i)
-	}
 
 	signedTx := &pb.AnyTx{
 		Content: &pb.AnyTx_FrostWithdrawSignedTx{
@@ -1073,18 +1120,16 @@ func TestFrostWithdrawSignedBTC_UTXOLock(t *testing.T) {
 				WithdrawIds:        []string{withdrawID},
 				VaultId:            1,
 				KeyEpoch:           1,
-				TemplateHash:       templateHash,
 				Chain:              chain,
 				Asset:              asset,
-				UtxoInputs: []*pb.UtxoInput{
-					{Txid: "prev_tx_001", Vout: 0, Amount: 50000},
-					{Txid: "prev_tx_002", Vout: 1, Amount: 30000},
-				},
+				TemplateData:       templateData,
+				InputSigs:          inputSigs,
+				ScriptPubkeys:      scriptPubkeys,
 			},
 		},
 	}
 
-	// 执行 DryRun
+	// 执行 DryRun（由于没有 Vault 状态，验签会被跳过）
 	sv := vm.NewStateView(readFn, scanFn)
 	handler, _ := reg.Get("frost_withdraw_signed")
 	ops, receipt, err := handler.DryRun(signedTx, sv)
@@ -1111,7 +1156,43 @@ func TestFrostWithdrawSignedBTC_UTXOLock(t *testing.T) {
 		db.mu.Unlock()
 	}
 
-	// 创建第二个 job 尝试使用同一 UTXO
+	// 创建第二个 withdraw（新的 QUEUED 状态）
+	withdrawID2 := "test_withdraw_btc_002"
+	withdrawKey2 := keys.KeyFrostWithdraw(withdrawID2)
+	withdrawState2 := &pb.FrostWithdrawState{
+		WithdrawId:    withdrawID2,
+		TxId:          "orig_tx_002",
+		Seq:           2, // 下一个序号
+		Chain:         chain,
+		Asset:         asset,
+		To:            "bc1qtest2",
+		Amount:        "20000",
+		RequestHeight: 100,
+		Status:        "QUEUED",
+	}
+	withdrawData2, _ := proto.Marshal(withdrawState2)
+	db.mu.Lock()
+	db.data[withdrawKey2] = withdrawData2
+	db.mu.Unlock()
+
+	// 设置 FIFO head 为 2（因为第一个 withdraw 已被处理）
+	fifoHeadKey := keys.KeyFrostWithdrawFIFOHead(chain, asset)
+	db.mu.Lock()
+	db.data[fifoHeadKey] = []byte("2")
+	db.mu.Unlock()
+
+	// 创建第二个 job 尝试使用同一 UTXO（只用第一个 input）
+	inputs2 := []struct {
+		TxID   string
+		Vout   uint32
+		Amount uint64
+	}{
+		{"prev_tx_001", 0, 50000}, // 同一 UTXO
+	}
+	templateData2 := createTestBTCTemplateData(inputs2, 10000, withdrawID2)
+	inputSigs2 := [][]byte{make([]byte, 64)}
+	scriptPubkeys2 := [][]byte{make([]byte, 34)}
+
 	signedTx2 := &pb.AnyTx{
 		Content: &pb.AnyTx_FrostWithdrawSignedTx{
 			FrostWithdrawSignedTx: &pb.FrostWithdrawSignedTx{
@@ -1122,25 +1203,17 @@ func TestFrostWithdrawSignedBTC_UTXOLock(t *testing.T) {
 				},
 				JobId:              "job_btc_002", // 不同的 job
 				SignedPackageBytes: []byte("dummy_signature2"),
-				WithdrawIds:        []string{withdrawID},
+				WithdrawIds:        []string{withdrawID2},
 				VaultId:            1,
 				KeyEpoch:           1,
-				TemplateHash:       templateHash,
 				Chain:              chain,
 				Asset:              asset,
-				UtxoInputs: []*pb.UtxoInput{
-					{Txid: "prev_tx_001", Vout: 0, Amount: 50000}, // 同一 UTXO
-				},
+				TemplateData:       templateData2,
+				InputSigs:          inputSigs2,
+				ScriptPubkeys:      scriptPubkeys2,
 			},
 		},
 	}
-
-	// 重新准备 withdraw 状态为 QUEUED（因为已被第一个 job 改为 SIGNED）
-	withdrawState.Status = "QUEUED"
-	withdrawData2, _ := proto.Marshal(withdrawState)
-	db.mu.Lock()
-	db.data[withdrawKey] = withdrawData2
-	db.mu.Unlock()
 
 	sv2 := vm.NewStateView(readFn, scanFn)
 	_, receipt2, err2 := handler.DryRun(signedTx2, sv2)
@@ -1184,7 +1257,17 @@ func TestFrostWithdrawSignedBTC_SameJobResubmit(t *testing.T) {
 	db.data[withdrawKey] = withdrawData
 	db.mu.Unlock()
 
-	templateHash := make([]byte, 32)
+	// 创建 BTC 模板数据
+	inputs := []struct {
+		TxID   string
+		Vout   uint32
+		Amount uint64
+	}{
+		{"prev_tx_same", 0, 10000},
+	}
+	templateData := createTestBTCTemplateData(inputs, 9000, withdrawID)
+	inputSigs := [][]byte{make([]byte, 64)}
+	scriptPubkeys := [][]byte{make([]byte, 34)}
 
 	signedTx := &pb.AnyTx{
 		Content: &pb.AnyTx_FrostWithdrawSignedTx{
@@ -1198,12 +1281,11 @@ func TestFrostWithdrawSignedBTC_SameJobResubmit(t *testing.T) {
 				SignedPackageBytes: []byte("sig1"),
 				WithdrawIds:        []string{withdrawID},
 				VaultId:            1,
-				TemplateHash:       templateHash,
 				Chain:              chain,
 				Asset:              asset,
-				UtxoInputs: []*pb.UtxoInput{
-					{Txid: "prev_tx_same", Vout: 0, Amount: 10000},
-				},
+				TemplateData:       templateData,
+				InputSigs:          inputSigs,
+				ScriptPubkeys:      scriptPubkeys,
 			},
 		},
 	}
@@ -1236,12 +1318,11 @@ func TestFrostWithdrawSignedBTC_SameJobResubmit(t *testing.T) {
 				SignedPackageBytes: []byte("sig2"),
 				WithdrawIds:        []string{withdrawID},
 				VaultId:            1,
-				TemplateHash:       templateHash,
 				Chain:              chain,
 				Asset:              asset,
-				UtxoInputs: []*pb.UtxoInput{
-					{Txid: "prev_tx_same", Vout: 0, Amount: 10000}, // 同一 UTXO
-				},
+				TemplateData:       templateData,  // 同一模板
+				InputSigs:          inputSigs,     // 同一签名
+				ScriptPubkeys:      scriptPubkeys, // 同一 scriptPubkeys
 			},
 		},
 	}

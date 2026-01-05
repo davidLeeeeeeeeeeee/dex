@@ -3,6 +3,7 @@
 package vm
 
 import (
+	"dex/frost/chain/btc"
 	"dex/frost/core/frost"
 	"dex/keys"
 	"dex/pb"
@@ -70,6 +71,15 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	chain := firstWithdraw.Chain
 	asset := firstWithdraw.Asset
 
+	// ===== P0-1: FIFO 队首验证（首次提交时必须验证）=====
+	// 只有首次提交需要验证 FIFO 顺序，追加产物时跳过
+	if currentCount == 0 {
+		// 验证 withdraw_ids 是否从队首开始连续
+		if err := h.validateFIFOOrder(sv, chain, asset, withdrawIDs); err != nil {
+			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: err.Error()}, err
+		}
+	}
+
 	// 如果已有产物，只追加 receipt/history
 	if currentCount > 0 {
 		// 追加新的 SignedPackage
@@ -112,40 +122,84 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	// BTC 验签（如果是 BTC 链）
 	if chain == "btc" {
 		vaultID := signed.VaultId
-		templateHash := signed.TemplateHash
-		utxoInputs := signed.UtxoInputs
+		templateData := signed.TemplateData
+		inputSigs := signed.InputSigs
+		scriptPubkeys := signed.ScriptPubkeys
 
-		// 验证必须有 template_hash
-		if len(templateHash) != 32 {
-			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid template_hash length"}, errors.New("invalid template_hash length")
+		// 必须提供 template_data 和 input_sigs（新版验签方式）
+		if len(templateData) == 0 {
+			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "missing template_data for BTC"}, errors.New("missing template_data for BTC")
+		}
+
+		// 从 template_data 解析 BTC 模板
+		template, err := btc.FromJSON(templateData)
+		if err != nil {
+			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid template_data: " + err.Error()}, err
+		}
+
+		// 验证 input_sigs 数量与 template inputs 匹配
+		if len(inputSigs) != len(template.Inputs) {
+			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "input_sigs count mismatch with template inputs"}, errors.New("input_sigs count mismatch")
+		}
+
+		// 验证 scriptPubkeys 数量与 template inputs 匹配
+		if len(scriptPubkeys) != len(template.Inputs) {
+			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "script_pubkeys count mismatch with template inputs"}, errors.New("script_pubkeys count mismatch")
+		}
+
+		// 复算 template_hash 并验证与提交的一致
+		computedTemplateHash := template.TemplateHash()
+		if len(signed.TemplateHash) > 0 {
+			if len(computedTemplateHash) != len(signed.TemplateHash) {
+				return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "template_hash mismatch"}, errors.New("template_hash mismatch")
+			}
+			for i := range computedTemplateHash {
+				if computedTemplateHash[i] != signed.TemplateHash[i] {
+					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "template_hash mismatch"}, errors.New("template_hash mismatch")
+				}
+			}
 		}
 
 		// 获取 Vault 公钥（用于验签）
 		vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
 		vaultStateData, vaultExists, vaultErr := sv.Get(vaultStateKey)
-		if vaultErr != nil || !vaultExists {
-			// Vault 状态不存在，跳过验签（测试环境或 dummy 签名）
-			// 在生产环境中应该报错
-		} else if len(vaultStateData) > 0 {
+		if vaultErr != nil || !vaultExists || len(vaultStateData) == 0 {
+			// Vault 状态不存在，生产环境应报错
+			// 测试环境跳过验签
+		} else {
 			// 解析 Vault 状态获取公钥
 			vaultState := &pb.FrostVaultState{}
-			if err := proto.Unmarshal(vaultStateData, vaultState); err == nil {
-				pubKey := vaultState.GroupPubkey
-				if len(pubKey) == 32 && len(signedPackageBytes) >= 64 {
-					// 提取签名（假设前 64 字节是 BIP-340 签名）
-					sig := signedPackageBytes[:64]
-					// 验签：签名必须对 template_hash 有效
-					valid, err := frost.VerifyBIP340(pubKey, templateHash, sig)
-					if err != nil || !valid {
-						return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "BTC signature verification failed"}, errors.New("BTC signature verification failed")
-					}
+			if err := proto.Unmarshal(vaultStateData, vaultState); err != nil {
+				return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse vault state"}, err
+			}
+
+			pubKey := vaultState.GroupPubkey
+			if len(pubKey) != 32 {
+				return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid vault pubkey length"}, errors.New("invalid vault pubkey length")
+			}
+
+			// 复算每个 input 的 Taproot sighash
+			sighashes, err := template.ComputeTaprootSighash(scriptPubkeys, btc.SighashDefault)
+			if err != nil {
+				return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to compute sighash: " + err.Error()}, err
+			}
+
+			// 对每个 input 验签
+			for i, sig := range inputSigs {
+				if len(sig) != 64 {
+					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid signature length for input"}, errors.New("invalid signature length")
+				}
+
+				valid, err := frost.VerifyBIP340(pubKey, sighashes[i], sig)
+				if err != nil || !valid {
+					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "BTC signature verification failed for input"}, errors.New("BTC signature verification failed")
 				}
 			}
 		}
 
-		// BTC UTXO lock：防止双花
-		for _, utxo := range utxoInputs {
-			lockKey := keys.KeyFrostBtcLockedUtxo(vaultID, utxo.Txid, utxo.Vout)
+		// BTC UTXO lock：从复算的模板提取 UTXO（而非客户端传入）
+		for _, input := range template.Inputs {
+			lockKey := keys.KeyFrostBtcLockedUtxo(vaultID, input.TxID, input.Vout)
 			existingJobID, lockExists, _ := sv.Get(lockKey)
 
 			if lockExists && len(existingJobID) > 0 {
@@ -276,4 +330,68 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 
 func (h *FrostWithdrawSignedTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
+}
+
+// validateFIFOOrder 验证 withdraw_ids 是否从队首开始连续
+// 约束：
+// 1. withdraw_ids[0].seq == 当前 head（队首）
+// 2. withdraw_ids[i].seq == head + i（连续递增）
+// 3. 所有 withdraw 状态必须为 QUEUED
+func (h *FrostWithdrawSignedTxHandler) validateFIFOOrder(sv StateView, chain, asset string, withdrawIDs []string) error {
+	if len(withdrawIDs) == 0 {
+		return errors.New("FIFO: empty withdraw_ids")
+	}
+
+	// 1. 读取当前队首指针 head
+	headKey := keys.KeyFrostWithdrawFIFOHead(chain, asset)
+	currentHead := readUint64FromState(sv, headKey)
+	if currentHead == 0 {
+		// head 未初始化，默认从 1 开始
+		currentHead = 1
+	}
+
+	// 2. 获取所有 withdraw 并验证
+	withdraws := make([]*FrostWithdrawRequest, 0, len(withdrawIDs))
+	for _, wid := range withdrawIDs {
+		withdrawKey := keys.KeyFrostWithdraw(wid)
+		withdrawData, exists, err := sv.Get(withdrawKey)
+		if err != nil || !exists {
+			return errors.New("FIFO: withdraw not found: " + wid)
+		}
+
+		withdraw, err := unmarshalWithdrawRequest(withdrawData)
+		if err != nil {
+			return errors.New("FIFO: failed to parse withdraw: " + wid)
+		}
+
+		// 验证状态必须为 QUEUED
+		if withdraw.Status != WithdrawStatusQueued {
+			return errors.New("FIFO: withdraw not in QUEUED status: " + wid)
+		}
+
+		// 验证 chain/asset 一致性
+		if withdraw.Chain != chain || withdraw.Asset != asset {
+			return errors.New("FIFO: inconsistent chain/asset in withdraw: " + wid)
+		}
+
+		withdraws = append(withdraws, withdraw)
+	}
+
+	// 3. 验证第一个 withdraw 的 seq == currentHead
+	if withdraws[0].Seq != currentHead {
+		return errors.New("FIFO: first withdraw seq (" + strconv.FormatUint(withdraws[0].Seq, 10) +
+			") != head (" + strconv.FormatUint(currentHead, 10) + ")")
+	}
+
+	// 4. 验证 seq 连续递增
+	for i := 1; i < len(withdraws); i++ {
+		expectedSeq := currentHead + uint64(i)
+		if withdraws[i].Seq != expectedSeq {
+			return errors.New("FIFO: seq gap at position " + strconv.Itoa(i) +
+				", expected " + strconv.FormatUint(expectedSeq, 10) +
+				", got " + strconv.FormatUint(withdraws[i].Seq, 10))
+		}
+	}
+
+	return nil
 }

@@ -97,6 +97,19 @@ func DefaultKindFn(tx *pb.AnyTx) (string, error) {
 		return "frost_withdraw_request", nil
 	case *pb.AnyTx_FrostWithdrawSignedTx:
 		return "frost_withdraw_signed", nil
+	// Frost DKG/轮换相关交易类型
+	case *pb.AnyTx_FrostVaultDkgCommitTx:
+		return "frost_vault_dkg_commit", nil
+	case *pb.AnyTx_FrostVaultDkgShareTx:
+		return "frost_vault_dkg_share", nil
+	case *pb.AnyTx_FrostVaultDkgComplaintTx:
+		return "frost_vault_dkg_complaint", nil
+	case *pb.AnyTx_FrostVaultDkgRevealTx:
+		return "frost_vault_dkg_reveal", nil
+	case *pb.AnyTx_FrostVaultDkgValidationSignedTx:
+		return "frost_vault_dkg_validation_signed", nil
+	case *pb.AnyTx_FrostVaultTransitionSignedTx:
+		return "frost_vault_transition_signed", nil
 	default:
 		return "", fmt.Errorf("unknown tx type: %v", tx.GetTxId())
 	}

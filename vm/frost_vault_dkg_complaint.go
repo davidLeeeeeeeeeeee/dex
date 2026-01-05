@@ -3,6 +3,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"fmt"
@@ -41,7 +42,7 @@ func (e *Executor) HandleFrostVaultDkgComplaintTx(sender string, tx *pb.FrostVau
 	}
 
 	// 1. 检查是否已存在投诉（幂等性）
-	complaintKey := KeyFrostVaultDkgComplaint(chain, vaultID, epochID, dealerID, receiverID)
+	complaintKey := keys.KeyFrostVaultDkgComplaint(chain, vaultID, epochID, dealerID, receiverID)
 	existing, err := e.DB.GetFrostDkgComplaint(complaintKey)
 	if err == nil && existing != nil {
 		logs.Debug("[DKGComplaint] already submitted, idempotent")
@@ -49,7 +50,7 @@ func (e *Executor) HandleFrostVaultDkgComplaintTx(sender string, tx *pb.FrostVau
 	}
 
 	// 2. 验证 VaultTransitionState 存在且状态正确
-	transitionKey := KeyFrostVaultTransition(chain, vaultID, epochID)
+	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 	transition, err := e.DB.GetFrostVaultTransition(transitionKey)
 	if err != nil {
 		return fmt.Errorf("DKGComplaint: transition not found: %w", err)
@@ -71,7 +72,7 @@ func (e *Executor) HandleFrostVaultDkgComplaintTx(sender string, tx *pb.FrostVau
 	}
 
 	// 6. 验证对应的 share 已上链
-	shareKey := KeyFrostVaultDkgShare(chain, vaultID, epochID, dealerID, receiverID)
+	shareKey := keys.KeyFrostVaultDkgShare(chain, vaultID, epochID, dealerID, receiverID)
 	share, err := e.DB.GetFrostDkgShare(shareKey)
 	if err != nil || share == nil {
 		return fmt.Errorf("DKGComplaint: share not found for dealer=%s receiver=%s", dealerID, receiverID)
@@ -104,9 +105,4 @@ func (e *Executor) HandleFrostVaultDkgComplaintTx(sender string, tx *pb.FrostVau
 
 	logs.Debug("[DKGComplaint] stored complaint dealer=%s receiver=%s", dealerID, receiverID)
 	return nil
-}
-
-// KeyFrostVaultDkgComplaint 生成 DKG 投诉 key
-func KeyFrostVaultDkgComplaint(chain string, vaultID uint32, epochID uint64, dealer, receiver string) string {
-	return fmt.Sprintf("v1_frost_vault_dkg_complaint_%s_%d_%d_%s_%s", chain, vaultID, epochID, dealer, receiver)
 }

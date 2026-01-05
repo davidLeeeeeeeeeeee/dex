@@ -4,6 +4,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"fmt"
@@ -35,7 +36,7 @@ func (e *Executor) HandleFrostVaultDkgCommitTx(sender string, tx *pb.FrostVaultD
 		sender, chain, vaultID, epochID, signAlgo)
 
 	// 1. 检查是否已存在承诺（幂等性）
-	existingKey := KeyFrostVaultDkgCommit(chain, vaultID, epochID, sender)
+	existingKey := keys.KeyFrostVaultDkgCommit(chain, vaultID, epochID, sender)
 	existing, err := e.DB.GetFrostDkgCommitment(existingKey)
 	if err == nil && existing != nil {
 		logs.Debug("[DKGCommit] already committed, idempotent")
@@ -43,7 +44,7 @@ func (e *Executor) HandleFrostVaultDkgCommitTx(sender string, tx *pb.FrostVaultD
 	}
 
 	// 2. 验证 VaultTransitionState 存在且状态正确
-	transitionKey := KeyFrostVaultTransition(chain, vaultID, epochID)
+	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 	transition, err := e.DB.GetFrostVaultTransition(transitionKey)
 	if err != nil {
 		return fmt.Errorf("DKGCommit: transition not found: %w", err)
@@ -100,14 +101,4 @@ func isInCommittee(address string, members []string) bool {
 		}
 	}
 	return false
-}
-
-// KeyFrostVaultDkgCommit 生成 DKG 承诺 key
-func KeyFrostVaultDkgCommit(chain string, vaultID uint32, epochID uint64, miner string) string {
-	return fmt.Sprintf("v1_frost_vault_dkg_commit_%s_%d_%d_%s", chain, vaultID, epochID, miner)
-}
-
-// KeyFrostVaultTransition 生成 Vault 轮换状态 key
-func KeyFrostVaultTransition(chain string, vaultID uint32, epochID uint64) string {
-	return fmt.Sprintf("v1_frost_vault_transition_%s_%d_%d", chain, vaultID, epochID)
 }

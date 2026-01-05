@@ -4,6 +4,7 @@
 package vm
 
 import (
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"fmt"
@@ -30,7 +31,7 @@ func (e *Executor) HandleFrostVaultDkgShareTx(sender string, tx *pb.FrostVaultDk
 	}
 
 	// 1. 检查是否已存在（幂等性）
-	existingKey := KeyFrostVaultDkgShare(chain, vaultID, epochID, dealerID, receiverID)
+	existingKey := keys.KeyFrostVaultDkgShare(chain, vaultID, epochID, dealerID, receiverID)
 	existing, err := e.DB.GetFrostDkgShare(existingKey)
 	if err == nil && existing != nil {
 		logs.Debug("[DKGShare] already submitted, idempotent")
@@ -38,7 +39,7 @@ func (e *Executor) HandleFrostVaultDkgShareTx(sender string, tx *pb.FrostVaultDk
 	}
 
 	// 2. 验证 VaultTransitionState 存在且状态正确
-	transitionKey := KeyFrostVaultTransition(chain, vaultID, epochID)
+	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 	transition, err := e.DB.GetFrostVaultTransition(transitionKey)
 	if err != nil {
 		return fmt.Errorf("DKGShare: transition not found: %w", err)
@@ -81,9 +82,4 @@ func (e *Executor) HandleFrostVaultDkgShareTx(sender string, tx *pb.FrostVaultDk
 
 	logs.Debug("[DKGShare] stored share dealer=%s -> receiver=%s", dealerID, receiverID)
 	return nil
-}
-
-// KeyFrostVaultDkgShare 生成 DKG share key
-func KeyFrostVaultDkgShare(chain string, vaultID uint32, epochID uint64, dealer, receiver string) string {
-	return fmt.Sprintf("v1_frost_vault_dkg_share_%s_%d_%d_%s_%s", chain, vaultID, epochID, dealer, receiver)
 }
