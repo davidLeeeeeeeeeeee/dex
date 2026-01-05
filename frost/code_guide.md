@@ -2,6 +2,84 @@
 
 这份指南基于现有代码行为总结，重点描述运行生命周期、调用路径和关键模块。内容不以设计稿为前提。
 
+## 0. Frost 目录责任总览（逐路径/文件）
+- `frost/`：FROST 模块根目录，包含设计文档、核心算法、运行时与链适配器实现。
+  - `code_guide.md`：当前阅读指南，汇总模块地图与关键调用路径。
+  - `design.md`：FROST v1 设计文档，说明目标、架构、流程与数据模型。
+  - `different.md`：FROST 与 ROAST 的概念差异与流程对比。
+  - `dkg.md`：DKG（分布式密钥生成）流程与图示说明。
+  - `requirements.md`：需求、风险点与设计约束的汇总清单。
+  - `chain/`：链适配器层，负责交易模板构建、哈希绑定与签名打包。
+    - `adapter.go`：定义链标识、模板结构、适配器接口与默认工厂。
+    - `btc/`：BTC 适配器与模板实现。
+      - `adapter.go`：构建 Taproot 提现模板、计算 sighash 并组装 raw tx。
+      - `template.go`：BTC 模板结构、确定性序列化、哈希与 Taproot sighash 计算。
+      - `template_test.go`：BTC 模板排序与哈希确定性的单元测试。
+      - `utxo.go`：BTC UTXO 管理的占位文件（待实现）。
+    - `evm/`：EVM 链（ETH/BNB）适配器实现。
+      - `adapter.go`：构建合约调用模板并打包签名 calldata。
+      - `contract.go`：EVM 合约交互的占位文件（待实现）。
+    - `solana/`：Solana 适配器占位目录。
+      - `adapter.go`：Solana 适配器占位文件（待实现）。
+    - `tron/`：TRON 适配器占位目录。
+      - `adapter.go`：TRON 适配器占位文件（待实现）。
+  - `core/`：纯算法层，提供曲线、DKG、FROST 与 ROAST 的基础实现。
+    - `curve/`：椭圆曲线抽象与实现，供签名算法复用。
+      - `group.go`：定义曲线群接口与通用 Point 结构。
+      - `secp256k1.go`：secp256k1 曲线实现，包含点运算与压缩点解码。
+      - `bn256.go`：alt_bn128 曲线实现，封装 G1 运算与点转换。
+      - `utils.go`：Taproot tweak 与大整数转换等通用工具。
+    - `dkg/`：DKG 数学工具，包含多项式与拉格朗日计算。
+      - `polynomial.go`：生成随机多项式并计算份额。
+      - `lagrange.go`：拉格朗日插值与系数计算工具。
+    - `frost/`：FROST/Schnorr 核心算法实现。
+      - `api.go`：统一验签 API，按算法路由到具体实现。
+      - `challenge.go`：BIP340 与 Keccak 的 challenge 计算实现。
+      - `schnorr.go`：BIP340 Schnorr 签名与验签实现。
+      - `threshold.go`：门限 Schnorr 部分签名与聚合签名流程。
+      - `schnorr_test.go`：Schnorr 与统一验签 API 的单元测试。
+    - `roast/`：ROAST 鲁棒签名算法实现。
+      - `roast.go`：ROAST 子集选择、绑定系数与签名聚合逻辑。
+      - `roast_test.go`：ROAST 核心算法的单元测试。
+  - `runtime/`：运行时层，扫描链上队列并驱动签名/DKG 流程。
+    - `deps.go`：Runtime 依赖接口与基础类型定义。
+    - `manager.go`：Runtime 生命周期管理与主循环调度。
+    - `manager_test.go`：Manager 与 Scanner 的单元测试。
+    - `scanner.go`：扫描链上 FIFO 提现队列并定位待处理任务。
+    - `job_planner.go`：生成确定性签名任务与模板参数。
+    - `withdraw_worker.go`：提现流程执行器，提交 FrostWithdrawSignedTx。
+    - `transition_worker.go`：DKG 轮换流程执行器，提交 commit/share/validation 交易。
+    - `coordinator.go`：ROAST 协调者会话管理与签名聚合。
+    - `participant.go`：签名参与者处理 nonce/份额并回复协调者。
+    - `signer.go`：签名服务封装，驱动协调者并等待结果。
+    - `signer_test.go`：签名服务与 ROAST 签名逻辑测试。
+    - `vault_committee.go`：Top10000 矿工到 Vault 委员会的确定性分配算法。
+    - `vault_committee_test.go`：委员会分配算法的单元测试。
+    - `vault_committee_provider.go`：从链上读取配置并生成委员会信息。
+    - `vault_committee_provider_test.go`：Vault 委员会 Provider 的单元测试。
+    - `adapters/`：运行时与外部 DB/TxPool 的适配器实现。
+      - `state_reader.go`：StateDB/DB 读取接口适配为 ChainStateReader。
+      - `tx_submitter.go`：TxPool 提交器与测试用 Fake 实现。
+      - `adapters_test.go`：StateReader 与 TxSubmitter 适配器测试。
+    - `net/`：P2P FrostEnvelope 路由与消息处理。
+      - `msg.go`：FrostEnvelope 路由器与反序列化分发。
+      - `handlers.go`：默认消息处理器注册（占位转发）。
+      - `msg_test.go`：P2P 路由器的单元测试。
+    - `session/`：本地会话状态与 nonce 持久化管理。
+      - `types.go`：会话状态、参与者与事件类型定义。
+      - `store.go`：nonce 绑定与 SessionStore 实现。
+      - `store_test.go`：SessionStore 相关单元测试。
+      - `roast.go`：运行时 ROAST 会话状态机实现。
+      - `roast_test.go`：运行时 ROAST 会话与恢复逻辑测试。
+      - `recovery.go`：会话持久化与重启恢复逻辑。
+  - `security/`：安全与防重放工具。
+    - `ecies.go`：secp256k1 ECIES 加解密与 share 校验工具。
+    - `ecies_test.go`：ECIES 加解密与 share 校验的单元测试。
+    - `idempotency.go`：幂等检查、ID 生成与序列防重放工具。
+    - `signing.go`：FrostEnvelope 签名/验签与模板哈希绑定工具。
+  - `sign/`：独立实验工具目录。
+    - `main.go`：BTC Taproot 交易构建与签名示例程序。
+
 ## 1. 入口与生命周期
 - 实际入口：`cmd/main.go`
 - 启动阶段（按代码顺序）：
