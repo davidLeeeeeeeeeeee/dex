@@ -19,3 +19,9 @@ type CurvePoint = types.CurvePoint
 type NonceInput = types.NonceInput
 type ShareInput = types.ShareInput
 type PartialSignParams = types.PartialSignParams
+
+// SignerSetProvider 从 runtime 包导入
+type SignerSetProvider interface {
+	Top10000(height uint64) ([]SignerInfo, error)
+	CurrentEpoch(height uint64) uint64
+}

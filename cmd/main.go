@@ -14,6 +14,7 @@ import (
 	"dex/frost/chain/btc"
 	frostrt "dex/frost/runtime"
 	"dex/frost/runtime/adapters"
+	"dex/frost/runtime/committee"
 	"dex/handlers"
 	"dex/logs"
 	"dex/middleware"
@@ -392,6 +393,41 @@ ContinueWithConsensus:
 			adapterFactory := chain.NewDefaultAdapterFactory()
 			adapterFactory.RegisterAdapter(btc.NewBTCAdapter("mainnet")) // BTC 适配器
 
+			// 创建 TxSubmitter（适配 txpool）
+			var txSubmitter frostrt.TxSubmitter
+			if node.TxPool != nil && node.SenderManager != nil {
+				txPoolAdapter := adapters.NewTxPoolAdapter(node.TxPool, node.SenderManager)
+				txSubmitter = adapters.NewTxPoolSubmitter(txPoolAdapter)
+			}
+
+			// 创建 FinalityNotifier（适配 EventBus）
+			var notifier frostrt.FinalityNotifier
+			if node.ConsensusManager != nil {
+				eventBus := node.ConsensusManager.GetEventBus()
+				if eventBus != nil {
+					notifier = adapters.NewEventBusFinalityNotifier(eventBus)
+				}
+			}
+
+			// 创建 P2P（适配 Transport）
+			var p2p frostrt.P2P
+			if node.ConsensusManager != nil && node.ConsensusManager.Transport != nil {
+				p2p = adapters.NewTransportP2P(node.ConsensusManager.Transport, frostrt.NodeID(node.Address))
+			}
+
+			// 创建 SignerProvider（从 consensus 获取）
+			var signerProvider frostrt.SignerSetProvider
+			if node.DBManager != nil {
+				dbAdapter := adapters.NewDBManagerAdapter(node.DBManager)
+				signerProvider = adapters.NewConsensusSignerProvider(dbAdapter)
+			}
+
+			// 创建 VaultProvider（使用 DefaultVaultCommitteeProvider）
+			var vaultProvider frostrt.VaultCommitteeProvider
+			if stateReader != nil {
+				vaultProvider = committee.NewDefaultVaultCommitteeProvider(stateReader, committee.DefaultVaultCommitteeProviderConfig())
+			}
+
 			// 创建 FROST Runtime Manager
 			frostCfg := frostrt.ManagerConfig{
 				NodeID: frostrt.NodeID(node.Address),
@@ -402,12 +438,12 @@ ContinueWithConsensus:
 			}
 			frostDeps := frostrt.ManagerDeps{
 				StateReader:    stateReader,
-				TxSubmitter:    nil, // TODO: 需要适配 txpool
-				Notifier:       nil, // TODO: 需要实现 FinalityNotifier
-				P2P:            nil, // TODO: 需要适配 P2P 层
+				TxSubmitter:    txSubmitter,
+				Notifier:       notifier,
+				P2P:            p2p,
 				RoastMessenger: roastMessenger,
-				SignerProvider: nil, // TODO: 从 consensus 获取 signer set
-				VaultProvider:  nil, // TODO: 实现 VaultCommitteeProvider
+				SignerProvider: signerProvider,
+				VaultProvider:  vaultProvider,
 				AdapterFactory: adapterFactory,
 			}
 			frostManager := frostrt.NewManager(frostCfg, frostDeps)

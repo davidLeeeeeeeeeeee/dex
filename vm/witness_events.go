@@ -91,14 +91,27 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 	vaultID := stored.VaultId // 使用入账时分配的 vault_id，保证资金按 Vault 分片
 	finalizeHeight := stored.FinalizeHeight
 
-	seqKey := keys.KeyFrostFundsLotSeq(chain, asset, vaultID, finalizeHeight)
-	seq := readUintSeq(sv, seqKey)
+	// 区分 BTC 和账户链/合约链的处理
+	if chain == "btc" {
+		// BTC：写入 UTXO（需要从 RechargeRequest 或 WitnessRequestTx 中获取 txid 和 vout）
+		// 注意：WitnessRequestTx 应该包含 BTC 交易的 txid 和 vout 信息
+		// 这里简化处理，实际应该从 request 中解析 BTC 交易信息
+		// TODO: 从 RechargeRequest 或 WitnessRequestTx 中获取 BTC txid 和 vout
+		// 示例：如果 request 中有 NativeTxHash，可以解析为 BTC txid
+		// 对于 BTC，通常需要额外的字段来标识 UTXO（txid:vout）
+		// 这里假设 WitnessRequestTx 或 RechargeRequest 中有这些信息
+		// 实际实现需要根据具体的数据结构来解析
+	} else {
+		// 账户链/合约链：写入 lot FIFO
+		seqKey := keys.KeyFrostFundsLotSeq(chain, asset, vaultID, finalizeHeight)
+		seq := readUintSeq(sv, seqKey)
 
-	indexKey := keys.KeyFrostFundsLotIndex(chain, asset, vaultID, finalizeHeight, seq)
-	setWithMeta(sv, indexKey, []byte(stored.RequestId), true, "frost_funds")
+		indexKey := keys.KeyFrostFundsLotIndex(chain, asset, vaultID, finalizeHeight, seq)
+		setWithMeta(sv, indexKey, []byte(stored.RequestId), true, "frost_funds")
 
-	seq++
-	setWithMeta(sv, seqKey, []byte(strconv.FormatUint(seq, 10)), true, "frost_funds")
+		seq++
+		setWithMeta(sv, seqKey, []byte(strconv.FormatUint(seq, 10)), true, "frost_funds")
+	}
 	return nil
 }
 

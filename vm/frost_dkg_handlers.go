@@ -643,6 +643,17 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 	vault.GroupPubkey = req.NewGroupPubkey
 	vault.SignAlgo = transition.SignAlgo
 	vault.Status = VaultStatusKeyReady
+	// 更新委员会成员（从 transition 获取）
+	if len(transition.NewCommitteeMembers) > 0 {
+		vault.CommitteeMembers = transition.NewCommitteeMembers
+	}
+	// 设置 lifecycle：DKG 完成后，如果这是首次创建，lifecycle 为 KEY_READY
+	// 如果是从旧 Vault 轮换来的，lifecycle 应该已经在 transition 中设置
+	if transition.Lifecycle != "" {
+		// transition 中可能已经有 lifecycle 信息，但 VaultState 本身不存储 lifecycle
+		// lifecycle 主要在 VaultTransitionState 中管理
+		// VaultState 的 status 字段用于表示密钥状态：PENDING -> KEY_READY -> ACTIVE
+	}
 
 	updatedVaultData, err := proto.Marshal(vault)
 	if err != nil {

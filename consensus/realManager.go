@@ -174,6 +174,14 @@ func (m *ConsensusNodeManager) GetCurrentHeight() uint64 {
 	return m.store.GetCurrentHeight()
 }
 
+// GetEventBus 获取事件总线（用于适配器）
+func (m *ConsensusNodeManager) GetEventBus() interfaces.EventBus {
+	if m.Node != nil {
+		return m.Node.events
+	}
+	return nil
+}
+
 // IsReady 检查共识是否准备就绪
 func (m *ConsensusNodeManager) IsReady() bool {
 	// 检查各组件是否就绪

@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"dex/frost/runtime"
 	"dex/pb"
+	"dex/sender"
+	"dex/txpool"
 	"encoding/hex"
 	"errors"
 	"sync"
@@ -23,6 +25,52 @@ type TxPool interface {
 	AddTx(tx proto.Message) error
 	// Broadcast 广播交易
 	Broadcast(tx proto.Message) error
+}
+
+// TxPoolAdapter 适配 txpool.TxPool 到 adapters.TxPool 接口
+type TxPoolAdapter struct {
+	txPool *txpool.TxPool
+	sender *sender.SenderManager
+}
+
+// NewTxPoolAdapter 创建新的 TxPoolAdapter
+func NewTxPoolAdapter(txPool *txpool.TxPool, sender *sender.SenderManager) *TxPoolAdapter {
+	return &TxPoolAdapter{
+		txPool: txPool,
+		sender: sender,
+	}
+}
+
+// AddTx 添加交易到池中
+func (a *TxPoolAdapter) AddTx(tx proto.Message) error {
+	// 将 proto.Message 转换为 pb.AnyTx
+	anyTx, ok := tx.(*pb.AnyTx)
+	if !ok {
+		// 如果不是 AnyTx，尝试包装
+		anyTx = &pb.AnyTx{}
+		// TODO: 根据实际类型设置 Content
+	}
+	
+	// 使用 txpool 的 SubmitTx 方法
+	return a.txPool.SubmitTx(anyTx, "", func(txID string) {
+		// 广播回调
+		if a.sender != nil {
+			a.sender.BroadcastTx(anyTx)
+		}
+	})
+}
+
+// Broadcast 广播交易
+func (a *TxPoolAdapter) Broadcast(tx proto.Message) error {
+	if a.sender == nil {
+		return nil
+	}
+	anyTx, ok := tx.(*pb.AnyTx)
+	if !ok {
+		return nil
+	}
+	a.sender.BroadcastTx(anyTx)
+	return nil
 }
 
 // TxPoolSubmitter 基于 TxPool 的 TxSubmitter 实现

@@ -119,9 +119,21 @@ func computeDkgValidationMsgHash(chain string, vaultID uint32, epochID uint64, s
 func verifyDkgValidationSignature(signAlgo pb.SignAlgo, pubkey, msg, sig []byte) (bool, error) {
 	switch signAlgo {
 	case pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340:
+		if len(pubkey) != 32 {
+			return false, fmt.Errorf("invalid pubkey length for BIP340 (expected 32 bytes)")
+		}
 		return frost.VerifyBIP340(pubkey, msg, sig)
+	case pb.SignAlgo_SIGN_ALGO_SCHNORR_ALT_BN128:
+		if len(pubkey) != 64 {
+			return false, fmt.Errorf("invalid pubkey length for BN128 (expected 64 bytes)")
+		}
+		return frost.VerifyBN128(pubkey, msg, sig)
+	case pb.SignAlgo_SIGN_ALGO_ED25519:
+		if len(pubkey) != 32 {
+			return false, fmt.Errorf("invalid pubkey length for Ed25519 (expected 32 bytes)")
+		}
+		return frost.VerifyEd25519(pubkey, msg, sig)
 	default:
-		// 其他算法暂不支持
 		return false, fmt.Errorf("unsupported sign_algo: %v", signAlgo)
 	}
 }

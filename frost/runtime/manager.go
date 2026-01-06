@@ -387,7 +387,7 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 	maxInFlight := 1 // 默认值，应该从配置读取
 	m.withdrawWorker = workers.NewWithdrawWorker(deps.StateReader, deps.AdapterFactory, deps.TxSubmitter, signingServiceAdapter, deps.VaultProvider, maxInFlight)
 	
-	m.transitionWorker = workers.NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, string(config.NodeID))
+	m.transitionWorker = workers.NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, deps.VaultProvider, deps.SignerProvider, string(config.NodeID))
 	m.roastDispatcher = roast.NewDispatcher(m.coordinator, m.participant)
 	m.frostRouter = frostRouter
 
@@ -494,8 +494,12 @@ func (m *Manager) runLoop(ctx context.Context) {
 func (m *Manager) onFinalized(ctx context.Context, height uint64) {
 	log.Printf("[FrostManager] Processing finalized block: height=%d", height)
 
-	// 检查是否有需要启动的 DKG 会话
-	// TODO: 从链上读取 DKG 触发条件
+	// 检查是否有需要启动的 DKG 会话（触发条件检测）
+	if m.transitionWorker != nil {
+		if err := m.transitionWorker.CheckTriggerConditions(ctx, height); err != nil {
+			log.Printf("[FrostManager] CheckTriggerConditions error: %v", err)
+		}
+	}
 }
 
 // scanAndProcess 扫描并处理提现请求

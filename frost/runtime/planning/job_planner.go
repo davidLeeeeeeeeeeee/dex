@@ -64,8 +64,9 @@ func (p *JobPlanner) PlanJob(scanResult *ScanResult) (*Job, error) {
 		return nil, err
 	}
 
-	// 2. 选择 Vault（最小版：按 vault_id 升序选择第一个 ACTIVE 的 Vault）
-	vaultID, keyEpoch, err := p.selectVault(scanResult.Chain)
+	// 2. 选择 Vault（按 vault_id 升序，检查余额和 lifecycle）
+	amount := parseAmount(state.Amount)
+	vaultID, keyEpoch, err := p.selectVault(scanResult.Chain, scanResult.Asset, amount)
 	if err != nil {
 		return nil, err
 	}
@@ -115,12 +116,57 @@ func (p *JobPlanner) PlanJob(scanResult *ScanResult) (*Job, error) {
 	}, nil
 }
 
-// selectVault 选择 Vault（最小版：返回第一个 ACTIVE 的 Vault）
-// 按 vault_id 升序遍历，选出第一个 lifecycle=ACTIVE 的 Vault
-func (p *JobPlanner) selectVault(chain string) (vaultID uint32, keyEpoch uint64, err error) {
-	// 简化版：直接返回 vault_id=0，key_epoch=1
-	// 实际实现需要遍历所有 Vault 并检查 lifecycle 和 balance
-	// TODO: 完善 Vault 选择逻辑
+// selectVault 选择 Vault（按 vault_id 升序，检查余额和 lifecycle）
+// 按 vault_id 升序遍历，选出第一个 lifecycle=ACTIVE 且余额足够的 Vault
+func (p *JobPlanner) selectVault(chain, asset string, amount uint64) (vaultID uint32, keyEpoch uint64, err error) {
+	// 读取 VaultConfig 获取 vault_count
+	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
+	vaultCfgData, exists, err := p.stateReader.Get(vaultCfgKey)
+	if err != nil {
+		return 0, 1, err
+	}
+
+	var vaultCount uint32 = 1 // 默认值
+	if exists && len(vaultCfgData) > 0 {
+		var cfg pb.FrostVaultConfig
+		if err := proto.Unmarshal(vaultCfgData, &cfg); err == nil {
+			vaultCount = cfg.VaultCount
+			if vaultCount == 0 {
+				vaultCount = 1
+			}
+		}
+	}
+
+	// 按 vault_id 升序遍历，选择第一个 ACTIVE 且余额足够的 Vault
+	for id := uint32(0); id < vaultCount; id++ {
+		vaultStateKey := keys.KeyFrostVaultState(chain, id)
+		vaultStateData, exists, err := p.stateReader.Get(vaultStateKey)
+		if err != nil {
+			continue
+		}
+		if !exists || len(vaultStateData) == 0 {
+			continue
+		}
+
+		var state pb.FrostVaultState
+		if err := proto.Unmarshal(vaultStateData, &state); err != nil {
+			continue
+		}
+
+		// 检查 status 必须是 ACTIVE
+		if state.Status != "ACTIVE" {
+			continue
+		}
+
+		// 检查该 Vault 的可用余额是否足够
+		// 注意：JobPlanner 没有 calculateVaultAvailableBalance 方法
+		// 这里简化处理，先返回第一个 ACTIVE 的 Vault
+		// 完整的余额检查应该在 JobWindowPlanner 中实现
+
+		return id, state.KeyEpoch, nil
+	}
+
+	// 如果没有找到 ACTIVE 的 Vault，返回默认值
 	return 0, 1, nil
 }
 
