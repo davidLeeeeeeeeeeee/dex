@@ -253,7 +253,6 @@ func createE2ETestAccount(t *testing.T, dbMgr *db.Manager, address string, balan
 		account.Balances[token] = &pb.TokenBalance{
 			Balance:                balance,
 			MinerLockedBalance:     "0",
-			CandidateLockedBalance: "0",
 		}
 	}
 

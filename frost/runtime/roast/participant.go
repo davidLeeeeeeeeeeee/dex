@@ -1,7 +1,7 @@
-// frost/runtime/participant.go
+// frost/runtime/roast/participant.go
 // FROST Participant: 签名参与者，响应协调者请求，生成 nonce 和签名份额
 
-package runtime
+package roast
 
 import (
 	"errors"
@@ -175,7 +175,7 @@ func (p *Participant) HandleNonceRequest(env *FrostEnvelope) error {
 }
 
 // HandleRoastNonceRequest handles nonce requests using RoastEnvelope.
-func (p *Participant) HandleRoastNonceRequest(env *RoastEnvelope) error {
+func (p *Participant) HandleRoastNonceRequest(env *Envelope) error {
 	if env == nil {
 		return ErrInvalidNonceRequest
 	}
@@ -197,6 +197,10 @@ func (p *Participant) HandleRoastNonceRequest(env *RoastEnvelope) error {
 	if myIndex < 0 {
 		return ErrParticipantNotInCommittee
 	}
+
+	// 验证请求是否来自当前协调者（防止旧协调者的请求）
+	// 注意：这里简化处理，实际应该根据区块高度计算当前协调者
+	// TODO: 实现完整的协调者验证逻辑
 
 	// 获取本地密钥份额
 	myShare := p.GetShare(env.Chain, env.VaultID, env.Epoch)
@@ -302,7 +306,7 @@ func (p *Participant) sendNonceCommitment(sess *ParticipantSession, coordinator 
 	sess.mu.RLock()
 	defer sess.mu.RUnlock()
 
-	msg := &RoastEnvelope{
+	msg := &Envelope{
 		SessionID: sess.JobID,
 		Kind:      "NonceCommit",
 		From:      p.nodeID,
@@ -315,7 +319,7 @@ func (p *Participant) sendNonceCommitment(sess *ParticipantSession, coordinator 
 	}
 
 	if p.messenger != nil {
-		return p.messenger.Send(coordinator, msg)
+		return p.messenger.Send(coordinator, toTypesRoastEnvelope(msg))
 	}
 	return nil
 }
@@ -336,7 +340,7 @@ func (p *Participant) HandleSignRequest(env *FrostEnvelope) error {
 }
 
 // HandleRoastSignRequest handles sign requests using RoastEnvelope.
-func (p *Participant) HandleRoastSignRequest(env *RoastEnvelope) error {
+func (p *Participant) HandleRoastSignRequest(env *Envelope) error {
 	if env == nil {
 		return ErrInvalidSignRequest
 	}
@@ -529,7 +533,7 @@ func (p *Participant) sendSignatureShares(sess *ParticipantSession, coordinator 
 		payload = append(payload, share...)
 	}
 
-	msg := &RoastEnvelope{
+	msg := &Envelope{
 		SessionID: sess.JobID,
 		Kind:      "SigShare",
 		From:      p.nodeID,
@@ -542,7 +546,7 @@ func (p *Participant) sendSignatureShares(sess *ParticipantSession, coordinator 
 	}
 
 	if p.messenger != nil {
-		return p.messenger.Send(coordinator, msg)
+		return p.messenger.Send(coordinator, toTypesRoastEnvelope(msg))
 	}
 	return nil
 }

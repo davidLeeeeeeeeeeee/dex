@@ -411,33 +411,157 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "empty reveal data"}, errors.New("empty reveal data")
 	}
 
-	// TODO: 验证 share 和 enc_rand 的正确性（通过密码学验证）
-	// 验证成功则更新投诉状态为 RESOLVED
+	// 4. 获取 transition 状态
+	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
+	transitionData, transitionExists, _ := sv.Get(transitionKey)
+	if !transitionExists || len(transitionData) == 0 {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "transition not found"}, errors.New("transition not found")
+	}
 
-	// 4. 更新投诉状态
-	complaint.Status = ComplaintStatusResolved
+	transition, err := unmarshalFrostVaultTransition(transitionData)
+	if err != nil {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
+	}
+
+	// 5. 获取 dealer 的 commitment 和原始 share
+	commitKey := keys.KeyFrostVaultDkgCommit(chain, vaultID, epochID, dealerID)
+	commitData, commitExists, _ := sv.Get(commitKey)
+	if !commitExists || len(commitData) == 0 {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "dealer commitment not found"}, errors.New("dealer commitment not found")
+	}
+
+	commitment := &pb.FrostVaultDkgCommitment{}
+	if err := proto.Unmarshal(commitData, commitment); err != nil {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse commitment"}, err
+	}
+
+	shareKey := keys.KeyFrostVaultDkgShare(chain, vaultID, epochID, dealerID, receiverID)
+	shareData, shareExists, _ := sv.Get(shareKey)
+	if !shareExists || len(shareData) == 0 {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "share not found"}, errors.New("share not found")
+	}
+
+	originalShare := &pb.FrostVaultDkgShare{}
+	if err := proto.Unmarshal(shareData, originalShare); err != nil {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse share"}, err
+	}
+
+	// 6. 验证 reveal（密码学验证）
+	receiverIndex := getReceiverIndexInCommittee(receiverID, transition.NewCommitteeMembers)
+	valid := verifyRevealInDryRun(req.Share, req.EncRand, originalShare.Ciphertext, commitment.CommitmentPoints, receiverIndex)
+
+	ops := []WriteOp{}
+
+	// 7. 根据验证结果处理
+	if valid {
+		// share 有效 - 恶意投诉
+		complaint.Status = ComplaintStatusResolved
+		logs.Info("[DKGReveal] share is valid, false complaint by receiver=%s", receiverID)
+
+		// 剔除投诉者（恶意投诉）
+		transition.NewCommitteeMembers = removeFromCommittee(transition.NewCommitteeMembers, receiverID)
+		transition.DkgN = uint32(len(transition.NewCommitteeMembers))
+
+		// 检查门限可行性
+		if int(transition.DkgN) < int(transition.DkgThresholdT) {
+			transition.DkgStatus = DKGStatusFailed
+			logs.Warn("[DKGReveal] insufficient qualified participants after removing %s, DKG failed", receiverID)
+		}
+
+		// 清空 dealer 的 commitment（share 已泄露，需要重新生成）
+		// 注意：只清空该 dealer 的 commitment，其他参与者保持不变
+		ops = append(ops, WriteOp{
+			Key:         commitKey,
+			Value:       nil, // 删除
+			Del:         true,
+			SyncStateDB: true,
+			Category:    "frost_dkg_commit",
+		})
+	} else {
+		// share 无效 - dealer 作恶
+		complaint.Status = ComplaintStatusDisqualified
+		logs.Info("[DKGReveal] share is invalid, dealer %s disqualified", dealerID)
+
+		// 剔除 dealer（作恶）
+		transition.NewCommitteeMembers = removeFromCommittee(transition.NewCommitteeMembers, dealerID)
+		transition.DkgN = uint32(len(transition.NewCommitteeMembers))
+
+		// 检查门限可行性
+		if int(transition.DkgN) < int(transition.DkgThresholdT) {
+			transition.DkgStatus = DKGStatusFailed
+			logs.Warn("[DKGReveal] insufficient qualified participants after removing %s, DKG failed", dealerID)
+		} else {
+			// 继续流程：其他参与者计算份额时直接排除该 dealer 的贡献
+			logs.Info("[DKGReveal] dealer %s disqualified, continuing DKG with remaining participants", dealerID)
+		}
+	}
+
+	// 更新投诉状态
 	updatedComplaintData, err := proto.Marshal(complaint)
 	if err != nil {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to marshal complaint"}, err
 	}
-
-	ops := []WriteOp{{
+	ops = append(ops, WriteOp{
 		Key:         complaintKey,
 		Value:       updatedComplaintData,
 		SyncStateDB: true,
 		Category:    "frost_dkg_complaint",
-	}}
+	})
+
+	// 更新 transition
+	updatedTransitionData, err := proto.Marshal(transition)
+	if err != nil {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to marshal transition"}, err
+	}
+	ops = append(ops, WriteOp{
+		Key:         transitionKey,
+		Value:       updatedTransitionData,
+		SyncStateDB: true,
+		Category:    "frost_vault_transition",
+	})
 
 	for _, op := range ops {
 		sv.Set(op.Key, op.Value)
 	}
 
-	logs.Debug("[DKGReveal] resolved complaint dealer=%s receiver=%s", dealerID, receiverID)
+	logs.Debug("[DKGReveal] resolved complaint dealer=%s receiver=%s valid=%v", dealerID, receiverID, valid)
 	return ops, &Receipt{TxID: txID, Status: "SUCCEED", WriteCount: len(ops)}, nil
 }
 
 func (h *FrostVaultDkgRevealTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
+}
+
+// verifyRevealInDryRun 在 DryRun 中验证 reveal 数据（简化版，实际应调用完整验证）
+func verifyRevealInDryRun(share, encRand, ciphertext []byte, commitmentPoints [][]byte, receiverIndex int) bool {
+	// 基本参数校验
+	if len(share) == 0 || len(encRand) == 0 || len(ciphertext) == 0 || len(commitmentPoints) == 0 {
+		return false
+	}
+	// TODO: 实现完整的密码学验证（ECIES 密文验证 + Feldman VSS commitment 验证）
+	// 这里简化处理，返回 true 表示验证通过
+	return true
+}
+
+// getReceiverIndexInCommittee 从委员会中获取成员索引（1-based）
+func getReceiverIndexInCommittee(receiverID string, committeeMembers []string) int {
+	for i, member := range committeeMembers {
+		if member == receiverID {
+			return i + 1 // 1-based index
+		}
+	}
+	return 0
+}
+
+// removeFromCommittee 从委员会中移除成员
+func removeFromCommittee(committee []string, memberID string) []string {
+	result := make([]string, 0, len(committee))
+	for _, m := range committee {
+		if m != memberID {
+			result = append(result, m)
+		}
+	}
+	return result
 }
 
 // ========== FrostVaultDkgValidationSignedTxHandler ==========

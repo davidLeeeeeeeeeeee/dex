@@ -3,19 +3,15 @@ package runtime
 import (
 	"context"
 
+	"dex/frost/runtime/types"
 	"dex/pb"
 )
 
-// NodeID 表示网络节点标识
-type NodeID string
+// NodeID 表示网络节点标识（从 types 包导入）
+type NodeID = types.NodeID
 
-// SignerInfo 表示签名者信息
-type SignerInfo struct {
-	ID        NodeID // 节点 ID
-	Index     uint32 // 在 Top10000 中的索引
-	PublicKey []byte // 公钥
-	Weight    uint64 // 权重（可选）
-}
+// SignerInfo 表示签名者信息（从 types 包导入）
+type SignerInfo = types.SignerInfo
 
 // ChainStateReader 读链上最终化状态（来自 StateDB/DB overlay 的只读视图）
 type ChainStateReader interface {
@@ -74,15 +70,14 @@ type SignerSetProvider interface {
 	CurrentEpoch(height uint64) uint64
 }
 
-// VaultCommitteeProvider Vault 委员会提供者（按 Vault 分片）
-type VaultCommitteeProvider interface {
-	// VaultCommittee 获取指定 Vault 的委员会成员（K 个）
-	VaultCommittee(chain string, vaultID uint32, epoch uint64) ([]SignerInfo, error)
-	// VaultCurrentEpoch 获取指定 Vault 的当前 epoch
-	VaultCurrentEpoch(chain string, vaultID uint32) uint64
-	// VaultGroupPubkey 获取指定 Vault 的 group_pubkey
-	VaultGroupPubkey(chain string, vaultID uint32, epoch uint64) ([]byte, error)
-}
+// VaultCommitteeProvider Vault 委员会提供者（从 types 包导入）
+type VaultCommitteeProvider = types.VaultCommitteeProvider
+
+// RoastEnvelope ROAST 消息封装（从 types 包导入）
+type RoastEnvelope = types.RoastEnvelope
+
+// RoastMessenger ROAST 消息传输接口（从 types 包导入）
+type RoastMessenger = types.RoastMessenger
 
 // ChainAdapter 和 ChainAdapterFactory 接口定义在 frost/chain/adapter.go
 // 这里不再重复定义，直接使用 frost/chain 包中的类型：
@@ -92,3 +87,22 @@ type VaultCommitteeProvider interface {
 // 使用示例：
 //   import "dex/frost/chain"
 //   func NewWorker(factory chain.ChainAdapterFactory) { ... }
+
+// PBEnvelopeFromRoast 将 RoastEnvelope 编码为 pb.FrostEnvelope（包装roast包的函数）
+func PBEnvelopeFromRoast(msg *RoastEnvelope) (*pb.FrostEnvelope, error) {
+	if msg == nil {
+		return nil, nil
+	}
+	// 直接构建pb.FrostEnvelope
+	// TODO: 使用roast包的PBEnvelopeFromRoast函数进行完整转换
+	kind := pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_RESPONSE
+	if msg.Kind == "NonceRequest" || msg.Kind == "SignRequest" {
+		kind = pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_REQUEST
+	}
+	return &pb.FrostEnvelope{
+		From:    string(msg.From),
+		Kind:    kind,
+		Payload: msg.Payload,
+		JobId:   msg.SessionID,
+	}, nil
+}

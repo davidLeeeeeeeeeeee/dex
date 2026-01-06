@@ -1,7 +1,7 @@
 // frost/runtime/vault_committee_test.go
 // VaultCommittee 单元测试
 
-package runtime
+package committee
 
 import (
 	"testing"

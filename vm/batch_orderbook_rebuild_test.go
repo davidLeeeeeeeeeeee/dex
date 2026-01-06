@@ -368,7 +368,6 @@ func createTestAccount(t *testing.T, db *MockDB, address, tokenAddress, balance 
 	account.Balances[tokenAddress] = &pb.TokenBalance{
 		Balance:                balance,
 		MinerLockedBalance:     "0",
-		CandidateLockedBalance: "0",
 	}
 
 	// 序列化并保存（使用 JSON）

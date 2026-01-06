@@ -1,7 +1,7 @@
-// frost/runtime/signer.go
+// frost/runtime/roast/signer.go
 // 签名服务：协调 ROAST/FROST 签名流程
 
-package runtime
+package roast
 
 import (
 	"context"

@@ -111,10 +111,6 @@ func KeyMinerHistory(txID string) string {
 	return keys.KeyMinerHistory(txID)
 }
 
-func KeyCandidateHistory(txID string) string {
-	return keys.KeyCandidateHistory(txID)
-}
-
 func KeyRechargeHistory(txID string) string {
 	return keys.KeyRechargeHistory(txID)
 }
@@ -124,10 +120,6 @@ func KeyFreezeHistory(txID string) string {
 }
 
 // ===================== 索引相关 =====================
-
-func KeyCandidateIndex(candidateAddress, userAddress string) string {
-	return keys.KeyCandidateIndex(candidateAddress, userAddress)
-}
 
 func KeyRechargeRecord(address, tweak string) string {
 	return keys.KeyRechargeRecord(address, tweak)

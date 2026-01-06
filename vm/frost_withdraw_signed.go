@@ -161,22 +161,30 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 			}
 		}
 
-		// 获取 Vault 公钥（用于验签）
+		// 获取 Vault 公钥和签名算法（用于验签）
 		vaultStateKey := keys.KeyFrostVaultState(chainName, vaultID)
 		vaultStateData, vaultExists, vaultErr := sv.Get(vaultStateKey)
 		if vaultErr != nil || !vaultExists || len(vaultStateData) == 0 {
 			// Vault 状态不存在，生产环境应报错
 			// 测试环境跳过验签
 		} else {
-			// 解析 Vault 状态获取公钥
+			// 解析 Vault 状态获取公钥和签名算法
 			vaultState := &pb.FrostVaultState{}
 			if err := proto.Unmarshal(vaultStateData, vaultState); err != nil {
 				return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse vault state"}, err
 			}
 
 			pubKey := vaultState.GroupPubkey
-			if len(pubKey) != 32 {
-				return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid vault pubkey length"}, errors.New("invalid vault pubkey length")
+			signAlgo := vaultState.SignAlgo
+			if signAlgo == pb.SignAlgo_SIGN_ALGO_UNSPECIFIED {
+				// 从 VaultConfig 获取
+				vaultCfgKey := keys.KeyFrostVaultConfig(chainName, 0)
+				if cfgData, exists, _ := sv.Get(vaultCfgKey); exists {
+					var cfg pb.FrostVaultConfig
+					if err := proto.Unmarshal(cfgData, &cfg); err == nil {
+						signAlgo = cfg.SignAlgo
+					}
+				}
 			}
 
 			// 复算每个 input 的 Taproot sighash
@@ -185,15 +193,15 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 				return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to compute sighash: " + err.Error()}, err
 			}
 
-			// 对每个 input 验签
+			// 对每个 input 验签（支持多曲线）
 			for i, sig := range inputSigs {
 				if len(sig) != 64 {
 					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid signature length for input"}, errors.New("invalid signature length")
 				}
 
-				valid, err := frost.VerifyBIP340(pubKey, sighashes[i], sig)
+				valid, err := verifySignature(signAlgo, pubKey, sighashes[i], sig)
 				if err != nil || !valid {
-					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "BTC signature verification failed for input"}, errors.New("BTC signature verification failed")
+					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "signature verification failed for input: " + err.Error()}, errors.New("signature verification failed")
 				}
 			}
 		}
@@ -331,6 +339,33 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 
 func (h *FrostWithdrawSignedTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
+}
+
+// verifySignature 验证签名（支持多曲线）
+// 根据 signAlgo 选择对应的验证算法
+func verifySignature(signAlgo pb.SignAlgo, pubKey, msg, sig []byte) (bool, error) {
+	switch signAlgo {
+	case pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340:
+		// BTC: BIP-340 Schnorr
+		if len(pubKey) != 32 {
+			return false, errors.New("invalid pubkey length for BIP340")
+		}
+		return frost.VerifyBIP340(pubKey, msg, sig)
+	case pb.SignAlgo_SIGN_ALGO_SCHNORR_ALT_BN128:
+		// ETH/BNB: alt_bn128 Schnorr
+		// TODO: 实现 bn128 验证
+		return false, errors.New("bn128 signature verification not implemented yet")
+	case pb.SignAlgo_SIGN_ALGO_ED25519:
+		// SOL: Ed25519
+		// TODO: 实现 Ed25519 验证
+		return false, errors.New("ed25519 signature verification not implemented yet")
+	case pb.SignAlgo_SIGN_ALGO_ECDSA_SECP256K1:
+		// TRX: ECDSA (GG20/CGGMP)
+		// TODO: 实现 ECDSA 验证
+		return false, errors.New("ecdsa signature verification not implemented yet")
+	default:
+		return false, errors.New("unsupported sign_algo: " + signAlgo.String())
+	}
 }
 
 // validateFIFOOrder 验证 withdraw_ids 是否从队首开始连续

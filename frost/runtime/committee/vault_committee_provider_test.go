@@ -1,6 +1,6 @@
-// frost/runtime/vault_committee_provider_test.go
+// frost/runtime/committee/vault_committee_provider_test.go
 
-package runtime
+package committee
 
 import (
 	"dex/keys"

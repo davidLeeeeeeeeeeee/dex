@@ -69,10 +69,15 @@ func (e *Executor) HandleFrostVaultDkgRevealTx(sender string, tx *pb.FrostVaultD
 	// 6. 获取 transition 状态以获取 committee 成员列表
 	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 	transition, err := e.DB.GetFrostVaultTransition(transitionKey)
-	var receiverIndex int
-	if err == nil && transition != nil {
-		receiverIndex = getReceiverIndex(receiverID, transition.NewCommitteeMembers)
+	if err != nil {
+		return fmt.Errorf("DKGReveal: failed to get transition: %w", err)
 	}
+	if transition == nil {
+		return fmt.Errorf("DKGReveal: transition not found")
+	}
+
+	var receiverIndex int
+	receiverIndex = getReceiverIndex(receiverID, transition.NewCommitteeMembers)
 
 	// 7. 获取 receiver 的公钥（用于密文验证）
 	// TODO: 从链上状态获取 receiver 的签名公钥
@@ -90,12 +95,50 @@ func (e *Executor) HandleFrostVaultDkgRevealTx(sender string, tx *pb.FrostVaultD
 		complaint.Status = ComplaintStatusResolved
 		logs.Info("[DKGReveal] share is valid, false complaint by receiver=%s", receiverID)
 
+		// 剔除投诉者（恶意投诉）
+		transition.NewCommitteeMembers = removeFromCommittee(transition.NewCommitteeMembers, receiverID)
+		transition.DkgN = uint32(len(transition.NewCommitteeMembers))
+
+		// 检查门限可行性
+		if int(transition.DkgN) < int(transition.DkgThresholdT) {
+			// 无法凑齐门限，必须重启 DKG
+			transition.DkgStatus = DKGStatusFailed
+			logs.Warn("[DKGReveal] insufficient qualified participants after removing %s, DKG failed", receiverID)
+		}
+
 		// 清空 dealer 的 commitment（share 已泄露，需要重新生成）
-		// 这里只记录状态，实际清空在外部处理
+		// 注意：只清空该 dealer 的 commitment，其他参与者保持不变
+		commitKey := keys.KeyFrostVaultDkgCommit(chain, vaultID, epochID, dealerID)
+		e.DB.EnqueueDel(commitKey)
+
+		// 更新 transition
+		if err := e.DB.SetFrostVaultTransition(transitionKey, transition); err != nil {
+			return fmt.Errorf("DKGReveal: failed to update transition: %w", err)
+		}
 	} else {
 		// share 无效 - dealer 作恶
 		complaint.Status = ComplaintStatusDisqualified
 		logs.Info("[DKGReveal] share is invalid, dealer %s disqualified", dealerID)
+
+		// 剔除 dealer（作恶）
+		transition.NewCommitteeMembers = removeFromCommittee(transition.NewCommitteeMembers, dealerID)
+		transition.DkgN = uint32(len(transition.NewCommitteeMembers))
+
+		// 检查门限可行性
+		if int(transition.DkgN) < int(transition.DkgThresholdT) {
+			// 无法凑齐门限，必须重启 DKG
+			transition.DkgStatus = DKGStatusFailed
+			logs.Warn("[DKGReveal] insufficient qualified participants after removing %s, DKG failed", dealerID)
+		} else {
+			// 继续流程：其他参与者计算份额时直接排除该 dealer 的贡献
+			// 注意：不需要重新生成多项式，只需在聚合时排除该 dealer
+			logs.Info("[DKGReveal] dealer %s disqualified, continuing DKG with remaining participants", dealerID)
+		}
+
+		// 更新 transition
+		if err := e.DB.SetFrostVaultTransition(transitionKey, transition); err != nil {
+			return fmt.Errorf("DKGReveal: failed to update transition: %w", err)
+		}
 	}
 
 	// 更新投诉状态

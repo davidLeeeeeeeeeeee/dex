@@ -379,6 +379,30 @@ func (s *DKGSession) GetAllAI0s() [][]byte {
 	return result
 }
 
+// GetLocalShare 获取本地密钥份额
+func (s *DKGSession) GetLocalShare() []byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.LocalShare == nil {
+		return nil
+	}
+	result := make([]byte, len(s.LocalShare))
+	copy(result, s.LocalShare)
+	return result
+}
+
+// GetGroupPubkey 获取群公钥
+func (s *DKGSession) GetGroupPubkey() []byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.GroupPubkey == nil {
+		return nil
+	}
+	result := make([]byte, len(s.GroupPubkey))
+	copy(result, s.GroupPubkey)
+	return result
+}
+
 // Close 关闭会话
 func (s *DKGSession) Close() {
 	s.mu.Lock()

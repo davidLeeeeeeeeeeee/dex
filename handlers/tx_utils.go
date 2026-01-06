@@ -36,12 +36,6 @@ func ExtractTxId(a *pb.AnyTx) (string, error) {
 		}
 		return tx.OrderTx.Base.TxId, nil
 
-	case *pb.AnyTx_CandidateTx:
-		if tx.CandidateTx.Base == nil {
-			return "", fmt.Errorf("CandidateTx base is nil")
-		}
-		return tx.CandidateTx.Base.TxId, nil
-
 	default:
 		return "", fmt.Errorf("unrecognized tx type")
 	}

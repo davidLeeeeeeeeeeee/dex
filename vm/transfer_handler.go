@@ -142,12 +142,11 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 	if toAccount.Balances[transfer.TokenAddress] == nil {
 		toAccount.Balances[transfer.TokenAddress] = &pb.TokenBalance{
-			Balance:                "0",
-			CandidateLockedBalance: "0",
-			MinerLockedBalance:     "0",
-			LiquidLockedBalance:    "0",
-			WitnessLockedBalance:   "0",
-			LeverageLockedBalance:  "0",
+			Balance:              "0",
+			MinerLockedBalance:   "0",
+			LiquidLockedBalance:  "0",
+			WitnessLockedBalance: "0",
+			LeverageLockedBalance: "0",
 		}
 	}
 

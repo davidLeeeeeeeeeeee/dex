@@ -11,8 +11,243 @@ import (
 	"dex/frost/chain"
 	frostrtnet "dex/frost/runtime/net"
 	"dex/frost/runtime/session"
+	"dex/frost/runtime/planning"
+	"dex/frost/runtime/roast"
+	"dex/frost/runtime/services"
+	"dex/frost/runtime/types"
+	"dex/frost/runtime/workers"
 	"dex/pb"
 )
+
+// planningReaderAdapter 适配器：将runtime.ChainStateReader转换为planning.ChainStateReader
+type planningReaderAdapter struct {
+	reader ChainStateReader
+}
+
+func (a *planningReaderAdapter) Get(key string) ([]byte, bool, error) {
+	return a.reader.Get(key)
+}
+
+func (a *planningReaderAdapter) Scan(prefix string, fn func(k string, v []byte) bool) error {
+	return a.reader.Scan(prefix, fn)
+}
+
+// vaultProviderAdapter 适配器：将runtime.VaultCommitteeProvider转换为roast.VaultCommitteeProvider
+type vaultProviderAdapter struct {
+	provider VaultCommitteeProvider
+}
+
+func (a *vaultProviderAdapter) VaultCommittee(chain string, vaultID uint32, epoch uint64) ([]roast.SignerInfo, error) {
+	committee, err := a.provider.VaultCommittee(chain, vaultID, epoch)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]roast.SignerInfo, len(committee))
+	for i, member := range committee {
+		result[i] = roast.SignerInfo{
+			ID:        roast.NodeID(member.ID),
+			Index:     member.Index,
+			PublicKey: member.PublicKey,
+			Weight:    member.Weight,
+		}
+	}
+	return result, nil
+}
+
+func (a *vaultProviderAdapter) VaultCurrentEpoch(chain string, vaultID uint32) uint64 {
+	return a.provider.VaultCurrentEpoch(chain, vaultID)
+}
+
+func (a *vaultProviderAdapter) VaultGroupPubkey(chain string, vaultID uint32, epoch uint64) ([]byte, error) {
+	return a.provider.VaultGroupPubkey(chain, vaultID, epoch)
+}
+
+// cryptoFactoryAdapter 适配器：将runtime.CryptoExecutorFactory转换为roast.CryptoExecutorFactory
+type cryptoFactoryAdapter struct {
+	factory CryptoExecutorFactory
+}
+
+func (a *cryptoFactoryAdapter) NewROASTExecutor(signAlgo int32) (roast.ROASTExecutor, error) {
+	return a.factory.NewROASTExecutor(signAlgo)
+}
+
+func (a *cryptoFactoryAdapter) NewDKGExecutor(signAlgo int32) (roast.DKGExecutor, error) {
+	return a.factory.NewDKGExecutor(signAlgo)
+}
+
+// workers适配器：将runtime类型转换为workers类型
+type workersStateReaderAdapter struct {
+	reader ChainStateReader
+}
+
+func (a *workersStateReaderAdapter) Get(key string) ([]byte, bool, error) {
+	return a.reader.Get(key)
+}
+
+func (a *workersStateReaderAdapter) Scan(prefix string, fn func(k string, v []byte) bool) error {
+	return a.reader.Scan(prefix, fn)
+}
+
+type workersTxSubmitterAdapter struct {
+	submitter TxSubmitter
+}
+
+func (a *workersTxSubmitterAdapter) Submit(tx any) (txID string, err error) {
+	return a.submitter.Submit(tx)
+}
+
+func (a *workersTxSubmitterAdapter) SubmitDkgCommitTx(ctx context.Context, tx *pb.FrostVaultDkgCommitTx) error {
+	return a.submitter.SubmitDkgCommitTx(ctx, tx)
+}
+
+func (a *workersTxSubmitterAdapter) SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error {
+	return a.submitter.SubmitDkgShareTx(ctx, tx)
+}
+
+func (a *workersTxSubmitterAdapter) SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error {
+	return a.submitter.SubmitDkgValidationSignedTx(ctx, tx)
+}
+
+type workersPubKeyProviderAdapter struct {
+	provider MinerPubKeyProvider
+}
+
+func (a *workersPubKeyProviderAdapter) GetMinerSigningPubKey(minerID string, signAlgo pb.SignAlgo) ([]byte, error) {
+	return a.provider.GetMinerSigningPubKey(minerID, signAlgo)
+}
+
+type workersCryptoFactoryAdapter struct {
+	factory CryptoExecutorFactory
+}
+
+func (a *workersCryptoFactoryAdapter) NewROASTExecutor(signAlgo int32) (workers.ROASTExecutor, error) {
+	return a.factory.NewROASTExecutor(signAlgo)
+}
+
+func (a *workersCryptoFactoryAdapter) NewDKGExecutor(signAlgo int32) (workers.DKGExecutor, error) {
+	return a.factory.NewDKGExecutor(signAlgo)
+}
+
+// workers适配器2：将runtime类型转换为workers类型（用于WithdrawWorker）
+type workersStateReaderAdapter2 struct {
+	reader ChainStateReader
+}
+
+func (a *workersStateReaderAdapter2) Get(key string) ([]byte, bool, error) {
+	return a.reader.Get(key)
+}
+
+func (a *workersStateReaderAdapter2) Scan(prefix string, fn func(k string, v []byte) bool) error {
+	return a.reader.Scan(prefix, fn)
+}
+
+type workersTxSubmitterAdapter2 struct {
+	submitter TxSubmitter
+}
+
+func (a *workersTxSubmitterAdapter2) Submit(tx any) (txID string, err error) {
+	return a.submitter.Submit(tx)
+}
+
+func (a *workersTxSubmitterAdapter2) SubmitDkgCommitTx(ctx context.Context, tx *pb.FrostVaultDkgCommitTx) error {
+	return a.submitter.SubmitDkgCommitTx(ctx, tx)
+}
+
+func (a *workersTxSubmitterAdapter2) SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error {
+	return a.submitter.SubmitDkgShareTx(ctx, tx)
+}
+
+func (a *workersTxSubmitterAdapter2) SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error {
+	return a.submitter.SubmitDkgValidationSignedTx(ctx, tx)
+}
+
+type workersVaultProviderAdapter struct {
+	provider VaultCommitteeProvider
+}
+
+func (a *workersVaultProviderAdapter) VaultCommittee(chain string, vaultID uint32, epoch uint64) ([]workers.SignerInfo, error) {
+	committee, err := a.provider.VaultCommittee(chain, vaultID, epoch)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]workers.SignerInfo, len(committee))
+	for i, member := range committee {
+		result[i] = workers.SignerInfo{
+			ID:        member.ID,
+			Index:     member.Index,
+			PublicKey: member.PublicKey,
+			Weight:    member.Weight,
+		}
+	}
+	return result, nil
+}
+
+func (a *workersVaultProviderAdapter) VaultCurrentEpoch(chain string, vaultID uint32) uint64 {
+	return a.provider.VaultCurrentEpoch(chain, vaultID)
+}
+
+func (a *workersVaultProviderAdapter) VaultGroupPubkey(chain string, vaultID uint32, epoch uint64) ([]byte, error) {
+	return a.provider.VaultGroupPubkey(chain, vaultID, epoch)
+}
+
+func (a *workersVaultProviderAdapter) CalculateThreshold(chain string, vaultID uint32) (int, error) {
+	return a.provider.CalculateThreshold(chain, vaultID)
+}
+
+// signingServiceAdapter 适配器：将services.SigningService转换为workers.SigningService
+type signingServiceAdapter struct {
+	service services.SigningService
+}
+
+func (a *signingServiceAdapter) StartSigningSession(ctx context.Context, params *workers.SigningSessionParams) (string, error) {
+	// 转换参数
+	serviceParams := &services.SigningSessionParams{
+		JobID:     params.JobID,
+		Chain:     params.Chain,
+		VaultID:   params.VaultID,
+		KeyEpoch:  params.KeyEpoch,
+		SignAlgo:  params.SignAlgo,
+		Messages:  params.Messages,
+		Threshold: params.Threshold,
+	}
+	return a.service.StartSigningSession(ctx, serviceParams)
+}
+
+func (a *signingServiceAdapter) GetSessionStatus(sessionID string) (*workers.SessionStatus, error) {
+	status, err := a.service.GetSessionStatus(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	// 转换状态
+	return &workers.SessionStatus{
+		SessionID:   status.SessionID,
+		JobID:       status.JobID,
+		State:       status.State,
+		Progress:    status.Progress,
+		StartedAt:   status.StartedAt,
+		CompletedAt: status.CompletedAt,
+		Error:       status.Error,
+	}, nil
+}
+
+func (a *signingServiceAdapter) CancelSession(sessionID string) error {
+	return a.service.CancelSession(sessionID)
+}
+
+func (a *signingServiceAdapter) WaitForCompletion(ctx context.Context, sessionID string, timeout time.Duration) (*workers.SignedPackage, error) {
+	pkg, err := a.service.WaitForCompletion(ctx, sessionID, timeout)
+	if err != nil {
+		return nil, err
+	}
+	// 转换签名包
+	return &workers.SignedPackage{
+		SessionID:    pkg.SessionID,
+		JobID:        pkg.JobID,
+		Signature:    pkg.Signature,
+		RawTx:        pkg.RawTx,
+		TemplateHash: pkg.TemplateHash,
+	}, nil
+}
 
 // ManagerConfig 管理器配置
 type ManagerConfig struct {
@@ -59,12 +294,12 @@ type Manager struct {
 	adapterFactory chain.ChainAdapterFactory
 
 	// 子组件
-	scanner          *Scanner
-	withdrawWorker   *WithdrawWorker
-	transitionWorker *TransitionWorker
-	coordinator      *Coordinator
-	participant      *Participant
-	roastDispatcher  *RoastDispatcher
+	scanner          *planning.Scanner
+	withdrawWorker   *workers.WithdrawWorker
+	transitionWorker *workers.TransitionWorker
+	coordinator      *roast.Coordinator
+	participant      *roast.Participant
+	roastDispatcher  *roast.Dispatcher
 	frostRouter      *frostrtnet.Router
 	sessionStore     *session.SessionStore
 
@@ -117,9 +352,13 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 		finalizedCh:    make(chan uint64, 100),
 	}
 
-	roastMessenger := deps.RoastMessenger
-	if roastMessenger == nil && deps.P2P != nil {
-		roastMessenger = NewP2PRoastMessenger(deps.P2P)
+	var roastMessenger types.RoastMessenger
+	if deps.RoastMessenger != nil {
+		// 使用提供的RoastMessenger，但需要适配为roast包使用的类型
+		roastMessenger = &roastMessengerAdapter{messenger: deps.RoastMessenger}
+	} else if deps.P2P != nil {
+		// 创建RoastMessenger适配器，将runtime.P2P适配为roast包使用的类型
+		roastMessenger = &roastMessengerAdapter{p2p: deps.P2P}
 	}
 	frostRouter := deps.FrostRouter
 	if frostRouter == nil {
@@ -128,12 +367,28 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 	}
 
 	// 初始化子组件
-	m.scanner = NewScanner(deps.StateReader)
-	m.withdrawWorker = NewWithdrawWorker(deps.StateReader, deps.AdapterFactory, deps.TxSubmitter)
-	m.transitionWorker = NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, string(config.NodeID))
-	m.coordinator = NewCoordinator(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, nil)
-	m.participant = NewParticipant(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, sessionStore, nil)
-	m.roastDispatcher = NewRoastDispatcher(m.coordinator, m.participant)
+	// 适配runtime.ChainStateReader到planning.ChainStateReader
+	planningReader := &planningReaderAdapter{reader: deps.StateReader}
+	m.scanner = planning.NewScanner(planningReader)
+	
+	// 创建 Coordinator 和 Participant（用于 SigningService）
+	// 由于接口已统一，直接使用runtime包中的类型
+	m.coordinator = roast.NewCoordinator(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, nil)
+	m.participant = roast.NewParticipant(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, sessionStore, nil)
+	
+	// 创建 SigningService
+	roastSigningService := services.NewRoastSigningService(m.coordinator, m.participant, deps.VaultProvider)
+	
+	// 创建适配器，将 services.SigningService 适配为 workers.SigningService
+	signingServiceAdapter := &signingServiceAdapter{service: roastSigningService}
+	
+	// 创建 WithdrawWorker（使用 SigningService）
+	// TODO: 从配置读取 maxInFlightPerChainAsset
+	maxInFlight := 1 // 默认值，应该从配置读取
+	m.withdrawWorker = workers.NewWithdrawWorker(deps.StateReader, deps.AdapterFactory, deps.TxSubmitter, signingServiceAdapter, deps.VaultProvider, maxInFlight)
+	
+	m.transitionWorker = workers.NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, string(config.NodeID))
+	m.roastDispatcher = roast.NewDispatcher(m.coordinator, m.participant)
 	m.frostRouter = frostRouter
 
 	return m
@@ -267,8 +522,8 @@ func (m *Manager) processChainAsset(ctx context.Context, chainName, asset string
 	log.Printf("[FrostManager] Found pending withdraw: chain=%s, asset=%s, id=%s, seq=%d",
 		chainName, asset, scanResult.WithdrawID, scanResult.Seq)
 
-	// 处理提现
-	job, err := m.withdrawWorker.ProcessOnce(chainName, asset)
+	// 处理提现（传入 context）
+	job, err := m.withdrawWorker.ProcessOnce(ctx, chainName, asset)
 	if err != nil {
 		log.Printf("[FrostManager] ProcessOnce error: %v", err)
 		return
@@ -280,17 +535,17 @@ func (m *Manager) processChainAsset(ctx context.Context, chainName, asset string
 }
 
 // GetCoordinator 获取协调者（用于测试）
-func (m *Manager) GetCoordinator() *Coordinator {
+func (m *Manager) GetCoordinator() *roast.Coordinator {
 	return m.coordinator
 }
 
 // GetParticipant 获取参与者（用于测试）
-func (m *Manager) GetParticipant() *Participant {
+func (m *Manager) GetParticipant() *roast.Participant {
 	return m.participant
 }
 
 // HandleRoastEnvelope routes a ROAST message to coordinator/participant.
-func (m *Manager) HandleRoastEnvelope(env *RoastEnvelope) error {
+func (m *Manager) HandleRoastEnvelope(env *roast.Envelope) error {
 	if m.roastDispatcher == nil {
 		return nil
 	}
@@ -302,19 +557,32 @@ func (m *Manager) HandleFrostEnvelope(env *FrostEnvelope) error {
 	if m.roastDispatcher == nil {
 		return nil
 	}
-	return m.roastDispatcher.HandleFrostEnvelope(env)
+	// 转换 runtime.FrostEnvelope 到 roast.FrostEnvelope
+	roastEnv := &roast.FrostEnvelope{
+		SessionID: env.SessionID,
+		Kind:      env.Kind,
+		From:      roast.NodeID(env.From),
+		Chain:     env.Chain,
+		VaultID:   env.VaultID,
+		SignAlgo:  env.SignAlgo,
+		Epoch:     env.Epoch,
+		Round:     env.Round,
+		Payload:   env.Payload,
+		Sig:       env.Sig,
+	}
+	return m.roastDispatcher.HandleFrostEnvelope(roastEnv)
 }
 
 // HandlePBEnvelope routes a protobuf envelope to ROAST or other handlers.
 func (m *Manager) HandlePBEnvelope(env *pb.FrostEnvelope) error {
 	if env == nil {
-		return ErrInvalidPBEnvelope
+		return roast.ErrInvalidPBEnvelope
 	}
 
 	switch env.Kind {
 	case pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_REQUEST,
 		pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_RESPONSE:
-		roastEnv, err := RoastEnvelopeFromPB(env)
+		roastEnv, err := roast.EnvelopeFromPB(env)
 		if err != nil {
 			return err
 		}
@@ -334,6 +602,62 @@ func (m *Manager) HandlePBEnvelope(env *pb.FrostEnvelope) error {
 }
 
 // GetTransitionWorker 获取 TransitionWorker（用于测试）
-func (m *Manager) GetTransitionWorker() *TransitionWorker {
+func (m *Manager) GetTransitionWorker() *workers.TransitionWorker {
 	return m.transitionWorker
+}
+
+// roastMessengerAdapter 适配器：将runtime.RoastMessenger适配为types.RoastMessenger
+type roastMessengerAdapter struct {
+	messenger RoastMessenger
+	p2p       P2P
+}
+
+func (a *roastMessengerAdapter) Send(to types.NodeID, msg *types.RoastEnvelope) error {
+	if a == nil || msg == nil {
+		return nil
+	}
+	if a.messenger != nil {
+		return a.messenger.Send(to, msg)
+	}
+	if a.p2p != nil {
+		// 转换types.RoastEnvelope到FrostEnvelope
+		frostEnv := &FrostEnvelope{
+			SessionID: msg.SessionID,
+			Kind:      msg.Kind,
+			From:      msg.From,
+			Chain:     msg.Chain,
+			VaultID:   msg.VaultID,
+			SignAlgo:  msg.SignAlgo,
+			Epoch:     msg.Epoch,
+			Round:     msg.Round,
+			Payload:   msg.Payload,
+		}
+		return a.p2p.Send(to, frostEnv)
+	}
+	return nil
+}
+
+func (a *roastMessengerAdapter) Broadcast(peers []types.NodeID, msg *types.RoastEnvelope) error {
+	if a == nil || msg == nil {
+		return nil
+	}
+	if a.messenger != nil {
+		return a.messenger.Broadcast(peers, msg)
+	}
+	if a.p2p != nil {
+		// 转换types.RoastEnvelope到FrostEnvelope
+		frostEnv := &FrostEnvelope{
+			SessionID: msg.SessionID,
+			Kind:      msg.Kind,
+			From:      msg.From,
+			Chain:     msg.Chain,
+			VaultID:   msg.VaultID,
+			SignAlgo:  msg.SignAlgo,
+			Epoch:     msg.Epoch,
+			Round:     msg.Round,
+			Payload:   msg.Payload,
+		}
+		return a.p2p.Broadcast(peers, frostEnv)
+	}
+	return nil
 }

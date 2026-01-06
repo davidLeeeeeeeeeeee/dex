@@ -1,7 +1,7 @@
-// frost/runtime/transition_worker.go
+// frost/runtime/workers/transition_worker.go
 // TransitionWorker: 处理 Vault DKG 轮换的运行时组件
 
-package runtime
+package workers
 
 import (
 	"context"

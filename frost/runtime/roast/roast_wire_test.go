@@ -1,4 +1,4 @@
-package runtime
+package roast
 
 import (
 	"bytes"
@@ -9,10 +9,10 @@ import (
 )
 
 func TestRoastEnvelopeWireRoundTrip(t *testing.T) {
-	msg := &RoastEnvelope{
+	msg := &Envelope{
 		SessionID: "job-1",
 		Kind:      "NonceCommit",
-		From:      "node-1",
+		From:      NodeID("node-1"),
 		Chain:     "btc",
 		VaultID:   10,
 		SignAlgo:  pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
@@ -29,9 +29,9 @@ func TestRoastEnvelopeWireRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected envelope kind: %v", env.Kind)
 	}
 
-	decoded, err := RoastEnvelopeFromPB(env)
+	decoded, err := EnvelopeFromPB(env)
 	if err != nil {
-		t.Fatalf("RoastEnvelopeFromPB failed: %v", err)
+		t.Fatalf("EnvelopeFromPB failed: %v", err)
 	}
 	if decoded.SessionID != msg.SessionID || decoded.Kind != msg.Kind || decoded.From != msg.From {
 		t.Fatalf("decoded header mismatch: got %+v want %+v", decoded, msg)
@@ -47,15 +47,15 @@ func TestRoastEnvelopeWireRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRoastEnvelopeFromPBEmptyPayload(t *testing.T) {
-	_, err := RoastEnvelopeFromPB(&pb.FrostEnvelope{})
+func TestEnvelopeFromPBEmptyPayload(t *testing.T) {
+	_, err := EnvelopeFromPB(&pb.FrostEnvelope{})
 	if !errors.Is(err, ErrEmptyRoastPayload) {
 		t.Fatalf("expected ErrEmptyRoastPayload, got %v", err)
 	}
 }
 
 func TestPBEnvelopeFromRoastInvalidKind(t *testing.T) {
-	_, err := PBEnvelopeFromRoast(&RoastEnvelope{
+	_, err := PBEnvelopeFromRoast(&Envelope{
 		SessionID: "job-1",
 		Kind:      "UnknownKind",
 	})

@@ -1,6 +1,6 @@
-// frost/runtime/job_planner.go
+// frost/runtime/planning/job_planner.go
 // 确定性 Job 规划器
-package runtime
+package planning
 
 import (
 	"crypto/sha256"

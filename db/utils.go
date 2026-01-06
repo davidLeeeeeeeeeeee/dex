@@ -123,11 +123,6 @@ func HashTx(tx proto.Message) (string, error) {
 			t.Base.TxId = ""
 			t.Base.Signature = nil
 		}
-	case *pb.CandidateTx:
-		if t.Base != nil {
-			t.Base.TxId = ""
-			t.Base.Signature = nil
-		}
 	case *pb.MinerTx:
 		if t.Base != nil {
 			t.Base.TxId = ""
@@ -156,11 +151,6 @@ func HashTx(tx proto.Message) (string, error) {
 			if content.OrderTx.Base != nil {
 				content.OrderTx.Base.TxId = ""
 				content.OrderTx.Base.Signature = nil
-			}
-		case *pb.AnyTx_CandidateTx:
-			if content.CandidateTx.Base != nil {
-				content.CandidateTx.Base.TxId = ""
-				content.CandidateTx.Base.Signature = nil
 			}
 		case *pb.AnyTx_MinerTx:
 			if content.MinerTx.Base != nil {

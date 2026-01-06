@@ -1,7 +1,7 @@
-// frost/runtime/roast_wire.go
+// frost/runtime/roast/roast_wire.go
 // Wire helpers to encode/decode ROAST envelopes through pb.FrostEnvelope.
 
-package runtime
+package roast
 
 import (
 	"encoding/json"
@@ -17,8 +17,8 @@ var (
 	ErrUnknownRoastEncode = errors.New("unable to encode roast envelope")
 )
 
-// RoastEnvelopeFromPB decodes a RoastEnvelope from pb.FrostEnvelope payload.
-func RoastEnvelopeFromPB(env *pb.FrostEnvelope) (*RoastEnvelope, error) {
+// EnvelopeFromPB decodes a Envelope from pb.FrostEnvelope payload.
+func EnvelopeFromPB(env *pb.FrostEnvelope) (*Envelope, error) {
 	if env == nil {
 		return nil, ErrInvalidPBEnvelope
 	}
@@ -26,7 +26,7 @@ func RoastEnvelopeFromPB(env *pb.FrostEnvelope) (*RoastEnvelope, error) {
 		return nil, ErrEmptyRoastPayload
 	}
 
-	var msg RoastEnvelope
+	var msg Envelope
 	if err := json.Unmarshal(env.Payload, &msg); err != nil {
 		return nil, err
 	}
@@ -56,8 +56,8 @@ func RoastEnvelopeFromPB(env *pb.FrostEnvelope) (*RoastEnvelope, error) {
 	return &msg, nil
 }
 
-// PBEnvelopeFromRoast encodes a RoastEnvelope into pb.FrostEnvelope payload.
-func PBEnvelopeFromRoast(msg *RoastEnvelope) (*pb.FrostEnvelope, error) {
+// PBEnvelopeFromRoast encodes a Envelope into pb.FrostEnvelope payload.
+func PBEnvelopeFromRoast(msg *Envelope) (*pb.FrostEnvelope, error) {
 	if msg == nil {
 		return nil, ErrUnknownRoastEncode
 	}

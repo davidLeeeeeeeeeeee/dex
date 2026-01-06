@@ -1,9 +1,10 @@
-// frost/runtime/vault_committee_provider.go
+// frost/runtime/committee/vault_committee_provider.go
 // 实现 VaultCommitteeProvider 接口，从链上读取 Top10000 和 VaultConfig
 
-package runtime
+package committee
 
 import (
+	"dex/frost/runtime"
 	"dex/keys"
 	"dex/pb"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 // DefaultVaultCommitteeProvider 默认的 VaultCommitteeProvider 实现
 // 从 ChainStateReader 读取链上数据
 type DefaultVaultCommitteeProvider struct {
-	stateReader  ChainStateReader
+	stateReader  runtime.ChainStateReader
 	cfg          VaultCommitteeProviderConfig
 	assigner     *VaultCommitteeAssigner
 }
@@ -37,7 +38,7 @@ func DefaultVaultCommitteeProviderConfig() VaultCommitteeProviderConfig {
 
 // NewDefaultVaultCommitteeProvider 创建 VaultCommitteeProvider
 func NewDefaultVaultCommitteeProvider(
-	stateReader ChainStateReader,
+	stateReader runtime.ChainStateReader,
 	cfg VaultCommitteeProviderConfig,
 ) *DefaultVaultCommitteeProvider {
 	return &DefaultVaultCommitteeProvider{
@@ -48,7 +49,7 @@ func NewDefaultVaultCommitteeProvider(
 }
 
 // VaultCommittee 获取指定 Vault 的委员会成员
-func (p *DefaultVaultCommitteeProvider) VaultCommittee(chain string, vaultID uint32, epoch uint64) ([]SignerInfo, error) {
+func (p *DefaultVaultCommitteeProvider) VaultCommittee(chain string, vaultID uint32, epoch uint64) ([]runtime.SignerInfo, error) {
 	// 1. 读取 Top10000 列表
 	top10000, err := p.GetTop10000()
 	if err != nil {
@@ -77,7 +78,7 @@ func (p *DefaultVaultCommitteeProvider) VaultCommittee(chain string, vaultID uin
 	)
 
 	// 4. 将索引转换为 SignerInfo
-	signers := make([]SignerInfo, 0, len(indices))
+	signers := make([]runtime.SignerInfo, 0, len(indices))
 	for _, idx := range indices {
 		signer := p.indexToSignerInfo(top10000, idx)
 		signers = append(signers, signer)
@@ -168,15 +169,15 @@ func (p *DefaultVaultCommitteeProvider) GetVaultState(chain string, vaultID uint
 }
 
 // indexToSignerInfo 将矿工索引转换为 SignerInfo
-func (p *DefaultVaultCommitteeProvider) indexToSignerInfo(top10000 *pb.FrostTop10000, idx uint64) SignerInfo {
+func (p *DefaultVaultCommitteeProvider) indexToSignerInfo(top10000 *pb.FrostTop10000, idx uint64) runtime.SignerInfo {
 	// 在 Top10000 中查找对应索引的信息
 	for i, minerIdx := range top10000.Indices {
 		if minerIdx == idx {
-			signer := SignerInfo{
+			signer := runtime.SignerInfo{
 				Index: uint32(idx),
 			}
 			if i < len(top10000.Addresses) {
-				signer.ID = NodeID(top10000.Addresses[i])
+				signer.ID = runtime.NodeID(top10000.Addresses[i])
 			}
 			if i < len(top10000.PublicKeys) {
 				signer.PublicKey = top10000.PublicKeys[i]
@@ -186,7 +187,7 @@ func (p *DefaultVaultCommitteeProvider) indexToSignerInfo(top10000 *pb.FrostTop1
 	}
 
 	// 未找到时返回仅包含索引的信息
-	return SignerInfo{
+	return runtime.SignerInfo{
 		Index: uint32(idx),
 	}
 }
@@ -210,5 +211,5 @@ func (p *DefaultVaultCommitteeProvider) CalculateThreshold(chain string, vaultID
 }
 
 // Ensure DefaultVaultCommitteeProvider implements VaultCommitteeProvider
-var _ VaultCommitteeProvider = (*DefaultVaultCommitteeProvider)(nil)
+var _ runtime.VaultCommitteeProvider = (*DefaultVaultCommitteeProvider)(nil)
 

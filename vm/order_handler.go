@@ -470,16 +470,14 @@ func (h *OrderTxHandler) updateAccountBalances(
 		}
 		if account.Balances[orderTx.BaseToken] == nil {
 			account.Balances[orderTx.BaseToken] = &pb.TokenBalance{
-				Balance:                "0",
-				MinerLockedBalance:     "0",
-				CandidateLockedBalance: "0",
+				Balance:            "0",
+				MinerLockedBalance: "0",
 			}
 		}
 		if account.Balances[orderTx.QuoteToken] == nil {
 			account.Balances[orderTx.QuoteToken] = &pb.TokenBalance{
-				Balance:                "0",
-				MinerLockedBalance:     "0",
-				CandidateLockedBalance: "0",
+				Balance:            "0",
+				MinerLockedBalance: "0",
 			}
 		}
 

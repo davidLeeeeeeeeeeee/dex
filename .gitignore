@@ -1,0 +1,4 @@
+data/
+.vscode/
+*.exe
+output_dex.txt

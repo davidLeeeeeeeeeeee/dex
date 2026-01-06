@@ -116,12 +116,11 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 
 	if account.Balances[tokenAddress] == nil {
 		account.Balances[tokenAddress] = &pb.TokenBalance{
-			Balance:                  issueTx.TotalSupply,
-			CandidateLockedBalance:   "0",
-			MinerLockedBalance:       "0",
-			LiquidLockedBalance:      "0",
-			WitnessLockedBalance:     "0",
-			LeverageLockedBalance:    "0",
+			Balance:              issueTx.TotalSupply,
+			MinerLockedBalance:   "0",
+			LiquidLockedBalance:  "0",
+			WitnessLockedBalance: "0",
+			LeverageLockedBalance: "0",
 		}
 	} else {
 		// 如果已存在余额（理论上不应该发生），累加

@@ -1,7 +1,7 @@
-// frost/runtime/coordinator.go
+// frost/runtime/roast/coordinator.go
 // ROAST Coordinator: 协调签名会话，收集 nonce 承诺和签名份额
 
-package runtime
+package roast
 
 import (
 	"bytes"
@@ -215,6 +215,22 @@ func (c *Coordinator) computeCoordinatorIndex(sess *roastsession.Session) int {
 	return 0
 }
 
+// shouldRotateCoordinator 检查是否应该切换协调者（超时切换）
+func (c *Coordinator) shouldRotateCoordinator(sess *roastsession.Session) bool {
+	// 计算自会话开始以来经过的区块数
+	blocksElapsed := c.currentHeight - sess.StartHeight
+
+	// 如果超过轮换区块数，且当前协调者索引已变化，则需要切换
+	if blocksElapsed >= c.config.AggregatorRotateBlocks {
+		// 计算新的协调者索引
+		newCoordIndex := c.computeCoordinatorIndex(sess)
+		// 如果新的协调者不是本节点，则需要切换
+		return sess.MyIndex != newCoordIndex
+	}
+
+	return false
+}
+
 // computeAggregatorSeed 计算聚合者选举种子
 func computeAggregatorSeed(jobID string, keyEpoch uint64) []byte {
 	data := jobID + "|" + string(rune(keyEpoch)) + "|frost_agg"
@@ -242,10 +258,21 @@ func permuteCommittee(committee []roastsession.Participant, seed []byte) []roast
 func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession.Session) {
 	logs.Info("[Coordinator] starting session %s", sess.JobID)
 
+	// 定期检查协调者切换的 ticker
+	rotateTicker := time.NewTicker(1 * time.Second)
+	defer rotateTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-rotateTicker.C:
+			// 检查是否需要切换协调者（超时切换）
+			if !c.isCurrentCoordinator(sess) {
+				// 本节点不再是协调者，停止循环
+				logs.Info("[Coordinator] no longer coordinator for session %s, stopping", sess.JobID)
+				return
+			}
 		default:
 		}
 
@@ -260,7 +287,13 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 			if c.waitForNonces(ctx, sess) {
 				sess.SetState(roastsession.SignSessionStateCollectingShares)
 			} else {
-				// 超时，尝试重试
+				// 超时，检查是否需要切换协调者
+				if c.shouldRotateCoordinator(sess) {
+					logs.Info("[Coordinator] rotating coordinator for session %s due to timeout", sess.JobID)
+					// 停止当前循环，让新的协调者接管
+					return
+				}
+				// 否则尝试重试
 				if !c.retryWithNewSet(sess) {
 					sess.SetState(roastsession.SignSessionStateFailed)
 					return
@@ -275,7 +308,13 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 			if c.waitForShares(ctx, sess) {
 				sess.SetState(roastsession.SignSessionStateAggregating)
 			} else {
-				// 超时，尝试重试
+				// 超时，检查是否需要切换协调者
+				if c.shouldRotateCoordinator(sess) {
+					logs.Info("[Coordinator] rotating coordinator for session %s due to timeout", sess.JobID)
+					// 停止当前循环，让新的协调者接管
+					return
+				}
+				// 否则尝试重试
 				if !c.retryWithNewSet(sess) {
 					sess.SetState(roastsession.SignSessionStateFailed)
 					return
@@ -286,6 +325,12 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 			// 聚合签名
 			if err := c.aggregateSignatures(sess); err != nil {
 				logs.Error("[Coordinator] aggregate failed: %v", err)
+				// 检查是否需要切换协调者
+				if c.shouldRotateCoordinator(sess) {
+					logs.Info("[Coordinator] rotating coordinator for session %s due to aggregate failure", sess.JobID)
+					return
+				}
+				// 否则尝试重试
 				if !c.retryWithNewSet(sess) {
 					sess.SetState(roastsession.SignSessionStateFailed)
 					return
@@ -318,7 +363,7 @@ func (c *Coordinator) broadcastNonceRequest(sess *roastsession.Session) {
 		return
 	}
 
-	msg := &RoastEnvelope{
+	msg := &Envelope{
 		SessionID: sess.JobID,
 		Kind:      "NonceRequest",
 		From:      c.nodeID,
@@ -329,7 +374,7 @@ func (c *Coordinator) broadcastNonceRequest(sess *roastsession.Session) {
 		Round:     1,
 	}
 
-	_ = c.messenger.Broadcast(peers, msg)
+	_ = c.messenger.Broadcast(peers, toTypesRoastEnvelope(msg))
 }
 
 // waitForNonces 等待收集 nonce
@@ -372,7 +417,7 @@ func (c *Coordinator) broadcastSignRequest(sess *roastsession.Session) {
 		return
 	}
 
-	msg := &RoastEnvelope{
+	msg := &Envelope{
 		SessionID: sess.JobID,
 		Kind:      "SignRequest",
 		From:      c.nodeID,
@@ -384,7 +429,7 @@ func (c *Coordinator) broadcastSignRequest(sess *roastsession.Session) {
 		Payload:   aggregatedNonces,
 	}
 
-	_ = c.messenger.Broadcast(peers, msg)
+	_ = c.messenger.Broadcast(peers, toTypesRoastEnvelope(msg))
 }
 
 // aggregateNonces 聚合 nonce 承诺
@@ -554,7 +599,7 @@ func (c *Coordinator) HandleNonceCommit(env *FrostEnvelope) error {
 }
 
 // HandleRoastNonceCommit handles nonce commitments from a RoastEnvelope.
-func (c *Coordinator) HandleRoastNonceCommit(env *RoastEnvelope) error {
+func (c *Coordinator) HandleRoastNonceCommit(env *Envelope) error {
 	if env == nil {
 		return ErrInvalidRoastPayload
 	}
@@ -586,7 +631,7 @@ func (c *Coordinator) HandleSigShare(env *FrostEnvelope) error {
 }
 
 // HandleRoastSigShare handles signature shares from a RoastEnvelope.
-func (c *Coordinator) HandleRoastSigShare(env *RoastEnvelope) error {
+func (c *Coordinator) HandleRoastSigShare(env *Envelope) error {
 	if env == nil {
 		return ErrInvalidRoastPayload
 	}

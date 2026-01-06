@@ -1,31 +1,33 @@
-// frost/runtime/roast_dispatcher.go
+// frost/runtime/roast/roast_dispatcher.go
 // RoastDispatcher routes ROAST messages to coordinator/participant handlers.
 
-package runtime
+package roast
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrInvalidRoastMessage = errors.New("invalid roast message")
 	ErrUnknownRoastKind    = errors.New("unknown roast message kind")
 )
 
-// RoastDispatcher dispatches ROAST messages without exposing transport details.
-type RoastDispatcher struct {
+// Dispatcher dispatches ROAST messages without exposing transport details.
+type Dispatcher struct {
 	coordinator *Coordinator
 	participant *Participant
 }
 
-// NewRoastDispatcher creates a dispatcher bound to coordinator/participant.
-func NewRoastDispatcher(coordinator *Coordinator, participant *Participant) *RoastDispatcher {
-	return &RoastDispatcher{
+// NewDispatcher creates a dispatcher bound to coordinator/participant.
+func NewDispatcher(coordinator *Coordinator, participant *Participant) *Dispatcher {
+	return &Dispatcher{
 		coordinator: coordinator,
 		participant: participant,
 	}
 }
 
 // Handle routes a RoastEnvelope to the appropriate handler.
-func (d *RoastDispatcher) Handle(msg *RoastEnvelope) error {
+func (d *Dispatcher) Handle(msg *Envelope) error {
 	if msg == nil {
 		return ErrInvalidRoastMessage
 	}
@@ -57,6 +59,6 @@ func (d *RoastDispatcher) Handle(msg *RoastEnvelope) error {
 }
 
 // HandleFrostEnvelope routes a transport envelope to ROAST handlers.
-func (d *RoastDispatcher) HandleFrostEnvelope(env *FrostEnvelope) error {
+func (d *Dispatcher) HandleFrostEnvelope(env *FrostEnvelope) error {
 	return d.Handle(FromFrostEnvelope(env))
 }

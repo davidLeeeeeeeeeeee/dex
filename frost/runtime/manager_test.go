@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"dex/frost/chain"
+	"dex/frost/runtime/planning"
+	"dex/frost/runtime/workers"
 	"dex/keys"
 	"dex/pb"
 	"sync"
@@ -197,7 +199,7 @@ func (r *fakeStateReader) Scan(prefix string, fn func(k string, v []byte) bool) 
 // TestScanner 测试 Scanner
 func TestScanner(t *testing.T) {
 	reader := newFakeStateReader()
-	scanner := NewScanner(reader)
+	scanner := planning.NewScanner(reader)
 
 	// 测试空队列
 	t.Run("EmptyQueue", func(t *testing.T) {
@@ -247,7 +249,7 @@ func TestScanner(t *testing.T) {
 	// 测试 SIGNED 状态的 withdraw 不返回
 	t.Run("SkipSignedWithdraw", func(t *testing.T) {
 		reader2 := newFakeStateReader()
-		scanner2 := NewScanner(reader2)
+		scanner2 := planning.NewScanner(reader2)
 
 		reader2.Set(keys.KeyFrostWithdrawFIFOSeq("ETH", "native"), []byte("1"))
 		reader2.Set(keys.KeyFrostWithdrawFIFOIndex("ETH", "native", 1), []byte("test_withdraw_2"))
@@ -345,7 +347,7 @@ func TestJobPlanner(t *testing.T) {
 	factory := newFakeAdapterFactory()
 	factory.Register("BTC")
 
-	planner := NewJobPlanner(reader, factory)
+	planner := planning.NewJobPlanner(reader, factory)
 
 	// 设置 withdraw 状态
 	withdrawState := &pb.FrostWithdrawState{
@@ -361,7 +363,7 @@ func TestJobPlanner(t *testing.T) {
 	reader.Set(keys.KeyFrostWithdraw("test_withdraw_1"), data)
 
 	// 创建扫描结果
-	scanResult := &ScanResult{
+	scanResult := &planning.ScanResult{
 		Chain:      "BTC",
 		Asset:      "native",
 		WithdrawID: "test_withdraw_1",
@@ -451,7 +453,10 @@ func TestWithdrawWorker(t *testing.T) {
 	factory.Register("BTC")
 	submitter := newFakeTxSubmitter()
 
-	worker := NewWithdrawWorker(reader, factory, submitter)
+	// 创建fake signingService和vaultProvider
+	var signingService workers.SigningService = nil // TODO: 创建fake实现
+	var vaultProvider VaultCommitteeProvider = nil  // TODO: 创建fake实现
+	worker := workers.NewWithdrawWorker(reader, factory, submitter, signingService, vaultProvider, 1)
 
 	// 设置 withdraw 队列
 	reader.Set(keys.KeyFrostWithdrawFIFOSeq("BTC", "native"), []byte("1"))
@@ -470,7 +475,8 @@ func TestWithdrawWorker(t *testing.T) {
 	reader.Set(keys.KeyFrostWithdraw("test_withdraw_1"), data)
 
 	// 处理一次
-	job, err := worker.ProcessOnce("BTC", "native")
+	ctx := context.Background()
+	job, err := worker.ProcessOnce(ctx, "BTC", "native")
 	if err != nil {
 		t.Fatalf("ProcessOnce failed: %v", err)
 	}
@@ -515,10 +521,14 @@ func TestWithdrawWorker_EmptyQueue(t *testing.T) {
 	factory.Register("BTC")
 	submitter := newFakeTxSubmitter()
 
-	worker := NewWithdrawWorker(reader, factory, submitter)
+	// 创建fake signingService和vaultProvider
+	var signingService workers.SigningService = nil // TODO: 创建fake实现
+	var vaultProvider VaultCommitteeProvider = nil  // TODO: 创建fake实现
+	worker := workers.NewWithdrawWorker(reader, factory, submitter, signingService, vaultProvider, 1)
 
 	// 处理空队列
-	job, err := worker.ProcessOnce("BTC", "native")
+	ctx := context.Background()
+	job, err := worker.ProcessOnce(ctx, "BTC", "native")
 	if err != nil {
 		t.Fatalf("ProcessOnce failed: %v", err)
 	}

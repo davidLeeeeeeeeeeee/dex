@@ -217,7 +217,6 @@ func TestBasicExecution(t *testing.T) {
 			"token123": {
 				Balance:                "1000",
 				MinerLockedBalance:     "0",
-				CandidateLockedBalance: "0",
 			},
 		},
 	}
@@ -230,7 +229,6 @@ func TestBasicExecution(t *testing.T) {
 			"token123": {
 				Balance:                "500",
 				MinerLockedBalance:     "0",
-				CandidateLockedBalance: "0",
 			},
 		},
 	}
@@ -322,7 +320,6 @@ func TestCacheEffectiveness(t *testing.T) {
 			"token123": {
 				Balance:                "1000",
 				MinerLockedBalance:     "0",
-				CandidateLockedBalance: "0",
 			},
 		},
 	}
@@ -335,7 +332,6 @@ func TestCacheEffectiveness(t *testing.T) {
 			"token123": {
 				Balance:                "0",
 				MinerLockedBalance:     "0",
-				CandidateLockedBalance: "0",
 			},
 		},
 	}
@@ -447,7 +443,6 @@ func TestConcurrentExecution(t *testing.T) {
 				"token123": {
 					Balance:                "1000",
 					MinerLockedBalance:     "0",
-					CandidateLockedBalance: "0",
 				},
 			},
 		}
@@ -618,7 +613,6 @@ func BenchmarkPreExecute(b *testing.B) {
 				"token123": {
 					Balance:                "10000",
 					MinerLockedBalance:     "0",
-					CandidateLockedBalance: "0",
 				},
 			},
 		}

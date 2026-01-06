@@ -252,7 +252,6 @@ func createTestAccount(t *testing.T, dbMgr *db.Manager, address string, balances
 		account.Balances[token] = &pb.TokenBalance{
 			Balance:                amount,
 			MinerLockedBalance:     "0",
-			CandidateLockedBalance: "0",
 		}
 	}
 

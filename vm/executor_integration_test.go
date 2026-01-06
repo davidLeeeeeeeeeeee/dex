@@ -109,7 +109,6 @@ func TestWriteOpSyncStateDB(t *testing.T) {
 			"FB": {
 				Balance:                "1000",
 				MinerLockedBalance:     "0",
-				CandidateLockedBalance: "0",
 			},
 		},
 	}
@@ -203,7 +202,6 @@ func TestWriteOpNoSyncStateDB(t *testing.T) {
 			"FB": {
 				Balance:                "10000",
 				MinerLockedBalance:     "0",
-				CandidateLockedBalance: "0",
 			},
 		},
 	}
@@ -278,7 +276,6 @@ func TestIdempotency(t *testing.T) {
 			"FB": {
 				Balance:                "1000",
 				MinerLockedBalance:     "0",
-				CandidateLockedBalance: "0",
 			},
 		},
 	}

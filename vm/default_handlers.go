@@ -7,7 +7,6 @@ func RegisterDefaultHandlers(reg *HandlerRegistry) error {
 		&FreezeTxHandler{},     // 冻结/解冻Token交易
 		&TransferTxHandler{},   // 转账交易
 		&OrderTxHandler{},      // 订单交易
-		&CandidateTxHandler{},  // 委托人投票交易
 		&MinerTxHandler{},      // 矿工交易
 		// Witness 相关交易处理器
 		&WitnessStakeTxHandler{},       // 见证者质押/解质押

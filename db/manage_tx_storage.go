@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/logs"
 	"dex/pb"
 	"dex/utils"
 	"fmt"
@@ -179,6 +180,9 @@ func (mgr *Manager) SaveMinerTx(tx *pb.MinerTx) error {
 		}
 	}
 
+	// 计算旧的 stake（在修改账户之前）
+	oldStake, _ := CalcStake(acc)
+
 	switch tx.Op {
 	case pb.OrderOp_ADD:
 		// (ADD) 2-a 判断是否已是矿工
@@ -233,9 +237,20 @@ func (mgr *Manager) SaveMinerTx(tx *pb.MinerTx) error {
 		return fmt.Errorf("unknown MinerTx op=%v", tx.Op)
 	}
 
+	// 计算新的 stake（在修改账户之后）
+	newStake, _ := CalcStake(acc)
+
 	// 3) 把更新后的账户写回
 	if err := mgr.SaveAccount(acc); err != nil {
 		return err
+	}
+
+	// 4) 更新 stake index（如果 stake 发生变化）
+	if !oldStake.Equal(newStake) {
+		if err := mgr.UpdateStakeIndex(oldStake, newStake, acc.Address); err != nil {
+			// 记录错误但不中断处理
+			logs.Error("[DB] failed to update stake index for %s: %v", acc.Address, err)
+		}
 	}
 
 	return nil

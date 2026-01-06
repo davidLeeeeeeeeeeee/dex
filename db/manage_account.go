@@ -57,23 +57,18 @@ func (mgr *Manager) GetAccount(address string) (*pb.Account, error) {
 	return account, nil
 }
 
-// CalcStake = receive_votes + FB.miner_locked_balance
+// CalcStake = FB.miner_locked_balance
 func CalcStake(acc *pb.Account) (decimal.Decimal, error) {
-	rv, err := decimal.NewFromString(acc.ReceiveVotes)
-	if err != nil {
-		rv = decimal.Zero // 如果acc.ReceiveVotes空或解析失败，可设为0
-	}
-
 	fbBal, ok := acc.Balances["FB"]
 	if !ok {
 		// 说明没有任何FB余额，锁定余额也为0
-		return rv, nil
+		return decimal.Zero, nil
 	}
-	ml, err2 := decimal.NewFromString(fbBal.MinerLockedBalance)
-	if err2 != nil {
+	ml, err := decimal.NewFromString(fbBal.MinerLockedBalance)
+	if err != nil {
 		ml = decimal.Zero
 	}
-	return rv.Add(ml), nil
+	return ml, nil
 }
 
 // 用来删掉旧stakeIndex再插入新的

@@ -11,8 +11,6 @@ func (m *AnyTx) GetBase() *BaseMessage {
 		return tx.Transaction.GetBase()
 	case *AnyTx_OrderTx:
 		return tx.OrderTx.GetBase()
-	case *AnyTx_CandidateTx:
-		return tx.CandidateTx.GetBase()
 	case *AnyTx_MinerTx:
 		return tx.MinerTx.GetBase()
 	case *AnyTx_WitnessStakeTx:

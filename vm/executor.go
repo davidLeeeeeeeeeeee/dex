@@ -255,9 +255,15 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 	// ========== 第二步：应用所有状态变更 ==========
 	// 遍历 Diff 中的所有写操作
 	stateDBUpdates := make([]interface{}, 0) // 用于收集需要同步到 StateDB 的更新
+	accountUpdates := make([]*WriteOp, 0)    // 用于收集账户更新，用于更新 stake index
 
 	for i := range res.Diff {
 		w := &res.Diff[i] // 使用指针，因为 WriteOp 的方法是指针接收器
+
+		// 检测账户更新（用于更新 stake index）
+		if !w.Del && (w.Category == "account" || strings.HasPrefix(w.Key, "v1_account_")) {
+			accountUpdates = append(accountUpdates, w)
+		}
 
 		// 写入到 DB
 		if w.Del {
@@ -272,7 +278,50 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 		}
 	}
 
-	// ========== 第三步：同步到 StateDB ==========
+	// ========== 第三步：更新 Stake Index ==========
+	// 对于账户更新，需要更新 stake index
+	if len(accountUpdates) > 0 {
+		// 尝试将 DBManager 转换为具有 UpdateStakeIndex 方法的类型
+		type StakeIndexUpdater interface {
+			UpdateStakeIndex(oldStake, newStake decimal.Decimal, address string) error
+		}
+		if updater, ok := x.DB.(StakeIndexUpdater); ok {
+			for _, w := range accountUpdates {
+				// 从 key 中提取地址（格式：v1_account_<address>）
+				address := extractAddressFromAccountKey(w.Key)
+				if address == "" {
+					continue
+				}
+
+				// 读取旧的账户数据（在应用 WriteOp 之前）
+				oldAccountData, err := x.DB.Get(w.Key)
+				var oldAccount pb.Account
+				var oldStake decimal.Decimal
+				if err == nil && oldAccountData != nil {
+					if err := proto.Unmarshal(oldAccountData, &oldAccount); err == nil {
+						oldStake, _ = calcStake(&oldAccount)
+					}
+				}
+
+				// 从新的 WriteOp.Value 中解析新的账户数据
+				var newAccount pb.Account
+				if err := proto.Unmarshal(w.Value, &newAccount); err != nil {
+					continue
+				}
+				newStake, _ := calcStake(&newAccount)
+
+				// 如果 stake 发生变化，更新 stake index
+				if !oldStake.Equal(newStake) {
+					if err := updater.UpdateStakeIndex(oldStake, newStake, address); err != nil {
+						// 记录错误但不中断提交
+						fmt.Printf("[VM] Warning: failed to update stake index for %s: %v\n", address, err)
+					}
+				}
+			}
+		}
+	}
+
+	// ========== 第四步：同步到 StateDB ==========
 	// 统一处理所有需要同步到 StateDB 的数据
 	if len(stateDBUpdates) > 0 && x.DB != nil {
 		if err := x.syncToStateDB(b.Height, stateDBUpdates); err != nil {
@@ -324,7 +373,9 @@ func (x *Executor) syncToStateDB(height uint64, updates []interface{}) error {
 	// 尝试调用 DB 的 StateDB 同步方法
 	// 这里假设 DBManager 接口有 SyncToStateDB 方法
 	// 如果没有，可以通过类型断言来调用
-	if syncable, ok := x.DB.(interface{ SyncToStateDB(uint64, []interface{}) error }); ok {
+	if syncable, ok := x.DB.(interface {
+		SyncToStateDB(uint64, []interface{}) error
+	}); ok {
 		return syncable.SyncToStateDB(height, updates)
 	}
 
@@ -340,6 +391,34 @@ func (x *Executor) IsBlockCommitted(height uint64) (bool, string) {
 		return false, ""
 	}
 	return true, string(blockID)
+}
+
+// extractAddressFromAccountKey 从账户 key 中提取地址
+// 格式：v1_account_<address> 或 account_<address>
+func extractAddressFromAccountKey(key string) string {
+	// 移除版本前缀
+	prefixes := []string{"v1_account_", "account_"}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(key, prefix) {
+			return strings.TrimPrefix(key, prefix)
+		}
+	}
+	return ""
+}
+
+// calcStake 计算账户的 stake（与 db.CalcStake 逻辑一致）
+// CalcStake = FB.miner_locked_balance
+func calcStake(acc *pb.Account) (decimal.Decimal, error) {
+	fbBal, ok := acc.Balances["FB"]
+	if !ok {
+		// 说明没有任何FB余额，锁定余额也为0
+		return decimal.Zero, nil
+	}
+	ml, err := decimal.NewFromString(fbBal.MinerLockedBalance)
+	if err != nil {
+		ml = decimal.Zero
+	}
+	return ml, nil
 }
 
 // GetTransactionStatus 获取交易状态

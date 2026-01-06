@@ -173,12 +173,6 @@ func KeyMinerHistory(txID string) string {
 	return withVer("miner_history_" + txID)
 }
 
-// KeyCandidateHistory 候选人历史
-// 例：v1_candidate_history_<txID>
-func KeyCandidateHistory(txID string) string {
-	return withVer("candidate_history_" + txID)
-}
-
 // KeyRechargeHistory 充值历史
 // 例：v1_recharge_history_<txID>
 func KeyRechargeHistory(txID string) string {
@@ -192,12 +186,6 @@ func KeyFreezeHistory(txID string) string {
 }
 
 // ===================== 索引相关 =====================
-
-// KeyCandidateIndex 候选人索引
-// 例：v1_candidate:<candidateAddress>|user:<userAddress>
-func KeyCandidateIndex(candidateAddress, userAddress string) string {
-	return withVer(fmt.Sprintf("candidate:%s|user:%s", candidateAddress, userAddress))
-}
 
 // KeyRechargeRecord 充值记录
 // 例：v1_recharge_record_<address>_<tweak>

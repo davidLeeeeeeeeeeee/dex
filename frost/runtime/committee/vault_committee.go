@@ -1,7 +1,7 @@
-// frost/runtime/vault_committee.go
+// frost/runtime/committee/vault_committee.go
 // Vault 委员会分配：确定性将 Top10000 分配到 M 个 Vault
 
-package runtime
+package committee
 
 import (
 	"crypto/sha256"

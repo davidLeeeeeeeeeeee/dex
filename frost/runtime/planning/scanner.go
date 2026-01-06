@@ -1,6 +1,6 @@
-// frost/runtime/scanner.go
+// frost/runtime/planning/scanner.go
 // Frost FIFO 队列扫描器
-package runtime
+package planning
 
 import (
 	"dex/keys"
@@ -9,6 +9,13 @@ import (
 
 	"google.golang.org/protobuf/proto"
 )
+
+// ChainStateReader 读链上最终化状态（来自 StateDB/DB overlay 的只读视图）
+// 定义在planning包中以避免import cycle
+type ChainStateReader interface {
+	Get(key string) ([]byte, bool, error)
+	Scan(prefix string, fn func(k string, v []byte) bool) error
+}
 
 // ScanResult 扫描结果
 type ScanResult struct {

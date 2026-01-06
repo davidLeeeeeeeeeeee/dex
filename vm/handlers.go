@@ -75,8 +75,6 @@ func DefaultKindFn(tx *pb.AnyTx) (string, error) {
 		return "transfer", nil
 	case *pb.AnyTx_OrderTx:
 		return "order", nil
-	case *pb.AnyTx_CandidateTx:
-		return "candidate", nil
 	case *pb.AnyTx_MinerTx:
 		return "miner", nil
 	// Witness 相关交易类型
