@@ -1,0 +1,12 @@
+﻿{
+  "name": "dex-explorer",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json -w"
+  }
+}

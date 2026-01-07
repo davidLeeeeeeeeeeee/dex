@@ -1,5 +1,68 @@
-// Generated from explorer/app.ts. Run "npm run build" in explorer/ to regenerate.
-const state = {
+// Source for explorer/app.js. Run "npm run build" in explorer/ to regenerate.
+type NodeSummary = {
+  address: string;
+  status?: string;
+  info?: string;
+  current_height?: number;
+  last_accepted_height?: number;
+  latency_ms?: number;
+  error?: string;
+  block?: BlockSummary;
+  frost_metrics?: FrostMetrics;
+};
+
+type BlockSummary = {
+  height: number;
+  block_hash?: string;
+  prev_block_hash?: string;
+  txs_hash?: string;
+  miner?: string;
+  tx_count: number;
+  tx_type_counts?: Record<string, number>;
+  accumulated_reward?: string;
+  window?: number;
+};
+
+type FrostMetrics = {
+  heap_alloc: number;
+  heap_sys: number;
+  num_goroutine: number;
+  frost_jobs: number;
+  frost_withdraws: number;
+};
+
+type NodesResponse = {
+  base_port: number;
+  count: number;
+  nodes: string[];
+};
+
+type SummaryRequest = {
+  nodes: string[];
+  include_block: boolean;
+  include_frost: boolean;
+};
+
+type SummaryResponse = {
+  generated_at?: string;
+  nodes: NodeSummary[];
+  errors?: string[];
+  selected?: string[];
+  elapsed_ms?: number;
+};
+
+type ExplorerState = {
+  nodes: string[];
+  customNodes: string[];
+  selected: Set<string>;
+  auto: boolean;
+  includeBlock: boolean;
+  includeFrost: boolean;
+  intervalMs: number;
+  timer: number | null;
+};
+
+const state: ExplorerState = {
   nodes: [],
   customNodes: [],
   selected: new Set(),
@@ -11,22 +74,22 @@ const state = {
 };
 
 const els = {
-  refreshBtn: document.getElementById("refreshBtn"),
-  autoToggle: document.getElementById("autoToggle"),
-  intervalSelect: document.getElementById("intervalSelect"),
-  includeBlock: document.getElementById("includeBlock"),
-  includeFrost: document.getElementById("includeFrost"),
-  nodeInput: document.getElementById("nodeInput"),
-  addNodeBtn: document.getElementById("addNodeBtn"),
-  selectAllBtn: document.getElementById("selectAllBtn"),
-  clearBtn: document.getElementById("clearBtn"),
-  nodeList: document.getElementById("nodeList"),
-  nodeCount: document.getElementById("nodeCount"),
-  cards: document.getElementById("cards"),
-  lastUpdate: document.getElementById("lastUpdate"),
-  statusLine: document.getElementById("statusLine"),
-  elapsedLine: document.getElementById("elapsedLine"),
-  defaultInfo: document.getElementById("defaultInfo"),
+  refreshBtn: document.getElementById("refreshBtn") as HTMLButtonElement,
+  autoToggle: document.getElementById("autoToggle") as HTMLInputElement,
+  intervalSelect: document.getElementById("intervalSelect") as HTMLSelectElement,
+  includeBlock: document.getElementById("includeBlock") as HTMLInputElement,
+  includeFrost: document.getElementById("includeFrost") as HTMLInputElement,
+  nodeInput: document.getElementById("nodeInput") as HTMLInputElement,
+  addNodeBtn: document.getElementById("addNodeBtn") as HTMLButtonElement,
+  selectAllBtn: document.getElementById("selectAllBtn") as HTMLButtonElement,
+  clearBtn: document.getElementById("clearBtn") as HTMLButtonElement,
+  nodeList: document.getElementById("nodeList") as HTMLDivElement,
+  nodeCount: document.getElementById("nodeCount") as HTMLSpanElement,
+  cards: document.getElementById("cards") as HTMLDivElement,
+  lastUpdate: document.getElementById("lastUpdate") as HTMLSpanElement,
+  statusLine: document.getElementById("statusLine") as HTMLSpanElement,
+  elapsedLine: document.getElementById("elapsedLine") as HTMLSpanElement,
+  defaultInfo: document.getElementById("defaultInfo") as HTMLSpanElement,
 };
 
 const storageKeys = {
@@ -38,44 +101,44 @@ const numberFormat = new Intl.NumberFormat("en-US");
 
 init();
 
-function init() {
+function init(): void {
   loadStoredState();
   bindEvents();
   loadDefaults();
 }
 
-function bindEvents() {
+function bindEvents(): void {
   els.refreshBtn.addEventListener("click", refreshSummary);
   els.autoToggle.addEventListener("change", (event) => {
-    state.auto = event.target.checked;
+    state.auto = (event.target as HTMLInputElement).checked;
     scheduleAuto();
   });
   els.intervalSelect.addEventListener("change", (event) => {
-    state.intervalMs = Number(event.target.value);
+    state.intervalMs = Number((event.target as HTMLSelectElement).value);
     scheduleAuto();
   });
   els.includeBlock.addEventListener("change", (event) => {
-    state.includeBlock = event.target.checked;
+    state.includeBlock = (event.target as HTMLInputElement).checked;
   });
   els.includeFrost.addEventListener("change", (event) => {
-    state.includeFrost = event.target.checked;
+    state.includeFrost = (event.target as HTMLInputElement).checked;
   });
   els.addNodeBtn.addEventListener("click", addNode);
   els.selectAllBtn.addEventListener("click", selectAll);
   els.clearBtn.addEventListener("click", clearSelection);
 }
 
-function loadStoredState() {
+function loadStoredState(): void {
   state.customNodes = safeParse(storageKeys.custom, []);
   const storedSelected = safeParse(storageKeys.selected, []);
   state.selected = new Set(storedSelected);
 }
 
-function loadDefaults() {
+function loadDefaults(): void {
   setStatus("Loading defaults...");
   fetch("/api/nodes")
     .then((resp) => resp.json())
-    .then((data) => {
+    .then((data: NodesResponse) => {
       const defaults = Array.isArray(data.nodes) ? data.nodes : [];
       state.nodes = mergeNodes(defaults, state.customNodes);
       if (state.selected.size === 0 && state.nodes.length > 0) {
@@ -85,27 +148,27 @@ function loadDefaults() {
       els.defaultInfo.textContent = `Default ${data.base_port} + ${data.count}`;
       setStatus("Defaults ready");
     })
-    .catch((err) => {
+    .catch((err: Error) => {
       setStatus(`Failed to load defaults: ${err.message}`);
       renderNodes();
     });
 }
 
-function mergeNodes(defaults, custom) {
-  const set = new Set();
+function mergeNodes(defaults: string[], custom: string[]): string[] {
+  const set = new Set<string>();
   defaults.forEach((node) => set.add(normalizeNode(node)));
   custom.forEach((node) => set.add(normalizeNode(node)));
   return Array.from(set).filter(Boolean);
 }
 
-function normalizeNode(value) {
+function normalizeNode(value: string): string {
   return String(value || "")
     .trim()
     .replace(/^https?:\/\//, "")
     .replace(/\/$/, "");
 }
 
-function renderNodes() {
+function renderNodes(): void {
   els.nodeList.innerHTML = "";
   state.nodes.forEach((node) => {
     const label = document.createElement("label");
@@ -134,11 +197,11 @@ function renderNodes() {
   updateSelectionCount();
 }
 
-function updateSelectionCount() {
+function updateSelectionCount(): void {
   els.nodeCount.textContent = `${state.selected.size} selected`;
 }
 
-function addNode() {
+function addNode(): void {
   const value = normalizeNode(els.nodeInput.value);
   if (!value) {
     return;
@@ -154,35 +217,38 @@ function addNode() {
   renderNodes();
 }
 
-function selectAll() {
+function selectAll(): void {
   state.nodes.forEach((node) => state.selected.add(node));
   persistSelection();
   renderNodes();
 }
 
-function clearSelection() {
+function clearSelection(): void {
   state.selected.clear();
   persistSelection();
   renderNodes();
 }
 
-function persistCustomNodes() {
+function persistCustomNodes(): void {
   localStorage.setItem(storageKeys.custom, JSON.stringify(state.customNodes));
 }
 
-function persistSelection() {
-  localStorage.setItem(storageKeys.selected, JSON.stringify(Array.from(state.selected)));
+function persistSelection(): void {
+  localStorage.setItem(
+    storageKeys.selected,
+    JSON.stringify(Array.from(state.selected))
+  );
   updateSelectionCount();
 }
 
-function refreshSummary() {
+function refreshSummary(): void {
   if (state.selected.size === 0) {
     renderEmptyState("Select at least one node to refresh.");
     return;
   }
 
   setStatus("Refreshing...");
-  const payload = {
+  const payload: SummaryRequest = {
     nodes: Array.from(state.selected),
     include_block: state.includeBlock,
     include_frost: state.includeFrost,
@@ -194,17 +260,17 @@ function refreshSummary() {
     body: JSON.stringify(payload),
   })
     .then((resp) => resp.json())
-    .then((data) => {
+    .then((data: SummaryResponse) => {
       renderSummary(data);
       setStatus("Snapshot updated");
     })
-    .catch((err) => {
+    .catch((err: Error) => {
       renderEmptyState(`Failed to load summary: ${err.message}`);
       setStatus("Snapshot failed");
     });
 }
 
-function renderSummary(data) {
+function renderSummary(data: SummaryResponse): void {
   els.cards.innerHTML = "";
   const nodes = Array.isArray(data.nodes) ? data.nodes : [];
   if (nodes.length === 0) {
@@ -294,17 +360,17 @@ function renderSummary(data) {
     : "";
 }
 
-function renderEmptyState(message) {
+function renderEmptyState(message: string): void {
   els.cards.innerHTML = `<div class="empty-state">${message}</div>`;
 }
 
-function statusClass(node) {
+function statusClass(node: NodeSummary): string {
   if (node.error) return "status-bad";
   if (node.status && node.status.toLowerCase() === "ok") return "status-good";
   return "status-warn";
 }
 
-function kv(label, value) {
+function kv(label: string, value: string): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "kv";
   const left = document.createElement("span");
@@ -316,19 +382,19 @@ function kv(label, value) {
   return row;
 }
 
-function truncate(value, max = 16) {
+function truncate(value?: string, max = 16): string {
   if (!value) return "-";
   if (value.length <= max) return value;
   return `${value.slice(0, max)}...`;
 }
 
-function formatNumber(value) {
+function formatNumber(value?: number | string | null): string {
   if (value === undefined || value === null) return "-";
   if (typeof value === "string") return value;
   return numberFormat.format(value);
 }
 
-function scheduleAuto() {
+function scheduleAuto(): void {
   if (state.timer) {
     clearInterval(state.timer);
     state.timer = null;
@@ -338,15 +404,15 @@ function scheduleAuto() {
   }
 }
 
-function setStatus(text) {
+function setStatus(text: string): void {
   els.statusLine.textContent = text;
 }
 
-function safeParse(key, fallback) {
+function safeParse<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return fallback;
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as T;
     return parsed ?? fallback;
   } catch {
     return fallback;
