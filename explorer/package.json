@@ -1,12 +1,14 @@
-﻿{
+{
   "name": "dex-explorer",
   "private": true,
   "type": "module",
   "devDependencies": {
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vite": "^7.3.1"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "watch": "tsc -p tsconfig.json -w"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   }
 }

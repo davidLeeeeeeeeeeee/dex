@@ -18,6 +18,7 @@ import (
 	"dex/frost/runtime/adapters"
 	"dex/frost/runtime/committee"
 	"dex/handlers"
+	"dex/keys"
 	"dex/logs"
 	"dex/middleware"
 	"dex/pb"
@@ -394,7 +395,7 @@ ContinueWithConsensus:
 			// 创建 ChainAdapterFactory 并注册链适配器
 			adapterFactory := chain.NewDefaultAdapterFactory()
 			adapterFactory.RegisterAdapter(btc.NewBTCAdapter("mainnet")) // BTC 适配器
-			
+
 			// 注册 EVM 适配器
 			if evmAdapter := evm.NewETHAdapter(); evmAdapter != nil {
 				adapterFactory.RegisterAdapter(evmAdapter)
@@ -402,12 +403,12 @@ ContinueWithConsensus:
 			if bnbAdapter := evm.NewBNBAdapter(); bnbAdapter != nil {
 				adapterFactory.RegisterAdapter(bnbAdapter)
 			}
-			
+
 			// 注册 Solana 适配器
 			if solAdapter := solana.NewSolanaAdapter(""); solAdapter != nil {
 				adapterFactory.RegisterAdapter(solAdapter)
 			}
-			
+
 			// TODO: 注册 Tron 适配器（待决策 - 需要 GG20/CGGMP）
 
 			// 创建 TxSubmitter（适配 txpool）
@@ -447,7 +448,7 @@ ContinueWithConsensus:
 
 			// 加载 FrostConfig
 			frostConfig := cfg.Frost
-			
+
 			// 从 FrostConfig 提取支持的链
 			var supportedChains []frostrt.ChainAssetPair
 			for chainName := range frostConfig.Chains {
@@ -469,11 +470,11 @@ ContinueWithConsensus:
 					Asset: asset,
 				})
 			}
-			
+
 			// 创建 FROST Runtime Manager
 			frostCfg := frostrt.ManagerConfig{
-				NodeID:         frostrt.NodeID(node.Address),
-				ScanInterval:   5 * time.Second,
+				NodeID:          frostrt.NodeID(node.Address),
+				ScanInterval:    5 * time.Second,
 				SupportedChains: supportedChains,
 			}
 			var roastMessenger frostrt.RoastMessenger
@@ -814,9 +815,52 @@ func generateTransactions(node *NodeInstance) {
 
 // 注册所有节点信息到每个节点的数据库
 func registerAllNodes(nodes []*NodeInstance) {
+	// 准备 Top10000 数据
+	top10000 := &pb.FrostTop10000{
+		Height:     0,
+		Indices:    make([]uint64, len(nodes)),
+		Addresses:  make([]string, len(nodes)),
+		PublicKeys: make([][]byte, len(nodes)),
+	}
+
+	for i, node := range nodes {
+		top10000.Indices[i] = uint64(i)
+		top10000.Addresses[i] = node.Address
+		// 简化处理：使用 P256 公钥作为默认公钥
+		// 实际应用中应该从 keyMgr 获取
+		top10000.PublicKeys[i] = []byte(fmt.Sprintf("node_%d_pub", i))
+	}
+	top10000Data, _ := proto.Marshal(top10000)
+
+	// 准备默认 VaultConfig
+	supportedChains := []string{"btc", "eth", "bnb"}
+	vaultConfigs := make(map[string][]byte)
+	for _, chainName := range supportedChains {
+		cfg := &pb.FrostVaultConfig{
+			Chain:          chainName,
+			VaultCount:     3,
+			CommitteeSize:  10,
+			ThresholdRatio: 0.67,
+			SignAlgo:       pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
+		}
+		if chainName == "eth" || chainName == "bnb" {
+			cfg.SignAlgo = pb.SignAlgo_SIGN_ALGO_SCHNORR_ALT_BN128
+		}
+		data, _ := proto.Marshal(cfg)
+		vaultConfigs[chainName] = data
+	}
+
 	for i, node := range nodes {
 		if node == nil || node.DBManager == nil {
 			continue
+		}
+
+		// 保存 Top10000
+		node.DBManager.EnqueueSet(keys.KeyFrostTop10000(), string(top10000Data))
+
+		// 保存 VaultConfigs
+		for chainName, data := range vaultConfigs {
+			node.DBManager.EnqueueSet(keys.KeyFrostVaultConfig(chainName, 0), string(data))
 		}
 
 		// 在当前节点的数据库中注册所有其他节点

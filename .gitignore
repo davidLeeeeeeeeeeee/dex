@@ -2,3 +2,8 @@ data/
 .vscode/
 *.exe
 output_dex.txt
+explorer/node_modules/.package-lock.json
+explorer/node_modules/
+explorer/package-lock.json
+*.key
+*.crt
