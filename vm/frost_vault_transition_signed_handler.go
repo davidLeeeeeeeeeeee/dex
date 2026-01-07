@@ -72,13 +72,13 @@ func (e *Executor) HandleFrostVaultTransitionSignedTx(sender string, tx *pb.Fros
 		return fmt.Errorf("TransitionSigned: invalid signature")
 	}
 
-	// 6. 更新旧 Vault 状态为 DEPRECATED
+	// 6. 更新旧 Vault 状态为 DEPRECATED（lifecycle 转换：DRAINING -> RETIRED）
 	oldVault.Status = "DEPRECATED"
 	if err := e.DB.SetFrostVaultState(oldVaultKey, oldVault); err != nil {
 		return fmt.Errorf("TransitionSigned: failed to update old vault: %w", err)
 	}
 
-	// 7. 获取新 Vault 状态并更新为 ACTIVE
+	// 7. 获取新 Vault 状态并更新为 ACTIVE（lifecycle 转换：KEY_READY -> ACTIVE）
 	newVaultKey := keys.KeyFrostVaultState(chain, newVaultID)
 	newVault, err := e.DB.GetFrostVaultState(newVaultKey)
 	if err != nil {
@@ -91,8 +91,8 @@ func (e *Executor) HandleFrostVaultTransitionSignedTx(sender string, tx *pb.Fros
 		return fmt.Errorf("TransitionSigned: failed to update new vault: %w", err)
 	}
 
-	// 8. 更新 transition 状态为 RETIRED
-	transition.Lifecycle = "RETIRED"
+	// 8. 更新 transition 状态为 RETIRED（lifecycle 转换：DRAINING -> RETIRED）
+	transition.Lifecycle = VaultLifecycleRetired
 	if err := e.DB.SetFrostVaultTransition(transitionKey, transition); err != nil {
 		return fmt.Errorf("TransitionSigned: failed to update transition: %w", err)
 	}

@@ -25,6 +25,8 @@ type Job struct {
 	TemplateHash []byte   // 模板哈希
 	TemplateData []byte   // 模板数据
 	FirstSeq     uint64   // 队首 withdraw 的 seq
+	IsComposite  bool     // 是否为 CompositeJob
+	SubJobs      []*Job   // CompositeJob 的子 job 列表（仅当 IsComposite=true 时有效）
 }
 
 // JobPlanner 确定性 Job 规划器

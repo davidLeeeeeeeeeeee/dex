@@ -9,6 +9,7 @@ import (
 	"dex/pb"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -453,23 +454,42 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	ops := []WriteOp{}
 
 	// 7. 根据验证结果处理
+	// 注意：NewCommitteeMembers 就是 qualified_set，剔除时从该集合移除
+	// disqualified_set 可以通过投诉记录和 transition 状态推断，暂不单独维护
 	if valid {
 		// share 有效 - 恶意投诉
+		// 处理规则：罚没投诉者的 bond，剔除投诉者，清空 dealer commitment（share 已泄露）
 		complaint.Status = ComplaintStatusResolved
 		logs.Info("[DKGReveal] share is valid, false complaint by receiver=%s", receiverID)
 
-		// 剔除投诉者（恶意投诉）
+		// 罚没投诉者的 bond（100% 罚没）
+		if complaint.Bond != "" && complaint.Bond != "0" {
+			bondAmount, ok := new(big.Int).SetString(complaint.Bond, 10)
+			if ok && bondAmount.Sign() > 0 {
+				slashOps, err := slashBond(sv, receiverID, bondAmount, "DKG false complaint")
+				if err != nil {
+					logs.Warn("[DKGReveal] failed to slash bond for receiver %s: %v", receiverID, err)
+				} else {
+					ops = append(ops, slashOps...)
+					logs.Info("[DKGReveal] slashed bond %s from false complainer %s", complaint.Bond, receiverID)
+				}
+			}
+		}
+
+		// 剔除投诉者（恶意投诉）：qualified_set.remove(receiverID)
 		transition.NewCommitteeMembers = removeFromCommittee(transition.NewCommitteeMembers, receiverID)
 		transition.DkgN = uint32(len(transition.NewCommitteeMembers))
 
-		// 检查门限可行性
+		// 检查门限可行性：current_n < initial_t 时，必须重启 DKG
 		if int(transition.DkgN) < int(transition.DkgThresholdT) {
 			transition.DkgStatus = DKGStatusFailed
-			logs.Warn("[DKGReveal] insufficient qualified participants after removing %s, DKG failed", receiverID)
+			logs.Warn("[DKGReveal] insufficient qualified participants after removing %s: current_n=%d < initial_t=%d, DKG failed (restart required)",
+				receiverID, transition.DkgN, transition.DkgThresholdT)
 		}
 
 		// 清空 dealer 的 commitment（share 已泄露，需要重新生成）
 		// 注意：只清空该 dealer 的 commitment，其他参与者保持不变
+		// dealer 需要重新提交 commitment 和 share
 		ops = append(ops, WriteOp{
 			Key:         commitKey,
 			Value:       nil, // 删除
@@ -479,20 +499,33 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		})
 	} else {
 		// share 无效 - dealer 作恶
+		// 处理规则：slash dealer 的质押金（100%），剔除 dealer，其他参与者继续，无需重新生成多项式
 		complaint.Status = ComplaintStatusDisqualified
 		logs.Info("[DKGReveal] share is invalid, dealer %s disqualified", dealerID)
 
-		// 剔除 dealer（作恶）
+		// Slash dealer 的质押金（100% 比例）
+		slashOps, err := slashMinerStake(sv, dealerID, "DKG dealer fault: invalid share")
+		if err != nil {
+			logs.Warn("[DKGReveal] failed to slash stake for dealer %s: %v", dealerID, err)
+		} else {
+			ops = append(ops, slashOps...)
+			logs.Info("[DKGReveal] slashed 100%% stake from dealer %s", dealerID)
+		}
+
+		// 剔除 dealer（作恶）：qualified_set.remove(dealerID)
 		transition.NewCommitteeMembers = removeFromCommittee(transition.NewCommitteeMembers, dealerID)
 		transition.DkgN = uint32(len(transition.NewCommitteeMembers))
 
-		// 检查门限可行性
+		// 检查门限可行性：current_n < initial_t 时，必须重启 DKG
 		if int(transition.DkgN) < int(transition.DkgThresholdT) {
 			transition.DkgStatus = DKGStatusFailed
-			logs.Warn("[DKGReveal] insufficient qualified participants after removing %s, DKG failed", dealerID)
+			logs.Warn("[DKGReveal] insufficient qualified participants after removing %s: current_n=%d < initial_t=%d, DKG failed (restart required)",
+				dealerID, transition.DkgN, transition.DkgThresholdT)
 		} else {
 			// 继续流程：其他参与者计算份额时直接排除该 dealer 的贡献
-			logs.Info("[DKGReveal] dealer %s disqualified, continuing DKG with remaining participants", dealerID)
+			// 注意：不需要重新生成多项式，只需在聚合 group_pubkey 时排除该 dealer 的 a_i0
+			logs.Info("[DKGReveal] dealer %s disqualified, continuing DKG with remaining participants (n=%d, t=%d)",
+				dealerID, transition.DkgN, transition.DkgThresholdT)
 		}
 	}
 
@@ -562,6 +595,38 @@ func removeFromCommittee(committee []string, memberID string) []string {
 		}
 	}
 	return result
+}
+
+// checkDkgRestartRule 检查 DKG 重启规则
+// 当 current_n < initial_t 时，必须重启 DKG
+// 返回是否需要重启
+func checkDkgRestartRule(currentN, initialT uint32) bool {
+	return int(currentN) < int(initialT)
+}
+
+// handleDkgRestart 处理 DKG 重启（当 qualified_set 不足时）
+// 根据设计文档，重启时需要：
+// - epoch_id += 1（新 epoch）
+// - 重新加载完整委员会
+// - 清空 disqualified_set
+// - 重置 initial_n 和 initial_t
+// - dkg_status = COMMITTING
+func handleDkgRestart(transition *pb.VaultTransitionState, newEpochID uint64, fullCommittee []string, thresholdRatio float64) {
+	transition.EpochId = newEpochID
+	transition.NewCommitteeMembers = fullCommittee // 重新加载完整委员会
+	transition.DkgN = uint32(len(fullCommittee))
+	// 重新计算门限
+	threshold := int(float64(len(fullCommittee)) * thresholdRatio)
+	if threshold < 1 {
+		threshold = 1
+	}
+	transition.DkgThresholdT = uint32(threshold)
+	transition.DkgStatus = DKGStatusCommitting
+	// 清空相关状态
+	transition.NewGroupPubkey = nil
+	transition.ValidationStatus = "NOT_STARTED"
+	transition.ValidationMsgHash = nil
+	logs.Info("[DKGRestart] DKG restarted: epoch=%d n=%d t=%d", newEpochID, transition.DkgN, transition.DkgThresholdT)
 }
 
 // ========== FrostVaultDkgValidationSignedTxHandler ==========
@@ -769,4 +834,126 @@ func (h *FrostVaultTransitionSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView)
 
 func (h *FrostVaultTransitionSignedTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
+}
+
+// slashBond 罚没投诉者的 bond（从账户余额中扣除）
+// 返回 WriteOp 列表用于更新账户余额
+func slashBond(sv StateView, address string, bondAmount *big.Int, reason string) ([]WriteOp, error) {
+	if bondAmount == nil || bondAmount.Sign() <= 0 {
+		return nil, fmt.Errorf("invalid bond amount")
+	}
+
+	// 读取账户
+	accountKey := keys.KeyAccount(address)
+	accountData, exists, err := sv.Get(accountKey)
+	if err != nil || !exists {
+		return nil, fmt.Errorf("account not found: %s", address)
+	}
+
+	var account pb.Account
+	if err := proto.Unmarshal(accountData, &account); err != nil {
+		return nil, fmt.Errorf("failed to parse account: %w", err)
+	}
+
+	// 初始化余额（如果不存在）
+	if account.Balances == nil {
+		account.Balances = make(map[string]*pb.TokenBalance)
+	}
+	// 使用 FB 作为原生代币
+	tokenAddr := "FB"
+	if account.Balances[tokenAddr] == nil {
+		account.Balances[tokenAddr] = &pb.TokenBalance{
+			Balance:            "0",
+			MinerLockedBalance: "0",
+		}
+	}
+
+	// 从可用余额中扣除 bond（如果余额不足，则扣除全部可用余额）
+	balance, _ := new(big.Int).SetString(account.Balances[tokenAddr].Balance, 10)
+	if balance == nil {
+		balance = big.NewInt(0)
+	}
+
+	// 扣除 bond（最多扣除全部可用余额）
+	slashAmount := bondAmount
+	if balance.Cmp(bondAmount) < 0 {
+		slashAmount = balance
+		logs.Warn("[slashBond] bond amount %s exceeds balance %s for %s, slashing only available balance", bondAmount.String(), balance.String(), address)
+	}
+
+	newBalance, err := SafeSub(balance, slashAmount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to subtract bond: %w", err)
+	}
+
+	account.Balances[tokenAddr].Balance = newBalance.String()
+
+	// 序列化并返回 WriteOp
+	updatedData, err := proto.Marshal(&account)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal account: %w", err)
+	}
+
+	logs.Info("[slashBond] slashed bond %s from %s (reason: %s), remaining balance: %s", slashAmount.String(), address, reason, newBalance.String())
+
+	return []WriteOp{{
+		Key:         accountKey,
+		Value:       updatedData,
+		SyncStateDB: true,
+		Category:    "account",
+	}}, nil
+}
+
+// slashMinerStake 罚没矿工的质押金（100% 比例，从 MinerLockedBalance 中扣除）
+// 返回 WriteOp 列表用于更新账户余额
+func slashMinerStake(sv StateView, address string, reason string) ([]WriteOp, error) {
+	// 读取账户
+	accountKey := keys.KeyAccount(address)
+	accountData, exists, err := sv.Get(accountKey)
+	if err != nil || !exists {
+		return nil, fmt.Errorf("account not found: %s", address)
+	}
+
+	var account pb.Account
+	if err := proto.Unmarshal(accountData, &account); err != nil {
+		return nil, fmt.Errorf("failed to parse account: %w", err)
+	}
+
+	// 初始化余额（如果不存在）
+	if account.Balances == nil {
+		account.Balances = make(map[string]*pb.TokenBalance)
+	}
+	// 使用 FB 作为原生代币
+	tokenAddr := "FB"
+	if account.Balances[tokenAddr] == nil {
+		account.Balances[tokenAddr] = &pb.TokenBalance{
+			Balance:            "0",
+			MinerLockedBalance: "0",
+		}
+	}
+
+	// 获取当前质押金（100% 罚没）
+	lockedBalance, _ := new(big.Int).SetString(account.Balances[tokenAddr].MinerLockedBalance, 10)
+	if lockedBalance == nil || lockedBalance.Sign() <= 0 {
+		logs.Warn("[slashMinerStake] no locked balance to slash for %s", address)
+		return nil, nil // 没有质押金可罚没，返回空操作
+	}
+
+	// 100% 罚没：将 MinerLockedBalance 清零
+	account.Balances[tokenAddr].MinerLockedBalance = "0"
+
+	// 序列化并返回 WriteOp
+	updatedData, err := proto.Marshal(&account)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal account: %w", err)
+	}
+
+	logs.Info("[slashMinerStake] slashed 100%% stake %s from %s (reason: %s)", lockedBalance.String(), address, reason)
+
+	return []WriteOp{{
+		Key:         accountKey,
+		Value:       updatedData,
+		SyncStateDB: true,
+		Category:    "account",
+	}}, nil
 }

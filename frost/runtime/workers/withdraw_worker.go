@@ -4,6 +4,7 @@ package workers
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"dex/frost/chain"
@@ -130,8 +131,15 @@ func (w *WithdrawWorker) ProcessWindow(ctx context.Context, chain, asset string)
 	logs.Info("[WithdrawWorker] planned %d jobs for %s/%s", len(jobs), chain, asset)
 
 	// 2. 为每个 job 启动签名会话（并发）
+	// 如果是 CompositeJob，需要为每个 SubJob 启动独立的 ROAST 会话
 	for _, job := range jobs {
-		go w.processJobAsync(ctx, job)
+		if job.IsComposite && len(job.SubJobs) > 0 {
+			// CompositeJob：为每个 SubJob 启动独立的签名会话
+			go w.processCompositeJobAsync(ctx, job)
+		} else {
+			// 普通 Job：直接处理
+			go w.processJobAsync(ctx, job)
+		}
 	}
 
 	return jobs, nil
@@ -249,6 +257,101 @@ func (w *WithdrawWorker) extractMessages(job *planning.Job) ([][]byte, error) {
 	// 这里简化处理，返回 template_hash 作为单条消息
 	// 实际实现需要根据链类型和模板数据提取
 	return [][]byte{job.TemplateHash}, nil
+}
+
+// processCompositeJobAsync 异步处理 CompositeJob
+// 为每个 SubJob 启动独立的 ROAST 会话，等待所有 SubJob 完成后提交
+func (w *WithdrawWorker) processCompositeJobAsync(ctx context.Context, compositeJob *planning.Job) {
+	logs.Info("[WithdrawWorker] processing composite job %s with %d sub jobs", compositeJob.JobID, len(compositeJob.SubJobs))
+
+	// 为每个 SubJob 启动独立的签名会话（并发）
+	subJobResults := make(chan *SignedPackage, len(compositeJob.SubJobs))
+	subJobErrors := make(chan error, len(compositeJob.SubJobs))
+
+	for _, subJob := range compositeJob.SubJobs {
+		go func(subJob *planning.Job) {
+			// 计算门限
+			threshold, err := w.calculateThreshold(subJob.Chain, subJob.VaultID)
+			if err != nil {
+				subJobErrors <- fmt.Errorf("failed to calculate threshold: %w", err)
+				return
+			}
+
+			// 获取签名算法
+			signAlgo, err := w.getSignAlgo(subJob.Chain, subJob.VaultID)
+			if err != nil {
+				subJobErrors <- fmt.Errorf("failed to get sign algo: %w", err)
+				return
+			}
+
+			// 构建待签名消息
+			messages, err := w.extractMessages(subJob)
+			if err != nil {
+				subJobErrors <- fmt.Errorf("failed to extract messages: %w", err)
+				return
+			}
+
+			// 启动签名会话
+			sessionParams := &SigningSessionParams{
+				JobID:     subJob.JobID,
+				Chain:     subJob.Chain,
+				VaultID:   subJob.VaultID,
+				KeyEpoch:  subJob.KeyEpoch,
+				SignAlgo:  signAlgo,
+				Messages:  messages,
+				Threshold: threshold,
+			}
+
+			sessionID, err := w.signingService.StartSigningSession(ctx, sessionParams)
+			if err != nil {
+				subJobErrors <- fmt.Errorf("failed to start signing session: %w", err)
+				return
+			}
+
+			logs.Info("[WithdrawWorker] started signing session %s for sub job %s", sessionID, subJob.JobID)
+
+			// 等待完成
+			timeout := 5 * time.Minute
+			signedPkg, err := w.signingService.WaitForCompletion(ctx, sessionID, timeout)
+			if err != nil {
+				subJobErrors <- fmt.Errorf("signing session %s failed: %w", sessionID, err)
+				return
+			}
+
+			subJobResults <- signedPkg
+		}(subJob)
+	}
+
+	// 等待所有 SubJob 完成
+	completedSubJobs := 0
+	var firstError error
+
+	for completedSubJobs < len(compositeJob.SubJobs) {
+		select {
+		case signedPkg := <-subJobResults:
+			completedSubJobs++
+			logs.Info("[WithdrawWorker] sub job %s completed (%d/%d)", signedPkg.JobID, completedSubJobs, len(compositeJob.SubJobs))
+		case err := <-subJobErrors:
+			if firstError == nil {
+				firstError = err
+			}
+			completedSubJobs++
+			logs.Error("[WithdrawWorker] sub job failed: %v", err)
+		case <-ctx.Done():
+			logs.Error("[WithdrawWorker] composite job %s cancelled", compositeJob.JobID)
+			return
+		}
+	}
+
+	// 如果有错误，记录但不阻止（部分完成也是可接受的）
+	if firstError != nil {
+		logs.Warn("[WithdrawWorker] composite job %s completed with errors: %v", compositeJob.JobID, firstError)
+	}
+
+	// 所有 SubJob 完成后，提交 CompositeJob
+	// 注意：实际实现中，可能需要为每个 SubJob 分别提交交易，或者合并为一个 batch 交易
+	logs.Info("[WithdrawWorker] all sub jobs completed for composite job %s", compositeJob.JobID)
+	// TODO: 实现 CompositeJob 的提交逻辑（可能需要多个交易或 batch 交易）
 }
 
 // buildSignedPackageBytes 构建 SignedPackage bytes

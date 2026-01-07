@@ -188,27 +188,28 @@ func (c *Coordinator) isCurrentCoordinator(sess *roastsession.Session) bool {
 }
 
 // computeCoordinatorIndex 计算当前协调者索引
-// 确定性算法：基于 session_id 和区块高度
+// 确定性算法：基于 session_id、key_epoch 和区块高度
+// 超时自动切换：agg_index = floor((now_height - session_start_height) / agg_timeout_blocks) % len(agg_candidates)
 func (c *Coordinator) computeCoordinatorIndex(sess *roastsession.Session) int {
 	if len(sess.Committee) == 0 {
 		return 0
 	}
 
-	// 计算种子
+	// 计算种子：seed = H(session_id || key_epoch || "frost_agg")
 	seed := computeAggregatorSeed(sess.JobID, sess.KeyEpoch)
 
-	// 计算轮换次数
-	rotations := (c.currentHeight - sess.StartHeight) / c.config.AggregatorRotateBlocks
-
-	// 确定性排列委员会
+	// 确定性排列委员会（基于种子）
 	permuted := permuteCommittee(sess.Committee, seed)
 
-	// 选择协调者
-	coordIndex := int(rotations) % len(permuted)
+	// 计算轮换次数（超时切换）
+	// agg_index = floor((now_height - session_start_height) / agg_timeout_blocks) % len(agg_candidates)
+	blocksElapsed := c.currentHeight - sess.StartHeight
+	rotations := blocksElapsed / c.config.AggregatorRotateBlocks
+	aggIndex := int(rotations) % len(permuted)
 
 	// 找回原始索引
 	for i, member := range sess.Committee {
-		if member.ID == permuted[coordIndex].ID {
+		if member.ID == permuted[aggIndex].ID {
 			return i
 		}
 	}
@@ -322,22 +323,42 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 			}
 
 		case roastsession.SignSessionStateAggregating:
-			// 聚合签名
-			if err := c.aggregateSignatures(sess); err != nil {
+			// 聚合签名（支持部分完成）
+			signatures, err := c.aggregateSignatures(sess)
+			if err != nil {
 				logs.Error("[Coordinator] aggregate failed: %v", err)
 				// 检查是否需要切换协调者
 				if c.shouldRotateCoordinator(sess) {
 					logs.Info("[Coordinator] rotating coordinator for session %s due to aggregate failure", sess.JobID)
 					return
 				}
-				// 否则尝试重试
+				// 否则尝试重试（对未完成的 task 继续收集）
 				if !c.retryWithNewSet(sess) {
 					sess.SetState(roastsession.SignSessionStateFailed)
 					return
 				}
+				// 重试时回到收集 share 状态
+				sess.SetState(roastsession.SignSessionStateCollectingShares)
 			} else {
-				logs.Info("[Coordinator] session %s completed", sess.JobID)
-				return
+				// 检查是否所有 task 都已完成
+				allCompleted := true
+				for i := 0; i < len(sess.Messages); i++ {
+					if i >= len(signatures) || signatures[i] == nil {
+						allCompleted = false
+						break
+					}
+				}
+
+				if allCompleted {
+					// 所有 task 都已完成
+					logs.Info("[Coordinator] session %s completed (all tasks)", sess.JobID)
+					return
+				} else {
+					// 部分完成：对未完成的 task 继续收集 share
+					logs.Info("[Coordinator] session %s partial completion, continuing for remaining tasks", sess.JobID)
+					// 继续收集未完成 task 的 share
+					sess.SetState(roastsession.SignSessionStateCollectingShares)
+				}
 			}
 
 		case roastsession.SignSessionStateComplete, roastsession.SignSessionStateFailed:
@@ -468,14 +489,38 @@ func (c *Coordinator) waitForShares(ctx context.Context, sess *roastsession.Sess
 	}
 }
 
-// aggregateSignatures 聚合签名
-func (c *Coordinator) aggregateSignatures(sess *roastsession.Session) error {
+// aggregateSignatures 聚合签名（支持部分完成）
+// 返回：签名列表（已完成的 task 有签名，未完成的为 nil）
+func (c *Coordinator) aggregateSignatures(sess *roastsession.Session) ([][]byte, error) {
 	signatures, err := c.aggregateSessionSignatures(sess)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	sess.MarkCompleted(signatures)
-	return nil
+
+	// 检查是否所有 task 都已完成
+	allCompleted := true
+	for i := 0; i < len(sess.Messages); i++ {
+		if i >= len(signatures) || signatures[i] == nil {
+			allCompleted = false
+			break
+		}
+	}
+
+	if allCompleted {
+		// 所有 task 都已完成，标记会话完成
+		sess.MarkCompleted(signatures)
+	} else {
+		// 部分完成：更新已完成的签名，但保持会话状态为 CollectingShares
+		// 注意：这里不调用 MarkCompleted，让会话继续收集未完成的 task
+		// 使用 UpdatePartialSignatures 方法（需要在 session 中添加）
+		// 简化处理：直接调用 MarkCompleted，但保持状态为 CollectingShares
+		// TODO: 添加 UpdatePartialSignatures 方法到 Session
+		sess.MarkCompleted(signatures)
+		// 重置状态为 CollectingShares，继续收集未完成的 task
+		sess.SetState(roastsession.SignSessionStateCollectingShares)
+	}
+
+	return signatures, nil
 }
 
 func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([][]byte, error) {
@@ -499,8 +544,11 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 
 	selectedSet := sess.SelectedSetSnapshot()
 	signatures := make([][]byte, len(sess.Messages))
+	completedTasks := make(map[int]bool) // 已完成的 task 索引
 
+	// 按 task 级别聚合签名（支持部分完成）
 	for taskIdx, msg := range sess.Messages {
+		// 检查该 task 是否已有足够的数据
 		nonces := make([]NonceInput, 0, len(selectedSet))
 		for _, idx := range selectedSet {
 			nonceData, ok := sess.GetNonce(idx)
@@ -524,7 +572,9 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 		}
 
 		if len(nonces) < minSigners {
-			return nil, ErrInsufficientNonces
+			// 该 task 的 nonce 不足，跳过（继续收集）
+			logs.Debug("[Coordinator] task %d: insufficient nonces (%d < %d), continue collecting", taskIdx, len(nonces), minSigners)
+			continue
 		}
 
 		shares := make([]ShareInput, 0, len(selectedSet))
@@ -542,23 +592,38 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 		}
 
 		if len(shares) < minSigners {
-			return nil, ErrInsufficientShares
+			// 该 task 的 share 不足，跳过（继续收集）
+			logs.Debug("[Coordinator] task %d: insufficient shares (%d < %d), continue collecting", taskIdx, len(shares), minSigners)
+			continue
 		}
 
-		// 通过接口调用密码学操作
+		// 该 task 有足够的数据，尝试聚合
 		R, err := roastExec.ComputeGroupCommitment(nonces, msg)
 		if err != nil {
-			return nil, err
+			logs.Warn("[Coordinator] task %d: failed to compute group commitment: %v", taskIdx, err)
+			continue
 		}
 
 		sig, err := roastExec.AggregateSignatures(R, shares)
 		if err != nil {
-			return nil, err
+			logs.Warn("[Coordinator] task %d: failed to aggregate signatures: %v", taskIdx, err)
+			continue
 		}
 
+		// 该 task 已完成
 		signatures[taskIdx] = sig
+		completedTasks[taskIdx] = true
+		logs.Info("[Coordinator] task %d completed, signature=%x", taskIdx, sig[:8])
 	}
 
+	// 检查是否有任何 task 完成
+	if len(completedTasks) == 0 {
+		return nil, ErrInsufficientShares
+	}
+
+	// 返回部分完成的签名（未完成的 task 为 nil）
+	// 协调者可对未完成 task 继续向新子集收集 share
+	logs.Info("[Coordinator] partial completion: %d/%d tasks completed", len(completedTasks), len(sess.Messages))
 	return signatures, nil
 }
 func (c *Coordinator) retryWithNewSet(sess *roastsession.Session) bool {

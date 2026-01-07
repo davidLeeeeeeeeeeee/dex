@@ -4,36 +4,15 @@
 package handlers
 
 import (
-	"encoding/json"
+	"dex/pb"
+	"io"
 	"net/http"
 	"runtime"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/proto"
 )
-
-// HealthResponse 健康检查响应
-type HealthResponse struct {
-	Status    string `json:"status"`
-	Uptime    string `json:"uptime"`
-	Version   string `json:"version"`
-	GoVersion string `json:"go_version"`
-	NumCPU    int    `json:"num_cpu"`
-}
-
-// MetricsResponse 指标响应
-type MetricsResponse struct {
-	HeapAlloc      uint64 `json:"heap_alloc"`
-	HeapSys        uint64 `json:"heap_sys"`
-	NumGoroutine   int    `json:"num_goroutine"`
-	FrostJobs      int    `json:"frost_jobs"`
-	FrostWithdraws int    `json:"frost_withdraws"`
-}
-
-// ForceRescanResponse 强制重扫响应
-type ForceRescanResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-}
 
 var startTime = time.Now()
 
@@ -64,16 +43,23 @@ func GetRescanCallback() RescanCallback {
 func (hm *HandlerManager) HandleGetHealth(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("GetHealth")
 
-	resp := HealthResponse{
+	resp := &pb.HealthResponse{
 		Status:    "healthy",
 		Uptime:    time.Since(startTime).String(),
 		Version:   "1.0.0",
 		GoVersion: runtime.Version(),
-		NumCPU:    runtime.NumCPU(),
+		NumCpu:    int32(runtime.NumCPU()),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	// 序列化为 protobuf
+	data, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Write(data)
 }
 
 // HandleGetMetrics 获取指标
@@ -99,22 +85,23 @@ func (hm *HandlerManager) HandleGetMetrics(w http.ResponseWriter, r *http.Reques
 		frostWithdraws = len(withdrawResults)
 	}
 
-	resp := MetricsResponse{
+	resp := &pb.MetricsResponse{
 		HeapAlloc:      m.HeapAlloc,
 		HeapSys:        m.HeapSys,
-		NumGoroutine:   runtime.NumGoroutine(),
-		FrostJobs:      frostJobs,
-		FrostWithdraws: frostWithdraws,
+		NumGoroutine:   int32(runtime.NumGoroutine()),
+		FrostJobs:      int32(frostJobs),
+		FrostWithdraws: int32(frostWithdraws),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
+	// 序列化为 protobuf
+	data, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		return
+	}
 
-// ForceRescanRequest 强制重扫请求
-type ForceRescanRequest struct {
-	Chain      string `json:"chain"`       // 链标识（可选，空表示所有链）
-	FromHeight uint64 `json:"from_height"` // 起始高度（可选，0 表示从最新）
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Write(data)
 }
 
 // HandleForceRescan 强制重扫
@@ -126,43 +113,67 @@ func (hm *HandlerManager) HandleForceRescan(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 解析请求
-	var req ForceRescanRequest
+	// 解析请求（protobuf）
+	var req pb.ForceRescanRequest
 	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
 			return
+		}
+		if len(body) > 0 {
+			if err := proto.Unmarshal(body, &req); err != nil {
+				http.Error(w, "invalid request body", http.StatusBadRequest)
+				return
+			}
 		}
 	}
 
 	// 获取重扫回调
 	callback := GetRescanCallback()
 	if callback == nil {
-		resp := ForceRescanResponse{
+		resp := &pb.ForceRescanResponse{
 			Success: false,
 			Message: "rescan callback not configured",
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		data, err := proto.Marshal(resp)
+		if err != nil {
+			http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.Write(data)
 		return
 	}
 
 	// 触发重扫
 	if err := callback(req.Chain, req.FromHeight); err != nil {
-		resp := ForceRescanResponse{
+		resp := &pb.ForceRescanResponse{
 			Success: false,
 			Message: "rescan failed: " + err.Error(),
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		data, err := proto.Marshal(resp)
+		if err != nil {
+			http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.Write(data)
 		return
 	}
 
-	resp := ForceRescanResponse{
+	resp := &pb.ForceRescanResponse{
 		Success: true,
 		Message: "rescan triggered for chain: " + req.Chain,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	// 序列化为 protobuf
+	data, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Write(data)
 }

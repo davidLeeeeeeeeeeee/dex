@@ -12,6 +12,8 @@ import (
 	"dex/db"
 	"dex/frost/chain"
 	"dex/frost/chain/btc"
+	"dex/frost/chain/evm"
+	"dex/frost/chain/solana"
 	frostrt "dex/frost/runtime"
 	"dex/frost/runtime/adapters"
 	"dex/frost/runtime/committee"
@@ -392,6 +394,21 @@ ContinueWithConsensus:
 			// 创建 ChainAdapterFactory 并注册链适配器
 			adapterFactory := chain.NewDefaultAdapterFactory()
 			adapterFactory.RegisterAdapter(btc.NewBTCAdapter("mainnet")) // BTC 适配器
+			
+			// 注册 EVM 适配器
+			if evmAdapter := evm.NewETHAdapter(); evmAdapter != nil {
+				adapterFactory.RegisterAdapter(evmAdapter)
+			}
+			if bnbAdapter := evm.NewBNBAdapter(); bnbAdapter != nil {
+				adapterFactory.RegisterAdapter(bnbAdapter)
+			}
+			
+			// 注册 Solana 适配器
+			if solAdapter := solana.NewSolanaAdapter(""); solAdapter != nil {
+				adapterFactory.RegisterAdapter(solAdapter)
+			}
+			
+			// TODO: 注册 Tron 适配器（待决策 - 需要 GG20/CGGMP）
 
 			// 创建 TxSubmitter（适配 txpool）
 			var txSubmitter frostrt.TxSubmitter
@@ -428,9 +445,36 @@ ContinueWithConsensus:
 				vaultProvider = committee.NewDefaultVaultCommitteeProvider(stateReader, committee.DefaultVaultCommitteeProviderConfig())
 			}
 
+			// 加载 FrostConfig
+			frostConfig := cfg.Frost
+			
+			// 从 FrostConfig 提取支持的链
+			var supportedChains []frostrt.ChainAssetPair
+			for chainName := range frostConfig.Chains {
+				// 根据链名确定资产名（简化处理）
+				asset := strings.ToUpper(chainName)
+				if chainName == "eth" {
+					asset = "ETH"
+				} else if chainName == "bnb" {
+					asset = "BNB"
+				} else if chainName == "btc" {
+					asset = "BTC"
+				} else if chainName == "sol" {
+					asset = "SOL"
+				} else if chainName == "trx" {
+					asset = "TRX"
+				}
+				supportedChains = append(supportedChains, frostrt.ChainAssetPair{
+					Chain: chainName,
+					Asset: asset,
+				})
+			}
+			
 			// 创建 FROST Runtime Manager
 			frostCfg := frostrt.ManagerConfig{
-				NodeID: frostrt.NodeID(node.Address),
+				NodeID:         frostrt.NodeID(node.Address),
+				ScanInterval:   5 * time.Second,
+				SupportedChains: supportedChains,
 			}
 			var roastMessenger frostrt.RoastMessenger
 			if node.SenderManager != nil {

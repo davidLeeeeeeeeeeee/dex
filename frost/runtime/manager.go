@@ -10,10 +10,10 @@ import (
 
 	"dex/frost/chain"
 	frostrtnet "dex/frost/runtime/net"
-	"dex/frost/runtime/session"
 	"dex/frost/runtime/planning"
 	"dex/frost/runtime/roast"
 	"dex/frost/runtime/services"
+	"dex/frost/runtime/session"
 	"dex/frost/runtime/types"
 	"dex/frost/runtime/workers"
 	"dex/pb"
@@ -370,24 +370,26 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 	// 适配runtime.ChainStateReader到planning.ChainStateReader
 	planningReader := &planningReaderAdapter{reader: deps.StateReader}
 	m.scanner = planning.NewScanner(planningReader)
-	
+
 	// 创建 Coordinator 和 Participant（用于 SigningService）
 	// 由于接口已统一，直接使用runtime包中的类型
 	m.coordinator = roast.NewCoordinator(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, nil)
 	m.participant = roast.NewParticipant(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, sessionStore, nil)
-	
+
 	// 创建 SigningService
 	roastSigningService := services.NewRoastSigningService(m.coordinator, m.participant, deps.VaultProvider)
-	
+
 	// 创建适配器，将 services.SigningService 适配为 workers.SigningService
 	signingServiceAdapter := &signingServiceAdapter{service: roastSigningService}
-	
+
 	// 创建 WithdrawWorker（使用 SigningService）
 	// TODO: 从配置读取 maxInFlightPerChainAsset
 	maxInFlight := 1 // 默认值，应该从配置读取
 	m.withdrawWorker = workers.NewWithdrawWorker(deps.StateReader, deps.AdapterFactory, deps.TxSubmitter, signingServiceAdapter, deps.VaultProvider, maxInFlight)
-	
-	m.transitionWorker = workers.NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, deps.VaultProvider, deps.SignerProvider, string(config.NodeID))
+
+	// 创建适配器，将 chain.ChainAdapterFactory 适配为 workers.ChainAdapterFactory
+	adapterFactoryAdapter := &chainAdapterFactoryAdapter{factory: deps.AdapterFactory}
+	m.transitionWorker = workers.NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, deps.VaultProvider, deps.SignerProvider, adapterFactoryAdapter, string(config.NodeID))
 	m.roastDispatcher = roast.NewDispatcher(m.coordinator, m.participant)
 	m.frostRouter = frostRouter
 
@@ -664,4 +666,80 @@ func (a *roastMessengerAdapter) Broadcast(peers []types.NodeID, msg *types.Roast
 		return a.p2p.Broadcast(peers, frostEnv)
 	}
 	return nil
+}
+
+// chainAdapterFactoryAdapter 适配器：将 chain.ChainAdapterFactory 适配为 workers.ChainAdapterFactory
+type chainAdapterFactoryAdapter struct {
+	factory chain.ChainAdapterFactory
+}
+
+func (a *chainAdapterFactoryAdapter) Adapter(chainName string) (workers.ChainAdapter, error) {
+	chainAdapter, err := a.factory.Adapter(chainName)
+	if err != nil {
+		return nil, err
+	}
+	return &chainAdapterAdapter{adapter: chainAdapter}, nil
+}
+
+// chainAdapterAdapter 适配器：将 chain.ChainAdapter 适配为 workers.ChainAdapter
+type chainAdapterAdapter struct {
+	adapter chain.ChainAdapter
+}
+
+func (a *chainAdapterAdapter) BuildWithdrawTemplate(params workers.WithdrawTemplateParams) (*workers.TemplateResult, error) {
+	// 转换参数
+	chainParams := chain.WithdrawTemplateParams{
+		Chain:         params.Chain,
+		Asset:         params.Asset,
+		VaultID:       params.VaultID,
+		KeyEpoch:      params.KeyEpoch,
+		WithdrawIDs:   params.WithdrawIDs,
+		Outputs:       convertOutputsToChain(params.Outputs),
+		Inputs:        convertUTXOsToChain(params.Inputs),
+		ChangeAddress: params.ChangeAddress,
+		Fee:           params.Fee,
+		ChangeAmount:  params.ChangeAmount,
+		ContractAddr:  params.ContractAddr,
+		MethodID:      params.MethodID,
+	}
+
+	result, err := a.adapter.BuildWithdrawTemplate(chainParams)
+	if err != nil {
+		return nil, err
+	}
+
+	// 转换结果
+	return &workers.TemplateResult{
+		TemplateHash: result.TemplateHash,
+		TemplateData: result.TemplateData,
+		SigHashes:    result.SigHashes,
+	}, nil
+}
+
+// convertOutputsToChain 转换输出列表
+func convertOutputsToChain(outputs []workers.WithdrawOutput) []chain.WithdrawOutput {
+	result := make([]chain.WithdrawOutput, len(outputs))
+	for i, out := range outputs {
+		result[i] = chain.WithdrawOutput{
+			WithdrawID: out.WithdrawID,
+			To:         out.To,
+			Amount:     out.Amount,
+		}
+	}
+	return result
+}
+
+// convertUTXOsToChain 转换 UTXO 列表
+func convertUTXOsToChain(utxos []workers.UTXO) []chain.UTXO {
+	result := make([]chain.UTXO, len(utxos))
+	for i, utxo := range utxos {
+		result[i] = chain.UTXO{
+			TxID:          utxo.TxID,
+			Vout:          utxo.Vout,
+			Amount:        utxo.Amount,
+			ScriptPubKey:  utxo.ScriptPubKey,
+			ConfirmHeight: utxo.ConfirmHeight,
+		}
+	}
+	return result
 }

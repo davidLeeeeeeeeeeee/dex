@@ -31,6 +31,52 @@ func allocateVaultID(requestID string, vaultCount uint32) uint32 {
 	return n % vaultCount
 }
 
+// allocateVaultIDWithLifecycleCheck 确定性分配 vault_id，并检查 Vault lifecycle
+// 如果分配的 Vault 处于 DRAINING 状态，尝试下一个可用的 ACTIVE Vault
+func allocateVaultIDWithLifecycleCheck(sv StateView, chain, requestID string, vaultCount uint32) (uint32, error) {
+	if vaultCount == 0 {
+		vaultCount = DefaultVaultCount
+	}
+
+	// 计算初始 vault_id（确定性）
+	initialVaultID := allocateVaultID(requestID, vaultCount)
+
+	// 检查初始 Vault 的 lifecycle
+	vaultStateKey := keys.KeyFrostVaultState(chain, initialVaultID)
+	vaultStateData, exists, _ := sv.Get(vaultStateKey)
+	if exists && len(vaultStateData) > 0 {
+		var vaultState pb.FrostVaultState
+		if err := proto.Unmarshal(vaultStateData, &vaultState); err == nil {
+			// 检查 lifecycle（从 VaultTransitionState 获取，或从 VaultState.Status 推断）
+			// 如果 Vault 处于 DRAINING 状态，尝试下一个 ACTIVE Vault
+			if vaultState.Status == VaultLifecycleDraining {
+				// 查找下一个 ACTIVE 的 Vault
+				for offset := uint32(1); offset < vaultCount; offset++ {
+					candidateID := (initialVaultID + offset) % vaultCount
+					candidateKey := keys.KeyFrostVaultState(chain, candidateID)
+					candidateData, candidateExists, _ := sv.Get(candidateKey)
+					if candidateExists && len(candidateData) > 0 {
+						var candidateState pb.FrostVaultState
+						if err := proto.Unmarshal(candidateData, &candidateState); err == nil {
+							if candidateState.Status == "ACTIVE" {
+								return candidateID, nil
+							}
+						}
+					} else {
+						// 如果 Vault 不存在，默认认为是 ACTIVE（新创建的 Vault）
+						return candidateID, nil
+					}
+				}
+				// 如果所有 Vault 都是 DRAINING，返回错误
+				return 0, fmt.Errorf("no ACTIVE vault available for chain %s", chain)
+			}
+		}
+	}
+
+	// 初始 Vault 是 ACTIVE 或不存在（默认 ACTIVE）
+	return initialVaultID, nil
+}
+
 // WitnessServiceAware 见证者服务感知接口
 // 实现此接口的 handler 可以接收 WitnessService 的引用
 type WitnessServiceAware interface {
@@ -286,7 +332,11 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 	}
 
 	// 确定性分配 vault_id，避免跨 Vault 混用资金
-	vaultID := allocateVaultID(requestID, DefaultVaultCount)
+	// 注意：需要检查 Vault lifecycle，DRAINING 的 Vault 不再分配新入账
+	vaultID, err := allocateVaultIDWithLifecycleCheck(sv, request.NativeChain, requestID, DefaultVaultCount)
+	if err != nil {
+		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: err.Error()}, err
+	}
 	rechargeRequest.VaultId = vaultID
 
 	pendingSeqKey := keys.KeyFrostFundsPendingLotSeq(request.NativeChain, request.TokenAddress, vaultID, pendingHeight)

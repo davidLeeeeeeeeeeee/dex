@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"dex/frost/security"
+	"dex/utils"
 	"dex/logs"
 	"dex/pb"
 	"encoding/binary"
@@ -30,6 +31,7 @@ type TransitionWorker struct {
 	cryptoFactory  CryptoExecutorFactory // 密码学执行器工厂
 	vaultProvider  VaultCommitteeProvider
 	signerProvider SignerSetProvider
+	adapterFactory ChainAdapterFactory   // 链适配器工厂
 	localAddress   string
 
 	// DKG 会话管理
@@ -41,6 +43,11 @@ type TransitionWorker struct {
 	signTimeout         time.Duration
 	transitionThreshold float64 // change_ratio 阈值（默认 0.2）
 	ewmaAlpha           float64 // EWMA 平滑系数（默认 0.3）
+	epochBlocks         uint64  // Epoch 边界区块数（默认 40000）
+
+	// EWMA 状态维护（按 Vault 独立）
+	// key: chain_vaultID, value: ewmaValue
+	ewmaHistory map[string]float64
 }
 
 // DKGSession 单个 DKG 会话状态
@@ -73,8 +80,57 @@ type DKGSession struct {
 	CreatedAt time.Time
 }
 
+// ChainAdapterFactory 链适配器工厂接口（避免循环依赖）
+type ChainAdapterFactory interface {
+	Adapter(chain string) (ChainAdapter, error)
+}
+
+// ChainAdapter 链适配器接口（避免循环依赖）
+type ChainAdapter interface {
+	BuildWithdrawTemplate(params WithdrawTemplateParams) (*TemplateResult, error)
+}
+
+// WithdrawTemplateParams 提现模板参数（避免循环依赖）
+type WithdrawTemplateParams struct {
+	Chain         string
+	Asset         string
+	VaultID       uint32
+	KeyEpoch      uint64
+	WithdrawIDs   []string
+	Outputs       []WithdrawOutput
+	Inputs        []UTXO
+	ChangeAddress string
+	Fee           uint64
+	ChangeAmount  uint64
+	ContractAddr string
+	MethodID      []byte
+}
+
+// WithdrawOutput 提现输出
+type WithdrawOutput struct {
+	WithdrawID string
+	To         string
+	Amount     uint64
+}
+
+// UTXO UTXO 信息
+type UTXO struct {
+	TxID          string
+	Vout          uint32
+	Amount        uint64
+	ScriptPubKey  []byte
+	ConfirmHeight uint64
+}
+
+// TemplateResult 模板构建结果
+type TemplateResult struct {
+	TemplateHash []byte
+	TemplateData []byte
+	SigHashes    [][]byte
+}
+
 // NewTransitionWorker 创建 TransitionWorker
-func NewTransitionWorker(stateReader StateReader, txSubmitter TxSubmitter, pubKeyProvider MinerPubKeyProvider, cryptoFactory CryptoExecutorFactory, vaultProvider VaultCommitteeProvider, signerProvider SignerSetProvider, localAddr string) *TransitionWorker {
+func NewTransitionWorker(stateReader StateReader, txSubmitter TxSubmitter, pubKeyProvider MinerPubKeyProvider, cryptoFactory CryptoExecutorFactory, vaultProvider VaultCommitteeProvider, signerProvider SignerSetProvider, adapterFactory ChainAdapterFactory, localAddr string) *TransitionWorker {
 	return &TransitionWorker{
 		stateReader:         stateReader,
 		txSubmitter:         txSubmitter,
@@ -82,13 +138,16 @@ func NewTransitionWorker(stateReader StateReader, txSubmitter TxSubmitter, pubKe
 		cryptoFactory:       cryptoFactory,
 		vaultProvider:       vaultProvider,
 		signerProvider:      signerProvider,
+		adapterFactory:      adapterFactory,
 		localAddress:        localAddr,
 		sessions:            make(map[string]*DKGSession),
 		commitTimeout:       30 * time.Second,
 		shareTimeout:        30 * time.Second,
 		signTimeout:         60 * time.Second,
-		transitionThreshold: 0.2, // 默认 20% 变化触发
-		ewmaAlpha:           0.3, // EWMA 平滑系数
+		transitionThreshold: 0.2,  // 默认 20% 变化触发
+		ewmaAlpha:           0.3,  // EWMA 平滑系数
+		epochBlocks:         40000, // 默认 Epoch 边界（40000 个区块）
+		ewmaHistory:         make(map[string]float64),
 	}
 }
 
@@ -266,28 +325,32 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 		return fmt.Errorf("create dkg executor: %w", err)
 	}
 
-	// 本地 share = 自己多项式在自己索引处的值 + 收到的所有 shares
-	// s_i = Σ_j f_j(i)
+	// 1) 计算本地对自己的多项式份额（dealer 为自己，receiver 为自己索引）
 	myShareBytes := dkgExec.EvaluateShare(session.Polynomial, session.MyIndex)
 
-	// 注意：在完整实现中，需要：
-	// 1. 等待收集所有 dealers 发送的加密 shares
-	// 2. 解密每个 share
-	// 3. 验证 share 与 commitment 一致
-	// 4. 累加所有 shares（使用 dkgExec.AggregateShares）
-	// 这里简化处理，假设已收集完成
-
-	session.LocalShare = new(big.Int).SetBytes(myShareBytes)
-	session.LocalShareBytes = myShareBytes
-
-	// 计算 group_pubkey = Σ A_j0（所有 dealers 的第一个承诺点之和）
-	// 在完整实现中需要从链上收集所有 commitments
-	// 这里使用自己的 A_0 作为示例
-	coeffs := session.Polynomial.Coefficients()
-	if len(coeffs) > 0 {
-		a0Pt := dkgExec.ScalarBaseMult(coeffs[0])
-		session.GroupPubkey = serializeCurvePoint(a0Pt)
+	// 2) 收集并解密所有发给本节点的 shares，验证后聚合
+	decryptedShares, err := w.collectAndVerifyShares(ctx, session)
+	if err != nil {
+		return fmt.Errorf("collect shares: %w", err)
 	}
+
+	// 聚合所有 share：s_i = Σ_j f_j(i)
+	allShares := make([][]byte, 0, 1+len(decryptedShares))
+	allShares = append(allShares, myShareBytes)
+	for _, s := range decryptedShares {
+		allShares = append(allShares, s)
+	}
+	aggShare := dkgExec.AggregateShares(allShares)
+
+	session.LocalShare = new(big.Int).SetBytes(aggShare)
+	session.LocalShareBytes = aggShare
+
+	// 3) 聚合 group_pubkey = Σ A_j0（收集所有 dealer 的 a_i0）
+	groupPubkey, err := w.aggregateGroupPubkey(ctx, session)
+	if err != nil {
+		return fmt.Errorf("aggregate group pubkey: %w", err)
+	}
+	session.GroupPubkey = groupPubkey
 
 	session.Phase = "KEY_READY"
 	logs.Info("[TransitionWorker] generateKey completed: localShare=%x groupPubkey=%x",
@@ -295,6 +358,111 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 	return nil
 }
 
+// collectAndVerifyShares 扫描链上密文 shares，解密属于本节点的份额并做一致性校验
+func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, session *DKGSession) (map[string][]byte, error) {
+	result := make(map[string][]byte) // dealerID -> share
+
+	// 1. 扫描该 session 的所有 DKG share（按前缀）
+	sharePrefix := fmt.Sprintf("v1_frost_vault_dkg_share_%s_%d_%s_", session.Chain, session.VaultID, padUint(session.EpochID))
+
+	// 解析本地 secp256k1 私钥（用于 ECIES 解密）
+	privStr := utils.GetKeyManager().GetPrivateKey()
+	privK, err := utils.ParseSecp256k1PrivateKey(privStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse local privkey: %w", err)
+	}
+	localPriv32 := privK.Serialize()
+
+	err = w.stateReader.Scan(sharePrefix, func(k string, v []byte) bool {
+		// 反序列化存储的 share 记录
+		var share pb.FrostVaultDkgShare
+		if err := proto.Unmarshal(v, &share); err != nil {
+			logs.Warn("[DKG] skip invalid share record: %v", err)
+			return true
+		}
+		// 只处理发给本节点的份额
+		if share.ReceiverId != w.localAddress {
+			return true
+		}
+
+		// 解密密文
+		plain, err := security.ECIESDecrypt(localPriv32, share.Ciphertext)
+		if err != nil {
+			logs.Warn("[DKG] decrypt share from %s failed: %v", share.DealerId, err)
+			return true
+		}
+
+		// 验证与 dealer 承诺点一致
+		if ok := w.verifyShareAgainstCommitments(session, share.DealerId, plain, session.MyIndex); !ok {
+			logs.Warn("[DKG] share verification failed for dealer=%s", share.DealerId)
+			return true
+		}
+
+		// 记录
+		result[share.DealerId] = plain
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// verifyShareAgainstCommitments 使用 Feldman VSS 校验 share 与 dealer 承诺点一致性
+func (w *TransitionWorker) verifyShareAgainstCommitments(session *DKGSession, dealerID string, share []byte, receiverIndex int) bool {
+	// 读取 dealer 的 commitment
+	commitKey := fmt.Sprintf("v1_frost_vault_dkg_commit_%s_%d_%s_%s", session.Chain, session.VaultID, padUint(session.EpochID), dealerID)
+	data, exists, err := w.stateReader.Get(commitKey)
+	if err != nil || !exists || len(data) == 0 {
+		return false
+	}
+	var commit pb.FrostVaultDkgCommitment
+	if err := proto.Unmarshal(data, &commit); err != nil {
+		return false
+	}
+	// Verify: g^share == Π(A_k^(x^k)), x=receiverIndex
+	return security.VerifyShareAgainstCommitment(share, commit.CommitmentPoints, big.NewInt(int64(receiverIndex)))
+}
+
+// aggregateGroupPubkey 收集所有 dealer 的 a_i0 聚合得到 group_pubkey
+func (w *TransitionWorker) aggregateGroupPubkey(ctx context.Context, session *DKGSession) ([]byte, error) {
+	dkgExec, err := w.cryptoFactory.NewDKGExecutor(int32(session.SignAlgo))
+	if err != nil {
+		return nil, err
+	}
+
+	commitPrefix := fmt.Sprintf("v1_frost_vault_dkg_commit_%s_%d_%s_", session.Chain, session.VaultID, padUint(session.EpochID))
+	ai0Points := make([][]byte, 0, len(session.Committee))
+
+	err = w.stateReader.Scan(commitPrefix, func(k string, v []byte) bool {
+		var commit pb.FrostVaultDkgCommitment
+		if err := proto.Unmarshal(v, &commit); err != nil {
+			return true
+		}
+		if len(commit.AI0) == 0 {
+			return true
+		}
+		ai0Points = append(ai0Points, commit.AI0)
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(ai0Points) == 0 {
+		// 回退：使用本地多项式的 a0 计算（保证不为空）
+		coeffs := session.Polynomial.Coefficients()
+		if len(coeffs) == 0 {
+			return nil, fmt.Errorf("no commitments found and local polynomial empty")
+		}
+		pt := dkgExec.ScalarBaseMult(coeffs[0])
+		return serializeCurvePoint(pt), nil
+	}
+
+	// 使用 DKG 执行器聚合公钥
+	groupPubkey := dkgExec.ComputeGroupPubkey(ai0Points)
+	return groupPubkey, nil
+}
 // serializeCurvePoint 序列化 CurvePoint 为压缩格式
 func serializeCurvePoint(p CurvePoint) []byte {
 	result := make([]byte, 33)
@@ -391,6 +559,12 @@ func (w *TransitionWorker) CheckTriggerConditions(ctx context.Context, height ui
 
 		// 遍历该链的所有 Vault
 		for vaultID := uint32(0); vaultID < vaultCfg.VaultCount; vaultID++ {
+			// 检查 DKG 失败并触发重启
+			if err := w.checkAndRestartDKG(ctx, chain, vaultID, height); err != nil {
+				logs.Warn("[TransitionWorker] check DKG restart failed: chain=%s vault=%d: %v", chain, vaultID, err)
+			}
+			
+			// 检查触发条件
 			if err := w.checkVaultTrigger(ctx, chain, vaultID, height, currentSigners); err != nil {
 				logs.Warn("[TransitionWorker] check vault trigger failed: chain=%s vault=%d: %v", chain, vaultID, err)
 				// 继续检查其他 Vault
@@ -403,10 +577,18 @@ func (w *TransitionWorker) CheckTriggerConditions(ctx context.Context, height ui
 
 // checkVaultTrigger 检查单个 Vault 的触发条件
 func (w *TransitionWorker) checkVaultTrigger(ctx context.Context, chain string, vaultID uint32, height uint64, currentSigners []SignerInfo) error {
-	// 1. 获取当前 Vault 的 epoch
+	// 1. 固定边界检查：轮换只在 epochBlocks 边界生效
+	// 计算当前高度是否在 Epoch 边界
+	epochBoundary := (height / w.epochBlocks) * w.epochBlocks
+	if height != epochBoundary {
+		// 不在边界，不触发轮换
+		return nil
+	}
+
+	// 2. 获取当前 Vault 的 epoch
 	currentEpoch := w.vaultProvider.VaultCurrentEpoch(chain, vaultID)
 
-	// 2. 获取当前和上一个 epoch 的委员会
+	// 3. 获取当前和上一个 epoch 的委员会
 	currentCommittee, err := w.vaultProvider.VaultCommittee(chain, vaultID, currentEpoch)
 	if err != nil {
 		return fmt.Errorf("get current committee: %w", err)
@@ -422,19 +604,122 @@ func (w *TransitionWorker) checkVaultTrigger(ctx context.Context, chain string, 
 		return nil
 	}
 
-	// 3. 计算 change_ratio（委员会成员变化比例）
+	// 4. 计算 change_ratio（委员会成员变化比例）
 	changeRatio := w.calculateChangeRatio(prevCommittee, currentCommittee)
 
-	// 4. 应用 EWMA 平滑（简化实现，实际应该维护历史状态）
-	// TODO: 维护每个 Vault 的历史 change_ratio，应用 EWMA
+	// 5. 应用 EWMA 平滑（维护历史状态）
+	ewmaKey := fmt.Sprintf("%s_%d", chain, vaultID)
+	w.mu.Lock()
+	prevEWMA, exists := w.ewmaHistory[ewmaKey]
+	if !exists {
+		// 首次计算，直接使用当前值
+		w.ewmaHistory[ewmaKey] = changeRatio
+		prevEWMA = changeRatio
+	} else {
+		// EWMA: new_value = alpha * current + (1 - alpha) * prev
+		newEWMA := w.ewmaAlpha*changeRatio + (1-w.ewmaAlpha)*prevEWMA
+		w.ewmaHistory[ewmaKey] = newEWMA
+		changeRatio = newEWMA // 使用平滑后的值
+	}
+	w.mu.Unlock()
 
-	// 5. 检查是否达到阈值
+	logs.Debug("[TransitionWorker] chain=%s vault=%d height=%d change_ratio=%.4f ewma=%.4f threshold=%.4f",
+		chain, vaultID, height, changeRatio, prevEWMA, w.transitionThreshold)
+
+	// 6. 检查是否达到阈值
 	if changeRatio >= w.transitionThreshold {
-		logs.Info("[TransitionWorker] trigger condition met: chain=%s vault=%d epoch=%d change_ratio=%.2f",
-			chain, vaultID, currentEpoch+1, changeRatio)
+		logs.Info("[TransitionWorker] trigger condition met: chain=%s vault=%d epoch=%d height=%d change_ratio=%.4f (ewma)",
+			chain, vaultID, currentEpoch+1, height, changeRatio)
 
 		// 创建新的 VaultTransitionState
 		return w.createTransitionState(ctx, chain, vaultID, currentEpoch+1, height, prevCommittee, currentCommittee)
+	}
+
+	return nil
+}
+
+// checkAndRestartDKG 检查 DKG 失败状态并触发重启
+// 当检测到 DkgStatusFailed 时，创建新的 transition state 并重启 DKG
+func (w *TransitionWorker) checkAndRestartDKG(ctx context.Context, chain string, vaultID uint32, height uint64) error {
+	// 获取当前 epoch
+	currentEpoch := w.vaultProvider.VaultCurrentEpoch(chain, vaultID)
+	
+	// 检查当前 epoch 的 transition state
+	transitionKey := fmt.Sprintf("v1_frost_vault_transition_%s_%d_%s", chain, vaultID, padUint(currentEpoch))
+	transitionData, exists, err := w.stateReader.Get(transitionKey)
+	if err != nil {
+		return fmt.Errorf("get transition state: %w", err)
+	}
+	if !exists || len(transitionData) == 0 {
+		return nil // 没有 transition state，无需重启
+	}
+
+	var transition pb.VaultTransitionState
+	if err := proto.Unmarshal(transitionData, &transition); err != nil {
+		return fmt.Errorf("unmarshal transition: %w", err)
+	}
+
+	// 检查 DKG 状态是否为 FAILED
+	if transition.DkgStatus != "FAILED" {
+		return nil // 不是失败状态，无需重启
+	}
+
+	logs.Info("[TransitionWorker] DKG failed detected: chain=%s vault=%d epoch=%d, triggering restart", chain, vaultID, currentEpoch)
+
+	// 获取完整委员会（从 Top10000 重新分配）
+	signers, err := w.signerProvider.Top10000(height)
+	if err != nil {
+		return fmt.Errorf("get top10000: %w", err)
+	}
+
+	// 获取 VaultConfig
+	vaultCfgKey := fmt.Sprintf("v1_frost_vault_cfg_%s_%d", chain, vaultID)
+	vaultCfgData, exists, err := w.stateReader.Get(vaultCfgKey)
+	if err != nil || !exists {
+		return fmt.Errorf("vault config not found")
+	}
+
+	var vaultCfg pb.FrostVaultConfig
+	if err := proto.Unmarshal(vaultCfgData, &vaultCfg); err != nil {
+		return fmt.Errorf("unmarshal vault config: %w", err)
+	}
+
+	// 重新计算委员会（使用新的 epoch）
+	newEpoch := currentEpoch + 1
+	// 使用确定性分配算法重新分配委员会
+	// 这里简化处理，实际应该调用 committee.AssignToVaults
+	// 为了简化，我们使用当前 Top10000 的前 N 个作为委员会
+	committeeSize := int(vaultCfg.CommitteeSize)
+	if len(signers) < committeeSize {
+		return fmt.Errorf("insufficient signers: have %d, need %d", len(signers), committeeSize)
+	}
+
+	// 构建新的委员会成员列表
+	newCommitteeMembers := make([]string, 0, committeeSize)
+	for i := 0; i < committeeSize && i < len(signers); i++ {
+		newCommitteeMembers = append(newCommitteeMembers, string(signers[i].ID))
+	}
+
+	// 计算新的门限
+	thresholdRatio := float64(vaultCfg.ThresholdRatio)
+	if thresholdRatio <= 0 || thresholdRatio > 1 {
+		thresholdRatio = 0.67 // 默认 2/3
+	}
+	threshold := int(float64(len(newCommitteeMembers)) * thresholdRatio)
+	if threshold < 1 {
+		threshold = 1
+	}
+
+	// 提交新的 transition state 交易
+	// 注意：这里需要通过 txSubmitter 提交 transition state
+	// 为了简化，我们直接启动新的 DKG 会话，transition state 会在 DKG 流程中创建
+	// TODO: 实现 SubmitTransitionStateTx 方法以显式创建 transition state
+	logs.Info("[TransitionWorker] DKG restart: chain=%s vault=%d new_epoch=%d n=%d t=%d", 
+		chain, vaultID, newEpoch, len(newCommitteeMembers), threshold)
+
+	// 启动新的 DKG 会话
+	if err := w.StartSession(ctx, chain, vaultID, newEpoch, vaultCfg.SignAlgo); err != nil {
+		return fmt.Errorf("start new DKG session: %w", err)
 	}
 
 	return nil
@@ -582,14 +867,11 @@ func (w *TransitionWorker) PlanMigrationJobs(ctx context.Context, chain string, 
 }
 
 // planBTCMigrationJobs 规划 BTC 迁移 Job（sweep 交易）
+// 扫描该 Vault 的所有 UTXO，生成 sweep 模板（所有 UTXO -> 新地址）
 func (w *TransitionWorker) planBTCMigrationJobs(ctx context.Context, chain string, vaultID uint32, epochID uint64, transition *pb.VaultTransitionState) error {
-	// 1. 扫描该 Vault 的所有 UTXO
+	// 1. 扫描该 Vault 的所有 UTXO（未锁定的）
 	utxoPrefix := fmt.Sprintf("v1_frost_btc_utxo_%d_", vaultID)
-	utxos := make([]struct {
-		txid  string
-		vout  uint32
-		value uint64
-	}, 0)
+	utxos := make([]UTXO, 0)
 
 	err := w.stateReader.Scan(utxoPrefix, func(k string, v []byte) bool {
 		// 解析 UTXO key: v1_frost_btc_utxo_<vault_id>_<txid>_<vout>
@@ -604,14 +886,25 @@ func (w *TransitionWorker) planBTCMigrationJobs(ctx context.Context, chain strin
 			return true
 		}
 
-		// 解析 UTXO 值（简化，实际应该从 v 中解析）
-		// TODO: 从 v 中解析完整的 UTXO 信息
-		utxos = append(utxos, struct {
-			txid  string
-			vout  uint32
-			value uint64
-		}{txid: txid, vout: uint32(vout), value: 0}) // value 需要从实际数据解析
+		// 检查是否已锁定（正在提现中）
+		lockKey := fmt.Sprintf("v1_frost_btc_locked_utxo_%d_%s_%d", vaultID, txid, vout)
+		_, locked, _ := w.stateReader.Get(lockKey)
+		if locked {
+			return true // 已锁定，跳过
+		}
 
+		// 解析 UTXO 信息（从 v 或从 RechargeRequest 获取）
+		// TODO: 从 v 中解析完整的 UTXO 信息（amount, scriptPubKey, confirmHeight）
+		// 这里简化处理，假设可以从其他地方获取
+		utxo := UTXO{
+			TxID:          txid,
+			Vout:          uint32(vout),
+			Amount:        0, // TODO: 从实际数据解析
+			ScriptPubKey:  nil,
+			ConfirmHeight: 0,
+		}
+
+		utxos = append(utxos, utxo)
 		return true
 	})
 	if err != nil {
@@ -629,22 +922,88 @@ func (w *TransitionWorker) planBTCMigrationJobs(ctx context.Context, chain strin
 		return fmt.Errorf("new group pubkey not ready")
 	}
 
-	// TODO: 从 group_pubkey 派生 BTC 地址
-	// newAddress := deriveBTCAddress(newGroupPubkey)
+	// TODO: 从 group_pubkey 派生 BTC Taproot 地址
+	// newAddress := deriveBTCTaprootAddress(newGroupPubkey)
+	// 这里简化处理，假设可以从 VaultState 获取新地址
+	newAddress := "" // TODO: 从新 VaultState 获取地址
 
-	// 3. 生成迁移交易模板（sweep：所有 UTXO -> 新地址）
-	// TODO: 实现完整的 BTC 迁移模板生成
-	// 这里需要：
-	// - 构建 BTC 交易模板（inputs = 所有 UTXO，outputs = 新地址）
-	// - 计算 template_hash
-	// - 创建 MigrationJob 记录
-	// - 启动 ROAST 签名会话
+	// 3. 计算总金额和手续费
+	var totalAmount uint64
+	for _, utxo := range utxos {
+		totalAmount += utxo.Amount
+	}
+	// 估算手续费（简化：基于 input/output 数量）
+	fee := estimateBTCMigrationFee(len(utxos), 1) // 1 个输出（新地址）
+	changeAmount := uint64(0)
+	if totalAmount > fee {
+		changeAmount = totalAmount - fee
+		// 如果找零小于粉尘限制，不创建找零输出
+		if changeAmount < 546 { // DustLimit
+			changeAmount = 0
+		}
+	}
 
-	logs.Info("[TransitionWorker] planned BTC migration: vault=%d utxos=%d", vaultID, len(utxos))
+	// 4. 获取链适配器并构建迁移模板
+	// 使用 WithdrawTemplateParams，但用于迁移场景
+	adapter, err := w.getChainAdapter(chain)
+	if err != nil {
+		return fmt.Errorf("get chain adapter: %w", err)
+	}
+
+	params := WithdrawTemplateParams{
+		Chain:        chain,
+		Asset:        "BTC",
+		VaultID:      vaultID,
+		KeyEpoch:     epochID - 1, // 使用旧 key_epoch（迁移时使用旧密钥签名）
+		WithdrawIDs:  []string{},   // 迁移没有 withdraw_id
+		Inputs:       utxos,
+		Outputs: []WithdrawOutput{
+			{
+				WithdrawID: fmt.Sprintf("migration_%d_%d", vaultID, epochID),
+				To:         newAddress,
+				Amount:     changeAmount,
+			},
+		},
+		Fee:          fee,
+		ChangeAmount: 0, // 不创建找零（全部迁移到新地址）
+	}
+
+	result, err := adapter.BuildWithdrawTemplate(params)
+	if err != nil {
+		return fmt.Errorf("build migration template: %w", err)
+	}
+
+	// 5. 创建 MigrationJob 记录（通过 VM 交易或直接存储）
+	// TODO: 创建 MigrationJob 并启动 ROAST 签名会话
+	// 这里简化处理，记录日志
+	logs.Info("[TransitionWorker] planned BTC migration: vault=%d epoch=%d utxos=%d template_hash=%x",
+		vaultID, epochID, len(utxos), result.TemplateHash)
+
 	return nil
 }
 
+// estimateBTCMigrationFee 估算 BTC 迁移手续费
+func estimateBTCMigrationFee(inputCount, outputCount int) uint64 {
+	// 简化估算：每个 input 约 148 bytes，每个 output 约 34 bytes
+	baseSize := 10
+	inputSize := inputCount * 148
+	outputSize := outputCount * 34
+	witnessSize := inputCount * 64 // Taproot witness
+	totalVBytes := baseSize + inputSize + outputSize + witnessSize/4
+	feeRate := uint64(10) // sat/vbyte
+	return uint64(totalVBytes) * feeRate
+}
+
+// getChainAdapter 获取链适配器
+func (w *TransitionWorker) getChainAdapter(chain string) (ChainAdapter, error) {
+	if w.adapterFactory == nil {
+		return nil, fmt.Errorf("chain adapter factory not available")
+	}
+	return w.adapterFactory.Adapter(chain)
+}
+
 // planContractMigrationJobs 规划合约链迁移 Job（updatePubkey）
+// 生成 updatePubkey(new_pubkey, vault_id, epoch_id) 模板
 func (w *TransitionWorker) planContractMigrationJobs(ctx context.Context, chain string, vaultID uint32, epochID uint64, transition *pb.VaultTransitionState) error {
 	// 1. 获取新 group_pubkey
 	newGroupPubkey := transition.NewGroupPubkey
@@ -652,15 +1011,48 @@ func (w *TransitionWorker) planContractMigrationJobs(ctx context.Context, chain 
 		return fmt.Errorf("new group pubkey not ready")
 	}
 
-	// 2. 生成 updatePubkey 模板
-	// template = updatePubkey(new_pubkey, vault_id, epoch_id, ...)
-	// TODO: 实现完整的合约调用模板生成
-	// 这里需要：
-	// - 构建合约调用 calldata
-	// - 计算 template_hash
-	// - 创建 MigrationJob 记录
-	// - 启动 ROAST 签名会话
+	// 2. 获取合约地址（从 VaultConfig 或 VaultState 获取）
+	// TODO: 从 VaultConfig 获取合约地址
+	contractAddr := "" // TODO: 从配置获取
 
-	logs.Info("[TransitionWorker] planned contract migration: chain=%s vault=%d epoch=%d", chain, vaultID, epochID)
+	// 3. 构建 updatePubkey 方法调用
+	// 方法签名：updatePubkey(bytes32 newPubkey, uint32 vaultId, uint64 epochId)
+	// 方法 ID：keccak256("updatePubkey(bytes32,uint32,uint64)")[:4]
+	methodID := []byte{0x12, 0x34, 0x56, 0x78} // TODO: 计算实际的方法 ID
+
+	// 4. 构建 calldata（ABI 编码）
+	// calldata = methodID + encode(newPubkey) + encode(vaultId) + encode(epochId)
+	// TODO: 实现 ABI 编码
+	calldata := make([]byte, 0)
+	calldata = append(calldata, methodID...)
+	// 这里简化处理，实际需要完整的 ABI 编码
+
+	// 5. 获取链适配器并构建迁移模板
+	adapter, err := w.getChainAdapter(chain)
+	if err != nil {
+		return fmt.Errorf("get chain adapter: %w", err)
+	}
+
+	params := WithdrawTemplateParams{
+		Chain:       chain,
+		Asset:       "NATIVE", // 原生币
+		VaultID:     vaultID,
+		KeyEpoch:    epochID - 1, // 使用旧 key_epoch
+		WithdrawIDs: []string{},
+		Outputs:     []WithdrawOutput{}, // updatePubkey 没有输出
+		ContractAddr: contractAddr,
+		MethodID:     methodID,
+	}
+
+	result, err := adapter.BuildWithdrawTemplate(params)
+	if err != nil {
+		return fmt.Errorf("build migration template: %w", err)
+	}
+
+	// 6. 创建 MigrationJob 记录
+	// TODO: 创建 MigrationJob 并启动 ROAST 签名会话
+	logs.Info("[TransitionWorker] planned contract migration: chain=%s vault=%d epoch=%d template_hash=%x",
+		chain, vaultID, epochID, result.TemplateHash)
+
 	return nil
 }

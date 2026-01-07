@@ -4,7 +4,9 @@
 package roast
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 	"time"
@@ -61,6 +63,9 @@ type Participant struct {
 	vaultProvider VaultCommitteeProvider
 	cryptoFactory CryptoExecutorFactory // 密码学执行器工厂
 	sessionStore  *session.SessionStore
+
+	// 当前区块高度（用于协调者验证）
+	currentHeight uint64
 
 	// 本地密钥份额（按 vault 和 epoch 存储）
 	shares map[string][]byte // key: "chain_vaultID_epoch" -> share bytes
@@ -145,8 +150,16 @@ func NewParticipant(nodeID NodeID, messenger RoastMessenger, vaultProvider Vault
 		vaultProvider: vaultProvider,
 		cryptoFactory: cryptoFactory,
 		sessionStore:  sessionStore,
+		currentHeight: 0,
 		shares:        make(map[string][]byte),
 	}
+}
+
+// UpdateHeight 更新当前区块高度
+func (p *Participant) UpdateHeight(height uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.currentHeight = height
 }
 
 // SetShare 设置本地密钥份额
@@ -199,8 +212,11 @@ func (p *Participant) HandleRoastNonceRequest(env *Envelope) error {
 	}
 
 	// 验证请求是否来自当前协调者（防止旧协调者的请求）
-	// 注意：这里简化处理，实际应该根据区块高度计算当前协调者
-	// TODO: 实现完整的协调者验证逻辑
+	// 参与者仅接受当前 agg_index 对应协调者的请求
+	if err := p.verifyCoordinator(env); err != nil {
+		logs.Warn("[Participant] rejected nonce request from non-current coordinator: %v", err)
+		return err
+	}
 
 	// 获取本地密钥份额
 	myShare := p.GetShare(env.Chain, env.VaultID, env.Epoch)
@@ -346,6 +362,12 @@ func (p *Participant) HandleRoastSignRequest(env *Envelope) error {
 	}
 	logs.Debug("[Participant] received sign request from %s for job %s", env.From, env.SessionID)
 
+	// 验证请求是否来自当前协调者（防止旧协调者的请求）
+	if err := p.verifyCoordinator(env); err != nil {
+		logs.Warn("[Participant] rejected sign request from non-current coordinator: %v", err)
+		return err
+	}
+
 	p.mu.RLock()
 	sess, exists := p.sessions[env.SessionID]
 	p.mu.RUnlock()
@@ -396,8 +418,23 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 	allNonces := parseAggregatedNonces(sess.AggregatedNonces, numTasks)
 
 	for i := 0; i < numTasks; i++ {
+		// 获取待签名消息
+		var msg []byte
+		if i < len(sess.Messages) {
+			msg = sess.Messages[i]
+		}
+		if msg == nil {
+			msg = []byte(sess.JobID) // 默认使用 jobID 作为消息
+		}
+
+		// 验证 nonce 是否绑定到正确的消息（防二次签名攻击）
+		hidingNonceBytes := sess.HidingNonces[i]
+		if !p.sessionStore.ValidateNonceForMessage(hidingNonceBytes, msg) {
+			return nil, fmt.Errorf("nonce for task %d is not bound to message (possible replay attack)", i)
+		}
+
 		// 解析本地 nonce
-		hidingNonce := new(big.Int).SetBytes(sess.HidingNonces[i])
+		hidingNonce := new(big.Int).SetBytes(hidingNonceBytes)
 		bindingNonce := new(big.Int).SetBytes(sess.BindingNonces[i])
 
 		// 计算 nonce 承诺点（通过接口）
@@ -424,13 +461,6 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		}
 
 		// 计算绑定系数 ρ_i
-		var msg []byte
-		if i < len(sess.Messages) {
-			msg = sess.Messages[i]
-		}
-		if msg == nil {
-			msg = []byte(sess.JobID) // 默认使用 jobID 作为消息
-		}
 		rho := roastExec.ComputeBindingCoefficient(sess.MyIndex+1, msg, taskNonces)
 
 		// 计算拉格朗日系数 λ_i
@@ -570,4 +600,99 @@ func (p *Participant) CloseSession(jobID string) {
 		}
 		delete(p.sessions, jobID)
 	}
+}
+
+// verifyCoordinator 验证请求是否来自当前协调者
+// 参与者仅接受当前 agg_index 对应协调者的请求
+func (p *Participant) verifyCoordinator(env *Envelope) error {
+	// 获取委员会
+	committee, err := p.vaultProvider.VaultCommittee(env.Chain, env.VaultID, env.Epoch)
+	if err != nil {
+		return err
+	}
+
+	if len(committee) == 0 {
+		return errors.New("empty committee")
+	}
+
+	// 计算当前协调者索引（与 Coordinator 使用相同的算法）
+	coordIndex := p.computeCoordinatorIndex(env.SessionID, env.Epoch, committee, env.Chain)
+
+	// 检查请求是否来自当前协调者
+	if coordIndex < 0 || coordIndex >= len(committee) {
+		return errors.New("invalid coordinator index")
+	}
+
+	currentCoordID := NodeID(committee[coordIndex].ID)
+	if env.From != currentCoordID {
+		return fmt.Errorf("request from non-current coordinator: expected=%s, got=%s", currentCoordID, env.From)
+	}
+
+	return nil
+}
+
+// computeCoordinatorIndex 计算当前协调者索引（与 Coordinator 使用相同的算法）
+func (p *Participant) computeCoordinatorIndex(jobID string, keyEpoch uint64, committee []SignerInfo, chain string) int {
+	if len(committee) == 0 {
+		return 0
+	}
+
+	// 计算种子：seed = H(session_id || key_epoch || "frost_agg")
+	seed := computeAggregatorSeed(jobID, keyEpoch)
+
+	// 转换为 Participant 列表
+	participants := make([]ParticipantInfo, len(committee))
+	for i, member := range committee {
+		participants[i] = ParticipantInfo{
+			ID:    string(member.ID),
+			Index: i,
+		}
+	}
+
+	// 确定性排列委员会
+	permuted := permuteParticipantList(participants, seed)
+
+	// 获取会话的起始高度（简化：假设从当前高度开始，实际应从会话存储获取）
+	// TODO: 从会话存储获取 StartHeight
+	startHeight := p.currentHeight // 简化处理
+	blocksElapsed := p.currentHeight - startHeight
+	if blocksElapsed < 0 {
+		blocksElapsed = 0
+	}
+
+	// 计算轮换次数（超时切换）
+	// agg_index = floor((now_height - session_start_height) / agg_timeout_blocks) % len(agg_candidates)
+	aggTimeoutBlocks := uint64(10) // TODO: 从配置获取
+	rotations := blocksElapsed / aggTimeoutBlocks
+	aggIndex := int(rotations) % len(permuted)
+
+	// 找回原始索引
+	for i, member := range committee {
+		if member.ID == NodeID(permuted[aggIndex].ID) {
+			return i
+		}
+	}
+	return 0
+}
+
+// ParticipantInfo 参与者信息（用于排列）
+type ParticipantInfo struct {
+	ID    string
+	Index int
+}
+
+// permuteParticipantList 确定性排列参与者列表
+func permuteParticipantList(participants []ParticipantInfo, seed []byte) []ParticipantInfo {
+	result := make([]ParticipantInfo, len(participants))
+	copy(result, participants)
+
+	// 使用 Fisher-Yates 洗牌，种子决定随机序列
+	for i := len(result) - 1; i > 0; i-- {
+		// 从种子派生确定性随机数
+		indexSeed := sha256.Sum256(append(seed, byte(i)))
+		j := int(indexSeed[0]) % (i + 1)
+		result[i], result[j] = result[j], result[i]
+	}
+
+	return result
 }

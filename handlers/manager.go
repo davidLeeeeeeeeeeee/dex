@@ -91,6 +91,10 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/frost/config", hm.HandleGetFrostConfig)
 	mux.HandleFunc("/frost/withdraw/status", hm.HandleGetWithdrawStatus)
 	mux.HandleFunc("/frost/withdraws", hm.HandleListWithdraws)
+	mux.HandleFunc("/frost/vault/group_pubkey", hm.HandleGetVaultGroupPubKey)
+	mux.HandleFunc("/frost/vault/transition_status", hm.HandleGetVaultTransitionStatus)
+	mux.HandleFunc("/frost/vault/dkg_commitments", hm.HandleGetVaultDkgCommitments)
+	mux.HandleFunc("/frost/signed_package", hm.HandleDownloadSignedPackage)
 	// Frost 管理接口
 	mux.HandleFunc("/frost/health", hm.HandleGetHealth)
 	mux.HandleFunc("/frost/metrics", hm.HandleGetMetrics)

@@ -2,6 +2,7 @@
 package vm
 
 import (
+	"fmt"
 	"dex/keys"
 	"dex/pb"
 	"dex/witness"
@@ -90,6 +91,21 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 	asset := stored.TokenAddress
 	vaultID := stored.VaultId // 使用入账时分配的 vault_id，保证资金按 Vault 分片
 	finalizeHeight := stored.FinalizeHeight
+
+	// 检查 Vault lifecycle：DRAINING 的 Vault 不再接受新入账
+	vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
+	vaultStateData, exists, _ := sv.Get(vaultStateKey)
+	if exists && len(vaultStateData) > 0 {
+		var vaultState pb.FrostVaultState
+		if err := proto.Unmarshal(vaultStateData, &vaultState); err == nil {
+			if vaultState.Status == VaultLifecycleDraining {
+				// DRAINING 状态的 Vault 不再接受新入账
+				// 注意：这里应该拒绝，但由于是 finalized 事件，可能已经发生，记录警告
+				// 实际应该在 witness_handler.go 中拒绝
+				return fmt.Errorf("vault %d is DRAINING, cannot accept new recharge", vaultID)
+			}
+		}
+	}
 
 	// 区分 BTC 和账户链/合约链的处理
 	if chain == "btc" {

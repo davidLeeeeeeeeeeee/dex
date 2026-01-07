@@ -736,3 +736,126 @@ message FrostVaultConfig {
   repeated string vault_refs = 7; // 各 Vault 的地址/合约
   string deposit_allocation_rule = 8; // 入账分配策略
 }
+
+// ========== Frost API 响应消息 ==========
+
+// ChainCfg 链级别配置（用于 API 响应）
+message ChainCfg {
+  string sign_algo = 1; // 签名算法
+  string frost_variant = 2; // Frost 变体（可选）
+  int32 vaults_per_chain = 3; // 每链 Vault 数量
+}
+
+// GetFrostConfigResponse Frost 配置响应
+message GetFrostConfigResponse {
+  bool enabled = 1; // 是否启用
+  repeated string supported_chains = 2; // 支持的链列表
+  double default_threshold = 3; // 默认门限比例
+  int32 vault_count = 4; // 总 Vault 数量
+  int32 committee_size = 5; // 委员会规模
+  string min_withdraw = 6; // 最小提现金额
+  map<string, ChainCfg> chains = 7; // 各链配置
+}
+
+// GetWithdrawStatusResponse 提现状态响应
+message GetWithdrawStatusResponse {
+  string lot_id = 1; // 提现 ID
+  string chain = 2; // 链标识
+  string status = 3; // 状态：QUEUED | SIGNING | SIGNED | BROADCAST
+  string amount = 4; // 金额
+  string receiver = 5; // 接收地址
+  uint64 height = 6; // 高度
+  string tx_hash = 7; // 交易哈希（可选）
+}
+
+// ListWithdrawsResponse 提现列表响应
+message ListWithdrawsResponse {
+  repeated GetWithdrawStatusResponse withdraws = 1; // 提现列表
+  int32 total = 2; // 总数
+}
+
+// GetVaultGroupPubKeyResponse Vault 群公钥响应
+message GetVaultGroupPubKeyResponse {
+  string chain = 1; // 链标识
+  uint32 vault_id = 2; // Vault ID
+  uint64 key_epoch = 3; // 密钥版本
+  string group_pubkey = 4; // 群公钥（hex 编码）
+  string sign_algo = 5; // 签名算法
+  string status = 6; // 状态
+}
+
+// GetVaultTransitionStatusResponse Vault 轮换状态响应
+message GetVaultTransitionStatusResponse {
+  string chain = 1; // 链标识
+  uint32 vault_id = 2; // Vault ID
+  uint64 epoch_id = 3; // epoch 版本
+  string sign_algo = 4; // 签名算法
+  uint64 trigger_height = 5; // 触发高度
+  repeated string old_committee_members = 6; // 旧委员会成员
+  repeated string new_committee_members = 7; // 新委员会成员
+  string dkg_status = 8; // DKG 状态
+  string dkg_session_id = 9; // DKG 会话 ID
+  uint32 dkg_threshold_t = 10; // DKG 门限 t
+  uint32 dkg_n = 11; // DKG 参与者数量 n
+  uint64 dkg_commit_deadline = 12; // commit 截止高度
+  uint64 dkg_dispute_deadline = 13; // 裁决截止高度
+  string old_group_pubkey = 14; // 旧群公钥（hex 编码）
+  string new_group_pubkey = 15; // 新群公钥（hex 编码）
+  string validation_status = 16; // 验证状态
+  string lifecycle = 17; // 生命周期
+}
+
+// DkgCommitmentInfo DKG 承诺信息
+message DkgCommitmentInfo {
+  string participant = 1; // 参与者地址
+  repeated string commitment_points = 2; // 承诺点列表（hex 编码）
+  uint64 commit_height = 3; // 提交高度
+}
+
+// GetVaultDkgCommitmentsResponse DKG 承诺列表响应
+message GetVaultDkgCommitmentsResponse {
+  string chain = 1; // 链标识
+  uint32 vault_id = 2; // Vault ID
+  uint64 epoch_id = 3; // epoch 版本
+  repeated DkgCommitmentInfo commitments = 4; // 承诺列表
+  int32 total = 5; // 总数
+}
+
+// DownloadSignedPackageResponse 下载签名包响应
+message DownloadSignedPackageResponse {
+  string job_id = 1; // 任务 ID
+  uint64 idx = 2; // 序号
+  string signed_package_bytes = 3; // 签名包字节（hex 编码）
+  uint64 submit_height = 4; // 提交高度
+  string submitter = 5; // 提交者地址
+}
+
+// HealthResponse 健康检查响应
+message HealthResponse {
+  string status = 1; // 状态
+  string uptime = 2; // 运行时间
+  string version = 3; // 版本
+  string go_version = 4; // Go 版本
+  int32 num_cpu = 5; // CPU 数量
+}
+
+// MetricsResponse 指标响应
+message MetricsResponse {
+  uint64 heap_alloc = 1; // 堆分配
+  uint64 heap_sys = 2; // 堆系统
+  int32 num_goroutine = 3; // Goroutine 数量
+  int32 frost_jobs = 4; // Frost 任务数
+  int32 frost_withdraws = 5; // Frost 提现数
+}
+
+// ForceRescanRequest 强制重扫请求
+message ForceRescanRequest {
+  string chain = 1; // 链标识（可选，空表示所有链）
+  uint64 from_height = 2; // 起始高度（可选，0 表示从最新）
+}
+
+// ForceRescanResponse 强制重扫响应
+message ForceRescanResponse {
+  bool success = 1; // 是否成功
+  string message = 2; // 消息
+}

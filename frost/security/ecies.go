@@ -145,6 +145,73 @@ func ParseECIESCiphertext(ciphertext []byte, plaintextLen int) (*ECIESCiphertext
 	}, nil
 }
 
+// ECIESDecrypt 使用 secp256k1 ECIES 解密
+// recipientPrivKey: 接收者私钥（32 字节）
+// ciphertext: 密文（ephemeralPubKey || encrypted || mac）
+// 返回：明文 share
+func ECIESDecrypt(recipientPrivKey, ciphertext []byte) ([]byte, error) {
+	if len(recipientPrivKey) != 32 {
+		return nil, ErrInvalidPrivateKey
+	}
+	if len(ciphertext) < 33+32+32 { // 最小长度：ephemeralPubKey(33) + encrypted(至少32) + mac(32)
+		return nil, ErrInvalidCiphertext
+	}
+
+	// 解析临时公钥
+	ephemeralPubBytes := ciphertext[:33]
+	ephemeralPub, err := btcec.ParsePubKey(ephemeralPubBytes)
+	if err != nil {
+		return nil, ErrInvalidCiphertext
+	}
+
+	// 创建接收者私钥
+	recipientPriv := secp256k1PrivKeyFromBytes(recipientPrivKey)
+
+	// 计算共享密钥：ECDH
+	sharedX, _ := btcec.S256().ScalarMult(ephemeralPub.X(), ephemeralPub.Y(), recipientPriv.Serialize())
+	sharedSecret := sha256.Sum256(sharedX.Bytes())
+
+	// 派生加密密钥和 MAC 密钥
+	encKey := sharedSecret[:16]
+	macKey := sharedSecret[16:]
+
+	// 提取加密数据和 MAC
+	encryptedLen := len(ciphertext) - 33 - 32
+	encrypted := ciphertext[33 : 33+encryptedLen]
+	mac := ciphertext[33+encryptedLen:]
+
+	// 验证 MAC
+	expectedMac := computeHMAC(macKey, encrypted)
+	if !hmac.Equal(mac, expectedMac) {
+		return nil, ErrMacVerificationFailed
+	}
+
+	// AES-CTR 解密
+	plaintext, err := aesCTRDecrypt(encKey, encrypted)
+	if err != nil {
+		return nil, err
+	}
+
+	return plaintext, nil
+}
+
+// aesCTRDecrypt AES-CTR 解密
+func aesCTRDecrypt(key, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	// 使用全零 IV（与加密时一致）
+	iv := make([]byte, aes.BlockSize)
+
+	plaintext := make([]byte, len(ciphertext))
+	stream := cipher.NewCTR(block, iv)
+	stream.XORKeyStream(plaintext, ciphertext)
+
+	return plaintext, nil
+}
+
 // GetReceiverPubKeyFromAddress 从地址获取接收者公钥
 // 注意：这需要从链上状态获取，这里只是接口定义
 // 实际实现需要查询 NodeInfo 或 PublicKeys

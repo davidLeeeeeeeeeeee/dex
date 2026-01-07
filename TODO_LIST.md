@@ -124,7 +124,7 @@
 
 ---
 
-### 5. CompositeJob（跨 Vault 组合支付）⚠️
+### 5. CompositeJob（跨 Vault 组合支付）✅
 
 **设计文档要求**（§5.1.2）：
 - 当队首提现无法由单个 Vault 覆盖时，启用跨 Vault 组合模式（仅限合约链/账户链）
@@ -132,19 +132,19 @@
 - BTC 不支持跨 Vault 组合（每个 Vault 是独立 Taproot 地址）
 
 **当前状态**：
-- ❌ **完全缺失**：CompositeJob 的实现
+- ✅ **已完成**：CompositeJob 的实现
 
 **需要实现**：
-- [ ] 在 `frost/runtime/planning/job_window_planner.go` 中：检测队首大额提现，触发 CompositeJob 规划
-- [ ] 定义 CompositeJob 结构（包含 sub_jobs[]）
-- [ ] 实现组合规划算法（按 vault_id 升序累加可用余额直至覆盖总额）
-- [ ] 在 `WithdrawWorker` 中：支持 CompositeJob 的并发签名（每个 SubJob 独立 ROAST）
+- [x] 在 `frost/runtime/planning/job_window_planner.go` 中：检测队首大额提现，触发 CompositeJob 规划 ✅
+- [x] 定义 CompositeJob 结构（包含 sub_jobs[]）✅
+- [x] 实现组合规划算法（按 vault_id 升序累加可用余额直至覆盖总额）✅
+- [x] 在 `WithdrawWorker` 中：支持 CompositeJob 的并发签名（每个 SubJob 独立 ROAST）✅
 
 ---
 
 ## 二、轮换功能缺失（中优先级）
 
-### 6. TransitionWorker DKG 触发检测 ⚠️
+### 6. TransitionWorker DKG 触发检测 ✅
 
 **设计文档要求**（§6.1、§6.3）：
 - 按 Vault 独立检测触发条件（change_ratio >= transitionTriggerRatio，默认 0.2）
@@ -155,18 +155,18 @@
 **当前状态**：
 - ✅ TransitionWorker 框架已实现（`frost/runtime/workers/transition_worker.go`）
 - ✅ `CheckTriggerConditions` 方法框架存在
-- ❌ **缺失**：完整的触发条件检测逻辑（EWMA 加权平均、固定边界检查）
-- ❌ **缺失**：VaultTransitionState 的创建（触发时通过 VM 交易创建）
-- ❌ **缺失**：DKG 剔除后的确定性规则（qualified_set、disqualified_set 维护）
+- ✅ **已完成**：完整的触发条件检测逻辑（EWMA 加权平均、固定边界检查）
+- ✅ **已完成**：VaultTransitionState 的创建（触发时通过 VM 交易创建）
+- ✅ **已完成**：DKG 剔除后的确定性规则（qualified_set、disqualified_set 维护）
 
 **需要实现**：
-- [ ] 在 `frost/runtime/workers/transition_worker.go` 中：完善 `CheckTriggerConditions`（EWMA、固定边界）
-- [ ] 创建 VM 交易类型 `FrostVaultTransitionTriggerTx`（或通过现有机制创建 VaultTransitionState）
-- [ ] 在 `vm/frost_dkg_handlers.go` 中：实现 DKG 剔除后的状态更新（qualified_set、disqualified_set、n/t 更新）
+- [x] 在 `frost/runtime/workers/transition_worker.go` 中：完善 `CheckTriggerConditions`（EWMA、固定边界）✅
+- [x] 创建 VM 交易类型 `FrostVaultTransitionTriggerTx`（或通过现有机制创建 VaultTransitionState）✅
+- [x] 在 `vm/frost_dkg_handlers.go` 中：实现 DKG 剔除后的状态更新（qualified_set、disqualified_set、n/t 更新）✅
 
 ---
 
-### 7. DKG 投诉裁决完整流程 ⚠️
+### 7. DKG 投诉裁决完整流程 ✅
 
 **设计文档要求**（§6.3.2）：
 - 恶意投诉处理：投诉者被惩罚并剔除，dealer 的 share 已泄露，仅 dealer 重新生成多项式
@@ -175,19 +175,19 @@
 
 **当前状态**：
 - ✅ Handler 框架已存在（`FrostVaultDkgComplaintTxHandler`、`FrostVaultDkgRevealTxHandler`）
-- ❌ **缺失**：完整的投诉裁决逻辑（恶意投诉 vs dealer 作恶的区分处理）
-- ❌ **缺失**：DKG 剔除后的 qualified_set 维护
-- ❌ **缺失**：DKG 重启规则（当 qualified_count < threshold 时）
+- ✅ **已完成**：完整的投诉裁决逻辑（恶意投诉 vs dealer 作恶的区分处理）
+- ✅ **已完成**：DKG 剔除后的 qualified_set 维护
+- ✅ **已完成**：DKG 重启规则（当 qualified_count < threshold 时）
 
 **需要实现**：
-- [ ] 在 `vm/frost_dkg_handlers.go` 中：完善 `FrostVaultDkgRevealTxHandler` 的裁决逻辑
-- [ ] 实现恶意投诉处理（剔除投诉者，清空 dealer commitment，仅 dealer 重做）
-- [ ] 实现 dealer 作恶处理（剔除 dealer，其他参与者继续，无需重做）
-- [ ] 实现 DKG 重启规则（检查 `current_n >= initial_t`，否则标记 FAILED）
+- [x] 在 `vm/frost_dkg_handlers.go` 中：完善 `FrostVaultDkgRevealTxHandler` 的裁决逻辑 ✅
+- [x] 实现恶意投诉处理（剔除投诉者，清空 dealer commitment，仅 dealer 重做）✅
+- [x] 实现 dealer 作恶处理（剔除 dealer，其他参与者继续，无需重做）✅
+- [x] 实现 DKG 重启规则（检查 `current_n >= initial_t`，否则标记 FAILED）✅
 
 ---
 
-### 8. 迁移 Job 规划 ⚠️
+### 8. 迁移 Job 规划 ✅
 
 **设计文档要求**（§6.4）：
 - 合约链：生成 `updatePubkey(new_pubkey, vault_id, epoch_id)` 模板
@@ -197,16 +197,16 @@
 **当前状态**：
 - ✅ TransitionWorker 框架已实现
 - ✅ `PlanMigrationJobs` 方法框架存在（`frost/runtime/workers/transition_worker.go`）
-- ❌ **缺失**：完整的迁移 Job 规划逻辑（扫描资金、生成模板、启动 ROAST）
+- ✅ **已完成**：完整的迁移 Job 规划逻辑（扫描资金、生成模板、启动 ROAST）
 
 **需要实现**：
-- [ ] 在 `frost/runtime/workers/transition_worker.go` 中：完善 `planBTCMigrationJobs`（扫描 UTXO，生成 sweep 模板）
-- [ ] 完善 `planContractMigrationJobs`（生成 updatePubkey 模板）
-- [ ] 在 VM 中：实现迁移完成判定逻辑（检查该 Vault 旧 key 资产是否全部消耗）
+- [x] 在 `frost/runtime/workers/transition_worker.go` 中：完善 `planBTCMigrationJobs`（扫描 UTXO，生成 sweep 模板）✅
+- [x] 完善 `planContractMigrationJobs`（生成 updatePubkey 模板）✅
+- [x] 在 VM 中：实现迁移完成判定逻辑（检查该 Vault 旧 key 资产是否全部消耗）✅
 
 ---
 
-### 9. Vault 生命周期管理 ⚠️
+### 9. Vault 生命周期管理 ✅
 
 **设计文档要求**（§4.3.0、§6.2.1）：
 - `ACTIVE`：正常运行，可接收充值、可提现
@@ -215,18 +215,18 @@
 
 **当前状态**：
 - ✅ 常量定义已存在（`vm/frost_vault_transition_signed.go`）
-- ❌ **缺失**：lifecycle 状态转换逻辑（ACTIVE → DRAINING → RETIRED）
-- ❌ **缺失**：witness 入账时检查 Vault lifecycle（DRAINING 时不再分配）
+- ✅ **已完成**：lifecycle 状态转换逻辑（ACTIVE → DRAINING → RETIRED）
+- ✅ **已完成**：witness 入账时检查 Vault lifecycle（DRAINING 时不再分配）
 
 **需要实现**：
-- [ ] 在 `vm/frost_vault_transition_signed_handler.go` 中：实现 lifecycle 状态转换
-- [ ] 在 `vm/witness_handler.go` 中：入账时检查 Vault lifecycle，DRAINING 时拒绝分配
+- [x] 在 `vm/frost_vault_transition_signed_handler.go` 中：实现 lifecycle 状态转换 ✅
+- [x] 在 `vm/witness_handler.go` 中：入账时检查 Vault lifecycle，DRAINING 时拒绝分配 ✅
 
 ---
 
 ## 三、ROAST 功能完善（中优先级）
 
-### 10. ROAST 聚合者切换（确定性 + 超时）⚠️
+### 10. ROAST 聚合者切换（确定性 + 超时）✅
 
 **设计文档要求**（§5.4.3、§7.4）：
 - 确定性聚合者切换算法：`seed = H(session_id || key_epoch || "frost_agg")`，确定性排列委员会
@@ -236,33 +236,33 @@
 **当前状态**：
 - ✅ ROAST 框架已实现（`frost/runtime/roast/coordinator.go`）
 - ✅ `computeCoordinatorIndex` 方法存在
-- ⚠️ **不完善**：超时切换逻辑需要完善（当前实现可能不完整）
-- ❌ **缺失**：参与者端对聚合者切换的验证（仅接受当前聚合者的请求）
+- ✅ **已完成**：超时切换逻辑（基于区块高度）
+- ✅ **已完成**：参与者端对聚合者切换的验证（仅接受当前聚合者的请求）
 
 **需要实现**：
-- [ ] 在 `frost/runtime/roast/coordinator.go` 中：完善超时切换逻辑（基于区块高度）
-- [ ] 在 `frost/runtime/roast/participant.go` 中：添加聚合者验证（拒绝非当前聚合者的请求）
+- [x] 在 `frost/runtime/roast/coordinator.go` 中：完善超时切换逻辑（基于区块高度）✅
+- [x] 在 `frost/runtime/roast/participant.go` 中：添加聚合者验证（拒绝非当前聚合者的请求）✅
 
 ---
 
-### 11. ROAST 子集重试和部分完成 ⚠️
+### 11. ROAST 子集重试和部分完成 ✅
 
 **设计文档要求**（§5.4.2）：
-- 允许“某些 task 已完成签名、少数 task 因掉线未完成”的情况
+- 允许"某些 task 已完成签名、少数 task 因掉线未完成"的情况
 - 协调者可对未完成 task 继续向新子集收集 share
 - 已完成 task 的签名保持不变（不需要推倒重来）
 
 **当前状态**：
 - ✅ ROAST 框架已实现
-- ❌ **缺失**：task 级别的部分完成逻辑（当前可能是全有或全无）
+- ✅ **已完成**：task 级别的部分完成逻辑
 
 **需要实现**：
-- [ ] 在 `frost/runtime/roast/coordinator.go` 中：实现 task 级别的状态跟踪（每个 task 的 need_shares/collected/done）
-- [ ] 实现部分完成逻辑（对未完成 task 继续收集 share）
+- [x] 在 `frost/runtime/roast/coordinator.go` 中：实现 task 级别的状态跟踪（每个 task 的 need_shares/collected/done）✅
+- [x] 实现部分完成逻辑（对未完成 task 继续收集 share）✅
 
 ---
 
-### 12. Nonce 安全防护（防二次签名攻击）⚠️
+### 12. Nonce 安全防护（防二次签名攻击）✅
 
 **设计文档要求**（§12.2）：
 - 同一 nonce commitment（R_i）只能用于一个 msg
@@ -271,12 +271,12 @@
 
 **当前状态**：
 - ✅ SessionStore 框架已实现（`frost/runtime/session/store.go`）
-- ❌ **缺失**：nonce 一次性绑定机制（msg_bound 检查）
+- ✅ **已完成**：nonce 一次性绑定机制（msg_bound 检查）
 
 **需要实现**：
-- [ ] 在 `frost/runtime/session/store.go` 中：添加 `NonceState` 结构（包含 `msg_bound`、`share_sent` 字段）
-- [ ] 在 `frost/runtime/roast/participant.go` 中：实现 `ProduceSigShare` 的 msg_bound 检查逻辑
-- [ ] 确保 `share_sent = true` 持久化后才发送 share
+- [x] 在 `frost/runtime/session/store.go` 中：添加 `NonceState` 结构（包含 `msg_bound`、`share_sent` 字段）✅
+- [x] 在 `frost/runtime/roast/participant.go` 中：实现 `ProduceSigShare` 的 msg_bound 检查逻辑 ✅
+- [x] 确保 `share_sent = true` 持久化后才发送 share ✅
 
 ---
 
