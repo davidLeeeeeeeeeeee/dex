@@ -1,0 +1,210 @@
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	cryptorand "crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"dex/consensus"
+	"dex/logs"
+	"dex/pb"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	mathrand "math/rand"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/quic-go/quic-go/http3"
+	"google.golang.org/protobuf/proto"
+)
+
+func main() {
+	mathrand.Seed(time.Now().UnixNano())
+
+	config := consensus.DefaultConfig()
+	config.Consensus.NumHeights = 50
+	config.Consensus.BlocksPerHeight = 5
+
+	fmt.Println("Starting Enhanced Simulated Consensus with HTTP/3 Web Monitor...")
+
+	network := consensus.NewNetworkManager(config)
+	network.CreateNodes()
+
+	// 为每个节点启动 HTTP/3 服务器
+	nodes := network.GetNodes()
+	for id, node := range nodes {
+		port := 6000 + int(id.Last2Mod100())
+		// 注册映射，方便 Explorer 通过 host:port 找到 NodeID 进而找到内存日志
+		logs.RegisterNodeMapping(fmt.Sprintf("127.0.0.1:%d", port), string(node.ID))
+		logs.RegisterNodeMapping(string(node.ID), string(node.ID))
+
+		go startNodeWeb(node, port)
+	}
+
+	programStart := time.Now()
+	network.Start()
+
+	// 监控模拟进度
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		lastHeight := uint64(0)
+		for range ticker.C {
+			minHeight, allDone := network.CheckProgress()
+			if minHeight > lastHeight {
+				fmt.Printf("\n✅ All honest nodes reached consensus on height %d\n", minHeight)
+				lastHeight = minHeight
+			}
+			if allDone {
+				totalTime := time.Since(programStart)
+				fmt.Printf("\n🎉 All heights completed! Total time: %v\n", totalTime)
+				fmt.Println("Keep running to allow Web Monitor access...")
+				network.PrintStatus()
+				network.PrintFinalResults()
+				return
+			}
+		}
+	}()
+
+	// 等待退出信号，不要完成模拟就退出，否则网页会 timeout
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+	fmt.Println("\n🛑 Shutting down...")
+}
+
+func startNodeWeb(node *consensus.Node, port int) {
+	mux := http.NewServeMux()
+
+	// 1. 状态接口
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		blockID, height := node.GetLastAccepted()
+		resProto := &pb.StatusResponse{
+			Status: "ok",
+			Info:   fmt.Sprintf("Simulated Node %s (Height: %d, Block: %s)", node.ID, height, blockID),
+		}
+		sendProto(w, resProto)
+	})
+
+	// 2. 高度接口 (Explorer 强依赖且会循环调用)
+	mux.HandleFunc("/heightquery", func(w http.ResponseWriter, r *http.Request) {
+		_, height := node.GetLastAccepted()
+		resProto := &pb.HeightResponse{
+			CurrentHeight:      height,
+			LastAcceptedHeight: height,
+			Address:            string(node.ID),
+		}
+		sendProto(w, resProto)
+	})
+
+	// 3. 获取区块详情 (详情页依赖)
+	mux.HandleFunc("/getblock", func(w http.ResponseWriter, r *http.Request) {
+		blockID, height := node.GetLastAccepted()
+		miner := string(node.ID)
+
+		// 尝试从 Store 获取真实区块以提取真实的 Proposer (Miner)
+		if b, ok := node.GetBlock(blockID); ok {
+			miner = b.Proposer
+		}
+
+		resProto := &pb.GetBlockResponse{
+			Block: &pb.Block{
+				Height:    height,
+				BlockHash: blockID,
+				Miner:     miner,
+			},
+		}
+		sendProto(w, resProto)
+	})
+
+	// 4. 获取最近区块
+	mux.HandleFunc("/getrecentblocks", func(w http.ResponseWriter, r *http.Request) {
+		blockID, height := node.GetLastAccepted()
+		miner := string(node.ID)
+
+		if b, ok := node.GetBlock(blockID); ok {
+			miner = b.Proposer
+		}
+
+		resProto := &pb.GetRecentBlocksResponse{
+			Blocks: []*pb.BlockHeader{
+				{
+					Height:  height,
+					Miner:   miner,
+					TxCount: 0,
+				},
+			},
+		}
+		sendProto(w, resProto)
+	})
+
+	// 5. 日志接口
+	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
+		logLines := logs.GetLogsForNode(string(node.ID))
+		resp := &pb.LogsResponse{
+			Logs: logLines,
+		}
+		sendProto(w, resp)
+	})
+
+	addr := fmt.Sprintf(":%d", port)
+
+	// 设置 HTTP/3 服务器 (Explorer 必须 HTTPS + HTTP/3)
+	certFile := fmt.Sprintf("sim_node_%s.crt", node.ID)
+	keyFile := fmt.Sprintf("sim_node_%s.key", node.ID)
+	generateSelfSignedCert(certFile, keyFile)
+	defer os.Remove(certFile)
+	defer os.Remove(keyFile)
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		NextProtos: []string{"h3", "h3-29", "h3-28", "h3-27"},
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		fmt.Printf("❌ Node %s: Failed to load TLS cert: %v\n", node.ID, err)
+		return
+	}
+	tlsConfig.Certificates = []tls.Certificate{cert}
+
+	server := &http3.Server{
+		Addr:      addr,
+		Handler:   mux,
+		TLSConfig: tlsConfig,
+	}
+
+	fmt.Printf("📡 Node %s Web Monitor (HTTP/3): https://127.0.0.1%s\n", node.ID, addr)
+	if err := server.ListenAndServe(); err != nil {
+		fmt.Printf("❌ Node %s: Web server failed: %v\n", node.ID, err)
+	}
+}
+
+func sendProto(w http.ResponseWriter, msg proto.Message) {
+	data, _ := proto.Marshal(msg)
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Write(data)
+}
+
+func generateSelfSignedCert(certFile, keyFile string) error {
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), cryptorand.Reader)
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		DNSNames:     []string{"localhost"},
+	}
+	certDER, _ := x509.CreateCertificate(cryptorand.Reader, &template, &template, &priv.PublicKey, priv)
+
+	cOut, _ := os.Create(certFile)
+	defer cOut.Close()
+	pem.Encode(cOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	kOut, _ := os.Create(keyFile)
+	defer kOut.Close()
+	privBytes, _ := x509.MarshalECPrivateKey(priv)
+	pem.Encode(kOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: privBytes})
+	return nil
+}

@@ -6,14 +6,17 @@ type NodeID string
 
 func (id NodeID) Last2Mod100() int {
 	s := string(id)
-	if len(s) < 2 {
+	if s == "" {
 		return 0
 	}
-	last2 := s[len(s)-2:] // 取最后两位字符串
+	last2 := s
+	if len(s) > 2 {
+		last2 = s[len(s)-2:] // 取最后两位字符串
+	}
 
 	n, err := strconv.Atoi(last2)
 	if err != nil {
-		return 0 // 如果不是数字，返回0（你也可以选择返回-1表示错误）
+		return 0
 	}
 	return n % 100
 }

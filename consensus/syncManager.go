@@ -283,9 +283,9 @@ func (sm *SyncManager) HandleSnapshotRequest(msg types.Message) {
 
 	// 更新统计
 	if sm.node != nil {
-		sm.node.stats.Mu.Lock()
-		sm.node.stats.SnapshotsServed++
-		sm.node.stats.Mu.Unlock()
+		sm.node.Stats.Mu.Lock()
+		sm.node.Stats.SnapshotsServed++
+		sm.node.Stats.Mu.Unlock()
 	}
 
 	response := types.Message{
@@ -327,9 +327,9 @@ func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
 
 	// 更新统计
 	if sm.node != nil {
-		sm.node.stats.Mu.Lock()
-		sm.node.stats.SnapshotsUsed++
-		sm.node.stats.Mu.Unlock()
+		sm.node.Stats.Mu.Lock()
+		sm.node.Stats.SnapshotsUsed++
+		sm.node.Stats.Mu.Unlock()
 	}
 
 	Logf("[Node %d] 📸 Successfully loaded snapshot at height %d\n",

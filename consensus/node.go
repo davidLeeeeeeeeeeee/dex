@@ -28,7 +28,7 @@ type Node struct {
 	cancel          context.CancelFunc
 	Logger          logs.Logger
 	config          *Config
-	stats           *NodeStats
+	Stats           *NodeStats
 }
 
 func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, byzantine bool, config *Config, logger logs.Logger) *Node {
@@ -48,7 +48,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 		cancel:      cancel,
 		Logger:      logger,
 		config:      config,
-		stats:       NewNodeStats(events),
+		Stats:       NewNodeStats(events),
 	}
 
 	messageHandler := NewMessageHandler(id, byzantine, transport, store, engine, events, &config.Consensus, logger)
@@ -107,4 +107,12 @@ func (n *Node) Start() {
 
 func (n *Node) Stop() {
 	n.cancel()
+}
+
+func (n *Node) GetLastAccepted() (string, uint64) {
+	return n.store.GetLastAccepted()
+}
+
+func (n *Node) GetBlock(id string) (*types.Block, bool) {
+	return n.store.Get(id)
 }

@@ -37,9 +37,9 @@
                            },
                            {
                                "cwd":  "${workspaceFolder}",
-                               "name":  "Run cmd/tes",
+                               "name":  "Run simulateMain/tes.go",
                                "request":  "launch",
-                               "program":  "${workspaceFolder}/cmd/tes.go",
+                               "program":  "${workspaceFolder}/simulateMain/tes.go",
                                "type":  "go",
                                "console":  "integratedTerminal",
                                "mode":  "auto"

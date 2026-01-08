@@ -148,7 +148,7 @@ func (m *ConsensusNodeManager) StartQuery() {
 
 // 获取节点统计信息
 func (m *ConsensusNodeManager) GetStats() *NodeStats {
-	return m.Node.stats
+	return m.Node.Stats
 }
 
 // CreateSnapshot 创建快照

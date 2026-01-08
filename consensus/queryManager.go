@@ -159,10 +159,10 @@ func (qm *QueryManager) issueQuery() {
 	qm.transport.Broadcast(msg, peers)
 
 	if qm.node != nil {
-		qm.node.stats.Mu.Lock()
-		qm.node.stats.QueriesSent++
-		qm.node.stats.QueriesPerHeight[block.Height]++
-		qm.node.stats.Mu.Unlock()
+		qm.node.Stats.Mu.Lock()
+		qm.node.Stats.QueriesSent++
+		qm.node.Stats.QueriesPerHeight[block.Height]++
+		qm.node.Stats.Mu.Unlock()
 	}
 }
 

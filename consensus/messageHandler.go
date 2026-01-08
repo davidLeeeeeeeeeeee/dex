@@ -64,9 +64,9 @@ func (h *MessageHandler) HandleMsg(msg types.Message) {
 	h.stats.RecordAPICall(string(msg.Type))
 	if h.isByzantine && (msg.Type == types.MsgPullQuery || msg.Type == types.MsgPushQuery) {
 		if h.node != nil {
-			h.node.stats.Mu.Lock()
-			h.node.stats.QueriesReceived++
-			h.node.stats.Mu.Unlock()
+			h.node.Stats.Mu.Lock()
+			h.node.Stats.QueriesReceived++
+			h.node.Stats.Mu.Unlock()
 		}
 		return
 	}
@@ -101,9 +101,9 @@ func (h *MessageHandler) HandleMsg(msg types.Message) {
 
 func (h *MessageHandler) handlePullQuery(msg types.Message) {
 	if h.node != nil {
-		h.node.stats.Mu.Lock()
-		h.node.stats.QueriesReceived++
-		h.node.stats.Mu.Unlock()
+		h.node.Stats.Mu.Lock()
+		h.node.Stats.QueriesReceived++
+		h.node.Stats.Mu.Unlock()
 	}
 
 	// 检查本地是否有该区块
@@ -150,9 +150,9 @@ func (h *MessageHandler) storePendingQuery(msg types.Message) {
 
 func (h *MessageHandler) handlePushQuery(msg types.Message) {
 	if h.node != nil {
-		h.node.stats.Mu.Lock()
-		h.node.stats.QueriesReceived++
-		h.node.stats.Mu.Unlock()
+		h.node.Stats.Mu.Lock()
+		h.node.Stats.QueriesReceived++
+		h.node.Stats.Mu.Unlock()
 	}
 
 	if msg.Block != nil {
@@ -248,9 +248,9 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 
 	// 增加 ChitsResponded 计数器
 	if h.node != nil {
-		h.node.stats.Mu.Lock()
-		h.node.stats.ChitsResponded++
-		h.node.stats.Mu.Unlock()
+		h.node.Stats.Mu.Lock()
+		h.node.Stats.ChitsResponded++
+		h.node.Stats.Mu.Unlock()
 	}
 }
 

@@ -25,6 +25,16 @@ type NetworkManager struct {
 	mu         sync.RWMutex
 }
 
+func (nm *NetworkManager) GetNodes() map[types.NodeID]*Node {
+	nm.mu.RLock()
+	defer nm.mu.RUnlock()
+	return nm.nodes
+}
+
+func (nm *NetworkManager) GetConfig() *Config {
+	return nm.config
+}
+
 func NewNetworkManager(config *Config) *NetworkManager {
 	return &NetworkManager{
 		nodes:      make(map[types.NodeID]*Node),
@@ -218,19 +228,19 @@ func (nm *NetworkManager) PrintQueryStatistics() {
 		}
 		honestNodeCount++
 
-		node.stats.Mu.Lock()
-		totalQueriesSent += node.stats.QueriesSent
-		totalQueriesReceived += node.stats.QueriesReceived
-		totalChitsResponded += node.stats.ChitsResponded
-		totalGossipsReceived += node.stats.GossipsReceived
-		totalBlocksProposed += node.stats.BlocksProposed
-		totalSnapshotsUsed += node.stats.SnapshotsUsed
-		totalSnapshotsServed += node.stats.SnapshotsServed
+		node.Stats.Mu.Lock()
+		totalQueriesSent += node.Stats.QueriesSent
+		totalQueriesReceived += node.Stats.QueriesReceived
+		totalChitsResponded += node.Stats.ChitsResponded
+		totalGossipsReceived += node.Stats.GossipsReceived
+		totalBlocksProposed += node.Stats.BlocksProposed
+		totalSnapshotsUsed += node.Stats.SnapshotsUsed
+		totalSnapshotsServed += node.Stats.SnapshotsServed
 
-		for height, count := range node.stats.QueriesPerHeight {
+		for height, count := range node.Stats.QueriesPerHeight {
 			queriesByHeight[height] += count
 		}
-		node.stats.Mu.Unlock()
+		node.Stats.Mu.Unlock()
 	}
 
 	if honestNodeCount > 0 {
