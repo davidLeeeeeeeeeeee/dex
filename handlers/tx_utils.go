@@ -48,17 +48,17 @@ func CheckAuth(r *http.Request) bool {
 		return true
 	}
 	clientIP := strings.Split(r.RemoteAddr, ":")[0]
-	dbMgr, err := db.NewManager("")
+	dbPath := ""
+	dbMgr, err := db.NewManager(dbPath, logs.NewNodeLogger("test", 0))
 	if err != nil {
 		logs.Error("CheckAuth GetInstance err : %v", err)
 		return false
 	}
+	// 为了在 CheckAuth 中使用 hm.Logger，我们需要重构此函数
+	// 目前临时保持现状，但显式传递一个 Logger 或改为 HandlerManager 的方法
+	// 鉴于目前这是一个工具函数，先保持 logs 库调用或注入
+	// TODO: 彻底 DI 化
 	info, err := dbMgr.GetClientInfo(clientIP)
-	if err != nil {
-		logs.Debug("CheckAuth GetClientInfo err : %v key: %s \n", err, clientIP)
-		return false
-	}
-	logs.Debug("CheckAuth info: %s", info.Ip)
 	if err != nil {
 		// 数据库中无记录，说明未认证
 		return false

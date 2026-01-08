@@ -21,12 +21,12 @@ func NewDefaultBlockProposer() interfaces.BlockProposer {
 }
 
 func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, window int) (*types.Block, error) {
-	blockID := fmt.Sprintf("block-%d-%d-w%d", height, proposer, window)
+	blockID := fmt.Sprintf("block-%d-%s-w%d", height, string(proposer), window)
 	block := &types.Block{
 		ID:        blockID,
 		Height:    height,
 		ParentID:  parentID,
-		Data:      fmt.Sprintf("Height %d, Proposer %d, Window %d", height, proposer, window),
+		Data:      fmt.Sprintf("Height %d, Proposer %s, Window %d", height, string(proposer), window),
 		Proposer:  string(proposer),
 		Window:    window,
 		VRFProof:  nil, // 模拟模式不生成VRF

@@ -3,6 +3,7 @@ package consensus
 import (
 	"context"
 	"dex/interfaces"
+	"dex/logs"
 	"dex/types"
 	"sync"
 )
@@ -16,15 +17,17 @@ type SnapshotManager struct {
 	store  interfaces.BlockStore
 	config *SnapshotConfig
 	events interfaces.EventBus
+	Logger logs.Logger
 	mu     sync.Mutex
 }
 
-func NewSnapshotManager(nodeID types.NodeID, store interfaces.BlockStore, config *SnapshotConfig, events interfaces.EventBus) *SnapshotManager {
+func NewSnapshotManager(id types.NodeID, store interfaces.BlockStore, config *SnapshotConfig, events interfaces.EventBus, logger logs.Logger) *SnapshotManager {
 	return &SnapshotManager{
-		nodeID: nodeID,
+		nodeID: id,
 		store:  store,
 		config: config,
 		events: events,
+		Logger: logger,
 	}
 }
 

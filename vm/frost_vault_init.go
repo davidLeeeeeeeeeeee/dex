@@ -39,7 +39,7 @@ func InitVaultConfig(sv StateView, chain string, cfg *pb.FrostVaultConfig) error
 	}
 	if exists && len(existingData) > 0 {
 		// 已存在，幂等返回
-		logs.Debug("[InitVaultConfig] config already exists for chain %s", chain)
+		// logs.Debug("[InitVaultConfig] config already exists for chain %s", chain)
 		return nil
 	}
 
@@ -53,8 +53,7 @@ func InitVaultConfig(sv StateView, chain string, cfg *pb.FrostVaultConfig) error
 	}
 
 	sv.Set(vaultCfgKey, cfgData)
-	logs.Info("[InitVaultConfig] initialized vault config for chain %s: vault_count=%d committee_size=%d",
-		chain, cfg.VaultCount, cfg.CommitteeSize)
+	// logs.Info("[InitVaultConfig] initialized vault config for chain %s: vault_count=%d committee_size=%d", chain, cfg.VaultCount, cfg.CommitteeSize)
 
 	return nil
 }

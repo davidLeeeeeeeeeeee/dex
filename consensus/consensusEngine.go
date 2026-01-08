@@ -3,6 +3,7 @@ package consensus
 import (
 	"context"
 	"dex/interfaces"
+	"dex/logs"
 	"dex/types"
 	"fmt"
 	"sync"
@@ -22,6 +23,7 @@ type SnowmanEngine struct {
 	snowballs     map[uint64]*Snowball
 	activeQueries map[string]*QueryContext
 	preferences   map[uint64]string
+	Logger        logs.Logger
 }
 
 type QueryContext struct {
@@ -34,7 +36,7 @@ type QueryContext struct {
 	height    uint64
 }
 
-func NewSnowmanEngine(nodeID types.NodeID, store interfaces.BlockStore, config *ConsensusConfig, events interfaces.EventBus) interfaces.ConsensusEngine {
+func NewSnowmanEngine(nodeID types.NodeID, store interfaces.BlockStore, config *ConsensusConfig, events interfaces.EventBus, logger logs.Logger) interfaces.ConsensusEngine {
 	return &SnowmanEngine{
 		nodeID:        nodeID,
 		store:         store,
@@ -43,6 +45,7 @@ func NewSnowmanEngine(nodeID types.NodeID, store interfaces.BlockStore, config *
 		snowballs:     make(map[uint64]*Snowball),
 		activeQueries: make(map[string]*QueryContext),
 		preferences:   make(map[uint64]string),
+		Logger:        logger,
 	}
 }
 
@@ -57,6 +60,8 @@ func (e *SnowmanEngine) Start(ctx context.Context) error {
 
 	// 定期检查超时
 	go func() {
+		// DI 模式下不需要 SetThreadNodeContext，但为了兼容性仍可保留或直接用 Logger
+		logs.SetThreadLogger(e.Logger)
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 

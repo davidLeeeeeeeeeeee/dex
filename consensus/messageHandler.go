@@ -20,12 +20,13 @@ type MessageHandler struct {
 	transport       interfaces.Transport
 	store           interfaces.BlockStore
 	engine          interfaces.ConsensusEngine
-	queryManager    *QueryManager
 	gossipManager   *GossipManager
 	syncManager     *SyncManager
 	snapshotManager *SnapshotManager
 	events          interfaces.EventBus
 	config          *ConsensusConfig
+	Logger          logs.Logger
+	queryManager    *QueryManager
 	proposalManager *ProposalManager // 用于访问window计算和缓存
 	// 存储待回复的PullQuery
 	pendingQueries   map[uint32]types.Message
@@ -33,15 +34,16 @@ type MessageHandler struct {
 	stats            *stats.Stats
 }
 
-func NewMessageHandler(nodeID types.NodeID, isByzantine bool, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, events interfaces.EventBus, config *ConsensusConfig) *MessageHandler {
+func NewMessageHandler(id types.NodeID, byzantine bool, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, events interfaces.EventBus, config *ConsensusConfig, logger logs.Logger) *MessageHandler {
 	return &MessageHandler{
-		nodeID:         nodeID,
-		isByzantine:    isByzantine,
+		nodeID:         id,
+		isByzantine:    byzantine,
 		transport:      transport,
 		store:          store,
 		engine:         engine,
 		events:         events,
 		config:         config,
+		Logger:         logger,
 		pendingQueries: make(map[uint32]types.Message),
 		stats:          stats.NewStats(),
 	}

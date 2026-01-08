@@ -67,13 +67,15 @@ func (a *chainStateReaderAdapter) Scan(prefix string, fn func(k string, v []byte
 
 // WithdrawWorker 提现流程执行器
 type WithdrawWorker struct {
-	scanner         *planning.Scanner
-	planner         *planning.JobPlanner
-	windowPlanner   *planning.JobWindowPlanner // Job 窗口规划器
-	txSubmitter     TxSubmitter
-	signingService  SigningService
-	vaultProvider   VaultCommitteeProvider
-	maxInFlight     int // 最多并发 job 数
+	scanner        *planning.Scanner
+	planner        *planning.JobPlanner
+	windowPlanner  *planning.JobWindowPlanner // Job 窗口规划器
+	txSubmitter    TxSubmitter
+	signingService SigningService
+	vaultProvider  VaultCommitteeProvider
+	maxInFlight    int // 最多并发 job 数
+	localAddress   string
+	Logger         logs.Logger
 }
 
 // NewWithdrawWorker 创建新的 WithdrawWorker
@@ -84,6 +86,8 @@ func NewWithdrawWorker(
 	signingService SigningService,
 	vaultProvider VaultCommitteeProvider,
 	maxInFlight int,
+	localAddress string,
+	logger logs.Logger,
 ) *WithdrawWorker {
 	if maxInFlight <= 0 {
 		maxInFlight = 1 // 默认值
@@ -98,6 +102,8 @@ func NewWithdrawWorker(
 		signingService: signingService,
 		vaultProvider:  vaultProvider,
 		maxInFlight:    maxInFlight,
+		localAddress:   localAddress,
+		Logger:         logger,
 	}
 }
 
@@ -128,17 +134,24 @@ func (w *WithdrawWorker) ProcessWindow(ctx context.Context, chain, asset string)
 		return nil, nil
 	}
 
-	logs.Info("[WithdrawWorker] planned %d jobs for %s/%s", len(jobs), chain, asset)
+	w.Logger.Info("[WithdrawWorker] planned %d jobs for %s/%s", len(jobs), chain, asset)
 
 	// 2. 为每个 job 启动签名会话（并发）
 	// 如果是 CompositeJob，需要为每个 SubJob 启动独立的 ROAST 会话
 	for _, job := range jobs {
+		job := job // 修复变量捕获
 		if job.IsComposite && len(job.SubJobs) > 0 {
 			// CompositeJob：为每个 SubJob 启动独立的签名会话
-			go w.processCompositeJobAsync(ctx, job)
+			go func() {
+				// logs.SetThreadNodeContext(w.localAddress) removed
+				w.processCompositeJobAsync(ctx, job)
+			}()
 		} else {
 			// 普通 Job：直接处理
-			go w.processJobAsync(ctx, job)
+			go func() {
+				// logs.SetThreadNodeContext(w.localAddress) removed
+				w.processJobAsync(ctx, job)
+			}()
 		}
 	}
 
@@ -150,21 +163,21 @@ func (w *WithdrawWorker) processJobAsync(ctx context.Context, job *planning.Job)
 	// 计算门限
 	threshold, err := w.calculateThreshold(job.Chain, job.VaultID)
 	if err != nil {
-		logs.Error("[WithdrawWorker] failed to calculate threshold: %v", err)
+		w.Logger.Error("[WithdrawWorker] failed to calculate threshold: %v", err)
 		return
 	}
 
 	// 获取签名算法
 	signAlgo, err := w.getSignAlgo(job.Chain, job.VaultID)
 	if err != nil {
-		logs.Error("[WithdrawWorker] failed to get sign algo: %v", err)
+		w.Logger.Error("[WithdrawWorker] failed to get sign algo: %v", err)
 		return
 	}
 
 	// 构建待签名消息
 	messages, err := w.extractMessages(job)
 	if err != nil {
-		logs.Error("[WithdrawWorker] failed to extract messages: %v", err)
+		w.Logger.Error("[WithdrawWorker] failed to extract messages: %v", err)
 		return
 	}
 
@@ -181,11 +194,11 @@ func (w *WithdrawWorker) processJobAsync(ctx context.Context, job *planning.Job)
 
 	sessionID, err := w.signingService.StartSigningSession(ctx, sessionParams)
 	if err != nil {
-		logs.Error("[WithdrawWorker] failed to start signing session: %v", err)
+		w.Logger.Error("[WithdrawWorker] failed to start signing session: %v", err)
 		return
 	}
 
-	logs.Info("[WithdrawWorker] started signing session %s for job %s", sessionID, job.JobID)
+	w.Logger.Info("[WithdrawWorker] started signing session %s for job %s", sessionID, job.JobID)
 
 	// 等待完成并提交
 	w.waitAndSubmit(ctx, job, sessionID)
@@ -197,14 +210,14 @@ func (w *WithdrawWorker) waitAndSubmit(ctx context.Context, job *planning.Job, s
 	timeout := 5 * time.Minute
 	signedPkg, err := w.signingService.WaitForCompletion(ctx, sessionID, timeout)
 	if err != nil {
-		logs.Error("[WithdrawWorker] signing session %s failed: %v", sessionID, err)
+		w.Logger.Error("[WithdrawWorker] signing session %s failed: %v", sessionID, err)
 		return
 	}
 
 	// 构建 SignedPackage bytes（需要包含签名和模板数据）
 	signedPackageBytes, err := w.buildSignedPackageBytes(signedPkg, job)
 	if err != nil {
-		logs.Error("[WithdrawWorker] failed to build signed package: %v", err)
+		w.Logger.Error("[WithdrawWorker] failed to build signed package: %v", err)
 		return
 	}
 
@@ -220,11 +233,11 @@ func (w *WithdrawWorker) waitAndSubmit(ctx context.Context, job *planning.Job, s
 
 	_, err = w.txSubmitter.Submit(tx)
 	if err != nil {
-		logs.Error("[WithdrawWorker] failed to submit signed tx: %v", err)
+		w.Logger.Error("[WithdrawWorker] failed to submit signed tx: %v", err)
 		return
 	}
 
-	logs.Info("[WithdrawWorker] successfully submitted signed tx for job %s", job.JobID)
+	w.Logger.Info("[WithdrawWorker] successfully submitted signed tx for job %s", job.JobID)
 }
 
 // calculateThreshold 计算门限值
@@ -262,14 +275,16 @@ func (w *WithdrawWorker) extractMessages(job *planning.Job) ([][]byte, error) {
 // processCompositeJobAsync 异步处理 CompositeJob
 // 为每个 SubJob 启动独立的 ROAST 会话，等待所有 SubJob 完成后提交
 func (w *WithdrawWorker) processCompositeJobAsync(ctx context.Context, compositeJob *planning.Job) {
-	logs.Info("[WithdrawWorker] processing composite job %s with %d sub jobs", compositeJob.JobID, len(compositeJob.SubJobs))
+	w.Logger.Info("[WithdrawWorker] processing composite job %s with %d sub jobs", compositeJob.JobID, len(compositeJob.SubJobs))
 
 	// 为每个 SubJob 启动独立的签名会话（并发）
 	subJobResults := make(chan *SignedPackage, len(compositeJob.SubJobs))
 	subJobErrors := make(chan error, len(compositeJob.SubJobs))
 
 	for _, subJob := range compositeJob.SubJobs {
+		subJob := subJob // 修复变量捕获
 		go func(subJob *planning.Job) {
+			// logs.SetThreadNodeContext(w.localAddress) removed
 			// 计算门限
 			threshold, err := w.calculateThreshold(subJob.Chain, subJob.VaultID)
 			if err != nil {
@@ -308,7 +323,7 @@ func (w *WithdrawWorker) processCompositeJobAsync(ctx context.Context, composite
 				return
 			}
 
-			logs.Info("[WithdrawWorker] started signing session %s for sub job %s", sessionID, subJob.JobID)
+			w.Logger.Info("[WithdrawWorker] started signing session %s for sub job %s", sessionID, subJob.JobID)
 
 			// 等待完成
 			timeout := 5 * time.Minute
@@ -330,27 +345,27 @@ func (w *WithdrawWorker) processCompositeJobAsync(ctx context.Context, composite
 		select {
 		case signedPkg := <-subJobResults:
 			completedSubJobs++
-			logs.Info("[WithdrawWorker] sub job %s completed (%d/%d)", signedPkg.JobID, completedSubJobs, len(compositeJob.SubJobs))
+			w.Logger.Info("[WithdrawWorker] sub job %s completed (%d/%d)", signedPkg.JobID, completedSubJobs, len(compositeJob.SubJobs))
 		case err := <-subJobErrors:
 			if firstError == nil {
 				firstError = err
 			}
 			completedSubJobs++
-			logs.Error("[WithdrawWorker] sub job failed: %v", err)
+			w.Logger.Error("[WithdrawWorker] sub job failed: %v", err)
 		case <-ctx.Done():
-			logs.Error("[WithdrawWorker] composite job %s cancelled", compositeJob.JobID)
+			w.Logger.Error("[WithdrawWorker] composite job %s cancelled", compositeJob.JobID)
 			return
 		}
 	}
 
 	// 如果有错误，记录但不阻止（部分完成也是可接受的）
 	if firstError != nil {
-		logs.Warn("[WithdrawWorker] composite job %s completed with errors: %v", compositeJob.JobID, firstError)
+		w.Logger.Warn("[WithdrawWorker] composite job %s completed with errors: %v", compositeJob.JobID, firstError)
 	}
 
 	// 所有 SubJob 完成后，提交 CompositeJob
 	// 注意：实际实现中，可能需要为每个 SubJob 分别提交交易，或者合并为一个 batch 交易
-	logs.Info("[WithdrawWorker] all sub jobs completed for composite job %s", compositeJob.JobID)
+	w.Logger.Info("[WithdrawWorker] all sub jobs completed for composite job %s", compositeJob.JobID)
 	// TODO: 实现 CompositeJob 的提交逻辑（可能需要多个交易或 batch 交易）
 }
 

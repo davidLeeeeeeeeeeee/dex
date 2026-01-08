@@ -3,6 +3,7 @@ package consensus
 import (
 	"context"
 	"dex/interfaces"
+	"dex/logs"
 	"dex/types"
 )
 
@@ -25,15 +26,16 @@ type Node struct {
 	proposalManager *ProposalManager
 	ctx             context.Context
 	cancel          context.CancelFunc
+	Logger          logs.Logger
 	config          *Config
 	stats           *NodeStats
 }
 
-func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, byzantine bool, config *Config) *Node {
+func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, byzantine bool, config *Config, logger logs.Logger) *Node {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	events := NewEventBus()
-	engine := NewSnowmanEngine(id, store, &config.Consensus, events)
+	engine := NewSnowmanEngine(id, store, &config.Consensus, events, logger)
 
 	node := &Node{
 		ID:          id,
@@ -44,25 +46,26 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 		events:      events,
 		ctx:         ctx,
 		cancel:      cancel,
+		Logger:      logger,
 		config:      config,
 		stats:       NewNodeStats(events),
 	}
 
-	messageHandler := NewMessageHandler(id, byzantine, transport, store, engine, events, &config.Consensus)
+	messageHandler := NewMessageHandler(id, byzantine, transport, store, engine, events, &config.Consensus, logger)
 	messageHandler.node = node
 
-	queryManager := NewQueryManager(id, transport, store, engine, &config.Consensus, events)
+	queryManager := NewQueryManager(id, transport, store, engine, &config.Consensus, events, logger)
 	queryManager.node = node
 
-	gossipManager := NewGossipManager(id, transport, store, &config.Gossip, events)
+	gossipManager := NewGossipManager(id, transport, store, &config.Gossip, events, logger)
 	gossipManager.node = node
 
-	syncManager := NewSyncManager(id, transport, store, &config.Sync, &config.Snapshot, events)
+	syncManager := NewSyncManager(id, transport, store, &config.Sync, &config.Snapshot, events, logger)
 	syncManager.node = node
 
-	snapshotManager := NewSnapshotManager(id, store, &config.Snapshot, events) // 新增
+	snapshotManager := NewSnapshotManager(id, store, &config.Snapshot, events, logger) // 新增
 
-	proposalManager := NewProposalManager(id, transport, store, &config.Node, events)
+	proposalManager := NewProposalManager(id, transport, store, &config.Node, events, logger)
 	proposalManager.node = node
 
 	messageHandler.SetManagers(queryManager, gossipManager, syncManager, snapshotManager)
@@ -80,6 +83,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 
 func (n *Node) Start() {
 	go func() {
+		logs.SetThreadLogger(n.Logger)
 		for {
 			select {
 			case msg := <-n.transport.Receive():

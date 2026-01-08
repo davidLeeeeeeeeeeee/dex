@@ -19,14 +19,16 @@ type MinerIndexManager struct {
 	mu     sync.RWMutex
 	bitmap *roaring.Bitmap
 	db     *badger.DB
+	Logger logs.Logger
 }
 
 // ----------  初始化 / 恢复  ----------
 
-func NewMinerIndexManager(db *badger.DB) (*MinerIndexManager, error) {
+func NewMinerIndexManager(db *badger.DB, logger logs.Logger) (*MinerIndexManager, error) {
 	m := &MinerIndexManager{
 		db:     db,
 		bitmap: roaring.New(),
+		Logger: logger,
 	}
 	if err := m.RebuildBitmapFromDB(); err != nil {
 		return nil, err
@@ -55,7 +57,7 @@ func (m *MinerIndexManager) RebuildBitmapFromDB() error {
 			m.bitmap.Add(uint32(idx))
 			count++
 		}
-		logs.Info("[MinerIndexManager] rebuilt bitmap with %d miners", count)
+		m.Logger.Info("[MinerIndexManager] rebuilt bitmap with %d miners", count)
 		return nil
 	})
 }

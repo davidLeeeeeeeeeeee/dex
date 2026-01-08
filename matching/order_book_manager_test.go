@@ -1,6 +1,7 @@
 package matching_test
 
 import (
+	"dex/logs"
 	"dex/pb"
 	"fmt"
 	"math/rand"
@@ -24,7 +25,7 @@ func TestOrderBookManager_Basic(t *testing.T) {
 	// 1. 初始化临时 DB
 	tmpDir := t.TempDir()
 
-	dbMgr, err := db.NewManager(tmpDir)
+	dbMgr, err := db.NewManager(tmpDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err, "failed to open DB")
 	defer dbMgr.Close()
 
@@ -102,7 +103,7 @@ func TestOrderBookManager_MassiveRebuild_WithMatching(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	dbMgr, err := db.NewManager(tmpDir)
+	dbMgr, err := db.NewManager(tmpDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err, "failed to open DB")
 	dbMgr.InitWriteQueue(10000, 200*time.Millisecond)
 	defer dbMgr.Close()

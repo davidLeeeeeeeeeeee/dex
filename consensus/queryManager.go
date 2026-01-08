@@ -24,6 +24,7 @@ type QueryManager struct {
 	engine      interfaces.ConsensusEngine
 	config      *ConsensusConfig
 	events      interfaces.EventBus
+	Logger      logs.Logger
 	activePolls sync.Map
 	nextReqID   uint32
 	mu          sync.Mutex
@@ -37,14 +38,15 @@ type Poll struct {
 	height    uint64
 }
 
-func NewQueryManager(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, config *ConsensusConfig, events interfaces.EventBus) *QueryManager {
+func NewQueryManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, config *ConsensusConfig, events interfaces.EventBus, logger logs.Logger) *QueryManager {
 	qm := &QueryManager{
-		nodeID:    nodeID,
+		nodeID:    id,
 		transport: transport,
 		store:     store,
 		engine:    engine,
 		config:    config,
 		events:    events,
+		Logger:    logger,
 	}
 
 	events.Subscribe(types.EventQueryComplete, func(e interfaces.Event) {
@@ -182,6 +184,7 @@ func (qm *QueryManager) HandleChit(msg types.Message) {
 
 func (qm *QueryManager) Start(ctx context.Context) {
 	go func() {
+		logs.SetThreadNodeContext(string(qm.nodeID))
 		time.Sleep(100 * time.Millisecond)
 		for i := 0; i < qm.config.MaxConcurrentQueries; i++ {
 			qm.tryIssueQuery()
@@ -189,6 +192,7 @@ func (qm *QueryManager) Start(ctx context.Context) {
 	}()
 
 	go func() {
+		logs.SetThreadNodeContext(string(qm.nodeID))
 		ticker := time.NewTicker(107 * time.Millisecond)
 		defer ticker.Stop()
 

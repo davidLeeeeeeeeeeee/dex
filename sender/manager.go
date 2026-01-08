@@ -26,6 +26,7 @@ type SenderManager struct {
 	SendQueue  *SendQueue // 持有SendQueue实例
 	httpClient *http.Client
 	nodeID     int // 只用作log,不参与业务逻辑
+	Logger     logs.Logger
 }
 
 // 用于通过ID拉取区块
@@ -41,12 +42,12 @@ type pullTxMessage struct {
 }
 
 // 创建新的发送管理器
-func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, nodeID int) *SenderManager {
+func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, nodeID int, logger logs.Logger) *SenderManager {
 	// 创建 HTTP/3 客户端
 	httpClient := createHttp3Client()
 	cfg := config.DefaultConfig()
 	// 创建SendQueue实例，传入 httpClient
-	queue := NewSendQueue(cfg.Sender.WorkerCount, cfg.Sender.QueueCapacity, httpClient, nodeID)
+	queue := NewSendQueue(cfg.Sender.WorkerCount, cfg.Sender.QueueCapacity, httpClient, nodeID, address, logger)
 
 	return &SenderManager{
 		dbManager:  dbMgr,
@@ -54,6 +55,7 @@ func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, no
 		address:    address,
 		SendQueue:  queue,
 		httpClient: httpClient,
+		Logger:     logger,
 	}
 }
 
@@ -61,7 +63,7 @@ func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, no
 func (sm *SenderManager) BroadcastTx(tx *pb.AnyTx) {
 	data, err := proto.Marshal(tx)
 	if err != nil {
-		logs.Verbose("BroadcastTx: proto marshal failed: %v", err)
+		sm.Logger.Verbose("BroadcastTx: proto marshal failed: %v", err)
 		return
 	}
 

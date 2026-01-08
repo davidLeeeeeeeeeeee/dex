@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"dex/consensus"
-	"dex/logs"
 	"dex/types"
 	"encoding/json"
 	"io"
@@ -44,7 +43,7 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 
 	// 已见过的区块直接返回 OK（可选，按你现有字段）
 	if hm.seenBlocksCache != nil && consBlock.ID != "" && hm.seenBlocksCache.Contains(consBlock.ID) {
-		logs.Debug("[HandleBlockGossip] Block %s already seen, OK", consBlock.ID)
+		hm.Logger.Debug("[HandleBlockGossip] Block %s already seen, OK", consBlock.ID)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 		return
@@ -69,11 +68,15 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 	// 将 dbBlock 加到共识存储（直接用 payload 里的 db.Block 即可）
 	if hm.consensusManager != nil {
 		if err := hm.consensusManager.AddBlock(payload.Block); err != nil {
-			logs.Debug("[HandleBlockGossip] AddBlock warn: %v", err) // 已存在等非致命错误
+			hm.Logger.Debug("[HandleBlockGossip] AddBlock warn: %v", err) // 已存在等非致命错误
 		}
+		// 如果是RealTransport，使用队列方式处理
 		if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 			if err := rt.EnqueueReceivedMessage(msg); err != nil {
-				logs.Warn("[HandleBlockGossip] Enqueue gossip message failed: %v", err)
+				hm.Logger.Warn("[Handler] Failed to enqueue chits message: %v", err)
+				// 控制面消息入队失败，返回 503
+				http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+				return
 			}
 		}
 	}
@@ -83,13 +86,13 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 		for _, tx := range payload.Block.Body {
 			if tx != nil {
 				if err := hm.txPool.StoreAnyTx(tx); err != nil {
-					logs.Debug("[HandleBlockGossip] Failed to store tx %s: %v", tx.GetTxId(), err)
+					hm.Logger.Debug("[HandleBlockGossip] Failed to store tx %s: %v", tx.GetTxId(), err)
 				}
 			}
 		}
 	}
 
-	logs.Debug("[HandleBlockGossip] Block %s at height %d proposer=%s",
+	hm.Logger.Debug("[HandleBlockGossip] Block %s at height %d proposer=%s",
 		consBlock.ID, consBlock.Height, consBlock.Proposer)
 
 	w.WriteHeader(http.StatusOK)

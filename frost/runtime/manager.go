@@ -16,6 +16,7 @@ import (
 	"dex/frost/runtime/session"
 	"dex/frost/runtime/types"
 	"dex/frost/runtime/workers"
+	"dex/logs"
 	"dex/pb"
 )
 
@@ -292,6 +293,7 @@ type Manager struct {
 	signerProvider SignerSetProvider
 	vaultProvider  VaultCommitteeProvider
 	adapterFactory chain.ChainAdapterFactory
+	Logger         logs.Logger
 
 	// 子组件
 	scanner          *planning.Scanner
@@ -332,6 +334,7 @@ type ManagerDeps struct {
 	AdapterFactory chain.ChainAdapterFactory
 	PubKeyProvider MinerPubKeyProvider
 	CryptoFactory  CryptoExecutorFactory // 密码学执行器工厂
+	Logger         logs.Logger
 }
 
 // NewManager 创建新的 Manager 实例
@@ -350,6 +353,7 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 		sessionStore:   sessionStore,
 		stopCh:         make(chan struct{}),
 		finalizedCh:    make(chan uint64, 100),
+		Logger:         deps.Logger,
 	}
 
 	var roastMessenger types.RoastMessenger
@@ -373,8 +377,8 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 
 	// 创建 Coordinator 和 Participant（用于 SigningService）
 	// 由于接口已统一，直接使用runtime包中的类型
-	m.coordinator = roast.NewCoordinator(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, nil)
-	m.participant = roast.NewParticipant(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, sessionStore, nil)
+	m.coordinator = roast.NewCoordinator(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, deps.Logger)
+	m.participant = roast.NewParticipant(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, sessionStore, deps.Logger)
 
 	// 创建 SigningService
 	roastSigningService := services.NewRoastSigningService(m.coordinator, m.participant, deps.VaultProvider)
@@ -385,11 +389,11 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 	// 创建 WithdrawWorker（使用 SigningService）
 	// TODO: 从配置读取 maxInFlightPerChainAsset
 	maxInFlight := 1 // 默认值，应该从配置读取
-	m.withdrawWorker = workers.NewWithdrawWorker(deps.StateReader, deps.AdapterFactory, deps.TxSubmitter, signingServiceAdapter, deps.VaultProvider, maxInFlight)
+	m.withdrawWorker = workers.NewWithdrawWorker(deps.StateReader, deps.AdapterFactory, deps.TxSubmitter, signingServiceAdapter, deps.VaultProvider, maxInFlight, string(config.NodeID), deps.Logger)
 
 	// 创建适配器，将 chain.ChainAdapterFactory 适配为 workers.ChainAdapterFactory
 	adapterFactoryAdapter := &chainAdapterFactoryAdapter{factory: deps.AdapterFactory}
-	m.transitionWorker = workers.NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, deps.VaultProvider, deps.SignerProvider, adapterFactoryAdapter, string(config.NodeID))
+	m.transitionWorker = workers.NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, deps.VaultProvider, deps.SignerProvider, adapterFactoryAdapter, string(config.NodeID), deps.Logger)
 	m.roastDispatcher = roast.NewDispatcher(m.coordinator, m.participant)
 	m.frostRouter = frostRouter
 
@@ -402,7 +406,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		return nil // 已经在运行
 	}
 
-	log.Printf("[FrostManager] Starting with NodeID: %s", m.config.NodeID)
+	m.Logger.Info("[FrostManager] Starting with NodeID: %s", m.config.NodeID)
 
 	// 订阅 finalized 事件
 	if m.notifier != nil {
@@ -413,18 +417,18 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.wg.Add(1)
 	go m.runLoop(ctx)
 
-	log.Printf("[FrostManager] Started")
+	m.Logger.Info("[FrostManager] Started")
 	return nil
 }
 
 // Stop 停止 Manager
 func (m *Manager) Stop() {
 	m.stopOnce.Do(func() {
-		log.Printf("[FrostManager] Stopping...")
+		m.Logger.Info("[FrostManager] Stopping...")
 		m.running.Store(false)
 		close(m.stopCh)
 		m.wg.Wait()
-		log.Printf("[FrostManager] Stopped")
+		m.Logger.Info("[FrostManager] Stopped")
 	})
 }
 
@@ -468,6 +472,7 @@ func (m *Manager) handleBlockFinalized(height uint64) {
 // runLoop 主循环
 func (m *Manager) runLoop(ctx context.Context) {
 	defer m.wg.Done()
+	logs.SetThreadNodeContext(string(m.config.NodeID))
 
 	// 定时扫描 ticker
 	scanInterval := m.config.ScanInterval

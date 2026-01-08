@@ -21,17 +21,19 @@ type GossipManager struct {
 	store      interfaces.BlockStore
 	config     *GossipConfig
 	events     interfaces.EventBus
+	Logger     logs.Logger
 	seenBlocks map[string]bool
 	mu         sync.RWMutex
 }
 
-func NewGossipManager(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *GossipConfig, events interfaces.EventBus) *GossipManager {
+func NewGossipManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *GossipConfig, events interfaces.EventBus, logger logs.Logger) *GossipManager {
 	gm := &GossipManager{
-		nodeID:     nodeID,
+		nodeID:     id,
 		transport:  transport,
 		store:      store,
 		config:     config,
 		events:     events,
+		Logger:     logger,
 		seenBlocks: make(map[string]bool),
 	}
 
@@ -46,6 +48,7 @@ func NewGossipManager(nodeID types.NodeID, transport interfaces.Transport, store
 
 func (gm *GossipManager) Start(ctx context.Context) {
 	go func() {
+		logs.SetThreadNodeContext(string(gm.nodeID))
 		ticker := time.NewTicker(gm.config.Interval)
 		defer ticker.Stop()
 
@@ -146,6 +149,7 @@ func (gm *GossipManager) HandleGossip(msg types.Message) {
 		})
 
 		go func() {
+			logs.SetThreadNodeContext(string(gm.nodeID))
 			time.Sleep(time.Duration(50+rand.Intn(100)) * time.Millisecond)
 			gm.gossipBlock(msg.Block)
 		}()

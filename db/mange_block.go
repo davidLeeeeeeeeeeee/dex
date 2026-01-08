@@ -2,7 +2,6 @@ package db
 
 import (
 	"dex/config"
-	"dex/logs"
 	"dex/pb"
 	"encoding/json"
 	"fmt"
@@ -17,7 +16,7 @@ import (
 //
 // Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveBlock(block *pb.Block) error {
-	logs.Debug("Saving new block_%d with ID %s", block.Height, block.BlockHash)
+	mgr.Logger.Debug("Saving new block_%d with ID %s", block.Height, block.BlockHash)
 
 	// 1. 使用 BlockID 作为主键存储完整区块
 	blockKey := KeyBlockData(block.BlockHash)
@@ -199,7 +198,7 @@ func (mgr *Manager) GetBlocksByRange(fromHeight, toHeight uint64) ([]*pb.Block, 
 		block, err := mgr.GetBlock(h)
 		if err != nil {
 			// 跳过不存在的高度
-			logs.Debug("[GetBlocksByRange] Skip height %d: %v", h, err)
+			mgr.Logger.Debug("[GetBlocksByRange] Skip height %d: %v", h, err)
 			continue
 		}
 		blocks = append(blocks, block)

@@ -87,11 +87,11 @@ func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
 	case types.MsgGossip:
 		return t.sendGossip(targetIP, msg)
 	case types.MsgSyncRequest:
-		return t.sendSyncRequest(targetIP, msg)
+		return t.sendSyncRequest(to, targetIP, msg)
 	case types.MsgHeightQuery:
-		return t.sendHeightQuery(targetIP, msg)
+		return t.sendHeightQuery(to, targetIP, msg)
 	case types.MsgSnapshotRequest:
-		return t.sendSnapshotRequest(targetIP, msg)
+		return t.sendSnapshotRequest(to, targetIP, msg)
 	default:
 		return fmt.Errorf("unknown message type: %v", msg.Type)
 	}
@@ -191,39 +191,77 @@ func (t *RealTransport) sendGossip(targetIP string, msg types.Message) error {
 	}
 	return t.senderManager.BroadcastGossipToTarget(targetIP, payload)
 }
-func (t *RealTransport) sendSyncRequest(targetIP string, msg types.Message) error {
-	for h := msg.FromHeight; h <= msg.ToHeight; h++ {
-		t.senderManager.PullBlock(targetIP, h, func(dbBlock *pb.Block) {
+func (t *RealTransport) sendSyncRequest(to types.NodeID, targetIP string, msg types.Message) error {
+	return t.senderManager.SendSyncRequest(targetIP, msg.FromHeight, msg.ToHeight, func(dbBlocks []*pb.Block) {
+		var blocks []*types.Block
+		for _, dbBlock := range dbBlocks {
 			block, err := t.adapter.DBBlockToConsensus(dbBlock)
-			if err != nil {
-				logs.Error("[RealTransport] Failed to convert DB block: %v", err)
-				return
+			if err == nil {
+				blocks = append(blocks, block)
 			}
+		}
 
+		if len(blocks) > 0 {
 			t.inbox <- types.Message{
-				Type:   types.MsgSyncResponse,
-				From:   msg.From,
-				Blocks: []*types.Block{block},
+				Type:       types.MsgSyncResponse,
+				From:       to,
+				RequestID:  msg.RequestID,
+				Blocks:     blocks,
+				FromHeight: msg.FromHeight,
+				ToHeight:   msg.ToHeight,
 			}
-		})
-	}
-	return nil
-}
-
-func (t *RealTransport) sendHeightQuery(targetIP string, msg types.Message) error {
-	return t.senderManager.SendHeightQuery(targetIP, func(resp *pb.HeightResponse) {
-		t.inbox <- types.Message{
-			Type:          types.MsgHeightResponse,
-			From:          msg.From,
-			Height:        resp.LastAcceptedHeight,
-			CurrentHeight: resp.CurrentHeight,
 		}
 	})
 }
 
-func (t *RealTransport) sendSnapshotRequest(targetIP string, msg types.Message) error {
-	t.senderManager.PullBlock(targetIP, msg.Height, func(block *pb.Block) {
-		logs.Info("[RealTransport] Received snapshot at height %d", block.Height)
+func (t *RealTransport) sendHeightQuery(to types.NodeID, targetIP string, msg types.Message) error {
+	return t.senderManager.SendHeightQuery(targetIP, func(resp *pb.HeightResponse) {
+		if resp == nil {
+			return
+		}
+		t.inbox <- types.Message{
+			Type:          types.MsgHeightResponse,
+			From:          to,
+			Height:        resp.LastAcceptedHeight,
+			CurrentHeight: resp.CurrentHeight,
+			RequestID:     msg.RequestID,
+		}
+	})
+}
+
+func (t *RealTransport) sendSnapshotRequest(to types.NodeID, targetIP string, msg types.Message) error {
+	// 临时方案：通过 PullBlock 拉取高度对应块作为快照通知，确保 Syncing 标志能重置
+	t.senderManager.PullBlock(targetIP, msg.Height, func(dbBlock *pb.Block) {
+		if dbBlock == nil {
+			// 如果没拿到，也要发个空响应，否则 SyncManager 会卡在 Syncing 状态
+			t.inbox <- types.Message{
+				Type:      types.MsgSnapshotResponse,
+				From:      to,
+				RequestID: msg.RequestID,
+				Snapshot:  nil,
+			}
+			return
+		}
+
+		block, err := t.adapter.DBBlockToConsensus(dbBlock)
+		if err != nil {
+			return
+		}
+
+		// 包装成简单快照以满足 SyncManager.HandleSnapshotResponse
+		snapshot := &types.Snapshot{
+			Height:             block.Height,
+			LastAcceptedID:     block.ID,
+			LastAcceptedHeight: block.Height,
+		}
+
+		t.inbox <- types.Message{
+			Type:           types.MsgSnapshotResponse,
+			From:           to,
+			RequestID:      msg.RequestID,
+			Snapshot:       snapshot,
+			SnapshotHeight: block.Height,
+		}
 	})
 	return nil
 }
@@ -266,6 +304,7 @@ func (t *RealTransport) Receive() <-chan types.Message {
 func (t *RealTransport) Broadcast(msg types.Message, peers []types.NodeID) {
 	for _, peer := range peers {
 		go func(p types.NodeID) {
+			logs.SetThreadNodeContext(string(t.nodeID))
 			if err := t.Send(p, msg); err != nil {
 				logs.Debug("[RealTransport] Failed to send to peer %s: %v", p, err)
 			}
@@ -305,6 +344,7 @@ func (t *RealTransport) startReceiveWorkers() {
 
 func (t *RealTransport) receiveWorker(workerID int) {
 	defer t.wg.Done()
+	logs.SetThreadNodeContext(string(t.nodeID))
 
 	for {
 		select {

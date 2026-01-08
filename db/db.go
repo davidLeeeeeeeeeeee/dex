@@ -41,10 +41,11 @@ type Manager struct {
 	// 缓存的区块切片，最多存 10 个
 	cachedBlocks   []*pb.Block
 	cachedBlocksMu sync.RWMutex
+	Logger         logs.Logger
 }
 
 // NewManager 创建一个新的 DBManager 实例
-func NewManager(path string) (*Manager, error) {
+func NewManager(path string, logger logs.Logger) (*Manager, error) {
 	cfg := config.DefaultConfig()
 	opts := badger.DefaultOptions(path).WithLoggingLevel(badger.INFO).
 		// 将单个 vlog 文件限制到 64 MB，比如 64 << 20
@@ -58,7 +59,7 @@ func NewManager(path string) (*Manager, error) {
 		return nil, fmt.Errorf("failed to open badger db: %w", err)
 	}
 
-	indexMgr, err := NewMinerIndexManager(db)
+	indexMgr, err := NewMinerIndexManager(db, logger)
 	if err != nil {
 		_ = db.Close() // 清理已打开的数据库
 		return nil, fmt.Errorf("failed to create index manager: %w", err)
@@ -94,6 +95,7 @@ func NewManager(path string) (*Manager, error) {
 		StateDB:  stateDB,
 		IndexMgr: indexMgr,
 		seq:      seq,
+		Logger:   logger,
 	}
 
 	return manager, nil
@@ -327,7 +329,7 @@ func (manager *Manager) tryFlushRange(batch []WriteTask, start, end int) bool {
 			// 单条仍过大：给出清晰提示
 			key := string(sub[0].Key)
 			valSz := len(sub[0].Value)
-			logs.Error("[flushBatch] single entry still too big: key=%q size=%d bytes; "+
+			manager.Logger.Error("[flushBatch] single entry still too big: key=%q size=%d bytes; "+
 				"consider compressing, chunking, or storing out-of-DB", key, valSz)
 			return false
 		}
@@ -600,7 +602,7 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
 				Deleted: writeOp.IsDel(),
 			})
 		} else {
-			logs.Warn("[DB] Failed to convert update to WriteOp: %T", u)
+			m.Logger.Warn("[DB] Failed to convert update to WriteOp: %T", u)
 		}
 	}
 

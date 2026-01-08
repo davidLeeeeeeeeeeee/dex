@@ -69,6 +69,8 @@ type Participant struct {
 
 	// 本地密钥份额（按 vault 和 epoch 存储）
 	shares map[string][]byte // key: "chain_vaultID_epoch" -> share bytes
+
+	Logger logs.Logger
 }
 
 // ParticipantSession 参与者会话
@@ -135,21 +137,19 @@ func (s ParticipantSessionState) String() string {
 }
 
 // NewParticipant 创建参与者
-func NewParticipant(nodeID NodeID, messenger RoastMessenger, vaultProvider VaultCommitteeProvider, cryptoFactory CryptoExecutorFactory, sessionStore *session.SessionStore, config *ParticipantConfig) *Participant {
-	if config == nil {
-		config = DefaultParticipantConfig()
-	}
+func NewParticipant(nodeID NodeID, messenger RoastMessenger, vaultProvider VaultCommitteeProvider, cryptoFactory CryptoExecutorFactory, sessionStore *session.SessionStore, logger logs.Logger) *Participant {
 	if sessionStore == nil {
 		sessionStore = session.NewSessionStore(nil)
 	}
 	return &Participant{
-		config:        config,
+		config:        DefaultParticipantConfig(),
 		nodeID:        nodeID,
 		sessions:      make(map[string]*ParticipantSession),
 		messenger:     messenger,
 		vaultProvider: vaultProvider,
 		cryptoFactory: cryptoFactory,
 		sessionStore:  sessionStore,
+		Logger:        logger,
 		currentHeight: 0,
 		shares:        make(map[string][]byte),
 	}

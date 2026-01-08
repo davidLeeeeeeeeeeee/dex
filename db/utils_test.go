@@ -26,6 +26,7 @@ func TestIndexAllocator(t *testing.T) {
 
 	// 2. Manager
 	mgr := &Manager{Db: db}
+	mgr.seq, _ = db.GetSequence([]byte("seq"), 1000)
 	mgr.InitWriteQueue(1_000, 200*time.Millisecond) // flushInterval 随便设
 
 	// ---------- 首次 idx1 ----------
@@ -100,6 +101,7 @@ func TestIndexAllocatorPerformance(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	mgr := &Manager{Db: db}
+	mgr.seq, _ = db.GetSequence([]byte("seq"), 1000)
 	mgr.InitWriteQueue(100000, 200*time.Millisecond)
 
 	start := time.Now()

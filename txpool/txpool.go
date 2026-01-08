@@ -26,6 +26,7 @@ type TxPool struct {
 
 	// 缓存
 	mu                     sync.RWMutex
+	Logger                 logs.Logger
 	pendingAnyTxCache      *lru.Cache
 	shortPendingAnyTxCache *lru.Cache
 	cacheTx                *lru.Cache
@@ -36,12 +37,13 @@ type TxPool struct {
 	validator TxValidator
 
 	// 控制
+	address  string
 	stopChan chan struct{}
 	wg       sync.WaitGroup
 }
 
 // NewTxPool 创建新的TxPool实例（替代GetInstance）
-func NewTxPool(dbManager *db.Manager, validator TxValidator) (*TxPool, error) {
+func NewTxPool(dbManager *db.Manager, validator TxValidator, address string, logger logs.Logger) (*TxPool, error) {
 	cfg := config.DefaultConfig()
 	pendingAnyTxCache, err := lru.New(cfg.TxPool.PendingTxCacheSize)
 	if err != nil {
@@ -55,6 +57,8 @@ func NewTxPool(dbManager *db.Manager, validator TxValidator) (*TxPool, error) {
 
 	tp := &TxPool{
 		dbManager:              dbManager,
+		address:                address,
+		Logger:                 logger,
 		network:                net,
 		pendingAnyTxCache:      pendingAnyTxCache,
 		shortPendingAnyTxCache: shortPendingAnyTxCache,

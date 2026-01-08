@@ -78,7 +78,7 @@ type ChainFrostConfig struct {
 // DefaultFrostConfig 返回 FrostConfig 默认值
 func DefaultFrostConfig() FrostConfig {
 	return FrostConfig{
-		Enabled: true, // 默认关闭
+		Enabled: false, // 默认关闭
 		Committee: CommitteeConfig{
 			TopN:           10000,
 			ThresholdRatio: 0.8,

@@ -25,6 +25,7 @@ type ConsensusNodeManager struct {
 	senderManager  *sender.SenderManager
 	adapter        *ConsensusAdapter
 	txPool         *txpool.TxPool
+	Logger         logs.Logger
 }
 
 func InitConsensusManager(
@@ -33,13 +34,14 @@ func InitConsensusManager(
 	config *Config,
 	senderMgr *sender.SenderManager,
 	txPool *txpool.TxPool,
+	logger logs.Logger,
 ) *ConsensusNodeManager {
 	// 创建真实的 transport
 	transport := NewRealTransport(nodeID, dbManager, senderMgr, context.Background())
 
 	// 替换默认的 MemoryBlockStore 为 RealBlockStore
-	realStore := NewRealBlockStore(dbManager, config.Snapshot.MaxSnapshots, txPool)
-	node := NewNode(nodeID, transport, realStore, false, config)
+	realStore := NewRealBlockStore(nodeID, dbManager, config.Snapshot.MaxSnapshots, txPool)
+	node := NewNode(nodeID, transport, realStore, false, config, logger)
 
 	// 设置EventBus到RealBlockStore
 	if rs, ok := realStore.(*RealBlockStore); ok {
@@ -47,7 +49,7 @@ func InitConsensusManager(
 	}
 
 	// 重新创建 engine，使用 realStore
-	node.engine = NewSnowmanEngine(nodeID, realStore, &config.Consensus, node.events)
+	node.engine = NewSnowmanEngine(nodeID, realStore, &config.Consensus, node.events, logger)
 
 	// 创建使用真实 BlockProposer 的 ProposalManager
 	proposer := NewRealBlockProposer(dbManager, txPool)
@@ -65,9 +67,10 @@ func InitConsensusManager(
 		senderManager:  senderMgr,
 		txPool:         txPool,
 		adapter:        NewConsensusAdapter(dbManager),
+		Logger:         logger,
 	}
 
-	logs.Info("[ConsensusManager] Initialized with NodeID %s", nodeID)
+	logger.Info("[ConsensusManager] Initialized with NodeID %s", nodeID)
 
 	return consensusManager
 }
@@ -75,7 +78,7 @@ func InitConsensusManager(
 func (m *ConsensusNodeManager) Start() {
 	if m.Node != nil {
 		m.Node.Start()
-		logs.Info("[ConsensusManager] Started consensus engine")
+		m.Logger.Info("[ConsensusManager] Started consensus engine")
 	}
 }
 func (m *ConsensusNodeManager) GetActiveQueryCount() int {

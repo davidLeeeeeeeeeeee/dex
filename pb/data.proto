@@ -859,3 +859,20 @@ message ForceRescanResponse {
   bool success = 1; // 是否成功
   string message = 2; // 消息
 }
+
+// LogsRequest 请求日志
+message LogsRequest {
+  int32 max_lines = 1; // 最大行数
+}
+
+// LogLine 单条日志行
+message LogLine {
+  string timestamp = 1; // 格式化时间
+  string level = 2;     // 级别
+  string message = 3;   // 内容
+}
+
+// LogsResponse 日志响应
+message LogsResponse {
+  repeated LogLine logs = 1;
+}

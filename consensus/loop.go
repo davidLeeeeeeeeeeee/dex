@@ -44,31 +44,28 @@ func RunLoop() {
 	defer ticker.Stop()
 
 	lastHeight := uint64(0)
-	for {
-		select {
-		case <-ticker.C:
-			minHeight, allDone := network.CheckProgress()
-			if minHeight > lastHeight {
-				Logf("\n✅ All honest nodes reached consensus on height %d\n", minHeight)
-				lastHeight = minHeight
-			}
+	for range ticker.C {
+		minHeight, allDone := network.CheckProgress()
+		if minHeight > lastHeight {
+			Logf("\n✅ All honest nodes reached consensus on height %d\n", minHeight)
+			lastHeight = minHeight
+		}
 
-			if allDone {
-				totalTime := time.Since(programStart)
-				Logf("\n🎉 All heights completed! Total time: %v\n", totalTime)
+		if allDone {
+			totalTime := time.Since(programStart)
+			Logf("\n🎉 All heights completed! Total time: %v\n", totalTime)
 
-				time.Sleep(1 * time.Second)
+			time.Sleep(1 * time.Second)
 
-				fmt.Println("\n\n===== FINAL RESULTS =====")
-				network.PrintStatus()
-				network.PrintFinalResults()
+			fmt.Println("\n\n===== FINAL RESULTS =====")
+			network.PrintStatus()
+			network.PrintFinalResults()
 
-				fmt.Println("\n--- Time Statistics ---")
-				Logf("Total Time: %v\n", totalTime)
-				Logf("Average/Height: %v\n", totalTime/time.Duration(config.Consensus.NumHeights))
+			fmt.Println("\n--- Time Statistics ---")
+			Logf("Total Time: %v\n", totalTime)
+			Logf("Average/Height: %v\n", totalTime/time.Duration(config.Consensus.NumHeights))
 
-				return
-			}
+			return
 		}
 	}
 }

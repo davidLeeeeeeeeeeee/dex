@@ -3,6 +3,7 @@ package vm
 import (
 	"dex/db"
 	"dex/keys"
+	"dex/logs"
 	"dex/pb"
 	"encoding/json"
 	"testing"
@@ -29,7 +30,7 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 	t.Log("📦 Step 1: Full node creates orders and indexes")
 
 	fullNodeDir := t.TempDir()
-	fullNodeDB, err := db.NewManager(fullNodeDir)
+	fullNodeDB, err := db.NewManager(fullNodeDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err, "Failed to create full node DB")
 	defer fullNodeDB.Close()
 
@@ -137,7 +138,7 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 	t.Log("📦 Step 2: Light node syncs from StateDB")
 
 	lightNodeDir := t.TempDir()
-	lightNodeDB, err := db.NewManager(lightNodeDir)
+	lightNodeDB, err := db.NewManager(lightNodeDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err, "Failed to create light node DB")
 	defer lightNodeDB.Close()
 
@@ -250,8 +251,8 @@ func createTestAccount(t *testing.T, dbMgr *db.Manager, address string, balances
 
 	for token, amount := range balances {
 		account.Balances[token] = &pb.TokenBalance{
-			Balance:                amount,
-			MinerLockedBalance:     "0",
+			Balance:            amount,
+			MinerLockedBalance: "0",
 		}
 	}
 

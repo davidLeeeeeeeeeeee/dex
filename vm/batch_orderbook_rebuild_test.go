@@ -1,7 +1,6 @@
 package vm_test
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -348,9 +347,9 @@ func createTestAccount(t *testing.T, db *MockDB, address, tokenAddress, balance 
 
 	var account *pb.Account
 	if exists {
-		// 反序列化现有账户（使用 JSON）
+		// 反序列化现有账户（使用 Proto）
 		account = &pb.Account{}
-		if err := json.Unmarshal(existingData, account); err != nil {
+		if err := proto.Unmarshal(existingData, account); err != nil {
 			account = &pb.Account{
 				Address:  address,
 				Balances: make(map[string]*pb.TokenBalance),
@@ -366,12 +365,12 @@ func createTestAccount(t *testing.T, db *MockDB, address, tokenAddress, balance 
 
 	// 添加或更新 token 余额
 	account.Balances[tokenAddress] = &pb.TokenBalance{
-		Balance:                balance,
-		MinerLockedBalance:     "0",
+		Balance:            balance,
+		MinerLockedBalance: "0",
 	}
 
-	// 序列化并保存（使用 JSON）
-	accountData, err := json.Marshal(account)
+	// 序列化并保存（使用 Proto）
+	accountData, err := proto.Marshal(account)
 	if err != nil {
 		if t != nil {
 			require.NoError(t, err)
@@ -412,10 +411,10 @@ func createTestOrders(t *testing.T, db *MockDB, pair string, count int) []*pb.Or
 	return orders
 }
 
-// saveOrderToDB 将订单保存到 MockDB（使用 JSON 序列化，与现有代码保持一致）
+// saveOrderToDB 将订单保存到 MockDB（使用 Proto 序列化，与生产代码保持一致）
 func saveOrderToDB(t *testing.T, db *MockDB, order *pb.OrderTx, pair string) {
-	// 序列化订单（使用 JSON）
-	orderData, err := json.Marshal(order)
+	// 序列化订单（使用 Proto）
+	orderData, err := proto.Marshal(order)
 	if err != nil {
 		if t != nil {
 			require.NoError(t, err)
@@ -686,10 +685,10 @@ func TestBatchRebuild_EdgeCases(t *testing.T) {
 									TxId:        "remove1",
 									FromAddress: "user_0", // 与订单创建者一致
 								},
-								Op:           pb.OrderOp_REMOVE,
-								OpTargetId:   "order_0", // 指定要删除的订单 ID
-								BaseToken:    "BTC",
-								QuoteToken:   "USDT",
+								Op:         pb.OrderOp_REMOVE,
+								OpTargetId: "order_0", // 指定要删除的订单 ID
+								BaseToken:  "BTC",
+								QuoteToken: "USDT",
 							},
 						},
 					},

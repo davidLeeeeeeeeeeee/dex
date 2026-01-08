@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"dex/consensus"
-	"dex/logs"
 	"dex/pb"
 	"dex/types"
 	"io"
@@ -37,7 +36,7 @@ func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request
 
 	if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 		if err := rt.EnqueueReceivedMessage(msg); err != nil {
-			logs.Warn("[Handler] Failed to enqueue PullQuery: %v", err)
+			hm.Logger.Warn("[Handler] Failed to enqueue PullQuery: %v", err)
 			http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}

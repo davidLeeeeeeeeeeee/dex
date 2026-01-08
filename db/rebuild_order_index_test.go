@@ -2,6 +2,7 @@ package db
 
 import (
 	"dex/keys"
+	"dex/logs"
 	"dex/pb"
 	"dex/utils"
 	"fmt"
@@ -20,7 +21,7 @@ import (
 func TestRebuildOrderPriceIndexes(t *testing.T) {
 	// 1. 创建临时数据库
 	tmpDir := t.TempDir()
-	dbMgr, err := NewManager(tmpDir)
+	dbMgr, err := NewManager(tmpDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err, "failed to create DB manager")
 	defer dbMgr.Close()
 
@@ -165,7 +166,7 @@ func TestRebuildOrderPriceIndexes(t *testing.T) {
 // TestRebuildOrderPriceIndexes_EmptyDB 测试空数据库的情况
 func TestRebuildOrderPriceIndexes_EmptyDB(t *testing.T) {
 	tmpDir := t.TempDir()
-	dbMgr, err := NewManager(tmpDir)
+	dbMgr, err := NewManager(tmpDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err)
 	defer dbMgr.Close()
 
@@ -184,7 +185,7 @@ func TestRebuildOrderPriceIndexes_Performance(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	dbMgr, err := NewManager(tmpDir)
+	dbMgr, err := NewManager(tmpDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err)
 	defer dbMgr.Close()
 
@@ -290,4 +291,3 @@ func extractOrderIDFromIndexKey(indexKey string) string {
 	}
 	return ""
 }
-

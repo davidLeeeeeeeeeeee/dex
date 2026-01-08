@@ -3,6 +3,7 @@ package consensus
 import (
 	"context"
 	"dex/interfaces"
+	"dex/logs"
 	"dex/types"
 	"fmt"
 	"math/rand"
@@ -36,7 +37,7 @@ func (nm *NetworkManager) CreateNodes() {
 	byzantineMap := make(map[types.NodeID]bool)
 	indices := rand.Perm(nm.config.Network.NumNodes)
 	for i := 0; i < nm.config.Network.NumByzantineNodes; i++ {
-		byzantineMap[types.NodeID(indices[i])] = true
+		byzantineMap[types.NodeID(strconv.Itoa(indices[i]))] = true
 	}
 
 	ctx := context.Background()
@@ -50,7 +51,8 @@ func (nm *NetworkManager) CreateNodes() {
 		nodeID := types.NodeID(strconv.Itoa(i))
 		// 为模拟场景创建 MemoryBlockStore
 		store := NewMemoryBlockStoreWithConfig(nm.config.Snapshot.MaxSnapshots)
-		node := NewNode(nodeID, nm.transports[nodeID], store, byzantineMap[nodeID], nm.config)
+		// Inject a new NodeLogger for each node
+		node := NewNode(nodeID, nm.transports[nodeID], store, byzantineMap[nodeID], nm.config, logs.NewNodeLogger(string(nodeID), 2000))
 		nm.nodes[nodeID] = node
 	}
 }

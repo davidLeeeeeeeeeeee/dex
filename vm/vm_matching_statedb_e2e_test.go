@@ -7,6 +7,7 @@ import (
 
 	"dex/db"
 	"dex/keys"
+	"dex/logs"
 	"dex/pb"
 	"dex/vm"
 
@@ -23,17 +24,17 @@ import (
 // 2. 初始化账户余额
 // 3. 提交订单交易，触发撮合
 // 4. 验证：
-//    - VM 正确执行
-//    - Matching 正确撮合
-//    - StateDB 正确同步账户数据
-//    - Badger 持久化所有数据
-//    - 数据一致性
+//   - VM 正确执行
+//   - Matching 正确撮合
+//   - StateDB 正确同步账户数据
+//   - Badger 持久化所有数据
+//   - 数据一致性
 func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 	// ========== 第一步：初始化真实数据库 ==========
 	tmpDir := t.TempDir() // 自动清理
 	t.Logf("📁 Test database directory: %s", tmpDir)
 
-	dbMgr, err := db.NewManager(tmpDir)
+	dbMgr, err := db.NewManager(tmpDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err, "Failed to create DB manager")
 	defer dbMgr.Close()
 
@@ -81,8 +82,8 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 				BaseToken:   "BTC",
 				QuoteToken:  "USDT",
 				Op:          pb.OrderOp_ADD,
-				Price:       "50000",  // 卖价 50000 USDT/BTC
-				Amount:      "1.0",    // 卖 1 BTC
+				Price:       "50000", // 卖价 50000 USDT/BTC
+				Amount:      "1.0",   // 卖 1 BTC
 				FilledBase:  "0",
 				FilledQuote: "0",
 				IsFilled:    false,
@@ -130,8 +131,8 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 				BaseToken:   "USDT",
 				QuoteToken:  "BTC",
 				Op:          pb.OrderOp_ADD,
-				Price:       "50000",    // USDT/BTC (1 BTC = 50000 USDT)
-				Amount:      "25000",    // 支付 25000 USDT
+				Price:       "50000", // USDT/BTC (1 BTC = 50000 USDT)
+				Amount:      "25000", // 支付 25000 USDT
 				FilledBase:  "0",
 				FilledQuote: "0",
 				IsFilled:    false,
@@ -251,8 +252,8 @@ func createE2ETestAccount(t *testing.T, dbMgr *db.Manager, address string, balan
 
 	for token, balance := range balances {
 		account.Balances[token] = &pb.TokenBalance{
-			Balance:                balance,
-			MinerLockedBalance:     "0",
+			Balance:            balance,
+			MinerLockedBalance: "0",
 		}
 	}
 
@@ -300,7 +301,7 @@ func TestE2E_MultiBlock_OrderMatching(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Logf("📁 Test database directory: %s", tmpDir)
 
-	dbMgr, err := db.NewManager(tmpDir)
+	dbMgr, err := db.NewManager(tmpDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err)
 	defer dbMgr.Close()
 
@@ -553,7 +554,7 @@ func TestE2E_TransactionOrderDeterminism(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Logf("📁 Test database directory: %s", tmpDir)
 
-	dbMgr, err := db.NewManager(tmpDir)
+	dbMgr, err := db.NewManager(tmpDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err)
 	defer dbMgr.Close()
 
@@ -671,7 +672,7 @@ func TestE2E_SameAccountMultipleBalanceChanges(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Logf("📁 Test database directory: %s", tmpDir)
 
-	dbMgr, err := db.NewManager(tmpDir)
+	dbMgr, err := db.NewManager(tmpDir, logs.NewNodeLogger("test", 0))
 	require.NoError(t, err)
 	defer dbMgr.Close()
 
@@ -789,11 +790,9 @@ func createTransferTx(txID, from, to, token, amount string) *pb.AnyTx {
 					FromAddress: from,
 					Status:      pb.Status_PENDING,
 				},
-				To:           to,
 				TokenAddress: token,
 				Amount:       amount,
 			},
 		},
 	}
 }
-

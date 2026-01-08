@@ -7,9 +7,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"dex/frost/security"
-	"dex/utils"
 	"dex/logs"
 	"dex/pb"
+	"dex/utils"
 	"encoding/binary"
 	"fmt"
 	"math/big"
@@ -31,8 +31,9 @@ type TransitionWorker struct {
 	cryptoFactory  CryptoExecutorFactory // 密码学执行器工厂
 	vaultProvider  VaultCommitteeProvider
 	signerProvider SignerSetProvider
-	adapterFactory ChainAdapterFactory   // 链适配器工厂
+	adapterFactory ChainAdapterFactory // 链适配器工厂
 	localAddress   string
+	Logger         logs.Logger
 
 	// DKG 会话管理
 	sessions map[string]*DKGSession // sessionID -> session
@@ -102,7 +103,7 @@ type WithdrawTemplateParams struct {
 	ChangeAddress string
 	Fee           uint64
 	ChangeAmount  uint64
-	ContractAddr string
+	ContractAddr  string
 	MethodID      []byte
 }
 
@@ -130,7 +131,17 @@ type TemplateResult struct {
 }
 
 // NewTransitionWorker 创建 TransitionWorker
-func NewTransitionWorker(stateReader StateReader, txSubmitter TxSubmitter, pubKeyProvider MinerPubKeyProvider, cryptoFactory CryptoExecutorFactory, vaultProvider VaultCommitteeProvider, signerProvider SignerSetProvider, adapterFactory ChainAdapterFactory, localAddr string) *TransitionWorker {
+func NewTransitionWorker(
+	stateReader StateReader,
+	txSubmitter TxSubmitter,
+	pubKeyProvider MinerPubKeyProvider,
+	cryptoFactory CryptoExecutorFactory,
+	vaultProvider VaultCommitteeProvider,
+	signerProvider SignerSetProvider,
+	adapterFactory ChainAdapterFactory,
+	localAddress string,
+	logger logs.Logger,
+) *TransitionWorker {
 	return &TransitionWorker{
 		stateReader:         stateReader,
 		txSubmitter:         txSubmitter,
@@ -139,13 +150,14 @@ func NewTransitionWorker(stateReader StateReader, txSubmitter TxSubmitter, pubKe
 		vaultProvider:       vaultProvider,
 		signerProvider:      signerProvider,
 		adapterFactory:      adapterFactory,
-		localAddress:        localAddr,
+		localAddress:        localAddress,
+		Logger:              logger,
 		sessions:            make(map[string]*DKGSession),
 		commitTimeout:       30 * time.Second,
 		shareTimeout:        30 * time.Second,
 		signTimeout:         60 * time.Second,
-		transitionThreshold: 0.2,  // 默认 20% 变化触发
-		ewmaAlpha:           0.3,  // EWMA 平滑系数
+		transitionThreshold: 0.2,   // 默认 20% 变化触发
+		ewmaAlpha:           0.3,   // EWMA 平滑系数
 		epochBlocks:         40000, // 默认 Epoch 边界（40000 个区块）
 		ewmaHistory:         make(map[string]float64),
 	}
@@ -159,7 +171,7 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 	defer w.mu.Unlock()
 
 	if _, exists := w.sessions[sessionID]; exists {
-		logs.Debug("[TransitionWorker] session %s already exists", sessionID)
+		w.Logger.Debug("[TransitionWorker] session %s already exists", sessionID)
 		return nil // 幂等
 	}
 
@@ -176,7 +188,7 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 	}
 
 	w.sessions[sessionID] = session
-	logs.Info("[TransitionWorker] started DKG session %s", sessionID)
+	w.Logger.Info("[TransitionWorker] started DKG session %s", sessionID)
 
 	// 异步执行 DKG 流程
 	go w.runSession(ctx, session)
@@ -186,38 +198,39 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 
 // runSession 运行 DKG 会话
 func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) {
-	logs.Debug("[TransitionWorker] runSession %s phase=%s", session.SessionID, session.Phase)
+	// logs.SetThreadNodeContext(w.localAddress) removed
+	w.Logger.Debug("[TransitionWorker] runSession %s phase=%s", session.SessionID, session.Phase)
 
 	// Phase 1: 提交 commitment
 	if err := w.submitCommitment(ctx, session); err != nil {
-		logs.Error("[TransitionWorker] submitCommitment failed: %v", err)
+		w.Logger.Error("[TransitionWorker] submitCommitment failed: %v", err)
 		return
 	}
 
 	// Phase 2: 等待所有 commitment 并提交 share
 	if err := w.submitShares(ctx, session); err != nil {
-		logs.Error("[TransitionWorker] submitShares failed: %v", err)
+		w.Logger.Error("[TransitionWorker] submitShares failed: %v", err)
 		return
 	}
 
 	// Phase 3: 收集 share 并生成密钥
 	if err := w.generateKey(ctx, session); err != nil {
-		logs.Error("[TransitionWorker] generateKey failed: %v", err)
+		w.Logger.Error("[TransitionWorker] generateKey failed: %v", err)
 		return
 	}
 
 	// Phase 4: 提交验证签名
 	if err := w.submitValidation(ctx, session); err != nil {
-		logs.Error("[TransitionWorker] submitValidation failed: %v", err)
+		w.Logger.Error("[TransitionWorker] submitValidation failed: %v", err)
 		return
 	}
 
-	logs.Info("[TransitionWorker] DKG session %s completed", session.SessionID)
+	w.Logger.Info("[TransitionWorker] DKG session %s completed", session.SessionID)
 }
 
 // submitCommitment 提交 DKG 承诺
 func (w *TransitionWorker) submitCommitment(ctx context.Context, session *DKGSession) error {
-	logs.Debug("[TransitionWorker] submitCommitment session=%s", session.SessionID)
+	w.Logger.Debug("[TransitionWorker] submitCommitment session=%s", session.SessionID)
 
 	// 获取 DKG 执行器
 	dkgExec, err := w.cryptoFactory.NewDKGExecutor(int32(session.SignAlgo))
@@ -274,7 +287,7 @@ func (w *TransitionWorker) submitCommitment(ctx context.Context, session *DKGSes
 
 // submitShares 提交 DKG shares
 func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession) error {
-	logs.Debug("[TransitionWorker] submitShares session=%s", session.SessionID)
+	w.Logger.Debug("[TransitionWorker] submitShares session=%s", session.SessionID)
 
 	// 为每个委员会成员提交加密的 share
 	for idx, receiverID := range session.Committee {
@@ -283,7 +296,7 @@ func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession
 		// 获取接收者公钥
 		receiverPubKey, err := w.pubKeyProvider.GetMinerSigningPubKey(receiverID, session.SignAlgo)
 		if err != nil {
-			logs.Warn("[TransitionWorker] cannot get pubkey for %s: %v", receiverID, err)
+			w.Logger.Warn("[TransitionWorker] cannot get pubkey for %s: %v", receiverID, err)
 			continue
 		}
 
@@ -317,7 +330,7 @@ func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession
 
 // generateKey 收集 shares 并生成本地密钥
 func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession) error {
-	logs.Debug("[TransitionWorker] generateKey session=%s", session.SessionID)
+	w.Logger.Debug("[TransitionWorker] generateKey session=%s", session.SessionID)
 
 	// 获取 DKG 执行器
 	dkgExec, err := w.cryptoFactory.NewDKGExecutor(int32(session.SignAlgo))
@@ -353,7 +366,7 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 	session.GroupPubkey = groupPubkey
 
 	session.Phase = "KEY_READY"
-	logs.Info("[TransitionWorker] generateKey completed: localShare=%x groupPubkey=%x",
+	w.Logger.Info("[TransitionWorker] generateKey completed: localShare=%x groupPubkey=%x",
 		session.LocalShareBytes[:8], session.GroupPubkey[:8])
 	return nil
 }
@@ -377,7 +390,7 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, session *
 		// 反序列化存储的 share 记录
 		var share pb.FrostVaultDkgShare
 		if err := proto.Unmarshal(v, &share); err != nil {
-			logs.Warn("[DKG] skip invalid share record: %v", err)
+			w.Logger.Warn("[DKG] skip invalid share record: %v", err)
 			return true
 		}
 		// 只处理发给本节点的份额
@@ -388,13 +401,13 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, session *
 		// 解密密文
 		plain, err := security.ECIESDecrypt(localPriv32, share.Ciphertext)
 		if err != nil {
-			logs.Warn("[DKG] decrypt share from %s failed: %v", share.DealerId, err)
+			w.Logger.Warn("[DKG] decrypt share from %s failed: %v", share.DealerId, err)
 			return true
 		}
 
 		// 验证与 dealer 承诺点一致
 		if ok := w.verifyShareAgainstCommitments(session, share.DealerId, plain, session.MyIndex); !ok {
-			logs.Warn("[DKG] share verification failed for dealer=%s", share.DealerId)
+			w.Logger.Warn("[DKG] share verification failed for dealer=%s", share.DealerId)
 			return true
 		}
 
@@ -463,6 +476,7 @@ func (w *TransitionWorker) aggregateGroupPubkey(ctx context.Context, session *DK
 	groupPubkey := dkgExec.ComputeGroupPubkey(ai0Points)
 	return groupPubkey, nil
 }
+
 // serializeCurvePoint 序列化 CurvePoint 为压缩格式
 func serializeCurvePoint(p CurvePoint) []byte {
 	result := make([]byte, 33)
@@ -477,7 +491,7 @@ func serializeCurvePoint(p CurvePoint) []byte {
 
 // submitValidation 提交验证签名
 func (w *TransitionWorker) submitValidation(ctx context.Context, session *DKGSession) error {
-	logs.Debug("[TransitionWorker] submitValidation session=%s", session.SessionID)
+	w.Logger.Debug("[TransitionWorker] submitValidation session=%s", session.SessionID)
 
 	// 构造验证消息：chain || vault_id || epoch_id || group_pubkey
 	msgHash := computeValidationMsgHash(session.Chain, session.VaultID, session.EpochID, session.GroupPubkey)
@@ -530,7 +544,7 @@ func (w *TransitionWorker) GetSession(sessionID string) *DKGSession {
 // CheckTriggerConditions 检查各 Vault 的触发条件（按 Vault 独立检测）
 // 扫描 Top10000 变化，计算 change_ratio，达到阈值时创建 VaultTransitionState
 func (w *TransitionWorker) CheckTriggerConditions(ctx context.Context, height uint64) error {
-	logs.Debug("[TransitionWorker] CheckTriggerConditions height=%d", height)
+	w.Logger.Debug("[TransitionWorker] CheckTriggerConditions height=%d", height)
 
 	// 1. 获取当前 Top10000
 	currentSigners, err := w.signerProvider.Top10000(height)
@@ -547,13 +561,13 @@ func (w *TransitionWorker) CheckTriggerConditions(ctx context.Context, height ui
 		vaultCfgKey := fmt.Sprintf("v1_frost_vault_cfg_%s_0", chain)
 		vaultCfgData, exists, err := w.stateReader.Get(vaultCfgKey)
 		if err != nil || !exists {
-			logs.Debug("[TransitionWorker] vault config not found for chain %s, skip", chain)
+			w.Logger.Debug("[TransitionWorker] vault config not found for chain %s, skip", chain)
 			continue
 		}
 
 		var vaultCfg pb.FrostVaultConfig
 		if err := proto.Unmarshal(vaultCfgData, &vaultCfg); err != nil {
-			logs.Warn("[TransitionWorker] failed to unmarshal vault config: %v", err)
+			w.Logger.Warn("[TransitionWorker] failed to unmarshal vault config: %v", err)
 			continue
 		}
 
@@ -561,12 +575,12 @@ func (w *TransitionWorker) CheckTriggerConditions(ctx context.Context, height ui
 		for vaultID := uint32(0); vaultID < vaultCfg.VaultCount; vaultID++ {
 			// 检查 DKG 失败并触发重启
 			if err := w.checkAndRestartDKG(ctx, chain, vaultID, height); err != nil {
-				logs.Warn("[TransitionWorker] check DKG restart failed: chain=%s vault=%d: %v", chain, vaultID, err)
+				w.Logger.Warn("[TransitionWorker] check DKG restart failed: chain=%s vault=%d: %v", chain, vaultID, err)
 			}
-			
+
 			// 检查触发条件
 			if err := w.checkVaultTrigger(ctx, chain, vaultID, height, currentSigners); err != nil {
-				logs.Warn("[TransitionWorker] check vault trigger failed: chain=%s vault=%d: %v", chain, vaultID, err)
+				w.Logger.Warn("[TransitionWorker] check vault trigger failed: chain=%s vault=%d: %v", chain, vaultID, err)
 				// 继续检查其他 Vault
 			}
 		}
@@ -623,12 +637,12 @@ func (w *TransitionWorker) checkVaultTrigger(ctx context.Context, chain string, 
 	}
 	w.mu.Unlock()
 
-	logs.Debug("[TransitionWorker] chain=%s vault=%d height=%d change_ratio=%.4f ewma=%.4f threshold=%.4f",
+	w.Logger.Debug("[TransitionWorker] chain=%s vault=%d height=%d change_ratio=%.4f ewma=%.4f threshold=%.4f",
 		chain, vaultID, height, changeRatio, prevEWMA, w.transitionThreshold)
 
 	// 6. 检查是否达到阈值
 	if changeRatio >= w.transitionThreshold {
-		logs.Info("[TransitionWorker] trigger condition met: chain=%s vault=%d epoch=%d height=%d change_ratio=%.4f (ewma)",
+		w.Logger.Info("[TransitionWorker] trigger condition met: chain=%s vault=%d epoch=%d height=%d change_ratio=%.4f (ewma)",
 			chain, vaultID, currentEpoch+1, height, changeRatio)
 
 		// 创建新的 VaultTransitionState
@@ -643,7 +657,7 @@ func (w *TransitionWorker) checkVaultTrigger(ctx context.Context, chain string, 
 func (w *TransitionWorker) checkAndRestartDKG(ctx context.Context, chain string, vaultID uint32, height uint64) error {
 	// 获取当前 epoch
 	currentEpoch := w.vaultProvider.VaultCurrentEpoch(chain, vaultID)
-	
+
 	// 检查当前 epoch 的 transition state
 	transitionKey := fmt.Sprintf("v1_frost_vault_transition_%s_%d_%s", chain, vaultID, padUint(currentEpoch))
 	transitionData, exists, err := w.stateReader.Get(transitionKey)
@@ -664,7 +678,7 @@ func (w *TransitionWorker) checkAndRestartDKG(ctx context.Context, chain string,
 		return nil // 不是失败状态，无需重启
 	}
 
-	logs.Info("[TransitionWorker] DKG failed detected: chain=%s vault=%d epoch=%d, triggering restart", chain, vaultID, currentEpoch)
+	w.Logger.Info("[TransitionWorker] DKG failed detected: chain=%s vault=%d epoch=%d, triggering restart", chain, vaultID, currentEpoch)
 
 	// 获取完整委员会（从 Top10000 重新分配）
 	signers, err := w.signerProvider.Top10000(height)
@@ -714,7 +728,7 @@ func (w *TransitionWorker) checkAndRestartDKG(ctx context.Context, chain string,
 	// 注意：这里需要通过 txSubmitter 提交 transition state
 	// 为了简化，我们直接启动新的 DKG 会话，transition state 会在 DKG 流程中创建
 	// TODO: 实现 SubmitTransitionStateTx 方法以显式创建 transition state
-	logs.Info("[TransitionWorker] DKG restart: chain=%s vault=%d new_epoch=%d n=%d t=%d", 
+	w.Logger.Info("[TransitionWorker] DKG restart: chain=%s vault=%d new_epoch=%d n=%d t=%d",
 		chain, vaultID, newEpoch, len(newCommitteeMembers), threshold)
 
 	// 启动新的 DKG 会话
@@ -758,7 +772,7 @@ func (w *TransitionWorker) createTransitionState(ctx context.Context, chain stri
 		return fmt.Errorf("check existing transition: %w", err)
 	}
 	if exists && len(existing) > 0 {
-		logs.Debug("[TransitionWorker] transition state already exists: %s", transitionKey)
+		w.Logger.Debug("[TransitionWorker] transition state already exists: %s", transitionKey)
 		return nil // 已存在，幂等
 	}
 
@@ -783,7 +797,7 @@ func (w *TransitionWorker) createTransitionState(ctx context.Context, chain stri
 	// 获取旧 group_pubkey
 	oldGroupPubkey, err := w.vaultProvider.VaultGroupPubkey(chain, vaultID, epochID-1)
 	if err != nil {
-		logs.Warn("[TransitionWorker] failed to get old group pubkey: %v", err)
+		w.Logger.Warn("[TransitionWorker] failed to get old group pubkey: %v", err)
 		oldGroupPubkey = nil
 	}
 
@@ -951,12 +965,12 @@ func (w *TransitionWorker) planBTCMigrationJobs(ctx context.Context, chain strin
 	}
 
 	params := WithdrawTemplateParams{
-		Chain:        chain,
-		Asset:        "BTC",
-		VaultID:      vaultID,
-		KeyEpoch:     epochID - 1, // 使用旧 key_epoch（迁移时使用旧密钥签名）
-		WithdrawIDs:  []string{},   // 迁移没有 withdraw_id
-		Inputs:       utxos,
+		Chain:       chain,
+		Asset:       "BTC",
+		VaultID:     vaultID,
+		KeyEpoch:    epochID - 1, // 使用旧 key_epoch（迁移时使用旧密钥签名）
+		WithdrawIDs: []string{},  // 迁移没有 withdraw_id
+		Inputs:      utxos,
 		Outputs: []WithdrawOutput{
 			{
 				WithdrawID: fmt.Sprintf("migration_%d_%d", vaultID, epochID),
@@ -1034,12 +1048,12 @@ func (w *TransitionWorker) planContractMigrationJobs(ctx context.Context, chain 
 	}
 
 	params := WithdrawTemplateParams{
-		Chain:       chain,
-		Asset:       "NATIVE", // 原生币
-		VaultID:     vaultID,
-		KeyEpoch:    epochID - 1, // 使用旧 key_epoch
-		WithdrawIDs: []string{},
-		Outputs:     []WithdrawOutput{}, // updatePubkey 没有输出
+		Chain:        chain,
+		Asset:        "NATIVE", // 原生币
+		VaultID:      vaultID,
+		KeyEpoch:     epochID - 1, // 使用旧 key_epoch
+		WithdrawIDs:  []string{},
+		Outputs:      []WithdrawOutput{}, // updatePubkey 没有输出
 		ContractAddr: contractAddr,
 		MethodID:     methodID,
 	}

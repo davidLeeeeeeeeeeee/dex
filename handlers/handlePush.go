@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"dex/consensus"
-	"dex/logs"
 	"dex/pb"
 	"dex/types"
 	"io"
@@ -21,7 +20,7 @@ func (hm *HandlerManager) HandlePushQuery(w http.ResponseWriter, r *http.Request
 	// 使用 pushQuery.Address 而不是从 IP 推断
 	senderAddress := pushQuery.Address
 	// 验证发送方身份（通过签名或其他机制）
-	if !hm.verifyNodeIdentity(senderAddress, pushQuery) {
+	if !hm.verifyNodeIdentity(senderAddress, &pushQuery) {
 		http.Error(w, "Invalid node identity", http.StatusUnauthorized)
 		return
 	}
@@ -38,7 +37,7 @@ func (hm *HandlerManager) HandlePushQuery(w http.ResponseWriter, r *http.Request
 	// 如果transport是RealTransport，使用队列方式
 	if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 		if err := rt.EnqueueReceivedMessage(msg); err != nil {
-			logs.Warn("[Handler] Failed to enqueue message: %v", err)
+			hm.Logger.Warn("[Handler] Failed to enqueue message: %v", err)
 			// 返回 503 Service Unavailable，促使发送方退避重试
 			http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
 			return

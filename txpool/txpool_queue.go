@@ -1,7 +1,6 @@
 package txpool
 
 import (
-	"dex/logs"
 	"dex/pb"
 	"dex/utils"
 	"log"
@@ -48,6 +47,7 @@ func newTxPoolQueue(pool *TxPool, validator TxValidator) *txPoolQueue {
 
 func (tq *txPoolQueue) runLoop() {
 	defer tq.pool.wg.Done()
+	// 不需要 SetThreadNodeContext，直接使用 tq.pool.Logger
 
 	for {
 		select {
@@ -63,9 +63,9 @@ func (tq *txPoolQueue) runLoop() {
 			case msgRemoveTx:
 				txID := msg.AnyTx.GetTxId()
 				tq.pool.RemoveTx(txID)
-				logs.Debug("[TxPoolQueue] removed tx=%s from TxPool", txID)
+				tq.pool.Logger.Debug("[TxPoolQueue] removed tx=%s from TxPool", txID)
 			default:
-				logs.Debug("[TxPoolQueue] unknown msg type: %d", msg.Type)
+				tq.pool.Logger.Debug("[TxPoolQueue] unknown msg type: %d", msg.Type)
 			}
 		}
 	}
@@ -84,7 +84,7 @@ func (tq *txPoolQueue) handleAddTx(incoming *pb.AnyTx, ip string, onAdded OnTxAd
 
 	base := incoming.GetBase()
 	if base == nil {
-		logs.Debug("[TxPoolQueue] missing BaseMessage, skip.")
+		tq.pool.Logger.Debug("[TxPoolQueue] missing BaseMessage, skip.")
 		return
 	}
 
@@ -117,14 +117,14 @@ func (tq *txPoolQueue) handleAddTx(incoming *pb.AnyTx, ip string, onAdded OnTxAd
 				return
 			}
 			if err := tq.pool.storeAnyTx(tx); err != nil {
-				logs.Debug("[TxPoolQueue] StoreAnyTx fail: %v", err)
+				tq.pool.Logger.Debug("[TxPoolQueue] StoreAnyTx fail: %v", err)
 			}
 		}(incoming)
 
 	} else {
 		// 未知节点：先验证后广播
 		if err := tq.validator.CheckAnyTx(incoming); err != nil {
-			logs.Debug("[TxPoolQueue] unknown node, tx=%s invalid: %v", txID, err)
+			tq.pool.Logger.Debug("[TxPoolQueue] unknown node, tx=%s invalid: %v", txID, err)
 			return
 		}
 
@@ -138,7 +138,7 @@ func (tq *txPoolQueue) handleAddTx(incoming *pb.AnyTx, ip string, onAdded OnTxAd
 
 		// 入池
 		if err := tq.pool.storeAnyTx(incoming); err != nil {
-			logs.Debug("[TxPoolQueue] unknown node => store tx=%s fail: %v", txID, err)
+			tq.pool.Logger.Debug("[TxPoolQueue] unknown node => store tx=%s fail: %v", txID, err)
 			return
 		}
 

@@ -27,6 +27,10 @@ const els = {
   statusLine: document.getElementById("statusLine"),
   elapsedLine: document.getElementById("elapsedLine"),
   defaultInfo: document.getElementById("defaultInfo"),
+  modalOverlay: document.getElementById("modalOverlay"),
+  modalTitle: document.getElementById("modalTitle"),
+  modalContent: document.getElementById("modalContent"),
+  closeModal: document.getElementById("closeModal"),
 };
 
 const storageKeys = {
@@ -63,6 +67,10 @@ function bindEvents() {
   els.addNodeBtn.addEventListener("click", addNode);
   els.selectAllBtn.addEventListener("click", selectAll);
   els.clearBtn.addEventListener("click", clearSelection);
+  els.closeModal.addEventListener("click", hideModal);
+  els.modalOverlay.addEventListener("click", (e) => {
+    if (e.target === els.modalOverlay) hideModal();
+  });
 }
 
 function loadStoredState() {
@@ -283,6 +291,7 @@ function renderSummary(data) {
     card.appendChild(header);
     card.appendChild(statusLine);
     card.appendChild(meta);
+    card.addEventListener("click", () => showNodeDetails(node.address));
     els.cards.appendChild(card);
   });
 
@@ -302,6 +311,86 @@ function statusClass(node) {
   if (node.error) return "status-bad";
   if (node.status && node.status.toLowerCase() === "ok") return "status-good";
   return "status-warn";
+}
+
+function showNodeDetails(address) {
+  els.modalOverlay.style.display = "flex";
+  els.modalTitle.textContent = `Node: ${address}`;
+  els.modalContent.innerHTML = `<div class="empty-state">Loading details for ${address}...</div>`;
+
+  fetch(`/api/node/details?address=${encodeURIComponent(address)}`)
+    .then((r) => r.json())
+    .then((data) => {
+      renderNodeDetails(data);
+    })
+    .catch((err) => {
+      els.modalContent.innerHTML = `<div class="empty-state">Error: ${err.message}</div>`;
+    });
+}
+
+function renderNodeDetails(data) {
+  els.modalContent.innerHTML = "";
+
+  const section = document.createElement("div");
+  section.className = "meta";
+  section.appendChild(kv("Address", data.address));
+  section.appendChild(kv("Status", data.status));
+  section.appendChild(kv("Current height", formatNumber(data.current_height)));
+  section.appendChild(kv("Last accepted", formatNumber(data.last_accepted_height)));
+  if (data.info) section.appendChild(kv("Info", data.info));
+  if (data.error) section.appendChild(kv("Error", data.error));
+
+  if (data.block) {
+    const block = data.block;
+    section.appendChild(kv("Block hash", block.block_hash || "-"));
+    section.appendChild(kv("Proposer", block.miner || "-"));
+    section.appendChild(kv("Tx count", formatNumber(block.tx_count)));
+  }
+
+  const logContainer = document.createElement("div");
+  logContainer.className = "log-container";
+  logContainer.innerHTML = "<h4>Recent Logs</h4>";
+
+  const list = document.createElement("div");
+  list.className = "log-list";
+
+  if (data.logs && data.logs.length > 0) {
+    data.logs.forEach((l) => {
+      const line = document.createElement("div");
+      line.className = "log-line";
+
+      const time = document.createElement("span");
+      time.className = "log-time";
+      time.textContent = l.timestamp;
+
+      const level = document.createElement("span");
+      level.className = `log-level ${l.level}`;
+      level.textContent = l.level;
+
+      const msg = document.createElement("span");
+      msg.className = "log-msg";
+      msg.textContent = l.message;
+
+      line.appendChild(time);
+      line.appendChild(level);
+      line.appendChild(msg);
+      list.appendChild(line);
+    });
+    // Scroll to bottom
+    setTimeout(() => {
+      list.scrollTop = list.scrollHeight;
+    }, 10);
+  } else {
+    list.innerHTML = '<div class="muted">No logs available.</div>';
+  }
+
+  logContainer.appendChild(list);
+  els.modalContent.appendChild(section);
+  els.modalContent.appendChild(logContainer);
+}
+
+function hideModal() {
+  els.modalOverlay.style.display = "none";
 }
 
 function kv(label, value) {

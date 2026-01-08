@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"dex/consensus"
-	"dex/logs"
 	"dex/pb"
 	"dex/types"
 	"io"
@@ -36,7 +35,7 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 
 	// 保存区块
 	if err := hm.dbManager.SaveBlock(&block); err != nil {
-		logs.Error("[HandlePut] Failed to save block %s: %v", block.BlockHash, err)
+		hm.Logger.Error("[HandlePut] Failed to save block %s: %v", block.BlockHash, err)
 		http.Error(w, "Failed to save block", http.StatusInternalServerError)
 		return
 	}
@@ -46,11 +45,11 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 		for _, tx := range block.Body {
 			if tx != nil {
 				if err := hm.txPool.StoreAnyTx(tx); err != nil {
-					logs.Debug("[HandlePut] Failed to store tx %s: %v", tx.GetTxId(), err)
+					hm.Logger.Debug("[HandlePut] Failed to store tx %s: %v", tx.GetTxId(), err)
 				}
 			}
 		}
-		logs.Debug("[HandlePut] Added %d transactions from block %s to pool", len(block.Body), block.BlockHash)
+		hm.Logger.Debug("[HandlePut] Added %d transactions from block %s to pool", len(block.Body), block.BlockHash)
 	}
 
 	// 通知共识（保持你现有逻辑）
@@ -66,12 +65,12 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 			}
 			if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 				if err := rt.EnqueueReceivedMessage(msg); err != nil {
-					logs.Warn("[HandlePut] Failed to enqueue block message: %v", err)
+					hm.Logger.Warn("[HandlePut] Failed to enqueue block message: %v", err)
 				}
 			}
 		}
 	}
 
-	logs.Info("[HandlePut] Stored block %s at height %d (txs=%d)", block.BlockHash, block.Height, len(block.Body))
+	hm.Logger.Info("[HandlePut] Stored block %s at height %d (txs=%d)", block.BlockHash, block.Height, len(block.Body))
 	w.WriteHeader(http.StatusOK)
 }

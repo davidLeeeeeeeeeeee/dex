@@ -11,6 +11,16 @@ type NodeSummary = {
   frost_metrics?: FrostMetrics;
 };
 
+type NodeDetails = NodeSummary & {
+  logs?: LogLine[];
+};
+
+type LogLine = {
+  timestamp: string;
+  level: string;
+  message: string;
+};
+
 type BlockSummary = {
   height: number;
   block_hash?: string;
@@ -90,6 +100,10 @@ const els = {
   statusLine: document.getElementById("statusLine") as HTMLSpanElement,
   elapsedLine: document.getElementById("elapsedLine") as HTMLSpanElement,
   defaultInfo: document.getElementById("defaultInfo") as HTMLSpanElement,
+  modalOverlay: document.getElementById("modalOverlay") as HTMLDivElement,
+  modalTitle: document.getElementById("modalTitle") as HTMLHeadingElement,
+  modalContent: document.getElementById("modalContent") as HTMLDivElement,
+  closeModal: document.getElementById("closeModal") as HTMLButtonElement,
 };
 
 const storageKeys = {
@@ -126,6 +140,10 @@ function bindEvents(): void {
   els.addNodeBtn.addEventListener("click", addNode);
   els.selectAllBtn.addEventListener("click", selectAll);
   els.clearBtn.addEventListener("click", clearSelection);
+  els.closeModal.addEventListener("click", hideModal);
+  els.modalOverlay.addEventListener("click", (e) => {
+    if (e.target === els.modalOverlay) hideModal();
+  });
 }
 
 function loadStoredState(): void {
@@ -349,6 +367,7 @@ function renderSummary(data: SummaryResponse): void {
     card.appendChild(header);
     card.appendChild(statusLine);
     card.appendChild(meta);
+    card.addEventListener("click", () => showNodeDetails(node.address));
     els.cards.appendChild(card);
   });
 
@@ -368,6 +387,86 @@ function statusClass(node: NodeSummary): string {
   if (node.error) return "status-bad";
   if (node.status && node.status.toLowerCase() === "ok") return "status-good";
   return "status-warn";
+}
+
+function showNodeDetails(address: string): void {
+  els.modalOverlay.style.display = "flex";
+  els.modalTitle.textContent = `Node: ${address}`;
+  els.modalContent.innerHTML = `<div class="empty-state">Loading details for ${address}...</div>`;
+
+  fetch(`/api/node/details?address=${encodeURIComponent(address)}`)
+    .then((r) => r.json())
+    .then((data: NodeDetails) => {
+      renderNodeDetails(data);
+    })
+    .catch((err: Error) => {
+      els.modalContent.innerHTML = `<div class="empty-state">Error: ${err.message}</div>`;
+    });
+}
+
+function renderNodeDetails(data: NodeDetails): void {
+  els.modalContent.innerHTML = "";
+
+  const section = document.createElement("div");
+  section.className = "meta";
+  section.appendChild(kv("Address", data.address));
+  section.appendChild(kv("Status", data.status || "-"));
+  section.appendChild(kv("Current height", formatNumber(data.current_height)));
+  section.appendChild(kv("Last accepted", formatNumber(data.last_accepted_height)));
+  if (data.info) section.appendChild(kv("Info", data.info));
+  if (data.error) section.appendChild(kv("Error", data.error));
+
+  if (data.block) {
+    const block = data.block;
+    section.appendChild(kv("Block hash", block.block_hash || "-"));
+    section.appendChild(kv("Proposer", block.miner || "-"));
+    section.appendChild(kv("Tx count", formatNumber(block.tx_count)));
+  }
+
+  const logContainer = document.createElement("div");
+  logContainer.className = "log-container";
+  logContainer.innerHTML = "<h4>Recent Logs</h4>";
+
+  const list = document.createElement("div");
+  list.className = "log-list";
+
+  if (data.logs && data.logs.length > 0) {
+    data.logs.forEach((l) => {
+      const line = document.createElement("div");
+      line.className = "log-line";
+
+      const time = document.createElement("span");
+      time.className = "log-time";
+      time.textContent = l.timestamp;
+
+      const level = document.createElement("span");
+      level.className = `log-level ${l.level}`;
+      level.textContent = l.level;
+
+      const msg = document.createElement("span");
+      msg.className = "log-msg";
+      msg.textContent = l.message;
+
+      line.appendChild(time);
+      line.appendChild(level);
+      line.appendChild(msg);
+      list.appendChild(line);
+    });
+    // Scroll to bottom
+    setTimeout(() => {
+      list.scrollTop = list.scrollHeight;
+    }, 10);
+  } else {
+    list.innerHTML = '<div class="muted">No logs available.</div>';
+  }
+
+  logContainer.appendChild(list);
+  els.modalContent.appendChild(section);
+  els.modalContent.appendChild(logContainer);
+}
+
+function hideModal(): void {
+  els.modalOverlay.style.display = "none";
 }
 
 function kv(label: string, value: string): HTMLDivElement {

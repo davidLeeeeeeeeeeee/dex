@@ -6,12 +6,14 @@ package handlers
 import (
 	"dex/db"
 	"dex/keys"
+	"dex/logs"
 	"dex/pb"
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -19,14 +21,13 @@ import (
 func setupTestHandlerManager(t *testing.T) *HandlerManager {
 	// 创建临时数据库
 	tempDir := t.TempDir()
-	dbMgr, err := db.NewManager(tempDir)
-	if err != nil {
-		t.Fatalf("failed to create db manager: %v", err)
-	}
+	dbManager, err := db.NewManager(tempDir, logs.NewNodeLogger("test", 0))
+	require.NoError(t, err)
+	defer dbManager.Close()
 
 	// 创建 HandlerManager
-	hm := NewHandlerManager(dbMgr, nil, "8080", "0x0001", nil, nil)
-	return hm
+	handlerManager := NewHandlerManager(dbManager, nil, "8080", "addr", nil, nil, logs.NewNodeLogger("test", 0))
+	return handlerManager
 }
 
 // TestHandleGetVaultGroupPubKey 测试 GetVaultGroupPubKey API
@@ -35,12 +36,12 @@ func TestHandleGetVaultGroupPubKey(t *testing.T) {
 
 	// 创建测试数据
 	vaultState := &pb.FrostVaultState{
-		VaultId:    1,
-		Chain:      "btc",
-		KeyEpoch:   1,
+		VaultId:     1,
+		Chain:       "btc",
+		KeyEpoch:    1,
 		GroupPubkey: []byte{0x01, 0x02, 0x03, 0x04},
-		SignAlgo:   pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
-		Status:     "KEY_READY",
+		SignAlgo:    pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
+		Status:      "KEY_READY",
 	}
 
 	vaultKey := keys.KeyFrostVaultState("btc", 1)

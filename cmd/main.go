@@ -34,6 +34,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -59,12 +60,11 @@ type NodeInstance struct {
 	SenderManager    *sender.SenderManager
 	HandlerManager   *handlers.HandlerManager
 	FrostRuntime     *frostrt.Manager // FROST 门限签名 Runtime（可选）
+	Logger           logs.Logger
 }
 
 // TestValidator 简单的交易验证器
 type TestValidator struct{}
-
-// 在 cmd/main.go 文件的import后面，NodeInstance结构体前面添加：
 
 // 接口调用统计结构体
 type APICallStats struct {
@@ -250,7 +250,7 @@ func printAPICallStatistics() {
 		}
 	}
 
-	fmt.Println("==========================================\n")
+	fmt.Println("==========================================")
 }
 func (v *TestValidator) CheckAnyTx(tx *pb.AnyTx) error {
 	if tx == nil {
@@ -284,8 +284,21 @@ func main() {
 	// 第一阶段：初始化所有节点（创建数据库和基础设施）
 	fmt.Println("📦 Phase 1: Initializing all nodes...")
 	for i := 0; i < numNodes; i++ {
+
+		// Pre-derive address to ensure Logger is registered with the correct address
+		privK, err := utils.ParseSecp256k1PrivateKey(privateKeys[i])
+		if err != nil {
+			logs.Error("Failed to parse private key for node %d: %v", i, err)
+			continue
+		}
+		address, err := utils.DeriveBtcBech32Address(privK)
+		if err != nil {
+			logs.Error("Failed to derive address for node %d: %v", i, err)
+			continue
+		}
+
 		node := &NodeInstance{
-			Address:    fmt.Sprintf("0x000%d", i),
+			Address:    address, // Use the correct address immediately
 			ID:         i,
 			PrivateKey: privateKeys[i],
 			Port:       fmt.Sprintf("%d", basePort+i),
@@ -295,9 +308,12 @@ func main() {
 		// 清理旧数据
 		os.RemoveAll(node.DataPath)
 
+		// 第一步：创建该节点的私有 Logger (using the correct address)
+		node.Logger = logs.NewNodeLogger(node.Address, 2000)
+
 		// 初始化节点
-		if err := initializeNode(node); err != nil {
-			logs.Error("Failed to initialize node %d: %v", i, err)
+		if err := initializeNode(node, cfg); err != nil {
+			node.Logger.Error("Failed to initialize node %d: %v", i, err)
 			continue
 		}
 
@@ -514,6 +530,14 @@ ContinueWithConsensus:
 			if err := frostManager.Start(context.Background()); err != nil {
 				logs.Error("Failed to start FROST Runtime for node %d: %v", node.ID, err)
 			} else {
+				// 额外启动一个协程，确保内部协程（如果是由外部控制的）也有上下文
+				go func(n *NodeInstance) {
+					logs.SetThreadNodeContext(n.Address)
+					// 这里实际上 Manager.Start 已经跑在子协程里了(某些后台任务)，
+					// 但我们在这里二次确认，或者通过 wrap 的方式启动更好。
+					// 考虑到 Manager.Start 内部可能有 go func，我们应该在调用前设置。
+				}(node)
+
 				fmt.Printf("  ✓ Node %d FROST Runtime started (StateReader=%v, AdapterFactory=%v)\n",
 					node.ID, stateReader != nil, adapterFactory != nil)
 			}
@@ -534,6 +558,7 @@ ContinueWithConsensus:
 		if node != nil && node.ConsensusManager != nil {
 			// 触发初始查询
 			go func(n *NodeInstance) {
+				logs.SetThreadNodeContext(n.Address)
 				time.Sleep(time.Duration(n.ID*100) * time.Millisecond) // 错开启动
 				n.ConsensusManager.StartQuery()
 			}(node)
@@ -565,6 +590,12 @@ ContinueWithConsensus:
 func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorChan chan<- error) error {
 	// 创建HTTP路由
 	mux := http.NewServeMux()
+
+	// 将该 Logger 绑定到当前主线程(协程)
+	logs.SetThreadLogger(node.Logger)
+
+	// 记录当前 Goroutine 的节点上下文
+	logs.SetThreadNodeContext(node.Address)
 
 	// 使用HandlerManager注册路由
 	node.HandlerManager.RegisterRoutes(mux)
@@ -656,7 +687,7 @@ func generatePrivateKeys(count int) []string {
 }
 
 // 初始化单个节点
-func initializeNode(node *NodeInstance) error {
+func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	// 1. 初始化密钥管理器
 	keyMgr := utils.GetKeyManager()
 	if err := keyMgr.InitKey(node.PrivateKey); err != nil {
@@ -668,7 +699,7 @@ func initializeNode(node *NodeInstance) error {
 	utils.Port = node.Port
 
 	// 3. 初始化数据库
-	dbManager, err := db.NewManager(node.DataPath)
+	dbManager, err := db.NewManager(node.DataPath, node.Logger)
 	if err != nil {
 		return fmt.Errorf("failed to init db: %v", err)
 	}
@@ -681,7 +712,7 @@ func initializeNode(node *NodeInstance) error {
 	validator := &TestValidator{}
 
 	// 5. 创建并启动TxPool（不再使用单例）
-	txPool, err := txpool.NewTxPool(dbManager, validator)
+	txPool, err := txpool.NewTxPool(dbManager, validator, node.Address, node.Logger)
 	if err != nil {
 		return fmt.Errorf("failed to create TxPool: %v", err)
 	}
@@ -691,30 +722,26 @@ func initializeNode(node *NodeInstance) error {
 	node.TxPool = txPool
 
 	// 6. 创建发送管理器
-	senderManager := sender.NewSenderManager(dbManager, node.Address, txPool, node.ID)
+	senderManager := sender.NewSenderManager(dbManager, node.Address, txPool, node.ID, node.Logger)
 	node.SenderManager = senderManager
 
 	// 7. 初始化共识系统
-	nodeID := types.NodeID(node.Address)
-	config := consensus.DefaultConfig()
-
+	consCfg := consensus.DefaultConfig()
 	// 调整配置
-	config.Network.NumNodes = 100
-	config.Network.NumByzantineNodes = 0
-	config.Consensus.NumHeights = 10     // 运行10个高度
-	config.Consensus.BlocksPerHeight = 3 // 每个高度3个候选块
-	config.Consensus.K = 10              // 采样10个节点
-	config.Consensus.Alpha = 7           // 需要7个回应
-	config.Consensus.Beta = 5            // 5次连续投票确认
-	config.Node.ProposalInterval = 5 * time.Second
+	consCfg.Consensus.NumHeights = 10     // 运行10个高度
+	consCfg.Consensus.BlocksPerHeight = 3 // 每个高度3个候选块
+	consCfg.Consensus.K = 10              // 采样10个节点
+	consCfg.Consensus.Alpha = 7           // 需要7个回应
+	consCfg.Consensus.Beta = 5            // 5次连续投票确认
+	consCfg.Node.ProposalInterval = 5 * time.Second
 
-	// 创建共识管理器
 	consensusManager := consensus.InitConsensusManager(
-		nodeID,
+		types.NodeID(strconv.Itoa(node.ID)),
 		dbManager,
-		config,
+		consCfg,
 		senderManager,
 		txPool,
+		node.Logger,
 	)
 	node.ConsensusManager = consensusManager
 
@@ -726,6 +753,7 @@ func initializeNode(node *NodeInstance) error {
 		node.Address,
 		senderManager,
 		txPool,
+		node.Logger,
 	)
 	node.HandlerManager = handlerManager
 
@@ -779,6 +807,7 @@ func initializeNode(node *NodeInstance) error {
 // Option 2: Generate transactions continuously
 func generateTransactions(node *NodeInstance) {
 	go func() {
+		logs.SetThreadNodeContext(node.Address)
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 
@@ -854,6 +883,12 @@ func registerAllNodes(nodes []*NodeInstance) {
 		if node == nil || node.DBManager == nil {
 			continue
 		}
+
+		// 注册节点 ID 和 端口 到地址的映射，用于日志归集（Explorer 仍需该映射）
+		logs.RegisterNodeMapping(strconv.Itoa(node.ID), node.Address)
+		logs.RegisterNodeMapping(node.Port, node.Address)
+		logs.RegisterNodeMapping(fmt.Sprintf("127.0.0.1:%s", node.Port), node.Address) // host:port 格式
+		logs.RegisterNodeMapping(node.Address, node.Address)                           // 地址本身也注册，确保日志缓冲区正确初始化
 
 		// 保存 Top10000
 		node.DBManager.EnqueueSet(keys.KeyFrostTop10000(), string(top10000Data))

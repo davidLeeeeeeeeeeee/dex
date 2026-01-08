@@ -79,23 +79,23 @@ type Coordinator struct {
 	messenger     RoastMessenger
 	vaultProvider VaultCommitteeProvider
 	cryptoFactory CryptoExecutorFactory // 密码学执行器工厂
+	sessionStore  *roastsession.SessionStore
+	Logger        logs.Logger
 
 	// 当前区块高度（用于协调者选举）
 	currentHeight uint64
 }
 
 // NewCoordinator 创建协调者
-func NewCoordinator(nodeID NodeID, messenger RoastMessenger, vaultProvider VaultCommitteeProvider, cryptoFactory CryptoExecutorFactory, config *CoordinatorConfig) *Coordinator {
-	if config == nil {
-		config = DefaultCoordinatorConfig()
-	}
+func NewCoordinator(nodeID NodeID, messenger RoastMessenger, vaultProvider VaultCommitteeProvider, cryptoFactory CryptoExecutorFactory, logger logs.Logger) *Coordinator {
 	return &Coordinator{
-		config:        config,
+		config:        DefaultCoordinatorConfig(),
 		nodeID:        nodeID,
 		sessions:      make(map[string]*roastsession.Session),
 		messenger:     messenger,
 		vaultProvider: vaultProvider,
 		cryptoFactory: cryptoFactory,
+		Logger:        logger,
 	}
 }
 
@@ -167,13 +167,16 @@ func (c *Coordinator) StartSession(ctx context.Context, params *StartSessionPara
 
 // StartSessionParams 启动会话参数
 type StartSessionParams struct {
-	JobID     string
-	VaultID   uint32
-	Chain     string
-	KeyEpoch  uint64
-	SignAlgo  pb.SignAlgo
-	Messages  [][]byte // 待签名消息列表
-	Threshold int
+	JobID        string
+	maxInFlight  int // 最多并发 job 数
+	localAddress string
+	Logger       logs.Logger
+	VaultID      uint32
+	Chain        string
+	KeyEpoch     uint64
+	SignAlgo     pb.SignAlgo
+	Messages     [][]byte // 待签名消息列表
+	Threshold    int
 }
 
 // isCurrentCoordinator 检查本节点是否是当前协调者

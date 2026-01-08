@@ -36,10 +36,11 @@ type RealBlockStore struct {
 	snapshots       map[uint64]*types.Snapshot
 	snapshotHeights []uint64
 	maxSnapshots    int
+	nodeID          types.NodeID // 新增
 }
 
 // 创建真实的区块存储
-func NewRealBlockStore(dbManager *db.Manager, maxSnapshots int, pool *txpool.TxPool) interfaces.BlockStore {
+func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots int, pool *txpool.TxPool) interfaces.BlockStore {
 	// 初始化 VM 执行器
 	registry := vm.NewHandlerRegistry()
 	if err := vm.RegisterDefaultHandlers(registry); err != nil {
@@ -61,6 +62,7 @@ func NewRealBlockStore(dbManager *db.Manager, maxSnapshots int, pool *txpool.TxP
 		maxSnapshots:    maxSnapshots,
 		maxHeight:       0,
 		adapter:         NewConsensusAdapter(dbManager),
+		nodeID:          nodeID, // 记录节点ID
 	}
 
 	// 初始化创世区块
@@ -142,7 +144,11 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 	}
 
 	// 异步保存到数据库（非最终化的区块暂时只在内存中）
-	go s.saveBlockToDB(block)
+	// 异步保存到数据库
+	go func() {
+		logs.SetThreadNodeContext(string(s.nodeID))
+		s.saveBlockToDB(block)
+	}()
 
 	logs.Debug("[RealBlockStore] Added block %s at height %d", block.ID, block.Height)
 
@@ -396,7 +402,11 @@ func (s *RealBlockStore) CreateSnapshot(height uint64) (*types.Snapshot, error) 
 	}
 
 	// 持久化快照到数据库
-	go s.saveSnapshotToDB(snapshot)
+	// 持久化快照到数据库
+	go func() {
+		logs.SetThreadNodeContext(string(s.nodeID))
+		s.saveSnapshotToDB(snapshot)
+	}()
 
 	logs.Info("[RealBlockStore] Created snapshot at height %d", height)
 

@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"dex/frost/security"
-	"dex/logs"
 	"dex/pb"
 	"dex/types"
 
@@ -88,26 +87,26 @@ func (hm *HandlerManager) HandleFrostMsg(w http.ResponseWriter, r *http.Request)
 	// 1. 签名验证
 	if verifier.EnableSigVerify {
 		if len(envelope.Sig) == 0 {
-			logs.Warn("[HandleFrostMsg] Missing signature from %s", senderAddress)
+			hm.Logger.Warn("[HandleFrostMsg] Missing signature from %s", senderAddress)
 			http.Error(w, "Missing signature", http.StatusUnauthorized)
 			return
 		}
 
 		if verifier.GetPublicKey == nil {
-			logs.Warn("[HandleFrostMsg] No public key lookup function configured")
+			hm.Logger.Warn("[HandleFrostMsg] No public key lookup function configured")
 			http.Error(w, "Signature verification not configured", http.StatusInternalServerError)
 			return
 		}
 
 		pubKey, err := verifier.GetPublicKey(senderAddress)
 		if err != nil {
-			logs.Warn("[HandleFrostMsg] Failed to get public key for %s: %v", senderAddress, err)
+			hm.Logger.Warn("[HandleFrostMsg] Failed to get public key for %s: %v", senderAddress, err)
 			http.Error(w, "Unknown sender", http.StatusUnauthorized)
 			return
 		}
 
 		if !security.VerifyFrostEnvelope(pubKey, &envelope) {
-			logs.Warn("[HandleFrostMsg] Invalid signature from %s", senderAddress)
+			hm.Logger.Warn("[HandleFrostMsg] Invalid signature from %s", senderAddress)
 			http.Error(w, "Invalid signature", http.StatusUnauthorized)
 			return
 		}
@@ -118,10 +117,10 @@ func (hm *HandlerManager) HandleFrostMsg(w http.ResponseWriter, r *http.Request)
 		valid, isReplay := verifier.ReplayGuard.Check(senderAddress, envelope.Seq)
 		if !valid {
 			if isReplay {
-				logs.Warn("[HandleFrostMsg] Replay attack detected from %s, seq=%d", senderAddress, envelope.Seq)
+				hm.Logger.Warn("[HandleFrostMsg] Replay attack detected from %s, seq=%d", senderAddress, envelope.Seq)
 				http.Error(w, "Replay detected", http.StatusConflict)
 			} else {
-				logs.Warn("[HandleFrostMsg] Seq jump too large from %s, seq=%d", senderAddress, envelope.Seq)
+				hm.Logger.Warn("[HandleFrostMsg] Seq jump too large from %s, seq=%d", senderAddress, envelope.Seq)
 				http.Error(w, "Invalid sequence number", http.StatusBadRequest)
 			}
 			return
@@ -138,7 +137,7 @@ func (hm *HandlerManager) HandleFrostMsg(w http.ResponseWriter, r *http.Request)
 	// 如果有 FrostMessageHandler，入队处理
 	if hm.frostMsgHandler != nil {
 		if err := hm.frostMsgHandler(msg); err != nil {
-			logs.Warn("[HandleFrostMsg] Failed to handle frost message: %v", err)
+			hm.Logger.Warn("[HandleFrostMsg] Failed to handle frost message: %v", err)
 			http.Error(w, "Failed to process message", http.StatusInternalServerError)
 			return
 		}

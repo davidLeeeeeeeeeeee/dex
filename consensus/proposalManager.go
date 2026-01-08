@@ -15,9 +15,10 @@ type ProposalManager struct {
 	node            *Node
 	transport       interfaces.Transport
 	store           interfaces.BlockStore
-	config          *NodeConfig
+	nodeConfig      *NodeConfig         // Renamed from 'config'
 	windowConfig    config.WindowConfig // Window配置
 	events          interfaces.EventBus
+	Logger          logs.Logger
 	proposedBlocks  map[string]bool
 	proposalWindow  int                    // 当前window（替代proposalRound）
 	lastBlockTime   time.Time              // 上次出块时间
@@ -27,21 +28,22 @@ type ProposalManager struct {
 }
 
 // NewProposalManager 创建新的提案管理器（使用默认提案者）
-func NewProposalManager(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, nodeConfig *NodeConfig, events interfaces.EventBus) *ProposalManager {
+func NewProposalManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, nodeConfig *NodeConfig, events interfaces.EventBus, logger logs.Logger) *ProposalManager {
 	// 获取window配置
 	cfg := config.DefaultConfig()
-	return NewProposalManagerWithProposer(nodeID, transport, store, nodeConfig, events, NewDefaultBlockProposer(), cfg.Window)
+	return NewProposalManagerWithProposer(id, transport, store, nodeConfig, events, NewDefaultBlockProposer(), cfg.Window, logger)
 }
 
 // 创建新的提案管理器（可注入自定义提案者）
-func NewProposalManagerWithProposer(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, nodeConfig *NodeConfig, events interfaces.EventBus, proposer interfaces.BlockProposer, windowConfig config.WindowConfig) *ProposalManager {
+func NewProposalManagerWithProposer(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, nodeConfig *NodeConfig, events interfaces.EventBus, proposer interfaces.BlockProposer, windowConfig config.WindowConfig, logger logs.Logger) *ProposalManager {
 	return &ProposalManager{
 		nodeID:          nodeID,
 		transport:       transport,
 		store:           store,
-		config:          nodeConfig,
+		nodeConfig:      nodeConfig, // Renamed from 'config'
 		windowConfig:    windowConfig,
 		events:          events,
+		Logger:          logger,
 		proposedBlocks:  make(map[string]bool),
 		proposer:        proposer,
 		lastBlockTime:   time.Now(), // 初始化为当前时间
@@ -54,7 +56,8 @@ func (pm *ProposalManager) Start(ctx context.Context) {
 	pm.events.Subscribe(types.EventBlockFinalized, pm.handleBlockFinalized)
 
 	go func() {
-		ticker := time.NewTicker(pm.config.ProposalInterval)
+		logs.SetThreadNodeContext(string(pm.nodeID))
+		ticker := time.NewTicker(pm.nodeConfig.ProposalInterval)
 		defer ticker.Stop()
 
 		for {
@@ -139,6 +142,7 @@ func (pm *ProposalManager) proposeBlock() {
 	// 提议者立即发起PushQuery来传播自己的区块
 	if pm.node != nil && pm.node.queryManager != nil {
 		go func() {
+			logs.SetThreadNodeContext(string(pm.nodeID))
 			pm.node.queryManager.tryIssueQuery()
 		}()
 	}

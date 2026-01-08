@@ -6,7 +6,7 @@
     "strict": true,
     "noEmitOnError": true,
     "sourceMap": false,
-    "outDir": "."
+    "outDir": "./dist"
   },
   "include": ["app.ts"]
 }

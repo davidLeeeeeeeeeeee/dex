@@ -3,6 +3,7 @@ package consensus
 import (
 	"context"
 	"dex/interfaces"
+	"dex/logs"
 	"dex/types"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ type SyncManager struct {
 	config         *SyncConfig
 	snapshotConfig *SnapshotConfig // 新增
 	events         interfaces.EventBus
+	Logger         logs.Logger
 	SyncRequests   map[uint32]time.Time
 	nextSyncID     uint32
 	Syncing        bool
@@ -30,14 +32,15 @@ type SyncManager struct {
 	usingSnapshot  bool // 新增：标记是否正在使用快照同步
 }
 
-func NewSyncManager(nodeID types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, snapshotConfig *SnapshotConfig, events interfaces.EventBus) *SyncManager {
+func NewSyncManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, snapshotConfig *SnapshotConfig, events interfaces.EventBus, logger logs.Logger) *SyncManager {
 	return &SyncManager{
-		nodeID:         nodeID,
+		nodeID:         id,
 		transport:      transport,
 		store:          store,
 		config:         config,
 		snapshotConfig: snapshotConfig,
 		events:         events,
+		Logger:         logger,
 		SyncRequests:   make(map[uint32]time.Time),
 		PeerHeights:    make(map[types.NodeID]uint64),
 		lastPoll:       time.Now(),
@@ -46,6 +49,7 @@ func NewSyncManager(nodeID types.NodeID, transport interfaces.Transport, store i
 
 func (sm *SyncManager) Start(ctx context.Context) {
 	go func() {
+		logs.SetThreadNodeContext(string(sm.nodeID))
 		ticker := time.NewTicker(sm.config.CheckInterval)
 		defer ticker.Stop()
 
@@ -110,8 +114,28 @@ func (sm *SyncManager) HandleHeightResponse(msg types.Message) {
 func (sm *SyncManager) checkAndSync() {
 	sm.Mu.Lock()
 	if sm.Syncing {
-		sm.Mu.Unlock()
-		return
+		// 检查是否有同步请求超时
+		now := time.Now()
+		hasTimeout := false
+		for syncID, startTime := range sm.SyncRequests {
+			if now.Sub(startTime) > sm.config.Timeout {
+				Logf("[Node %d] ⚠️ Sync request %d timed out (started at %v)\n",
+					sm.nodeID, syncID, startTime.Format("15:04:05"))
+				delete(sm.SyncRequests, syncID)
+				hasTimeout = true
+			}
+		}
+
+		if hasTimeout && len(sm.SyncRequests) == 0 {
+			logs.Warn("[Node %d] All sync requests timed out, resetting Syncing flag", sm.nodeID)
+			sm.Syncing = false
+			sm.usingSnapshot = false
+		}
+
+		if sm.Syncing {
+			sm.Mu.Unlock()
+			return
+		}
 	}
 
 	maxPeerHeight := uint64(0)

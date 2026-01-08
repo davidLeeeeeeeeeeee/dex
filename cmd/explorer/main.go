@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"dex/config"
+	"dex/logs"
 	"dex/pb"
 
 	"github.com/quic-go/quic-go"
@@ -65,6 +66,11 @@ type nodeSummary struct {
 	Error              string        `json:"error,omitempty"`
 	Block              *blockSummary `json:"block,omitempty"`
 	FrostMetrics       *frostMetrics `json:"frost_metrics,omitempty"`
+}
+
+type nodeDetails struct {
+	nodeSummary
+	Logs []*pb.LogLine `json:"logs,omitempty"`
 }
 
 type blockSummary struct {
@@ -119,6 +125,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/nodes", srv.handleNodes)
 	mux.HandleFunc("/api/summary", srv.handleSummary)
+	mux.HandleFunc("/api/node/details", srv.handleNodeDetails)
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	log.Printf("Explorer listening at http://%s (ui: %s)", *listenAddr, webDir)
@@ -381,7 +388,7 @@ func (s *server) fetchBlock(ctx context.Context, node string, height uint64) (*p
 		return nil, err
 	}
 	if resp.Error != "" {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	if resp.Block == nil {
 		return nil, errors.New("empty block")
@@ -514,4 +521,55 @@ func writeJSON(w http.ResponseWriter, payload any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(payload)
+}
+
+func (s *server) handleNodeDetails(w http.ResponseWriter, r *http.Request) {
+	address := r.URL.Query().Get("address")
+	if address == "" {
+		http.Error(w, "missing address", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	results, _ := s.collectSummary(ctx, []string{address}, true, true)
+	if len(results) == 0 {
+		http.Error(w, "node not found", http.StatusNotFound)
+		return
+	}
+
+	details := nodeDetails{
+		nodeSummary: results[0],
+	}
+
+	logs, err := s.fetchLogs(ctx, address)
+	if err == nil {
+		details.Logs = logs.Logs
+	}
+
+	writeJSON(w, details)
+}
+
+func (s *server) fetchLogs(ctx context.Context, node string) (*pb.LogsResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	var resp pb.LogsResponse
+	req := &pb.LogsRequest{MaxLines: 1000} // 请求行数同步调大
+
+	// 1. 优先尝试通过网络获取 (适用于分布式或活着的节点)
+	err := s.fetchProto(ctx, node, "/logs", req, &resp)
+	if err == nil {
+		log.Printf("[fetchLogs] node=%s: fetched %d logs via network", node, len(resp.Logs))
+		return &resp, nil
+	}
+
+	log.Printf("[fetchLogs] node=%s: network fetch failed: %v, trying local fallback", node, err)
+
+	// 2. 如果网络获取失败 (节点可能停了)，在本地直接尝试从 logger 拿 (针对单进程仿真)
+	logLines := logs.GetLogsForNode(node)
+	log.Printf("[fetchLogs] node=%s: local fallback found %d logs (available nodes: %v)", node, len(logLines), logs.GetAllLoggedNodes())
+	if len(logLines) > 0 {
+		return &pb.LogsResponse{Logs: logLines}, nil
+	}
+
+	return nil, err
 }

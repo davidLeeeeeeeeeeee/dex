@@ -314,3 +314,112 @@ input:focus {
     align-items: flex-start;
   }
 }
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(12px);
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.modal {
+  background: #0d1218;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 1000px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+  padding: 20px 28px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.modal-content {
+  flex: 1;
+  overflow: auto;
+  padding: 28px;
+}
+
+.log-container {
+  margin-top: 24px;
+}
+
+.log-container h4 {
+  margin: 0 0 12px;
+  color: var(--accent-2);
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+}
+
+.log-list {
+  background: #05080b;
+  border-radius: 12px;
+  padding: 16px;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.log-line {
+  margin-bottom: 3px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  padding-bottom: 3px;
+  display: flex;
+  gap: 12px;
+}
+
+.log-time {
+  color: #6a7c8d;
+  flex-shrink: 0;
+}
+
+.log-level {
+  font-weight: 600;
+  flex-shrink: 0;
+  width: 70px;
+}
+
+.log-level.INFO { color: #5ed0ff; }
+.log-level.DEBUG { color: #8a9ba8; }
+.log-level.WARN { color: #ffc857; }
+.log-level.ERROR { color: #ff5d5d; }
+.log-level.VERBOSE { color: #b088f9; }
+
+.log-msg {
+  color: #e1e7ed;
+  word-break: break-all;
+}
+
+.card {
+  cursor: pointer;
+  transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s;
+}
+
+.card:hover {
+  transform: translateY(-6px);
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.03);
+}

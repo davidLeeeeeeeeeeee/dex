@@ -42,6 +42,8 @@ type SendQueue struct {
 	wg            sync.WaitGroup
 	httpClient    *http.Client
 	nodeID        int              // 只用作log,不参与业务逻辑
+	address       string           // 节点地址
+	Logger        logs.Logger      // 注入的 Logger
 	InflightMap   map[string]int32 // 目标->在途请求数
 	InflightMutex sync.RWMutex
 }
@@ -49,9 +51,11 @@ type SendQueue struct {
 // 移除 GlobalQueue 和 InitQueue
 
 // 创建新的发送队列
-func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client, nodeID int) *SendQueue {
+func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client, nodeID int, address string, logger logs.Logger) *SendQueue {
 	sq := &SendQueue{
 		nodeID:      nodeID,
+		address:     address,
+		Logger:      logger,
 		workerCount: workerCount,
 		TaskChan:    make(chan *SendTask, queueCapacity),
 		stopChan:    make(chan struct{}),
@@ -68,7 +72,7 @@ func (sq *SendQueue) Start() {
 	for i := 0; i < sq.workerCount; i++ {
 		go sq.workerLoop(i)
 	}
-	logs.Verbose("[SendQueue] Started with %d workers", sq.workerCount)
+	sq.Logger.Verbose("[SendQueue] Started with %d workers", sq.workerCount)
 }
 
 // Stop 停止队列, 等待所有worker退出
@@ -113,10 +117,9 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 			// 成功入队
 			return
 		case <-time.After(cfg.Sender.ControlTaskTimeout):
-
 			// 80ms 后仍无法入队，记录错误
-			logs.Error("[Node %d][SendQueue] Control task timeout: len=%d cap=%d target=%s",
-				sq.nodeID, len(sq.TaskChan), cap(sq.TaskChan), task.Target)
+			sq.Logger.Error("[SendQueue] Control task timeout: len=%d cap=%d target=%s",
+				len(sq.TaskChan), cap(sq.TaskChan), task.Target)
 			// 可以选择丢弃或者进一步处理
 			return
 		}
@@ -127,14 +130,15 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 	case sq.TaskChan <- task:
 		// 成功入队
 	default:
-		logs.Debug("[Node %d][SendQueue] Data task dropped: queue full, target=%s",
-			sq.nodeID, task.Target)
+		sq.Logger.Debug("[SendQueue] Data task dropped: queue full, target=%s",
+			task.Target)
 	}
 }
 
 // workerLoop 逐个获取队列任务并执行
 func (sq *SendQueue) workerLoop(workerID int) {
 	defer sq.wg.Done()
+	// DI 模式下不再需要 SetThreadNodeContext
 
 	for {
 		select {
@@ -181,10 +185,10 @@ func (sq *SendQueue) doSend(task *SendTask, workerID int) error {
 	elapsed := time.Since(start)
 
 	if err != nil {
-		logs.Error("[SendQueue] worker=%d,%s send to %s FAILED after %v: %v",
+		sq.Logger.Error("[SendQueue] worker=%d,%s send to %s FAILED after %v: %v",
 			workerID, task.FuncName(), task.Target, elapsed, err)
 	} else {
-		logs.Trace("[SendQueue] worker=%d,%s send to %s success in %v",
+		sq.Logger.Trace("[SendQueue] worker=%d,%s send to %s success in %v",
 			workerID, task.FuncName(), task.Target, elapsed)
 	}
 	return err
@@ -193,7 +197,7 @@ func (sq *SendQueue) doSend(task *SendTask, workerID int) error {
 func (sq *SendQueue) handleRetry(task *SendTask, sendErr error) {
 	task.RetryCount++
 	if task.RetryCount > task.MaxRetries {
-		logs.Debug("[SendQueue] Exceed max retries(%d) target=%s, giving up",
+		sq.Logger.Debug("[SendQueue] Exceed max retries(%d) target=%s, giving up",
 			task.MaxRetries, task.Target)
 		return
 	}
@@ -203,7 +207,7 @@ func (sq *SendQueue) handleRetry(task *SendTask, sendErr error) {
 	backoff := baseDelay * time.Duration(math.Pow(2, float64(task.RetryCount-1)))
 	task.NextAttempt = time.Now().Add(backoff)
 	sq.Enqueue(task)
-	logs.Debug("[SendQueue] Retry %d/%d after %v for %s (err=%v)",
+	sq.Logger.Debug("[SendQueue] Retry %d/%d after %v for %s (err=%v)",
 		task.RetryCount, task.MaxRetries, backoff, task.Target, sendErr)
 }
 func (task *SendTask) FuncName() string {

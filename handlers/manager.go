@@ -3,6 +3,7 @@ package handlers
 import (
 	"dex/consensus"
 	"dex/db"
+	"dex/logs"
 	"dex/sender"
 	"dex/stats"
 	"dex/txpool"
@@ -33,6 +34,7 @@ type HandlerManager struct {
 	Stats *stats.Stats
 	// Frost 消息处理器
 	frostMsgHandler FrostMsgHandler
+	Logger          logs.Logger
 }
 
 // NewHandlerManager 创建新的处理器管理器
@@ -42,6 +44,7 @@ func NewHandlerManager(
 	port, address string,
 	senderMgr *sender.SenderManager,
 	txPool *txpool.TxPool, // 只注入TxPool
+	logger logs.Logger,
 ) *HandlerManager {
 	// 创建 LRU 缓存，容量设为 10000
 	seenBlocksCache, _ := lru.New(100)
@@ -55,6 +58,7 @@ func NewHandlerManager(
 		adapter:          consensus.NewConsensusAdapter(dbMgr),
 		Stats:            stats.NewStats(),
 		seenBlocksCache:  seenBlocksCache,
+		Logger:           logger,
 	}
 }
 
@@ -85,6 +89,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/nodes", hm.HandleNodes)
 	mux.HandleFunc("/getblockbyid", hm.HandleGet)
 	mux.HandleFunc("/put", hm.HandlePut)
+	mux.HandleFunc("/logs", hm.HandleLogs)
 	// Frost P2P
 	mux.HandleFunc("/frostmsg", hm.HandleFrostMsg)
 	// Frost 只读查询 API
