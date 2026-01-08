@@ -8,5 +8,5 @@
     "sourceMap": false,
     "outDir": "./dist"
   },
-  "include": ["app.ts"]
+  "include": ["app.tsx"]
 }

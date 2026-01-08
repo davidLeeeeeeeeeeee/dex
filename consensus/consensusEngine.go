@@ -126,12 +126,41 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) {
 		e.snowballs[ctx.height] = sb
 	}
 
-	// 候选区块
+	// 获取父区块（height-1 的已最终化区块）
+	// 只有父区块已最终化的候选区块才能参与共识
+	var parentBlock *types.Block
+	if ctx.height > 0 {
+		parent, ok := e.store.GetFinalizedAtHeight(ctx.height - 1)
+		if !ok {
+			// 父区块尚未最终化，无法对当前高度进行共识
+			logs.Debug("[Engine] Parent block at height %d not finalized, skipping vote processing for height %d",
+				ctx.height-1, ctx.height)
+			return
+		}
+		parentBlock = parent
+	}
+
+	// 候选区块：只包含那些 ParentID 指向已最终化父区块的区块
 	candidates := make([]string, 0)
 	blocks := e.store.GetByHeight(ctx.height)
 	for _, block := range blocks {
+		// 对于 height > 0 的区块，必须验证父区块链接
+		if ctx.height > 0 && parentBlock != nil {
+			if block.ParentID != parentBlock.ID {
+				logs.Debug("[Engine] Block %s rejected from candidates: parent mismatch (expected %s, got %s)",
+					block.ID, parentBlock.ID, block.ParentID)
+				continue
+			}
+		}
 		candidates = append(candidates, block.ID)
 	}
+
+	// 如果没有有效候选，直接返回
+	if len(candidates) == 0 {
+		logs.Debug("[Engine] No valid candidates for height %d (all blocks have wrong parent)", ctx.height)
+		return
+	}
+
 	//核心：统计投票
 	sb.RecordVote(candidates, ctx.votes, e.config.Alpha)
 

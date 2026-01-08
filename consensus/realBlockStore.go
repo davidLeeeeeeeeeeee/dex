@@ -311,56 +311,75 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 		}
 	}
 
-	if block != nil {
-		s.finalizedBlocks[height] = block
-		s.lastAccepted = block
-		s.lastAcceptedHeight = height
+	if block == nil {
+		logs.Error("[RealBlockStore] Cannot finalize block %s: block not found", blockID)
+		return
+	}
 
-		// 清理同高度其他区块
-		newBlocks := make([]*types.Block, 0, 1)
-		for _, b := range s.heightIndex[height] {
-			if b.ID == blockID {
-				newBlocks = append(newBlocks, b)
-			} else {
-				delete(s.blockCache, b.ID)
-			}
+	// 关键安全检查：验证父区块链接
+	// 只有当区块的 ParentID 指向前一高度已最终化的区块时，才允许最终化
+	if height > 0 {
+		parentBlock, parentExists := s.finalizedBlocks[height-1]
+		if !parentExists {
+			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: parent at height %d not finalized",
+				blockID, height, height-1)
+			return
 		}
-		s.heightIndex[height] = newBlocks
+		if block.ParentID != parentBlock.ID {
+			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: parent mismatch (expected %s, got %s)",
+				blockID, height, parentBlock.ID, block.ParentID)
+			return
+		}
+	}
 
-		// VM提交：使用VM统一提交机制替代手动保存交易
-		// 获取完整的 pb.Block（包含交易）
-		if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
-			// 调用 VM 提交最终化区块
-			if err := s.vmExecutor.CommitFinalizedBlock(pbBlock); err != nil {
-				logs.Error("[RealBlockStore] VM CommitFinalizedBlock failed for block %s: %v", block.ID, err)
-			} else {
-				logs.Info("[RealBlockStore] VM committed finalized block %s with %d txs at height %d",
-					block.ID, len(pbBlock.Body), height)
+	s.finalizedBlocks[height] = block
+	s.lastAccepted = block
+	s.lastAcceptedHeight = height
 
-				// 从交易池移除已提交的交易
-				for _, tx := range pbBlock.Body {
-					if base := tx.GetBase(); base != nil {
-						s.pool.RemoveAnyTx(base.TxId)
-					}
+	// 清理同高度其他区块
+	newBlocks := make([]*types.Block, 0, 1)
+	for _, b := range s.heightIndex[height] {
+		if b.ID == blockID {
+			newBlocks = append(newBlocks, b)
+		} else {
+			delete(s.blockCache, b.ID)
+		}
+	}
+	s.heightIndex[height] = newBlocks
+
+	// VM提交：使用VM统一提交机制替代手动保存交易
+	// 获取完整的 pb.Block（包含交易）
+	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
+		// 调用 VM 提交最终化区块
+		if err := s.vmExecutor.CommitFinalizedBlock(pbBlock); err != nil {
+			logs.Error("[RealBlockStore] VM CommitFinalizedBlock failed for block %s: %v", block.ID, err)
+		} else {
+			logs.Info("[RealBlockStore] VM committed finalized block %s with %d txs at height %d",
+				block.ID, len(pbBlock.Body), height)
+
+			// 从交易池移除已提交的交易
+			for _, tx := range pbBlock.Body {
+				if base := tx.GetBase(); base != nil {
+					s.pool.RemoveAnyTx(base.TxId)
 				}
 			}
-		} else {
-			// 如果是创世区块或没有交易的区块，使用旧的方式
-			if block.Height > 0 {
-				logs.Debug("[RealBlockStore] No cached pb.Block for %s, using legacy finalization", block.ID)
-			}
-			s.finalizeBlockWithTxs(block)
 		}
-
-		logs.Info("[RealBlockStore] Finalized block %s at height %d", blockID, height)
-
-		// 发布区块最终化事件
-		if s.events != nil {
-			s.events.PublishAsync(types.BaseEvent{
-				EventType: types.EventBlockFinalized,
-				EventData: block,
-			})
+	} else {
+		// 如果是创世区块或没有交易的区块，使用旧的方式
+		if block.Height > 0 {
+			logs.Debug("[RealBlockStore] No cached pb.Block for %s, using legacy finalization", block.ID)
 		}
+		s.finalizeBlockWithTxs(block)
+	}
+
+	logs.Info("[RealBlockStore] Finalized block %s at height %d", blockID, height)
+
+	// 发布区块最终化事件
+	if s.events != nil {
+		s.events.PublishAsync(types.BaseEvent{
+			EventType: types.EventBlockFinalized,
+			EventData: block,
+		})
 	}
 }
 
@@ -499,6 +518,34 @@ func (s *RealBlockStore) validateBlock(block *types.Block) error {
 	}
 	if block.Height > 0 && block.ParentID == "" {
 		return fmt.Errorf("non-genesis block must have parent")
+	}
+
+	// 父区块链接验证（关键共识安全检查）
+	// 确保新区块的 ParentID 指向本地已知的父区块，且高度正确
+	if block.Height > 0 {
+		parent, exists := s.blockCache[block.ParentID]
+		if !exists {
+			// 尝试从数据库加载
+			if dbBlock, err := s.dbManager.GetBlockByID(block.ParentID); err == nil && dbBlock != nil {
+				parent = s.convertDBBlockToTypes(dbBlock)
+				if parent != nil {
+					s.blockCache[block.ParentID] = parent
+					exists = true
+				}
+			}
+		}
+
+		if !exists {
+			logs.Warn("[RealBlockStore] Block %s rejected: parent %s not found locally", block.ID, block.ParentID)
+			return fmt.Errorf("parent block %s not found", block.ParentID)
+		}
+
+		// 验证父区块高度正确
+		if parent.Height != block.Height-1 {
+			logs.Warn("[RealBlockStore] Block %s rejected: parent height mismatch (expected %d, got %d)",
+				block.ID, block.Height-1, parent.Height)
+			return fmt.Errorf("parent height mismatch: expected %d, got %d", block.Height-1, parent.Height)
+		}
 	}
 
 	// VRF验证（跳过创世区块）

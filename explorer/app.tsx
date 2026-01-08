@@ -13,6 +13,17 @@ type NodeSummary = {
 
 type NodeDetails = NodeSummary & {
   logs?: LogLine[];
+  recent_blocks?: BlockHeader[];
+};
+
+type BlockHeader = {
+  height: number;
+  block_hash: string;
+  txs_hash: string;
+  miner: string;
+  tx_count: number;
+  accumulated_reward: string;
+  window: number;
 };
 
 type LogLine = {
@@ -461,8 +472,52 @@ function renderNodeDetails(data: NodeDetails): void {
   }
 
   logContainer.appendChild(list);
+
+  const blockContainer = document.createElement("div");
+  blockContainer.className = "log-container";
+  blockContainer.style.marginTop = "24px";
+  blockContainer.innerHTML = "<h4>Recent Blocks (Top 50)</h4>";
+
+  if (data.recent_blocks && data.recent_blocks.length > 0) {
+    console.log("Rendering blocks:", data.recent_blocks.length);
+    const table = document.createElement("table");
+    table.className = "block-table";
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+    table.innerHTML = `
+      <thead>
+        <tr style="text-align:left; border-bottom:1px solid rgba(255,255,255,0.1)">
+          <th style="padding:8px">Height</th>
+          <th style="padding:8px">Hash</th>
+          <th style="padding:8px">Tx</th>
+          <th style="padding:8px">Miner</th>
+          <th style="padding:8px">Reward</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    const tbody = table.querySelector("tbody")!;
+    data.recent_blocks.forEach(b => {
+      const tr = document.createElement("tr");
+      tr.style.borderBottom = "1px solid rgba(255,255,255,0.05)";
+      tr.innerHTML = `
+        <td style="padding:8px">${formatNumber(b.height)}</td>
+        <td style="padding:8px" class="hash-cell">${b.block_hash || "-"}</td>
+        <td style="padding:8px">${formatNumber(b.tx_count)}</td>
+        <td style="padding:8px" class="hash-cell">${b.miner || "-"}</td>
+        <td style="padding:8px">${b.accumulated_reward || "-"}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    blockContainer.appendChild(table);
+  } else {
+    console.warn("No blocks:", data);
+    blockContainer.innerHTML += '<div class="muted">No recent blocks available.</div>';
+  }
+
   els.modalContent.appendChild(section);
   els.modalContent.appendChild(logContainer);
+  els.modalContent.appendChild(blockContainer);
 }
 
 function hideModal(): void {

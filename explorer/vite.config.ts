@@ -8,6 +8,10 @@ export default defineConfig({
         changeOrigin: true,
       }
     }
+  },
+  build: {
+    outDir: '../web',
+    emptyOutDir: true
   }
 })
 

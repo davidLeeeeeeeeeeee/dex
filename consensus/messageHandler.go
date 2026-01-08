@@ -191,28 +191,49 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 }
 
 func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeight uint64) {
-	preferred := h.engine.GetPreference(queryHeight)
+	var preferred string
 
-	// NEW: 只有当本地 (h-1) 已最终化，才允许对 h 表态
-	if preferred == "" {
-		if parent, ok := h.store.GetFinalizedAtHeight(queryHeight - 1); ok {
-			// 只在“父=本地最终化父”的孩子里选偏好
-			blocks := h.store.GetByHeight(queryHeight)
-			cand := make([]string, 0, len(blocks))
-			for _, b := range blocks {
-				if b.ParentID == parent.ID {
-					cand = append(cand, b.ID)
+	// 对于 height=0（创世区块），直接返回 genesis
+	if queryHeight == 0 {
+		preferred = "genesis"
+	} else {
+		// 关键：必须验证父区块已最终化，才能对当前高度投票
+		parent, ok := h.store.GetFinalizedAtHeight(queryHeight - 1)
+		if !ok {
+			// 父区块尚未最终化，弃权（不投票）
+			logs.Debug("[sendChits] Parent at height %d not finalized, abstaining for height %d",
+				queryHeight-1, queryHeight)
+			preferred = "" // 弃权
+		} else {
+			// 获取引擎的当前偏好
+			preferred = h.engine.GetPreference(queryHeight)
+
+			// 验证偏好的区块是否链接到已最终化的父区块
+			if preferred != "" {
+				block, exists := h.store.Get(preferred)
+				if !exists || block.ParentID != parent.ID {
+					// 偏好的区块父链接不正确，重新选择
+					logs.Debug("[sendChits] Preferred block %s has wrong parent, reselecting", preferred)
+					preferred = ""
 				}
 			}
-			if len(cand) > 0 {
-				sort.Strings(cand)
-				preferred = cand[len(cand)-1]
+
+			// 如果没有有效偏好，从符合条件的候选中选择
+			if preferred == "" {
+				blocks := h.store.GetByHeight(queryHeight)
+				cand := make([]string, 0, len(blocks))
+				for _, b := range blocks {
+					if b.ParentID == parent.ID {
+						cand = append(cand, b.ID)
+					}
+				}
+				if len(cand) > 0 {
+					sort.Strings(cand)
+					preferred = cand[len(cand)-1]
+				}
 			}
 		}
 	}
-
-	// 不允许用“全体块里字典序最大”的兜底；父未定就弃权
-	// if still "", treat as abstain
 
 	accepted, acceptedHeight := h.store.GetLastAccepted()
 	logs.Debug("[sendChits] to=%s req=%d h=%d preferred=%v accepted=%v",

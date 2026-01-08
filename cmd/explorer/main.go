@@ -70,7 +70,8 @@ type nodeSummary struct {
 
 type nodeDetails struct {
 	nodeSummary
-	Logs []*pb.LogLine `json:"logs,omitempty"`
+	Logs         []*pb.LogLine     `json:"logs,omitempty"`
+	RecentBlocks []*pb.BlockHeader `json:"recent_blocks,omitempty"`
 }
 
 type blockSummary struct {
@@ -546,7 +547,23 @@ func (s *server) handleNodeDetails(w http.ResponseWriter, r *http.Request) {
 		details.Logs = logs.Logs
 	}
 
+	recentBlocks, err := s.fetchRecentBlocks(ctx, address)
+	if err == nil {
+		details.RecentBlocks = recentBlocks.Blocks
+	}
+
 	writeJSON(w, details)
+}
+
+func (s *server) fetchRecentBlocks(ctx context.Context, node string) (*pb.GetRecentBlocksResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	var resp pb.GetRecentBlocksResponse
+	req := &pb.GetRecentBlocksRequest{Count: 50}
+	if err := s.fetchProto(ctx, node, "/getrecentblocks", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 func (s *server) fetchLogs(ctx context.Context, node string) (*pb.LogsResponse, error) {

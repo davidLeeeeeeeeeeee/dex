@@ -876,3 +876,22 @@ message LogLine {
 message LogsResponse {
   repeated LogLine logs = 1;
 }
+
+// BlockHeader 区块头简要信息 (for explorer list)
+message BlockHeader {
+  uint64 height = 1;
+  string block_hash = 2;
+  string txs_hash = 3;
+  string miner = 4;
+  int32 tx_count = 5;
+  string accumulated_reward = 6;
+  int32 window = 7;
+}
+
+message GetRecentBlocksRequest {
+  int32 count = 1; // 请求数量
+}
+
+message GetRecentBlocksResponse {
+  repeated BlockHeader blocks = 1;
+}

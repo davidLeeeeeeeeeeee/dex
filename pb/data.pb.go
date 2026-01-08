@@ -7262,6 +7262,187 @@ func (x *LogsResponse) GetLogs() []*LogLine {
 	return nil
 }
 
+// BlockHeader 区块头简要信息 (for explorer list)
+type BlockHeader struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Height            uint64                 `protobuf:"varint,1,opt,name=height,proto3" json:"height,omitempty"`
+	BlockHash         string                 `protobuf:"bytes,2,opt,name=block_hash,json=blockHash,proto3" json:"block_hash,omitempty"`
+	TxsHash           string                 `protobuf:"bytes,3,opt,name=txs_hash,json=txsHash,proto3" json:"txs_hash,omitempty"`
+	Miner             string                 `protobuf:"bytes,4,opt,name=miner,proto3" json:"miner,omitempty"`
+	TxCount           int32                  `protobuf:"varint,5,opt,name=tx_count,json=txCount,proto3" json:"tx_count,omitempty"`
+	AccumulatedReward string                 `protobuf:"bytes,6,opt,name=accumulated_reward,json=accumulatedReward,proto3" json:"accumulated_reward,omitempty"`
+	Window            int32                  `protobuf:"varint,7,opt,name=window,proto3" json:"window,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *BlockHeader) Reset() {
+	*x = BlockHeader{}
+	mi := &file_data_proto_msgTypes[80]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BlockHeader) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BlockHeader) ProtoMessage() {}
+
+func (x *BlockHeader) ProtoReflect() protoreflect.Message {
+	mi := &file_data_proto_msgTypes[80]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BlockHeader.ProtoReflect.Descriptor instead.
+func (*BlockHeader) Descriptor() ([]byte, []int) {
+	return file_data_proto_rawDescGZIP(), []int{80}
+}
+
+func (x *BlockHeader) GetHeight() uint64 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *BlockHeader) GetBlockHash() string {
+	if x != nil {
+		return x.BlockHash
+	}
+	return ""
+}
+
+func (x *BlockHeader) GetTxsHash() string {
+	if x != nil {
+		return x.TxsHash
+	}
+	return ""
+}
+
+func (x *BlockHeader) GetMiner() string {
+	if x != nil {
+		return x.Miner
+	}
+	return ""
+}
+
+func (x *BlockHeader) GetTxCount() int32 {
+	if x != nil {
+		return x.TxCount
+	}
+	return 0
+}
+
+func (x *BlockHeader) GetAccumulatedReward() string {
+	if x != nil {
+		return x.AccumulatedReward
+	}
+	return ""
+}
+
+func (x *BlockHeader) GetWindow() int32 {
+	if x != nil {
+		return x.Window
+	}
+	return 0
+}
+
+type GetRecentBlocksRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Count         int32                  `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"` // 请求数量
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRecentBlocksRequest) Reset() {
+	*x = GetRecentBlocksRequest{}
+	mi := &file_data_proto_msgTypes[81]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRecentBlocksRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRecentBlocksRequest) ProtoMessage() {}
+
+func (x *GetRecentBlocksRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_data_proto_msgTypes[81]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRecentBlocksRequest.ProtoReflect.Descriptor instead.
+func (*GetRecentBlocksRequest) Descriptor() ([]byte, []int) {
+	return file_data_proto_rawDescGZIP(), []int{81}
+}
+
+func (x *GetRecentBlocksRequest) GetCount() int32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+type GetRecentBlocksResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Blocks        []*BlockHeader         `protobuf:"bytes,1,rep,name=blocks,proto3" json:"blocks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRecentBlocksResponse) Reset() {
+	*x = GetRecentBlocksResponse{}
+	mi := &file_data_proto_msgTypes[82]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRecentBlocksResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRecentBlocksResponse) ProtoMessage() {}
+
+func (x *GetRecentBlocksResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_data_proto_msgTypes[82]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRecentBlocksResponse.ProtoReflect.Descriptor instead.
+func (*GetRecentBlocksResponse) Descriptor() ([]byte, []int) {
+	return file_data_proto_rawDescGZIP(), []int{82}
+}
+
+func (x *GetRecentBlocksResponse) GetBlocks() []*BlockHeader {
+	if x != nil {
+		return x.Blocks
+	}
+	return nil
+}
+
 var File_data_proto protoreflect.FileDescriptor
 
 const file_data_proto_rawDesc = "" +
@@ -7884,7 +8065,20 @@ const file_data_proto_rawDesc = "" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\"/\n" +
 	"\fLogsResponse\x12\x1f\n" +
-	"\x04logs\x18\x01 \x03(\v2\v.pb.LogLineR\x04logs*\xda\x01\n" +
+	"\x04logs\x18\x01 \x03(\v2\v.pb.LogLineR\x04logs\"\xd7\x01\n" +
+	"\vBlockHeader\x12\x16\n" +
+	"\x06height\x18\x01 \x01(\x04R\x06height\x12\x1d\n" +
+	"\n" +
+	"block_hash\x18\x02 \x01(\tR\tblockHash\x12\x19\n" +
+	"\btxs_hash\x18\x03 \x01(\tR\atxsHash\x12\x14\n" +
+	"\x05miner\x18\x04 \x01(\tR\x05miner\x12\x19\n" +
+	"\btx_count\x18\x05 \x01(\x05R\atxCount\x12-\n" +
+	"\x12accumulated_reward\x18\x06 \x01(\tR\x11accumulatedReward\x12\x16\n" +
+	"\x06window\x18\a \x01(\x05R\x06window\".\n" +
+	"\x16GetRecentBlocksRequest\x12\x14\n" +
+	"\x05count\x18\x01 \x01(\x05R\x05count\"B\n" +
+	"\x17GetRecentBlocksResponse\x12'\n" +
+	"\x06blocks\x18\x01 \x03(\v2\x0f.pb.BlockHeaderR\x06blocks*\xda\x01\n" +
 	"\bSignAlgo\x12\x19\n" +
 	"\x15SIGN_ALGO_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14SIGN_ALGO_ECDSA_P256\x10\x01\x12\x1a\n" +
@@ -7949,7 +8143,7 @@ func file_data_proto_rawDescGZIP() []byte {
 }
 
 var file_data_proto_enumTypes = make([]protoimpl.EnumInfo, 8)
-var file_data_proto_msgTypes = make([]protoimpl.MessageInfo, 84)
+var file_data_proto_msgTypes = make([]protoimpl.MessageInfo, 87)
 var file_data_proto_goTypes = []any{
 	(SignAlgo)(0),                            // 0: pb.SignAlgo
 	(OrderOp)(0),                             // 1: pb.OrderOp
@@ -8039,18 +8233,21 @@ var file_data_proto_goTypes = []any{
 	(*LogsRequest)(nil),                      // 85: pb.LogsRequest
 	(*LogLine)(nil),                          // 86: pb.LogLine
 	(*LogsResponse)(nil),                     // 87: pb.LogsResponse
-	nil,                                      // 88: pb.TokenRegistry.TokensEntry
-	nil,                                      // 89: pb.PublicKeys.KeysEntry
-	nil,                                      // 90: pb.Account.BalancesEntry
-	nil,                                      // 91: pb.GetFrostConfigResponse.ChainsEntry
+	(*BlockHeader)(nil),                      // 88: pb.BlockHeader
+	(*GetRecentBlocksRequest)(nil),           // 89: pb.GetRecentBlocksRequest
+	(*GetRecentBlocksResponse)(nil),          // 90: pb.GetRecentBlocksResponse
+	nil,                                      // 91: pb.TokenRegistry.TokensEntry
+	nil,                                      // 92: pb.PublicKeys.KeysEntry
+	nil,                                      // 93: pb.Account.BalancesEntry
+	nil,                                      // 94: pb.GetFrostConfigResponse.ChainsEntry
 }
 var file_data_proto_depIdxs = []int32{
-	88, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
-	89, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
+	91, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
+	92, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
 	10, // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
 	2,  // 3: pb.BaseMessage.status:type_name -> pb.Status
 	10, // 4: pb.Account.public_keys:type_name -> pb.PublicKeys
-	90, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	93, // 5: pb.Account.balances:type_name -> pb.Account.BalancesEntry
 	22, // 6: pb.Block.body:type_name -> pb.AnyTx
 	11, // 7: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
 	11, // 8: pb.FreezeTx.base:type_name -> pb.BaseMessage
@@ -8114,18 +8311,19 @@ var file_data_proto_depIdxs = []int32{
 	11, // 66: pb.FrostVaultDkgValidationSignedTx.base:type_name -> pb.BaseMessage
 	11, // 67: pb.FrostVaultTransitionSignedTx.base:type_name -> pb.BaseMessage
 	0,  // 68: pb.FrostVaultConfig.sign_algo:type_name -> pb.SignAlgo
-	91, // 69: pb.GetFrostConfigResponse.chains:type_name -> pb.GetFrostConfigResponse.ChainsEntry
+	94, // 69: pb.GetFrostConfigResponse.chains:type_name -> pb.GetFrostConfigResponse.ChainsEntry
 	74, // 70: pb.ListWithdrawsResponse.withdraws:type_name -> pb.GetWithdrawStatusResponse
 	78, // 71: pb.GetVaultDkgCommitmentsResponse.commitments:type_name -> pb.DkgCommitmentInfo
 	86, // 72: pb.LogsResponse.logs:type_name -> pb.LogLine
-	8,  // 73: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
-	13, // 74: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
-	72, // 75: pb.GetFrostConfigResponse.ChainsEntry.value:type_name -> pb.ChainCfg
-	76, // [76:76] is the sub-list for method output_type
-	76, // [76:76] is the sub-list for method input_type
-	76, // [76:76] is the sub-list for extension type_name
-	76, // [76:76] is the sub-list for extension extendee
-	0,  // [0:76] is the sub-list for field type_name
+	88, // 73: pb.GetRecentBlocksResponse.blocks:type_name -> pb.BlockHeader
+	8,  // 74: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
+	13, // 75: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
+	72, // 76: pb.GetFrostConfigResponse.ChainsEntry.value:type_name -> pb.ChainCfg
+	77, // [77:77] is the sub-list for method output_type
+	77, // [77:77] is the sub-list for method input_type
+	77, // [77:77] is the sub-list for extension type_name
+	77, // [77:77] is the sub-list for extension extendee
+	0,  // [0:77] is the sub-list for field type_name
 }
 
 func init() { file_data_proto_init() }
@@ -8160,7 +8358,7 @@ func file_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_data_proto_rawDesc), len(file_data_proto_rawDesc)),
 			NumEnums:      8,
-			NumMessages:   84,
+			NumMessages:   87,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

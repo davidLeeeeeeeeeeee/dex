@@ -92,8 +92,19 @@ func (pm *ProposalManager) proposeBlock() {
 	// 先检查缓存中是否有可以处理的提案
 	pm.processCachedProposals(currentWindow)
 
-	lastAcceptedID, lastHeight := pm.store.GetLastAccepted()
+	// 获取最后接受的高度
+	_, lastHeight := pm.store.GetLastAccepted()
 	targetHeight := lastHeight + 1
+
+	// 关键修复：使用已最终化的父区块，而不是"最后接受"的区块
+	// 这防止了基于未达成共识的区块提议新块，避免分叉
+	parentBlock, exists := pm.store.GetFinalizedAtHeight(lastHeight)
+	if !exists {
+		// 如果父区块未最终化，等待共识完成
+		logs.Debug("[ProposalManager] Parent block at height %d not finalized yet, skipping proposal", lastHeight)
+		return
+	}
+	parentID := parentBlock.ID
 
 	currentBlocks := len(pm.store.GetByHeight(targetHeight))
 
@@ -102,7 +113,7 @@ func (pm *ProposalManager) proposeBlock() {
 		return
 	}
 
-	block, err := pm.proposer.ProposeBlock(lastAcceptedID, targetHeight, pm.nodeID, currentWindow)
+	block, err := pm.proposer.ProposeBlock(parentID, targetHeight, pm.nodeID, currentWindow)
 	if err != nil {
 		Logf("[Node %d] Failed to propose block: %v\n", pm.nodeID, err)
 		return
@@ -132,7 +143,7 @@ func (pm *ProposalManager) proposeBlock() {
 		pm.node.stats.Mu.Unlock()
 	}
 
-	Logf("[Node %d] Proposing %s on parent %s (window %d)\n", pm.nodeID, block, lastAcceptedID, currentWindow)
+	Logf("[Node %d] Proposing %s on parent %s (window %d)\n", pm.nodeID, block, parentID, currentWindow)
 
 	pm.events.PublishAsync(types.BaseEvent{
 		EventType: types.EventNewBlock,
