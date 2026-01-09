@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"compress/gzip"
+	"dex/logs"
 	"dex/pb"
 	"fmt"
 	"io"
@@ -25,9 +26,35 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 使用注入的dbManager而不是创建新实例
-	block, err := hm.dbManager.GetBlock(req.Height)
-	if err != nil || block == nil {
+	var block *pb.Block
+	finalizedAttempted := false
+	if hm.consensusManager != nil {
+		if blockID, ok := hm.consensusManager.GetFinalizedBlockID(req.Height); ok {
+			finalizedAttempted = true
+			b, err := hm.dbManager.GetBlockByID(blockID)
+			if err == nil && b != nil {
+				block = b
+			} else {
+				logs.Warn("[HandleGetBlock] Finalized block %s at height %d not found in DB: %v",
+					blockID, req.Height, err)
+			}
+		} else {
+			logs.Warn("[HandleGetBlock] No finalized block at height %d; fallback to non-finalized", req.Height)
+		}
+	}
+
+	if block == nil && !finalizedAttempted {
+		if blocksAtHeight, err := hm.dbManager.GetBlocksByHeight(req.Height); err == nil && len(blocksAtHeight) > 1 {
+			logs.Warn("[HandleGetBlock] Multiple blocks at height %d (count=%d); returning first",
+				req.Height, len(blocksAtHeight))
+		}
+		b, err := hm.dbManager.GetBlock(req.Height)
+		if err == nil && b != nil {
+			block = b
+		}
+	}
+
+	if block == nil {
 		resp := &pb.GetBlockResponse{
 			Error: fmt.Sprintf("Block not found at height %d", req.Height),
 		}

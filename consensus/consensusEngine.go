@@ -162,7 +162,24 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) {
 	}
 
 	//核心：统计投票
-	sb.RecordVote(candidates, ctx.votes, e.config.Alpha)
+	candidateSet := make(map[string]bool, len(candidates))
+	for _, id := range candidates {
+		candidateSet[id] = true
+	}
+	filteredVotes := make(map[string]int, len(ctx.votes))
+	droppedVotes := 0
+	for id, count := range ctx.votes {
+		if candidateSet[id] {
+			filteredVotes[id] = count
+		} else {
+			droppedVotes += count
+		}
+	}
+	if droppedVotes > 0 {
+		logs.Debug("[Engine] Dropped %d vote(s) for non-candidate blocks at height %d (query=%s)",
+			droppedVotes, ctx.height, ctx.queryKey)
+	}
+	sb.RecordVote(candidates, filteredVotes, e.config.Alpha)
 
 	newPreference := sb.GetPreference()
 	if newPreference != "" {
@@ -175,6 +192,10 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) {
 }
 
 func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string) {
+	if _, exists := e.store.Get(blockID); !exists {
+		logs.Warn("[Engine] Finalize skipped: block %s not found at height %d", blockID, height)
+		return
+	}
 	e.store.SetFinalized(height, blockID)
 
 	sb := e.snowballs[height]
@@ -209,6 +230,7 @@ func (e *SnowmanEngine) checkTimeouts() {
 	e.mu.Unlock()
 
 	if len(expired) > 0 {
+		logs.Debug("[Engine] Query timeout: %d expired (%v)", len(expired), expired)
 		e.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventQueryComplete,
 			EventData: QueryCompleteData{Reason: "timeout", QueryKeys: expired},

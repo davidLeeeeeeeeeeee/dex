@@ -50,6 +50,8 @@ func InitConsensusManager(
 
 	// 重新创建 engine，使用 realStore
 	node.engine = NewSnowmanEngine(nodeID, realStore, &config.Consensus, node.events, logger)
+	node.messageHandler.engine = node.engine
+	node.queryManager.engine = node.engine
 
 	// 创建使用真实 BlockProposer 的 ProposalManager
 	proposer := NewRealBlockProposer(dbManager, txPool)
@@ -131,6 +133,18 @@ func (m *ConsensusNodeManager) GetLastAccepted() (string, uint64) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.store.GetLastAccepted()
+}
+
+func (m *ConsensusNodeManager) GetFinalizedBlockID(height uint64) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.store == nil {
+		return "", false
+	}
+	if block, ok := m.store.GetFinalizedAtHeight(height); ok && block != nil {
+		return block.ID, true
+	}
+	return "", false
 }
 
 // HasBlock 检查是否有指定区块

@@ -146,10 +146,15 @@ func (sm *SyncManager) checkAndSync() {
 	}
 	sm.Mu.Unlock()
 
+	_, localAcceptedHeight := sm.store.GetLastAccepted()
 	localCurrentHeight := sm.store.GetCurrentHeight()
+	if localCurrentHeight > localAcceptedHeight {
+		logs.Debug("[Sync] Local height gap detected (accepted=%d, current=%d)",
+			localAcceptedHeight, localCurrentHeight)
+	}
 	heightDiff := uint64(0)
-	if maxPeerHeight > localCurrentHeight {
-		heightDiff = maxPeerHeight - localCurrentHeight
+	if maxPeerHeight > localAcceptedHeight {
+		heightDiff = maxPeerHeight - localAcceptedHeight
 	}
 
 	// 判断是否需要使用快照同步
@@ -158,7 +163,9 @@ func (sm *SyncManager) checkAndSync() {
 		sm.requestSnapshotSync(maxPeerHeight)
 	} else if heightDiff > sm.config.BehindThreshold {
 		// 使用普通同步
-		sm.requestSync(localCurrentHeight+1, minUint64(localCurrentHeight+sm.config.BatchSize, maxPeerHeight))
+		logs.Debug("[Sync] Behind by %d (peer=%d, accepted=%d, current=%d)",
+			heightDiff, maxPeerHeight, localAcceptedHeight, localCurrentHeight)
+		sm.requestSync(localAcceptedHeight+1, minUint64(localAcceptedHeight+sm.config.BatchSize, maxPeerHeight))
 	}
 }
 

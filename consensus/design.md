@@ -38,6 +38,7 @@ mindmap
       管理 Snowball 实例
       处理投票结果
       区块最终化
+      查询超时检测 checkTimeouts
     Snowball
       偏好追踪
       置信度累积
@@ -49,7 +50,7 @@ mindmap
     QueryManager
       PushQuery/PullQuery
       Chits 投票收集
-      超时处理
+      响应超时事件
     MessageHandler
       消息路由
       区块缓存
@@ -82,7 +83,11 @@ flowchart TD
     START[开始] --> SAMPLE[随机采样 K 个节点]
     SAMPLE --> QUERY[发送 Query 请求偏好]
     QUERY --> COLLECT[收集 Chits 响应]
-    COLLECT --> CHECK{票数 >= α?}
+
+    COLLECT --> TIMEOUT{超时检查<br>checkTimeouts}
+    TIMEOUT -->|超时| EXPIRE[移除过期查询<br>发布 QueryComplete]
+    TIMEOUT -->|未超时| CHECK{票数 >= α?}
+    EXPIRE --> SAMPLE
 
     CHECK -->|是| SAME{与当前偏好相同?}
     CHECK -->|否| FALLBACK[选择字典序最大区块]
@@ -100,6 +105,8 @@ flowchart TD
     FINAL -->|否| SAMPLE
 
     style FINALIZE fill:#eaffea,stroke:#4f8f00
+    style TIMEOUT fill:#fff3cd,stroke:#d6a735
+    style EXPIRE fill:#ffe8d6,stroke:#d67f35
 ```
 
 ---
@@ -208,6 +215,73 @@ sequenceDiagram
     B->>B: 存储区块
     B-->>A: Chits(preference=X)
 ```
+
+### 5.4 查询超时处理 (checkTimeouts)
+
+`SnowmanEngine.checkTimeouts()` 是共识引擎的**超时监控机制**，确保查询不会无限等待。
+
+#### 工作原理
+
+```mermaid
+flowchart TD
+    subgraph SnowmanEngine.Start
+        TICKER[定时器<br>每 1 秒触发] --> CHECK[checkTimeouts]
+    end
+
+    subgraph checkTimeouts
+        CHECK --> SCAN[扫描 activeQueries]
+        SCAN --> COMPARE{now - startTime<br>> QueryTimeout?}
+        COMPARE -->|是| EXPIRE[移除过期查询<br>加入 expired 列表]
+        COMPARE -->|否| NEXT[继续下一个]
+        EXPIRE --> NEXT
+        NEXT --> DONE{扫描完成?}
+        DONE -->|否| COMPARE
+        DONE -->|是| PUBLISH{有过期查询?}
+        PUBLISH -->|是| EVENT[发布 EventQueryComplete<br>Reason: timeout]
+        PUBLISH -->|否| END[结束]
+    end
+
+    style TICKER fill:#fff3cd,stroke:#d6a735
+    style EXPIRE fill:#ffe8d6,stroke:#d67f35
+    style EVENT fill:#dfefff,stroke:#6b8fd6
+```
+
+#### 超时时序图
+
+```mermaid
+sequenceDiagram
+    participant E as SnowmanEngine
+    participant Q as activeQueries
+    participant EB as EventBus
+    participant QM as QueryManager
+
+    Note over E: 每秒执行 checkTimeouts()
+
+    E->>Q: 遍历所有活跃查询
+
+    loop 对每个查询
+        E->>E: 检查 now - startTime > QueryTimeout
+        alt 已超时
+            E->>Q: 删除该查询
+            E->>E: 加入 expired 列表
+        end
+    end
+
+    alt 有过期查询
+        E->>EB: Publish(EventQueryComplete, timeout)
+        EB-->>QM: 通知查询结束
+        QM->>QM: 发起新一轮查询
+    end
+```
+
+#### 为什么需要超时处理
+
+| 场景 | 问题 | 超时处理的作用 |
+|------|------|----------------|
+| 网络分区 | 部分节点无法响应 Chits | 释放查询资源，允许重试 |
+| 节点宕机 | 被查询节点不再响应 | 避免无限等待，继续共识 |
+| 高负载 | 响应延迟超过阈值 | 防止查询堆积 |
+| 恶意节点 | 故意不响应 | 限制 DoS 攻击影响 |
 
 ---
 
@@ -381,6 +455,7 @@ flowchart TB
 | `K` | 每轮采样节点数 | 20 |
 | `Alpha` | 共识阈值 | 15 |
 | `Beta` | 最终化阈值 | 20 |
+| `QueryTimeout` | 查询超时时间 (checkTimeouts 检查间隔 1s) | 2s |
 | `MaxConcurrentQueries` | 最大并发查询数 | 4 |
 | `ProposalInterval` | 提案检查间隔 | 100ms |
 | `GossipInterval` | Gossip 间隔 | 500ms |

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"compress/gzip"
+	"dex/logs"
 	"dex/pb"
 	"io"
 	"net/http"
@@ -39,9 +40,33 @@ func (hm *HandlerManager) HandleGetRecentBlocks(w http.ResponseWriter, r *http.R
 		if lastHeight == 0 {
 			break
 		}
-		// Fetch block
-		block, err := hm.dbManager.GetBlock(lastHeight)
-		if err != nil || block == nil {
+		var block *pb.Block
+		finalizedAttempted := false
+		if hm.consensusManager != nil {
+			if blockID, ok := hm.consensusManager.GetFinalizedBlockID(lastHeight); ok {
+				finalizedAttempted = true
+				b, err := hm.dbManager.GetBlockByID(blockID)
+				if err == nil && b != nil {
+					block = b
+				} else {
+					logs.Warn("[HandleGetRecentBlocks] Finalized block %s at height %d not found in DB: %v",
+						blockID, lastHeight, err)
+				}
+			}
+		}
+
+		if block == nil && !finalizedAttempted {
+			if blocksAtHeight, err := hm.dbManager.GetBlocksByHeight(lastHeight); err == nil && len(blocksAtHeight) > 1 {
+				logs.Warn("[HandleGetRecentBlocks] Multiple blocks at height %d (count=%d); returning first",
+					lastHeight, len(blocksAtHeight))
+			}
+			b, err := hm.dbManager.GetBlock(lastHeight)
+			if err == nil && b != nil {
+				block = b
+			}
+		}
+
+		if block == nil {
 			// 可能遇到gap或还没同步到? 尝试继续找前一个
 			// 但如果是高度 1 找不到，通常是没数据
 			if lastHeight == 1 {

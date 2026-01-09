@@ -50,6 +50,23 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 	}
 
 	events.Subscribe(types.EventQueryComplete, func(e interfaces.Event) {
+		data, ok := e.Data().(QueryCompleteData)
+		if !ok {
+			if ptr, okPtr := e.Data().(*QueryCompleteData); okPtr && ptr != nil {
+				data = *ptr
+				ok = true
+			}
+		}
+		if !ok {
+			logs.Debug("[QueryManager] QueryComplete event has unexpected data type: %T", e.Data())
+			return
+		}
+
+		qm.cleanupPollsByQueryKeys(data.QueryKeys, data.Reason)
+		if data.Reason == "timeout" && len(data.QueryKeys) > 0 {
+			logs.Debug("[QueryManager] Re-issuing query after timeout (count=%d)", len(data.QueryKeys))
+			qm.tryIssueQuery()
+		}
 		//只有timeout才需要清理
 	})
 
@@ -100,6 +117,13 @@ func (qm *QueryManager) issueQuery() {
 
 	// 获取偏好区块ID
 	blockID := qm.engine.GetPreference(nextHeight)
+	if blockID != "" {
+		if _, exists := qm.store.Get(blockID); !exists {
+			logs.Warn("[QueryManager] Preferred block %s missing at height %d, fallback to candidates",
+				blockID, nextHeight)
+			blockID = ""
+		}
+	}
 	if blockID == "" {
 		candidates := make([]string, 0, len(blocks))
 		for _, b := range blocks {
@@ -111,6 +135,7 @@ func (qm *QueryManager) issueQuery() {
 
 	block, exists := qm.store.Get(blockID)
 	if !exists {
+		logs.Warn("[QueryManager] Block %s not found for query at height %d", blockID, nextHeight)
 		return
 	}
 	requestID, _ := secureRandUint32()
@@ -178,7 +203,42 @@ func secureRandUint32() (uint32, error) {
 func (qm *QueryManager) HandleChit(msg types.Message) {
 	if poll, ok := qm.activePolls.Load(msg.RequestID); ok {
 		p := poll.(*Poll)
+		if msg.PreferredID != "" {
+			if _, exists := qm.store.Get(msg.PreferredID); !exists {
+				logs.Warn("[QueryManager] Missing preferred block %s (h=%d) from %s; requesting",
+					msg.PreferredID, msg.PreferredIDHeight, msg.From)
+				_ = qm.transport.Send(types.NodeID(msg.From), types.Message{
+					Type:      types.MsgGet,
+					From:      qm.nodeID,
+					RequestID: msg.RequestID,
+					BlockID:   msg.PreferredID,
+					Height:    msg.PreferredIDHeight,
+				})
+			}
+		}
 		qm.engine.SubmitChit(types.NodeID(msg.From), p.queryKey, msg.PreferredID)
+	}
+}
+
+func (qm *QueryManager) cleanupPollsByQueryKeys(keys []string, reason string) {
+	if len(keys) == 0 {
+		return
+	}
+	keySet := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		keySet[k] = struct{}{}
+	}
+	removed := 0
+	qm.activePolls.Range(func(k, v interface{}) bool {
+		p := v.(*Poll)
+		if _, ok := keySet[p.queryKey]; ok {
+			qm.activePolls.Delete(k)
+			removed++
+		}
+		return true
+	})
+	if removed > 0 {
+		logs.Debug("[QueryManager] Cleaned %d poll(s) on query complete (reason=%s)", removed, reason)
 	}
 }
 
