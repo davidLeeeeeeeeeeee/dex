@@ -735,13 +735,17 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	consCfg.Consensus.Beta = 5            // 5次连续投票确认
 	consCfg.Node.ProposalInterval = 5 * time.Second
 
-	consensusManager := consensus.InitConsensusManager(
+	// 设置丢包率：10% 丢包模拟网络不稳定情况
+	packetLossRate := 0.1
+
+	consensusManager := consensus.InitConsensusManagerWithPacketLoss(
 		types.NodeID(strconv.Itoa(node.ID)),
 		dbManager,
 		consCfg,
 		senderManager,
 		txPool,
 		node.Logger,
+		packetLossRate,
 	)
 	node.ConsensusManager = consensusManager
 

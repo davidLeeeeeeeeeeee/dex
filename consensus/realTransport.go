@@ -12,6 +12,7 @@ import (
 	"dex/types"
 	"dex/utils"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -30,10 +31,11 @@ type RealTransport struct {
 	receiveQueue   chan types.Message
 	receiveWorkers int
 
-	stopOnce sync.Once
-	stopChan chan struct{}
-	wg       sync.WaitGroup
-	Stats    *stats.Stats
+	stopOnce       sync.Once
+	stopChan       chan struct{}
+	wg             sync.WaitGroup
+	Stats          *stats.Stats
+	packetLossRate float64 // 丢包率，范围 0.0 到 1.0
 }
 
 type NodeInfo struct {
@@ -45,6 +47,12 @@ type NodeInfo struct {
 }
 
 func NewRealTransport(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.SenderManager, ctx context.Context) interfaces.Transport {
+	return NewRealTransportWithPacketLoss(nodeID, dbMgr, senderMgr, ctx, 0.0)
+}
+
+// NewRealTransportWithPacketLoss 创建带丢包率模拟的 RealTransport
+// packetLossRate: 丢包率，范围 0.0 到 1.0，例如 0.1 表示 10% 丢包率
+func NewRealTransportWithPacketLoss(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.SenderManager, ctx context.Context, packetLossRate float64) interfaces.Transport {
 	keyMgr := utils.GetKeyManager()
 	rt := &RealTransport{
 		nodeID:         nodeID,
@@ -58,6 +66,7 @@ func NewRealTransport(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.
 		adapter:        NewConsensusAdapter(dbMgr),
 		stopChan:       make(chan struct{}),
 		Stats:          stats.NewStats(),
+		packetLossRate: packetLossRate,
 	}
 
 	rt.startReceiveWorkers()
@@ -66,6 +75,14 @@ func NewRealTransport(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.
 
 // 发送消息到指定节点
 func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
+	// 模拟网络丢包
+	if t.packetLossRate > 0 && rand.Float64() < t.packetLossRate {
+		// 丢包了，直接返回，不发送消息
+		// 发送方不知道丢包，返回nil表示"发送成功"
+		logs.Trace("[RealTransport] Packet dropped: %s -> %s, MsgType=%v", t.nodeID, to, msg.Type)
+		return nil
+	}
+
 	t.Stats.RecordAPICall(string(msg.Type))
 	targetIP, err := t.getNodeIP(to)
 	if err != nil {

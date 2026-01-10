@@ -36,8 +36,22 @@ func InitConsensusManager(
 	txPool *txpool.TxPool,
 	logger logs.Logger,
 ) *ConsensusNodeManager {
-	// 创建真实的 transport
-	transport := NewRealTransport(nodeID, dbManager, senderMgr, context.Background())
+	return InitConsensusManagerWithPacketLoss(nodeID, dbManager, config, senderMgr, txPool, logger, 0.0)
+}
+
+// InitConsensusManagerWithPacketLoss 初始化共识管理器，支持丢包率模拟
+// packetLossRate: 丢包率，范围 0.0 到 1.0，例如 0.1 表示 10% 丢包率
+func InitConsensusManagerWithPacketLoss(
+	nodeID types.NodeID,
+	dbManager *db.Manager,
+	config *Config,
+	senderMgr *sender.SenderManager,
+	txPool *txpool.TxPool,
+	logger logs.Logger,
+	packetLossRate float64,
+) *ConsensusNodeManager {
+	// 创建带丢包模拟的 transport
+	transport := NewRealTransportWithPacketLoss(nodeID, dbManager, senderMgr, context.Background(), packetLossRate)
 
 	// 替换默认的 MemoryBlockStore 为 RealBlockStore
 	realStore := NewRealBlockStore(nodeID, dbManager, config.Snapshot.MaxSnapshots, txPool)
@@ -72,7 +86,11 @@ func InitConsensusManager(
 		Logger:         logger,
 	}
 
-	logger.Info("[ConsensusManager] Initialized with NodeID %s", nodeID)
+	if packetLossRate > 0 {
+		logger.Info("[ConsensusManager] Initialized with NodeID %s, PacketLossRate=%.2f%%", nodeID, packetLossRate*100)
+	} else {
+		logger.Info("[ConsensusManager] Initialized with NodeID %s", nodeID)
+	}
 
 	return consensusManager
 }
