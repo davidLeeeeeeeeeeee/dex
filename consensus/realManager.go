@@ -10,6 +10,7 @@ import (
 	"dex/txpool"
 	"dex/types"
 	"sync"
+	"time"
 )
 
 // ConsensusNodeManager 管理共识节点的全局状态
@@ -36,10 +37,10 @@ func InitConsensusManager(
 	txPool *txpool.TxPool,
 	logger logs.Logger,
 ) *ConsensusNodeManager {
-	return InitConsensusManagerWithPacketLoss(nodeID, dbManager, config, senderMgr, txPool, logger, 0.0)
+	return InitConsensusManagerWithSimulation(nodeID, dbManager, config, senderMgr, txPool, logger, 0.0, 0, 0)
 }
 
-// InitConsensusManagerWithPacketLoss 初始化共识管理器，支持丢包率模拟
+// InitConsensusManagerWithPacketLoss 初始化共识管理器，支持丢包率模拟（兼容旧接口）
 // packetLossRate: 丢包率，范围 0.0 到 1.0，例如 0.1 表示 10% 丢包率
 func InitConsensusManagerWithPacketLoss(
 	nodeID types.NodeID,
@@ -50,8 +51,24 @@ func InitConsensusManagerWithPacketLoss(
 	logger logs.Logger,
 	packetLossRate float64,
 ) *ConsensusNodeManager {
-	// 创建带丢包模拟的 transport
-	transport := NewRealTransportWithPacketLoss(nodeID, dbManager, senderMgr, context.Background(), packetLossRate)
+	return InitConsensusManagerWithSimulation(nodeID, dbManager, config, senderMgr, txPool, logger, packetLossRate, 0, 0)
+}
+
+// InitConsensusManagerWithSimulation 初始化共识管理器，支持网络模拟（丢包率+延迟）
+// packetLossRate: 丢包率，范围 0.0 到 1.0，例如 0.1 表示 10% 丢包率
+// minLatency, maxLatency: 随机延迟范围，例如 100ms 到 200ms
+func InitConsensusManagerWithSimulation(
+	nodeID types.NodeID,
+	dbManager *db.Manager,
+	config *Config,
+	senderMgr *sender.SenderManager,
+	txPool *txpool.TxPool,
+	logger logs.Logger,
+	packetLossRate float64,
+	minLatency, maxLatency time.Duration,
+) *ConsensusNodeManager {
+	// 创建带网络模拟的 transport
+	transport := NewRealTransportWithSimulation(nodeID, dbManager, senderMgr, context.Background(), packetLossRate, minLatency, maxLatency)
 
 	// 替换默认的 MemoryBlockStore 为 RealBlockStore
 	realStore := NewRealBlockStore(nodeID, dbManager, config.Snapshot.MaxSnapshots, txPool)
@@ -86,8 +103,9 @@ func InitConsensusManagerWithPacketLoss(
 		Logger:         logger,
 	}
 
-	if packetLossRate > 0 {
-		logger.Info("[ConsensusManager] Initialized with NodeID %s, PacketLossRate=%.2f%%", nodeID, packetLossRate*100)
+	if packetLossRate > 0 || maxLatency > 0 {
+		logger.Info("[ConsensusManager] Initialized with NodeID %s, PacketLossRate=%.2f%%, Latency=%v~%v",
+			nodeID, packetLossRate*100, minLatency, maxLatency)
 	} else {
 		logger.Info("[ConsensusManager] Initialized with NodeID %s", nodeID)
 	}

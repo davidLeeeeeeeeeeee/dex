@@ -7,4 +7,4 @@ explorer/node_modules/
 explorer/package-lock.json
 *.key
 *.crt
-cmd/__debug_bin.exe*
+*debug_bin*

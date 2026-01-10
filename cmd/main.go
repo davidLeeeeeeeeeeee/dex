@@ -735,10 +735,12 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	consCfg.Consensus.Beta = 5            // 5次连续投票确认
 	consCfg.Node.ProposalInterval = 5 * time.Second
 
-	// 设置丢包率：10% 丢包模拟网络不稳定情况
-	packetLossRate := 0.1
+	// 网络模拟配置
+	packetLossRate := 0.1                // 10% 丢包率
+	minLatency := 100 * time.Millisecond // 最小延迟 100ms
+	maxLatency := 200 * time.Millisecond // 最大延迟 200ms
 
-	consensusManager := consensus.InitConsensusManagerWithPacketLoss(
+	consensusManager := consensus.InitConsensusManagerWithSimulation(
 		types.NodeID(strconv.Itoa(node.ID)),
 		dbManager,
 		consCfg,
@@ -746,6 +748,8 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 		txPool,
 		node.Logger,
 		packetLossRate,
+		minLatency,
+		maxLatency,
 	)
 	node.ConsensusManager = consensusManager
 

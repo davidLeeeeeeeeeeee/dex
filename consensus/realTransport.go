@@ -35,7 +35,9 @@ type RealTransport struct {
 	stopChan       chan struct{}
 	wg             sync.WaitGroup
 	Stats          *stats.Stats
-	packetLossRate float64 // 丢包率，范围 0.0 到 1.0
+	packetLossRate float64       // 丢包率，范围 0.0 到 1.0
+	minLatency     time.Duration // 最小延迟
+	maxLatency     time.Duration // 最大延迟
 }
 
 type NodeInfo struct {
@@ -47,12 +49,19 @@ type NodeInfo struct {
 }
 
 func NewRealTransport(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.SenderManager, ctx context.Context) interfaces.Transport {
-	return NewRealTransportWithPacketLoss(nodeID, dbMgr, senderMgr, ctx, 0.0)
+	return NewRealTransportWithSimulation(nodeID, dbMgr, senderMgr, ctx, 0.0, 0, 0)
 }
 
-// NewRealTransportWithPacketLoss 创建带丢包率模拟的 RealTransport
+// NewRealTransportWithPacketLoss 创建带丢包率模拟的 RealTransport（兼容旧接口）
 // packetLossRate: 丢包率，范围 0.0 到 1.0，例如 0.1 表示 10% 丢包率
 func NewRealTransportWithPacketLoss(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.SenderManager, ctx context.Context, packetLossRate float64) interfaces.Transport {
+	return NewRealTransportWithSimulation(nodeID, dbMgr, senderMgr, ctx, packetLossRate, 0, 0)
+}
+
+// NewRealTransportWithSimulation 创建带网络模拟的 RealTransport
+// packetLossRate: 丢包率，范围 0.0 到 1.0，例如 0.1 表示 10% 丢包率
+// minLatency, maxLatency: 随机延迟范围，例如 100ms 到 200ms
+func NewRealTransportWithSimulation(nodeID types.NodeID, dbMgr *db.Manager, senderMgr *sender.SenderManager, ctx context.Context, packetLossRate float64, minLatency, maxLatency time.Duration) interfaces.Transport {
 	keyMgr := utils.GetKeyManager()
 	rt := &RealTransport{
 		nodeID:         nodeID,
@@ -67,6 +76,8 @@ func NewRealTransportWithPacketLoss(nodeID types.NodeID, dbMgr *db.Manager, send
 		stopChan:       make(chan struct{}),
 		Stats:          stats.NewStats(),
 		packetLossRate: packetLossRate,
+		minLatency:     minLatency,
+		maxLatency:     maxLatency,
 	}
 
 	rt.startReceiveWorkers()
@@ -83,6 +94,22 @@ func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
 		return nil
 	}
 
+	// 模拟网络延迟 (100~200ms 随机延迟) - 异步执行
+	if t.maxLatency > 0 && t.maxLatency > t.minLatency {
+		delay := t.minLatency + time.Duration(rand.Int63n(int64(t.maxLatency-t.minLatency)))
+		go func() {
+			time.Sleep(delay)
+			t.doSend(to, msg)
+		}()
+		return nil
+	}
+
+	// 无延迟配置，直接发送
+	return t.doSend(to, msg)
+}
+
+// doSend 实际执行发送逻辑
+func (t *RealTransport) doSend(to types.NodeID, msg types.Message) error {
 	t.Stats.RecordAPICall(string(msg.Type))
 	targetIP, err := t.getNodeIP(to)
 	if err != nil {
