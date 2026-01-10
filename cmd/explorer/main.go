@@ -94,6 +94,60 @@ type frostMetrics struct {
 	FrostWithdraws int32  `json:"frost_withdraws"`
 }
 
+// Block/Tx search request/response types
+type blockRequest struct {
+	Node   string `json:"node"`
+	Height uint64 `json:"height,omitempty"`
+	Hash   string `json:"hash,omitempty"`
+}
+
+type blockResponse struct {
+	Block *blockInfo `json:"block,omitempty"`
+	Error string     `json:"error,omitempty"`
+}
+
+type blockInfo struct {
+	Height      uint64      `json:"height"`
+	BlockHash   string      `json:"block_hash"`
+	PrevHash    string      `json:"prev_block_hash,omitempty"`
+	TxsHash     string      `json:"txs_hash,omitempty"`
+	Miner       string      `json:"miner,omitempty"`
+	TxCount     int         `json:"tx_count"`
+	Accumulated string      `json:"accumulated_reward,omitempty"`
+	Window      int32       `json:"window,omitempty"`
+	Txs         []txSummary `json:"transactions,omitempty"`
+}
+
+type txSummary struct {
+	TxID        string `json:"tx_id"`
+	TxType      string `json:"tx_type,omitempty"`
+	FromAddress string `json:"from_address,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+}
+
+type txRequest struct {
+	Node string `json:"node"`
+	TxID string `json:"tx_id"`
+}
+
+type txResponse struct {
+	Transaction *txInfo `json:"transaction,omitempty"`
+	Error       string  `json:"error,omitempty"`
+}
+
+type txInfo struct {
+	TxID           string                 `json:"tx_id"`
+	TxType         string                 `json:"tx_type,omitempty"`
+	FromAddress    string                 `json:"from_address,omitempty"`
+	ToAddress      string                 `json:"to_address,omitempty"`
+	Status         string                 `json:"status,omitempty"`
+	ExecutedHeight uint64                 `json:"executed_height,omitempty"`
+	Fee            string                 `json:"fee,omitempty"`
+	Nonce          uint64                 `json:"nonce,omitempty"`
+	Details        map[string]interface{} `json:"details,omitempty"`
+}
+
 func main() {
 	cfg := config.DefaultConfig()
 
@@ -127,6 +181,8 @@ func main() {
 	mux.HandleFunc("/api/nodes", srv.handleNodes)
 	mux.HandleFunc("/api/summary", srv.handleSummary)
 	mux.HandleFunc("/api/node/details", srv.handleNodeDetails)
+	mux.HandleFunc("/api/block", srv.handleBlock)
+	mux.HandleFunc("/api/tx", srv.handleTx)
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	log.Printf("Explorer listening at http://%s (ui: %s)", *listenAddr, webDir)
@@ -279,6 +335,262 @@ func parseBool(value string) bool {
 		return false
 	}
 	return parsed
+}
+
+func (s *server) handleBlock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req blockRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, blockResponse{Error: "invalid request body"})
+		return
+	}
+	if req.Node == "" {
+		writeJSON(w, blockResponse{Error: "node is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+	defer cancel()
+
+	var block *pb.Block
+	var fetchErr error
+
+	if req.Hash != "" {
+		// 按 hash 查询
+		block, fetchErr = s.fetchBlockByID(ctx, req.Node, req.Hash)
+	} else {
+		// 按高度查询
+		block, fetchErr = s.fetchBlockByHeight(ctx, req.Node, req.Height)
+	}
+
+	if fetchErr != nil {
+		writeJSON(w, blockResponse{Error: fetchErr.Error()})
+		return
+	}
+
+	info := convertBlockToInfo(block)
+	writeJSON(w, blockResponse{Block: info})
+}
+
+func (s *server) handleTx(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req txRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, txResponse{Error: "invalid request body"})
+		return
+	}
+	if req.Node == "" || req.TxID == "" {
+		writeJSON(w, txResponse{Error: "node and tx_id are required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+	defer cancel()
+
+	anyTx, err := s.fetchTxByID(ctx, req.Node, req.TxID)
+	if err != nil {
+		writeJSON(w, txResponse{Error: err.Error()})
+		return
+	}
+
+	info := convertAnyTxToInfo(anyTx)
+	writeJSON(w, txResponse{Transaction: info})
+}
+
+func (s *server) fetchBlockByHeight(ctx context.Context, node string, height uint64) (*pb.Block, error) {
+	var resp pb.GetBlockResponse
+	req := &pb.GetBlockRequest{Height: height}
+	if err := s.fetchProto(ctx, node, "/getblock", req, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	if resp.Block == nil {
+		return nil, errors.New("block not found")
+	}
+	return resp.Block, nil
+}
+
+func (s *server) fetchBlockByID(ctx context.Context, node string, blockID string) (*pb.Block, error) {
+	var resp pb.GetBlockResponse
+	req := &pb.GetBlockByIDRequest{BlockId: blockID}
+	if err := s.fetchProto(ctx, node, "/getblockbyid", req, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	if resp.Block == nil {
+		return nil, errors.New("block not found")
+	}
+	return resp.Block, nil
+}
+
+func (s *server) fetchTxByID(ctx context.Context, node string, txID string) (*pb.AnyTx, error) {
+	var resp pb.AnyTx
+	req := &pb.GetData{TxId: txID}
+	if err := s.fetchProto(ctx, node, "/getdata", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func convertBlockToInfo(block *pb.Block) *blockInfo {
+	if block == nil {
+		return nil
+	}
+	info := &blockInfo{
+		Height:      block.Height,
+		BlockHash:   block.BlockHash,
+		PrevHash:    block.PrevBlockHash,
+		TxsHash:     block.TxsHash,
+		Miner:       block.Miner,
+		TxCount:     len(block.Body),
+		Accumulated: block.AccumulatedReward,
+		Window:      block.Window,
+		Txs:         make([]txSummary, 0, len(block.Body)),
+	}
+	for _, tx := range block.Body {
+		summary := convertAnyTxToSummary(tx)
+		info.Txs = append(info.Txs, summary)
+	}
+	return info
+}
+
+func convertAnyTxToSummary(tx *pb.AnyTx) txSummary {
+	if tx == nil {
+		return txSummary{}
+	}
+	summary := txSummary{
+		TxID:   tx.GetTxId(),
+		TxType: extractTxType(tx),
+	}
+	if base := tx.GetBase(); base != nil {
+		summary.FromAddress = base.FromAddress
+		summary.Status = base.Status.String()
+	}
+	summary.Summary = generateTxSummary(tx)
+	return summary
+}
+
+func convertAnyTxToInfo(tx *pb.AnyTx) *txInfo {
+	if tx == nil {
+		return nil
+	}
+	info := &txInfo{
+		TxID:    tx.GetTxId(),
+		TxType:  extractTxType(tx),
+		Details: make(map[string]interface{}),
+	}
+	if base := tx.GetBase(); base != nil {
+		info.FromAddress = base.FromAddress
+		info.Status = base.Status.String()
+		info.ExecutedHeight = base.ExecutedHeight
+		info.Fee = base.Fee
+		info.Nonce = base.Nonce
+	}
+	// 填充详情
+	fillTxDetails(tx, info)
+	return info
+}
+
+func extractTxType(tx *pb.AnyTx) string {
+	if tx == nil {
+		return ""
+	}
+	switch tx.GetContent().(type) {
+	case *pb.AnyTx_Transaction:
+		return "Transaction"
+	case *pb.AnyTx_IssueTokenTx:
+		return "IssueToken"
+	case *pb.AnyTx_FreezeTx:
+		return "Freeze"
+	case *pb.AnyTx_OrderTx:
+		return "Order"
+	case *pb.AnyTx_MinerTx:
+		return "Miner"
+	case *pb.AnyTx_WitnessStakeTx:
+		return "WitnessStake"
+	case *pb.AnyTx_WitnessRequestTx:
+		return "WitnessRequest"
+	case *pb.AnyTx_WitnessVoteTx:
+		return "WitnessVote"
+	case *pb.AnyTx_WitnessChallengeTx:
+		return "WitnessChallenge"
+	case *pb.AnyTx_ArbitrationVoteTx:
+		return "ArbitrationVote"
+	case *pb.AnyTx_WitnessClaimRewardTx:
+		return "WitnessClaimReward"
+	case *pb.AnyTx_FrostWithdrawRequestTx:
+		return "FrostWithdrawRequest"
+	case *pb.AnyTx_FrostWithdrawSignedTx:
+		return "FrostWithdrawSigned"
+	case *pb.AnyTx_FrostVaultDkgCommitTx:
+		return "FrostVaultDkgCommit"
+	case *pb.AnyTx_FrostVaultDkgShareTx:
+		return "FrostVaultDkgShare"
+	case *pb.AnyTx_FrostVaultDkgComplaintTx:
+		return "FrostVaultDkgComplaint"
+	case *pb.AnyTx_FrostVaultDkgRevealTx:
+		return "FrostVaultDkgReveal"
+	case *pb.AnyTx_FrostVaultDkgValidationSignedTx:
+		return "FrostVaultDkgValidationSigned"
+	case *pb.AnyTx_FrostVaultTransitionSignedTx:
+		return "FrostVaultTransitionSigned"
+	}
+	return "Unknown"
+}
+
+func generateTxSummary(tx *pb.AnyTx) string {
+	if tx == nil {
+		return ""
+	}
+	switch c := tx.GetContent().(type) {
+	case *pb.AnyTx_Transaction:
+		t := c.Transaction
+		return fmt.Sprintf("Transfer %s %s to %s", t.Amount, t.TokenAddress, t.To)
+	case *pb.AnyTx_WitnessStakeTx:
+		return fmt.Sprintf("Witness stake: %s", c.WitnessStakeTx.Op.String())
+	case *pb.AnyTx_IssueTokenTx:
+		return fmt.Sprintf("Issue token: %s", c.IssueTokenTx.TokenSymbol)
+	case *pb.AnyTx_MinerTx:
+		return fmt.Sprintf("Miner: %s", c.MinerTx.Op.String())
+	}
+	return extractTxType(tx)
+}
+
+func fillTxDetails(tx *pb.AnyTx, info *txInfo) {
+	if tx == nil || info == nil {
+		return
+	}
+	switch c := tx.GetContent().(type) {
+	case *pb.AnyTx_Transaction:
+		t := c.Transaction
+		info.ToAddress = t.To
+		info.Details["token_address"] = t.TokenAddress
+		info.Details["amount"] = t.Amount
+	case *pb.AnyTx_WitnessStakeTx:
+		w := c.WitnessStakeTx
+		info.Details["operation"] = w.Op.String()
+		info.Details["amount"] = w.Amount
+	case *pb.AnyTx_IssueTokenTx:
+		i := c.IssueTokenTx
+		info.Details["symbol"] = i.TokenSymbol
+		info.Details["name"] = i.TokenName
+		info.Details["total_supply"] = i.TotalSupply
+		info.Details["can_mint"] = i.CanMint
+	case *pb.AnyTx_MinerTx:
+		m := c.MinerTx
+		info.Details["operation"] = m.Op.String()
+		info.Details["amount"] = m.Amount
+	}
 }
 
 func (s *server) collectSummary(ctx context.Context, nodes []string, includeBlock, includeFrost bool) ([]nodeSummary, []string) {

@@ -6,14 +6,14 @@
 
 ```mermaid
 flowchart LR
-    subgraph Consensus模块
-        SE[SnowmanEngine<br>共识引擎]
-        SB[Snowball<br>投票算法]
-        PM[ProposalManager<br>提案管理]
-        QM[QueryManager<br>查询管理]
-        MH[MessageHandler<br>消息处理]
-        GM[GossipManager<br>广播管理]
-        SM[SyncManager<br>同步管理]
+    subgraph Consensus
+        SE["SnowmanEngine<br/>共识引擎<br/>-----<br/>1s: checkTimeouts"]
+        SB[Snowball<br/>投票算法]
+        PM["ProposalManager<br/>提案管理<br/>-----<br/>100ms: proposeBlock"]
+        QM["QueryManager<br/>查询管理<br/>-----<br/>107ms: tryIssueQuery"]
+        MH[MessageHandler<br/>消息处理]
+        GM["GossipManager<br/>广播管理<br/>-----<br/>500ms: gossipNewBlocks"]
+        SM["SyncManager<br/>同步管理<br/>-----<br/>1s: pollPeerHeights<br/>checkAndSync"]
     end
 
     PM -->|提出区块| SE
@@ -25,6 +25,10 @@ flowchart LR
 
     style SE fill:#dfefff,stroke:#6b8fd6
     style SB fill:#eaffea,stroke:#4f8f00
+    style PM fill:#fff3cd,stroke:#d6a735
+    style QM fill:#fff3cd,stroke:#d6a735
+    style GM fill:#fff3cd,stroke:#d6a735
+    style SM fill:#fff3cd,stroke:#d6a735
 ```
 
 ---

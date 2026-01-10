@@ -92,3 +92,63 @@ export interface ExplorerState {
   timer: number | null
 }
 
+// 区块详情（包含交易列表）
+export interface BlockInfo {
+  height: number
+  block_hash: string
+  prev_block_hash?: string
+  txs_hash?: string
+  miner?: string
+  tx_count: number
+  accumulated_reward?: string
+  window?: number
+  transactions?: TxSummary[]
+}
+
+// 交易摘要（区块内的交易列表项）
+export interface TxSummary {
+  tx_id: string
+  tx_type?: string
+  from_address?: string
+  status?: string
+  summary?: string
+}
+
+// 交易详情
+export interface TxInfo {
+  tx_id: string
+  tx_type?: string
+  from_address?: string
+  to_address?: string
+  status?: string
+  executed_height?: number
+  fee?: string
+  nonce?: number
+  details?: Record<string, unknown>
+}
+
+// 区块查询请求
+export interface BlockRequest {
+  node: string
+  height?: number
+  hash?: string
+}
+
+// 区块查询响应
+export interface BlockResponse {
+  block?: BlockInfo
+  error?: string
+}
+
+// 交易查询请求
+export interface TxRequest {
+  node: string
+  tx_id: string
+}
+
+// 交易查询响应
+export interface TxResponse {
+  transaction?: TxInfo
+  error?: string
+}
+

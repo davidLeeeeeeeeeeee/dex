@@ -7,6 +7,7 @@ import (
 	"dex/types"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -54,12 +55,19 @@ func (a *ConsensusAdapter) DBBlockToConsensus(dbBlock *pb.Block) (*types.Block, 
 	if dbBlock == nil {
 		return nil, fmt.Errorf("nil db block")
 	}
+
+	// 兼容：DB 中 Miner 字段有时会被写成带前缀的形式（例如 "v1_node_3"），
+	// 但 VRF 生成/验证的 nodeID 必须一致，否则会导致同步拉到的新块无法通过 VRF 校验。
+	proposer := dbBlock.Miner
+	if prefix := db.KeyNode(); strings.HasPrefix(proposer, prefix) {
+		proposer = strings.TrimPrefix(proposer, prefix)
+	}
 	return &types.Block{
 		ID:           dbBlock.BlockHash,
 		Height:       dbBlock.Height,
 		ParentID:     dbBlock.PrevBlockHash,
 		Data:         fmt.Sprintf("TxCount: %d, TxsHash: %s", len(dbBlock.Body), dbBlock.TxsHash),
-		Proposer:     dbBlock.Miner, // 直接就是地址
+		Proposer:     proposer,
 		Window:       int(dbBlock.Window),
 		VRFProof:     dbBlock.VrfProof,
 		VRFOutput:    dbBlock.VrfOutput,

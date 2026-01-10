@@ -49,19 +49,19 @@ func (sm *SnapshotManager) checkAndCreateSnapshot(height uint64) {
 	defer sm.mu.Unlock()
 
 	// 检查是否到了创建快照的高度
-	if height > 0 && height%sm.config.Interval == 0 {
-		snapshot, err := sm.store.CreateSnapshot(height)
-		if err != nil {
-			Logf("[Node %d] Failed to create snapshot at height %d: %v\n",
-				sm.nodeID, height, err)
-			return
-		}
+		if height > 0 && height%sm.config.Interval == 0 {
+			snapshot, err := sm.store.CreateSnapshot(height)
+			if err != nil {
+				Logf("[Node %s] Failed to create snapshot at height %d: %v\n",
+					sm.nodeID, height, err)
+				return
+			}
 
-		Logf("[Node %d] 📸 Created snapshot at height %d\n", sm.nodeID, height)
+			Logf("[Node %s] 📸 Created snapshot at height %d\n", sm.nodeID, height)
 
-		sm.events.PublishAsync(types.BaseEvent{
-			EventType: types.EventSnapshotCreated,
-			EventData: snapshot,
+			sm.events.PublishAsync(types.BaseEvent{
+				EventType: types.EventSnapshotCreated,
+				EventData: snapshot,
 		})
 	}
 }

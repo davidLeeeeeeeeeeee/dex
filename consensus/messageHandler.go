@@ -155,39 +155,50 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 		h.node.Stats.Mu.Unlock()
 	}
 
-	if msg.Block != nil {
-		// 检查区块的window是否符合当前时间
-		if h.proposalManager != nil {
-			h.proposalManager.mu.Lock()
-			currentWindow := h.proposalManager.calculateCurrentWindow()
-			h.proposalManager.mu.Unlock()
+	if msg.Block == nil {
+		return
+	}
 
-			// 如果区块的window大于当前window，缓存它
-			if msg.Block.Window > currentWindow {
-				logs.Debug("[Node %d] Received block %s for future window %d (current: %d), caching",
-					h.nodeID, msg.Block.ID, msg.Block.Window, currentWindow)
-				h.proposalManager.CacheProposal(msg.Block)
-				// 暂不回复chits，等到达对应window时再处理
-				return
-			}
-		}
+	// 如果该高度本地已经最终化/接受过，直接回复偏好即可（避免把旧高度的候选块重新塞回 store）
+	_, acceptedHeight := h.store.GetLastAccepted()
+	if msg.Block.Height <= acceptedHeight {
+		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
+		return
+	}
 
-		isNew, err := h.store.Add(msg.Block)
-		if err != nil {
+	// 仅对“当前要决策的下一高度”做 window 约束；否则会导致落后节点的 PushQuery 长期收不到回应而卡住
+	if h.proposalManager != nil && msg.Block.Height == acceptedHeight+1 {
+		h.proposalManager.mu.Lock()
+		currentWindow := h.proposalManager.calculateCurrentWindow()
+		h.proposalManager.mu.Unlock()
+
+		if msg.Block.Window > currentWindow {
+			logs.Debug("[Node %s] Received block %s for future window %d (current: %d), caching",
+				h.nodeID, msg.Block.ID, msg.Block.Window, currentWindow)
+			h.proposalManager.CacheProposal(msg.Block)
+			// 关键：即使缓存，也要回复 chits，避免对方 query 超时导致共识停滞
+			h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
 			return
 		}
-
-		if isNew {
-			logs.Debug("[Node %d] Received new block %s via PushQuery (window %d)\n",
-				h.nodeID, msg.Block.ID, msg.Block.Window)
-			h.events.PublishAsync(types.BaseEvent{
-				EventType: types.EventNewBlock,
-				EventData: msg.Block,
-			})
-		}
-
-		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
 	}
+
+	isNew, err := h.store.Add(msg.Block)
+	if err != nil {
+		// 区块被拒绝也应回复，避免对方长期等待
+		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
+		return
+	}
+
+	if isNew {
+		logs.Debug("[Node %s] Received new block %s via PushQuery (window %d)",
+			h.nodeID, msg.Block.ID, msg.Block.Window)
+		h.events.PublishAsync(types.BaseEvent{
+			EventType: types.EventNewBlock,
+			EventData: msg.Block,
+		})
+	}
+
+	h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
 }
 
 func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeight uint64) {
@@ -272,38 +283,24 @@ func (h *MessageHandler) handleGet(msg types.Message) {
 
 func (h *MessageHandler) handlePut(msg types.Message) {
 	if msg.Block != nil {
-		// 检查区块的window是否符合当前时间
-		if h.proposalManager != nil {
-			h.proposalManager.mu.Lock()
-			currentWindow := h.proposalManager.calculateCurrentWindow()
-			h.proposalManager.mu.Unlock()
-
-			// 如果区块的window大于当前window，缓存它
-			if msg.Block.Window > currentWindow {
-				logs.Debug("[Node %d] Received block %s via Put for future window %d (current: %d), caching",
-					h.nodeID, msg.Block.ID, msg.Block.Window, currentWindow)
-				h.proposalManager.CacheProposal(msg.Block)
-				// 暂不添加到store，等到达对应window时再处理
-				return
-			}
-		}
-
 		isNew, err := h.store.Add(msg.Block)
 		if err != nil {
+			// 仍尝试清理 pendingQueries，避免泄漏
+			h.checkPendingQueries(msg.RequestID)
 			return
 		}
 
 		if isNew {
-			logs.Debug("[Node %d] Received new block %s via Put from Node %d",
+			logs.Debug("[Node %s] Received new block %s via Put from Node %s",
 				h.nodeID, msg.Block.ID, msg.From)
 			h.events.PublishAsync(types.BaseEvent{
 				EventType: types.EventBlockReceived,
 				EventData: msg.Block,
 			})
-
-			// 检查是否有待回复的PullQuery
-			h.checkPendingQueries(msg.RequestID)
 		}
+
+		// 无论是否 isNew，都要检查 pendingQueries（可能已通过 gossip 等路径先收到该块）
+		h.checkPendingQueries(msg.RequestID)
 	}
 }
 

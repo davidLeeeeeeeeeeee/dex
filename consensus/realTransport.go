@@ -205,6 +205,7 @@ func (t *RealTransport) sendSyncRequest(to types.NodeID, targetIP string, msg ty
 			t.inbox <- types.Message{
 				Type:       types.MsgSyncResponse,
 				From:       to,
+				SyncID:     msg.SyncID,
 				RequestID:  msg.RequestID,
 				Blocks:     blocks,
 				FromHeight: msg.FromHeight,
@@ -237,6 +238,7 @@ func (t *RealTransport) sendSnapshotRequest(to types.NodeID, targetIP string, ms
 			t.inbox <- types.Message{
 				Type:      types.MsgSnapshotResponse,
 				From:      to,
+				SyncID:    msg.SyncID,
 				RequestID: msg.RequestID,
 				Snapshot:  nil,
 			}
@@ -258,6 +260,7 @@ func (t *RealTransport) sendSnapshotRequest(to types.NodeID, targetIP string, ms
 		t.inbox <- types.Message{
 			Type:           types.MsgSnapshotResponse,
 			From:           to,
+			SyncID:         msg.SyncID,
 			RequestID:      msg.RequestID,
 			Snapshot:       snapshot,
 			SnapshotHeight: block.Height,

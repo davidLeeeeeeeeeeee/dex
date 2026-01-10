@@ -140,7 +140,7 @@ func (gm *GossipManager) HandleGossip(msg types.Message) {
 	}
 
 	if isNew {
-		logs.Debug("[Node %d] Received new block %s via gossip from Node %d\n",
+		logs.Debug("[Node %s] Received new block %s via gossip from Node %s",
 			gm.nodeID, msg.Block.ID, msg.From)
 
 		gm.events.PublishAsync(types.BaseEvent{

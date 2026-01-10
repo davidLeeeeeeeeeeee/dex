@@ -106,7 +106,16 @@ func (pm *ProposalManager) proposeBlock() {
 	}
 	parentID := parentBlock.ID
 
-	currentBlocks := len(pm.store.GetByHeight(targetHeight))
+	// 只统计“基于已最终化父块”的候选，否则会出现：
+	// - height=N+1 先产生了很多基于非最终化父块的候选
+	// - height=N 最终化后，这些候选全部因 parent mismatch 变成无效候选
+	// - 但 currentBlocks 已达到上限，导致后续不再出块，最终永久卡住
+	currentBlocks := 0
+	for _, b := range pm.store.GetByHeight(targetHeight) {
+		if b != nil && b.ParentID == parentID {
+			currentBlocks++
+		}
+	}
 
 	// 判断是否应该在当前window提出区块
 	if !pm.proposer.ShouldPropose(pm.nodeID, currentWindow, currentBlocks, int(lastHeight), int(targetHeight), lastBlockTime) {
@@ -115,7 +124,7 @@ func (pm *ProposalManager) proposeBlock() {
 
 	block, err := pm.proposer.ProposeBlock(parentID, targetHeight, pm.nodeID, currentWindow)
 	if err != nil {
-		Logf("[Node %d] Failed to propose block: %v\n", pm.nodeID, err)
+		Logf("[Node %s] Failed to propose block: %v\n", pm.nodeID, err)
 		return
 	}
 	if block == nil {
@@ -143,7 +152,8 @@ func (pm *ProposalManager) proposeBlock() {
 		pm.node.Stats.Mu.Unlock()
 	}
 
-	Logf("[Node %d] Proposing %s on parent %s (window %d)\n", pm.nodeID, block, parentID, currentWindow)
+	Logf("[Node %s] Proposing %s at height %d on parent %s (window %d)\n",
+		pm.nodeID, block.ID, block.Height, parentID, currentWindow)
 
 	pm.events.PublishAsync(types.BaseEvent{
 		EventType: types.EventNewBlock,

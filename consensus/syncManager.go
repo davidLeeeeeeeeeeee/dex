@@ -107,7 +107,9 @@ func (sm *SyncManager) HandleHeightQuery(msg types.Message) {
 func (sm *SyncManager) HandleHeightResponse(msg types.Message) {
 	sm.Mu.Lock()
 	defer sm.Mu.Unlock()
-	sm.PeerHeights[types.NodeID(msg.From)] = msg.CurrentHeight
+	// 同步应该基于对方“已最终化/已接受”的高度，而不是其当前最大高度（可能包含大量未最终化块）。
+	// 否则会导致本节点不断尝试同步一些其实全网都还没最终化的高度，出现重复 sync 且 added=0 的情况。
+	sm.PeerHeights[types.NodeID(msg.From)] = msg.Height
 }
 
 // 检查是否有必要启动同步程序
@@ -119,7 +121,7 @@ func (sm *SyncManager) checkAndSync() {
 		hasTimeout := false
 		for syncID, startTime := range sm.SyncRequests {
 			if now.Sub(startTime) > sm.config.Timeout {
-				Logf("[Node %d] ⚠️ Sync request %d timed out (started at %v)\n",
+				Logf("[Node %s] ⚠️ Sync request %d timed out (started at %v)\n",
 					sm.nodeID, syncID, startTime.Format("15:04:05"))
 				delete(sm.SyncRequests, syncID)
 				hasTimeout = true
@@ -127,7 +129,7 @@ func (sm *SyncManager) checkAndSync() {
 		}
 
 		if hasTimeout && len(sm.SyncRequests) == 0 {
-			logs.Warn("[Node %d] All sync requests timed out, resetting Syncing flag", sm.nodeID)
+			logs.Warn("[Node %s] All sync requests timed out, resetting Syncing flag", sm.nodeID)
 			sm.Syncing = false
 			sm.usingSnapshot = false
 		}
@@ -201,7 +203,7 @@ func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
 	}
 
 	if targetPeer != "-1" {
-		Logf("[Node %d] 📸 Requesting SNAPSHOT sync from Node %d (behind by %d blocks)\n",
+		Logf("[Node %s] 📸 Requesting SNAPSHOT sync from Node %s (behind by %d blocks)\n",
 			sm.nodeID, targetPeer, targetHeight-sm.store.GetCurrentHeight())
 
 		msg := types.Message{
@@ -250,7 +252,7 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 	}
 
 	if targetPeer != "-1" {
-		Logf("[Node %d] Requesting sync from Node %d for heights %d-%d\n",
+		Logf("[Node %s] Requesting sync from Node %s for heights %d-%d\n",
 			sm.nodeID, targetPeer, fromHeight, toHeight)
 
 		msg := types.Message{
@@ -285,7 +287,7 @@ func (sm *SyncManager) HandleSnapshotRequest(msg types.Message) {
 		return
 	}
 
-	Logf("[Node %d] 📸 Sending snapshot (height %d) to Node %d\n",
+	Logf("[Node %s] 📸 Sending snapshot (height %d) to Node %s\n",
 		sm.nodeID, snapshot.Height, msg.From)
 
 	// 更新统计
@@ -326,7 +328,7 @@ func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
 	// 加载快照
 	err := sm.store.LoadSnapshot(msg.Snapshot)
 	if err != nil {
-		Logf("[Node %d] Failed to load snapshot: %v\n", sm.nodeID, err)
+		Logf("[Node %s] Failed to load snapshot: %v\n", sm.nodeID, err)
 		sm.Syncing = false
 		sm.usingSnapshot = false
 		return
@@ -339,7 +341,7 @@ func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
 		sm.node.Stats.Mu.Unlock()
 	}
 
-	Logf("[Node %d] 📸 Successfully loaded snapshot at height %d\n",
+	Logf("[Node %s] 📸 Successfully loaded snapshot at height %d\n",
 		sm.nodeID, msg.SnapshotHeight)
 
 	// 发布快照加载事件
@@ -376,7 +378,7 @@ func (sm *SyncManager) HandleSyncRequest(msg types.Message) {
 		return
 	}
 
-	Logf("[Node %d] Sending %d blocks to Node %d for sync\n",
+	Logf("[Node %s] Sending %d blocks to Node %s for sync\n",
 		sm.nodeID, len(blocks), msg.From)
 
 	response := types.Message{
@@ -393,19 +395,28 @@ func (sm *SyncManager) HandleSyncRequest(msg types.Message) {
 
 func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 	sm.Mu.Lock()
-	defer sm.Mu.Unlock()
-
 	if _, ok := sm.SyncRequests[msg.SyncID]; !ok {
+		sm.Mu.Unlock()
 		return
 	}
-
 	delete(sm.SyncRequests, msg.SyncID)
 	sm.Syncing = false
+	sm.Mu.Unlock()
 
 	added := 0
+	addErrs := 0
+	var firstAddErr error
+	var firstAddErrBlockID string
 	for _, block := range msg.Blocks {
 		isNew, err := sm.store.Add(block)
 		if err != nil {
+			addErrs++
+			if firstAddErr == nil {
+				firstAddErr = err
+				if block != nil {
+					firstAddErrBlockID = block.ID
+				}
+			}
 			continue
 		}
 		if isNew {
@@ -414,8 +425,67 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 	}
 
 	if added > 0 {
-		Logf("[Node %d] 📦 Successfully synced %d new blocks (heights %d-%d)\n",
+		Logf("[Node %s] 📦 Successfully synced %d new blocks (heights %d-%d)\n",
 			sm.nodeID, added, msg.FromHeight, msg.ToHeight)
+	}
+	if addErrs > 0 {
+		logs.Warn("[Node %s] Sync received %d blocks, %d failed to add (first=%s err=%v)",
+			sm.nodeID, len(msg.Blocks), addErrs, firstAddErrBlockID, firstAddErr)
+	}
+	if added == 0 && len(msg.Blocks) > 0 && addErrs == 0 {
+		logs.Warn("[Node %s] Sync received %d blocks but none were new (heights %d-%d)",
+			sm.nodeID, len(msg.Blocks), msg.FromHeight, msg.ToHeight)
+	}
+
+	// 加速追块：如果收到的是对方“已接受高度”范围内的区块，则可直接按父链关系推进本地 lastAccepted。
+	// 这能解决“本地已拥有区块但共识迟迟无法在该高度收敛”导致的长期停滞（反复 sync added=0）。
+	finalized := 0
+	acceptedID, acceptedHeight := sm.store.GetLastAccepted()
+	blocksByHeight := make(map[uint64][]*types.Block, len(msg.Blocks))
+	for _, b := range msg.Blocks {
+		if b == nil {
+			continue
+		}
+		blocksByHeight[b.Height] = append(blocksByHeight[b.Height], b)
+	}
+
+	for {
+		nextHeight := acceptedHeight + 1
+		cands := blocksByHeight[nextHeight]
+		if len(cands) == 0 {
+			break
+		}
+		chosen := cands[0]
+		for _, c := range cands {
+			if c != nil && c.ParentID == acceptedID {
+				chosen = c
+				break
+			}
+		}
+
+		// 尝试最终化该高度（RealBlockStore 内部会做父链接安全检查；失败会保持 lastAccepted 不变）
+		sm.store.SetFinalized(nextHeight, chosen.ID)
+
+		newAcceptedID, newAcceptedHeight := sm.store.GetLastAccepted()
+		if newAcceptedHeight != nextHeight || newAcceptedID != chosen.ID {
+			break
+		}
+
+		finalized++
+		acceptedID, acceptedHeight = newAcceptedID, newAcceptedHeight
+
+		// 主动发布最终化事件，驱动 ProposalManager/SnapshotManager 等组件状态前进
+		if blk, ok := sm.store.Get(chosen.ID); ok && blk != nil {
+			sm.events.PublishAsync(types.BaseEvent{
+				EventType: types.EventBlockFinalized,
+				EventData: blk,
+			})
+		}
+	}
+
+	if finalized > 0 {
+		logs.Info("[Node %s] ✅ Fast-finalized %d block(s) via sync (accepted=%d)",
+			sm.nodeID, finalized, acceptedHeight)
 	}
 
 	sm.events.PublishAsync(types.BaseEvent{

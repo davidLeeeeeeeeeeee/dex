@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import ControlPanel from './components/ControlPanel.vue'
 import NodeList from './components/NodeList.vue'
 import NodeCards from './components/NodeCards.vue'
 import NodeModal from './components/NodeModal.vue'
+import SearchPanel from './components/SearchPanel.vue'
 import type { NodeSummary, NodesResponse } from './types'
 import { fetchNodes, fetchSummary } from './api'
+
+// Tab 状态
+const activeTab = ref<'overview' | 'search'>('overview')
 
 // 状态
 const nodes = ref<string[]>([])
@@ -27,6 +31,12 @@ let timer: number | null = null
 // Modal 状态
 const modalVisible = ref(false)
 const modalAddress = ref('')
+
+// 为 Search 提供选中的第一个节点
+const firstSelectedNode = computed(() => {
+  const arr = Array.from(selected.value)
+  return arr.length > 0 ? arr[0] : ''
+})
 
 // 存储键
 const storageKeys = {
@@ -190,7 +200,18 @@ onMounted(() => {
     </div>
   </header>
 
-  <main class="layout">
+  <nav class="tab-nav">
+    <button
+      :class="['tab-btn', { active: activeTab === 'overview' }]"
+      @click="activeTab = 'overview'"
+    >节点总览</button>
+    <button
+      :class="['tab-btn', { active: activeTab === 'search' }]"
+      @click="activeTab = 'search'"
+    >Search</button>
+  </nav>
+
+  <main v-if="activeTab === 'overview'" class="layout">
     <div class="left">
       <ControlPanel
         :default-info="defaultInfo"
@@ -227,6 +248,13 @@ onMounted(() => {
         />
       </section>
     </div>
+  </main>
+
+  <main v-else-if="activeTab === 'search'" class="layout search-layout">
+    <SearchPanel
+      :nodes="nodes"
+      :default-node="firstSelectedNode"
+    />
   </main>
 
   <footer class="footer">
