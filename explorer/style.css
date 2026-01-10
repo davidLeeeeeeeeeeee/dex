@@ -321,7 +321,7 @@ input:focus {
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(12px);
   z-index: 1000;
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: center;
   padding: 40px;

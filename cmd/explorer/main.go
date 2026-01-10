@@ -173,7 +173,11 @@ func resolveWebDir(explicit string) string {
 		}
 		return ""
 	}
+	// 优先使用构建后的 dist 目录，其次是 explorer 源目录（开发时）
 	candidates := []string{
+		filepath.Join("explorer", "dist"),
+		filepath.Join("..", "explorer", "dist"),
+		filepath.Join("..", "..", "explorer", "dist"),
 		"explorer",
 		filepath.Join("..", "explorer"),
 		filepath.Join("..", "..", "explorer"),
