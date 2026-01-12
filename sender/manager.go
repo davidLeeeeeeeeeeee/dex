@@ -107,6 +107,7 @@ func (sm *SenderManager) SendTxToAllPeers(tx *pb.AnyTx) {
 			RetryCount: 0,
 			MaxRetries: 3,
 			SendFunc:   doSendTx,
+			Priority:   PriorityData, // 数据面：交易广播
 		}
 		sm.SendQueue.Enqueue(task)
 	}
@@ -139,6 +140,7 @@ func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*pb.AnyTx)
 		RetryCount: 0,
 		MaxRetries: 3,
 		SendFunc:   doSendGetDataWithManager,
+		Priority:   PriorityData, // 数据面：拉取交易
 	}
 	sm.SendQueue.Enqueue(task)
 }
@@ -203,6 +205,7 @@ func (sm *SenderManager) PullBlock(targetAddress string, height uint64, onSucces
 		RetryCount: 0,
 		MaxRetries: 1,
 		SendFunc:   doSendGetBlock,
+		Priority:   PriorityData, // 数据面：区块同步
 	}
 	sm.SendQueue.Enqueue(task)
 }
@@ -244,6 +247,7 @@ func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]
 		RetryCount: 0,
 		MaxRetries: 1,
 		SendFunc:   doSendBatchGetTxs,
+		Priority:   PriorityData, // 数据面：批量获取交易
 	}
 	sm.SendQueue.Enqueue(task)
 }
@@ -264,6 +268,7 @@ func (sm *SenderManager) BroadcastGossipToTarget(targetAddr string, payload *typ
 		RetryCount: 0,
 		MaxRetries: 3,
 		SendFunc:   doSendToOnePeer,
+		Priority:   PriorityData, // 数据面：gossip 广播
 	}
 	sm.SendQueue.Enqueue(task)
 	return nil
@@ -291,7 +296,7 @@ func (sm *SenderManager) PushQuery(peerAddr string, pq *pb.PushQuery) {
 		Message:    msg,
 		MaxRetries: 2,
 		SendFunc:   doSendPushQuery,
-		Priority:   PriorityControl, // 设置为控制面优先级
+		Priority:   PriorityData, // 数据面优先级：PushQuery 携带完整区块，体积大
 	}
 	sm.SendQueue.Enqueue(task)
 }

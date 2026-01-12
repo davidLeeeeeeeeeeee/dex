@@ -35,44 +35,75 @@ type SendTask struct {
 }
 
 // SendQueue 负责管理任务队列 + worker
+// 使用双队列：controlChan 用于共识消息，dataChan 用于普通数据
 type SendQueue struct {
-	workerCount   int
-	TaskChan      chan *SendTask
-	stopChan      chan struct{}
-	wg            sync.WaitGroup
-	httpClient    *http.Client
-	nodeID        int              // 只用作log,不参与业务逻辑
-	address       string           // 节点地址
-	Logger        logs.Logger      // 注入的 Logger
-	InflightMap   map[string]int32 // 目标->在途请求数
-	InflightMutex sync.RWMutex
+	controlWorkerCount int
+	dataWorkerCount    int
+	controlChan        chan *SendTask // 控制面队列（共识消息）
+	dataChan           chan *SendTask // 数据面队列（交易/同步）
+	stopChan           chan struct{}
+	wg                 sync.WaitGroup
+	httpClient         *http.Client
+	nodeID             int              // 只用作log,不参与业务逻辑
+	address            string           // 节点地址
+	Logger             logs.Logger      // 注入的 Logger
+	InflightMap        map[string]int32 // 目标->在途请求数
+	InflightMutex      sync.RWMutex
 }
 
-// 移除 GlobalQueue 和 InitQueue
-
-// 创建新的发送队列
+// 创建新的发送队列（双队列模式）
+// controlWorkers: 控制面 worker 数量（处理共识消息）
+// dataWorkers: 数据面 worker 数量（处理交易/同步）
 func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client, nodeID int, address string, logger logs.Logger) *SendQueue {
+	// 分配 worker：控制面占 1/3，数据面占 2/3，最少各 1 个
+	controlWorkers := workerCount / 3
+	if controlWorkers < 1 {
+		controlWorkers = 1
+	}
+	dataWorkers := workerCount - controlWorkers
+	if dataWorkers < 1 {
+		dataWorkers = 1
+	}
+
+	// 队列容量：控制面较小但更重要，数据面较大
+	controlCapacity := queueCapacity / 4
+	if controlCapacity < 64 {
+		controlCapacity = 64
+	}
+	dataCapacity := queueCapacity - controlCapacity
+
 	sq := &SendQueue{
-		nodeID:      nodeID,
-		address:     address,
-		Logger:      logger,
-		workerCount: workerCount,
-		TaskChan:    make(chan *SendTask, queueCapacity),
-		stopChan:    make(chan struct{}),
-		httpClient:  httpClient,
-		InflightMap: make(map[string]int32),
+		nodeID:             nodeID,
+		address:            address,
+		Logger:             logger,
+		controlWorkerCount: controlWorkers,
+		dataWorkerCount:    dataWorkers,
+		controlChan:        make(chan *SendTask, controlCapacity),
+		dataChan:           make(chan *SendTask, dataCapacity),
+		stopChan:           make(chan struct{}),
+		httpClient:         httpClient,
+		InflightMap:        make(map[string]int32),
 	}
 	sq.Start()
 	return sq
 }
 
-// Start 启动 workerCount 个协程
+// Start 启动 worker 协程
 func (sq *SendQueue) Start() {
-	sq.wg.Add(sq.workerCount)
-	for i := 0; i < sq.workerCount; i++ {
-		go sq.workerLoop(i)
+	// 启动控制面 worker
+	sq.wg.Add(sq.controlWorkerCount)
+	for i := 0; i < sq.controlWorkerCount; i++ {
+		go sq.workerLoop(i, sq.controlChan, "control")
 	}
-	sq.Logger.Verbose("[SendQueue] Started with %d workers", sq.workerCount)
+
+	// 启动数据面 worker
+	sq.wg.Add(sq.dataWorkerCount)
+	for i := 0; i < sq.dataWorkerCount; i++ {
+		go sq.workerLoop(i, sq.dataChan, "data")
+	}
+
+	sq.Logger.Verbose("[SendQueue] Started with %d control workers + %d data workers",
+		sq.controlWorkerCount, sq.dataWorkerCount)
 }
 
 // Stop 停止队列, 等待所有worker退出
@@ -110,41 +141,38 @@ func (sq *SendQueue) Enqueue(task *SendTask) {
 
 func (sq *SendQueue) enqueueNow(task *SendTask) {
 	cfg := config.DefaultConfig()
-	// 控制面任务：给一个短暂的阻塞窗口
+
 	if task.Priority == PriorityControl {
+		// 控制面任务：使用 controlChan，给一个短暂的阻塞窗口
 		select {
-		case sq.TaskChan <- task:
-			// 成功入队
+		case sq.controlChan <- task:
 			return
 		case <-time.After(cfg.Sender.ControlTaskTimeout):
-			// 80ms 后仍无法入队，记录错误
 			sq.Logger.Error("[SendQueue] Control task timeout: len=%d cap=%d target=%s",
-				len(sq.TaskChan), cap(sq.TaskChan), task.Target)
-			// 可以选择丢弃或者进一步处理
+				len(sq.controlChan), cap(sq.controlChan), task.Target)
 			return
 		}
-	}
-
-	// 数据面任务：队列满了直接丢弃
-	select {
-	case sq.TaskChan <- task:
-		// 成功入队
-	default:
-		sq.Logger.Debug("[SendQueue] Data task dropped: queue full, target=%s",
-			task.Target)
+	} else {
+		// 数据面任务：使用 dataChan，队列满了直接丢弃
+		select {
+		case sq.dataChan <- task:
+			// 成功入队
+		default:
+			sq.Logger.Debug("[SendQueue] Data task dropped: queue full len=%d, target=%s",
+				len(sq.dataChan), task.Target)
+		}
 	}
 }
 
 // workerLoop 逐个获取队列任务并执行
-func (sq *SendQueue) workerLoop(workerID int) {
+func (sq *SendQueue) workerLoop(workerID int, taskChan chan *SendTask, queueType string) {
 	defer sq.wg.Done()
-	// DI 模式下不再需要 SetThreadNodeContext
 
 	for {
 		select {
 		case <-sq.stopChan:
 			return
-		case task := <-sq.TaskChan:
+		case task := <-taskChan:
 			if task == nil {
 				return
 			}
@@ -153,19 +181,20 @@ func (sq *SendQueue) workerLoop(workerID int) {
 				sleepDur := task.NextAttempt.Sub(now)
 				time.Sleep(sleepDur)
 			}
-			// 在 err := sq.doSend(task, workerID) 之前添加
+
 			sq.InflightMutex.Lock()
 			sq.InflightMap[task.Target]++
 			sq.InflightMutex.Unlock()
 
-			err := sq.doSend(task, workerID)
-			// 在 err := sq.doSend(task, workerID) 之后添加
+			err := sq.doSend(task, workerID, queueType)
+
 			sq.InflightMutex.Lock()
 			sq.InflightMap[task.Target]--
 			if sq.InflightMap[task.Target] <= 0 {
 				delete(sq.InflightMap, task.Target)
 			}
 			sq.InflightMutex.Unlock()
+
 			if err != nil {
 				sq.handleRetry(task, err)
 			}
@@ -173,7 +202,7 @@ func (sq *SendQueue) workerLoop(workerID int) {
 	}
 }
 
-func (sq *SendQueue) doSend(task *SendTask, workerID int) error {
+func (sq *SendQueue) doSend(task *SendTask, workerID int, queueType string) error {
 	if task.SendFunc == nil {
 		return fmt.Errorf("SendFunc is nil, cannot send")
 	}
@@ -185,11 +214,11 @@ func (sq *SendQueue) doSend(task *SendTask, workerID int) error {
 	elapsed := time.Since(start)
 
 	if err != nil {
-		sq.Logger.Error("[SendQueue] worker=%d,%s send to %s FAILED after %v: %v",
-			workerID, task.FuncName(), task.Target, elapsed, err)
+		sq.Logger.Error("[SendQueue][%s] worker=%d,%s send to %s FAILED after %v: %v",
+			queueType, workerID, task.FuncName(), task.Target, elapsed, err)
 	} else {
-		sq.Logger.Trace("[SendQueue] worker=%d,%s send to %s success in %v",
-			workerID, task.FuncName(), task.Target, elapsed)
+		sq.Logger.Trace("[SendQueue][%s] worker=%d,%s send to %s success in %v",
+			queueType, workerID, task.FuncName(), task.Target, elapsed)
 	}
 	return err
 }
@@ -222,4 +251,19 @@ func (task *SendTask) FuncName() string {
 	} else {
 		return ""
 	}
+}
+
+// QueueLen 返回两个队列的总长度（用于监控）
+func (sq *SendQueue) QueueLen() int {
+	return len(sq.controlChan) + len(sq.dataChan)
+}
+
+// ControlQueueLen 返回控制面队列长度
+func (sq *SendQueue) ControlQueueLen() int {
+	return len(sq.controlChan)
+}
+
+// DataQueueLen 返回数据面队列长度
+func (sq *SendQueue) DataQueueLen() int {
+	return len(sq.dataChan)
 }

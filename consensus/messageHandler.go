@@ -5,7 +5,6 @@ import (
 	"dex/logs"
 	"dex/stats"
 	"dex/types"
-	"sort"
 	"sync"
 )
 
@@ -239,8 +238,8 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 					}
 				}
 				if len(cand) > 0 {
-					sort.Strings(cand)
-					preferred = cand[len(cand)-1]
+					// 使用 selectByMinHash 与 Snowball 保持一致的确定性选择规则
+					preferred = selectByMinHash(cand)
 				}
 			}
 		}

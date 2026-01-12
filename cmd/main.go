@@ -98,8 +98,8 @@ func monitorMetrics(nodes []*NodeInstance) {
 				continue
 			}
 
-			// 1. 发送队列长度
-			sendQueueLen := len(node.SenderManager.SendQueue.TaskChan)
+			// 1. 发送队列长度（控制面+数据面）
+			sendQueueLen := node.SenderManager.SendQueue.QueueLen()
 
 			// 2. 每目标在途请求
 			node.SenderManager.SendQueue.InflightMutex.RLock()
@@ -730,9 +730,9 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	// 调整配置
 	consCfg.Consensus.NumHeights = 10     // 运行10个高度
 	consCfg.Consensus.BlocksPerHeight = 3 // 每个高度3个候选块
-	consCfg.Consensus.K = 10              // 采样10个节点
-	consCfg.Consensus.Alpha = 7           // 需要7个回应
-	consCfg.Consensus.Beta = 5            // 5次连续投票确认
+	consCfg.Consensus.K = 15              // 采样 75% 节点
+	consCfg.Consensus.Alpha = 12          // 需要 80% 的 K 同意
+	consCfg.Consensus.Beta = 10           // 更多轮次确认
 	consCfg.Node.ProposalInterval = 5 * time.Second
 
 	// 网络模拟配置

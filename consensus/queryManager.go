@@ -8,7 +8,6 @@ import (
 	"dex/types"
 	"encoding/binary"
 	"math/rand"
-	"sort"
 	"sync"
 	"time"
 )
@@ -135,8 +134,8 @@ func (qm *QueryManager) issueQuery() {
 		for _, b := range blocks {
 			candidates = append(candidates, b.ID)
 		}
-		sort.Strings(candidates)
-		blockID = candidates[len(candidates)-1]
+		// 使用 selectByMinHash 与 Snowball 保持一致的确定性选择规则
+		blockID = selectByMinHash(candidates)
 	}
 
 	block, exists := qm.store.Get(blockID)

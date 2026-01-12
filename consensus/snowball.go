@@ -3,7 +3,7 @@ package consensus
 import (
 	"dex/interfaces"
 	"dex/types"
-	"sort"
+	"strings"
 	"sync"
 )
 
@@ -38,13 +38,26 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 
 	sb.lastVotes = votes
 
-	var winner string
+	// 找出最高票数
 	maxVotes := 0
-	for cid, v := range votes {
+	for _, v := range votes {
 		if v > maxVotes {
 			maxVotes = v
-			winner = cid
 		}
+	}
+
+	// 收集所有达到最高票数的候选（可能有多个并列）
+	var topCandidates []string
+	for cid, v := range votes {
+		if v == maxVotes {
+			topCandidates = append(topCandidates, cid)
+		}
+	}
+
+	// 确定性选择：按 hash 最小（使用 extractBlockHash 提取 hash 部分）
+	var winner string
+	if len(topCandidates) > 0 {
+		winner = selectByMinHash(topCandidates)
 	}
 
 	if maxVotes >= alpha {
@@ -59,19 +72,52 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 			sb.confidence++
 		}
 	} else {
+		// 票数不足 alpha，从所有候选中选 hash 最小的
 		if len(candidates) > 0 {
-			sort.Strings(candidates)
-			largestBlock := candidates[len(candidates)-1]
-			if largestBlock != sb.preference {
+			smallestBlock := selectByMinHash(candidates)
+			if smallestBlock != sb.preference {
 				sb.events.PublishAsync(types.BaseEvent{
 					EventType: types.EventPreferenceChanged,
 					EventData: PreferenceSwitch{BlockID: sb.preference, Confidence: sb.confidence, Winner: winner, Alpha: alpha},
 				})
-				sb.preference = largestBlock
+				sb.preference = smallestBlock
 				sb.confidence = 0
 			}
 		}
 	}
+}
+
+// extractBlockHash 从 blockID 中提取 hash 部分
+// blockID 格式: block-<height>-<proposer>-w<window>-<hash>
+// 返回最后一个 "-" 后面的部分作为 hash
+func extractBlockHash(blockID string) string {
+	lastDash := strings.LastIndex(blockID, "-")
+	if lastDash == -1 || lastDash == len(blockID)-1 {
+		return blockID // 无法解析，返回原始 blockID
+	}
+	return blockID[lastDash+1:]
+}
+
+// selectByMinHash 从候选列表中选择 hash 最小的区块
+// 使用字符串比较（hex 编码的 hash 字符串比较等价于数值比较）
+func selectByMinHash(candidates []string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+
+	minBlock := candidates[0]
+	minHash := extractBlockHash(candidates[0])
+	for _, cid := range candidates[1:] {
+		h := extractBlockHash(cid)
+		if h < minHash {
+			minHash = h
+			minBlock = cid
+		}
+	}
+	return minBlock
 }
 
 func (sb *Snowball) GetPreference() string {

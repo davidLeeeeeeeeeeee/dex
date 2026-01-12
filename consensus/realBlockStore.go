@@ -269,15 +269,19 @@ func (s *RealBlockStore) GetFinalizedAtHeight(height uint64) (*types.Block, bool
 	return nil, false
 }
 
-// 获取指定高度范围的区块
+// 获取指定高度范围的区块（只返回已最终化的区块，用于同步）
 func (s *RealBlockStore) GetBlocksFromHeight(from, to uint64) []*types.Block {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	blocks := make([]*types.Block, 0)
 	for h := from; h <= to && h <= s.maxHeight; h++ {
-		if heightBlocks, exists := s.heightIndex[h]; exists {
-			blocks = append(blocks, heightBlocks...)
+		// 优先返回已最终化的区块
+		if finalizedBlock, exists := s.finalizedBlocks[h]; exists {
+			blocks = append(blocks, finalizedBlock)
+		} else if heightBlocks, exists := s.heightIndex[h]; exists && len(heightBlocks) > 0 {
+			// 如果该高度尚未最终化，返回第一个候选区块（降级处理）
+			blocks = append(blocks, heightBlocks[0])
 		} else {
 			// 从数据库加载
 			if dbBlock, err := s.dbManager.GetBlock(h); err == nil && dbBlock != nil {
