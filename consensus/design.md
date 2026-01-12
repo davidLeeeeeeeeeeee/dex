@@ -85,8 +85,22 @@ mindmap
 ```mermaid
 flowchart TD
     START[开始] --> SAMPLE[随机采样 K 个节点]
-    SAMPLE --> QUERY[发送 Query 请求偏好]
-    QUERY --> COLLECT[收集 Chits 响应]
+    SAMPLE --> TYPE{查询类型}
+
+    TYPE -->|PushQuery<br>提议者使用| PUSH[发送 PushQuery<br>携带完整区块]
+    TYPE -->|PullQuery<br>非提议者使用| PULL[发送 PullQuery<br>仅携带区块ID]
+
+    PUSH --> PEER_STORE[对方存储区块]
+    PEER_STORE --> PEER_VOTE[对方投票]
+
+    PULL --> PEER_CHECK{对方有区块?}
+    PEER_CHECK -->|是| PEER_VOTE
+    PEER_CHECK -->|否| PEER_GET[对方发送 Get 请求]
+    PEER_GET --> SEND_PUT[返回 Put 区块数据]
+    SEND_PUT --> PEER_STORE2[对方存储区块]
+    PEER_STORE2 --> PEER_VOTE
+
+    PEER_VOTE --> COLLECT[收集 Chits 响应]
 
     COLLECT --> TIMEOUT{超时检查<br>checkTimeouts}
     TIMEOUT -->|超时| EXPIRE[移除过期查询<br>发布 QueryComplete]
@@ -108,10 +122,24 @@ flowchart TD
     FINAL -->|是| FINALIZE[区块最终化 ✓]
     FINAL -->|否| SAMPLE
 
+    style PUSH fill:#dfefff,stroke:#6b8fd6
+    style PULL fill:#fff3cd,stroke:#d6a735
+    style PEER_GET fill:#ffe8d6,stroke:#d67f35
+    style SEND_PUT fill:#ffe8d6,stroke:#d67f35
     style FINALIZE fill:#eaffea,stroke:#4f8f00
     style TIMEOUT fill:#fff3cd,stroke:#d6a735
     style EXPIRE fill:#ffe8d6,stroke:#d67f35
 ```
+
+#### PushQuery vs PullQuery 对比
+
+| 特性 | PushQuery | PullQuery |
+|------|-----------|-----------|
+| **使用者** | 区块提议者 | 非提议者（收到 Gossip 后） |
+| **携带数据** | 完整区块 | 仅区块ID |
+| **网络开销** | 较大（每次传输区块） | 较小（仅ID） |
+| **延迟** | 低（对方直接投票） | 可能高（需额外 Get/Put） |
+| **适用场景** | 首次广播新区块 | 后续查询或同步后查询 |
 
 ---
 
@@ -174,18 +202,24 @@ sequenceDiagram
 
 ### 5.2 查询时序图
 
+**PushQuery 只发给 K 个随机采样节点，不是所有矿工。** 未收到 PushQuery 的节点通过 Gossip 或 PullQuery 获取区块。
+
 ```mermaid
 sequenceDiagram
     participant A as Node A (提议者)
-    participant B as Node B
-    participant C as Node C
-    participant D as Node D
+    participant B as Node B (被采样)
+    participant C as Node C (被采样)
+    participant D as Node D (未被采样)
+    participant E as Node E (未被采样)
 
-    Note over A: 提议新区块 Block-X
+    Note over A: 提议新区块 Block-X<br>随机采样 K=2 个节点 (B, C)
 
-    A->>B: PushQuery(Block-X) 携带完整区块
-    A->>C: PushQuery(Block-X)
-    A->>D: PushQuery(Block-X)
+    par 并行: PushQuery 给采样节点
+        A->>B: PushQuery(Block-X) 携带完整区块
+        A->>C: PushQuery(Block-X)
+    and 并行: Gossip 给 Fanout 个节点
+        A->>D: Gossip(Block-X)
+    end
 
     B->>B: 存储区块
     C->>C: 存储区块
@@ -193,14 +227,34 @@ sequenceDiagram
 
     B-->>A: Chits(preference=Block-X)
     C-->>A: Chits(preference=Block-X)
-    D-->>A: Chits(preference=Block-X)
 
-    A->>A: 统计投票 (3 >= α)
+    A->>A: 统计投票 (2 >= α)
     A->>A: confidence++
 
     Note over A: 持续查询直到 confidence >= β
     A->>A: 区块最终化
+
+    Note over E: 未收到任何消息的节点<br>后续通过 PullQuery 获取区块
+
+    Note over B: B 本地已有区块 X<br>开始自己的查询轮次
+    B->>E: PullQuery(BlockID=X) 仅携带ID
+    E->>E: 检查本地: 无区块 X
+    E->>B: Get(BlockID=X)
+    Note over B: B 本地有区块，可以响应
+    B-->>E: Put(Block-X)
+    E->>E: 存储区块
+    E-->>B: Chits(preference=X)
 ```
+
+> **注意**：发送 PullQuery 的节点**必须本地已有区块**。因为接收方可能发送 Get 请求，发送方需要能够响应并返回完整区块。
+
+#### 区块传播路径总结
+
+| 传播方式 | 发起者 | 接收者 | 携带数据 | 说明 |
+|---------|--------|--------|---------|------|
+| **PushQuery** | 提议者 | K 个采样节点 | 完整区块 | 首次查询，请求投票 |
+| **Gossip** | 提议者 | Fanout 个节点 | 完整区块 | 主动广播，加速传播 |
+| **PullQuery + Get/Put** | 任意节点 | 任意节点 | 仅ID → 按需获取 | 后续轮次或补漏 |
 
 ### 5.3 PullQuery 流程（非提议者）
 

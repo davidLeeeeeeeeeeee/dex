@@ -86,4 +86,11 @@ e.g. btc直接聚合公钥地址管理，而智能合约用合约来管理资产
 
 11. 检查vm中金额的计算是不是大数。不要有边界问题的bug.
 
-12. 
+12. 转账tx逻辑完善
+
+13、冲突问题  func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
+	// 获取缓存的完整区块数据
+	if cachedBlock, exists := GetCachedBlock(block.ID); exists {
+		// 保存完整的区块数据
+		if err := s.dbManager.SaveBlock(cachedBlock); err != nil {
+			logs.Error("[RealBlockStore] Failed to save block to DB: %v", err)

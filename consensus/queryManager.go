@@ -2,11 +2,12 @@ package consensus
 
 import (
 	"context"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"dex/interfaces"
 	"dex/logs"
 	"dex/types"
 	"encoding/binary"
+	"math/rand"
 	"sort"
 	"sync"
 	"time"
@@ -64,8 +65,13 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 
 		qm.cleanupPollsByQueryKeys(data.QueryKeys, data.Reason)
 		if data.Reason == "timeout" && len(data.QueryKeys) > 0 {
-			logs.Debug("[QueryManager] Re-issuing query after timeout (count=%d)", len(data.QueryKeys))
-			qm.tryIssueQuery()
+			// 添加退避延迟，避免超时后立即重发导致自激荡
+			// 使用 200-500ms 随机退避 + jitter
+			backoff := 200*time.Millisecond + time.Duration(rand.Int63n(300))*time.Millisecond
+			logs.Debug("[QueryManager] Query timeout, will retry after %v (count=%d)", backoff, len(data.QueryKeys))
+			time.AfterFunc(backoff, func() {
+				qm.tryIssueQuery()
+			})
 		}
 		//只有timeout才需要清理
 	})
@@ -194,7 +200,7 @@ func (qm *QueryManager) issueQuery() {
 // 返回 [0, 2^32-1] 范围内的安全随机 uint32
 func secureRandUint32() (uint32, error) {
 	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if _, err := cryptorand.Read(b[:]); err != nil {
 		return 0, err
 	}
 	return binary.BigEndian.Uint32(b[:]), nil
@@ -207,13 +213,17 @@ func (qm *QueryManager) HandleChit(msg types.Message) {
 			if _, exists := qm.store.Get(msg.PreferredID); !exists {
 				logs.Warn("[QueryManager] Missing preferred block %s (h=%d) from %s; requesting",
 					msg.PreferredID, msg.PreferredIDHeight, msg.From)
-				_ = qm.transport.Send(types.NodeID(msg.From), types.Message{
+				if err := qm.transport.Send(types.NodeID(msg.From), types.Message{
 					Type:      types.MsgGet,
 					From:      qm.nodeID,
 					RequestID: msg.RequestID,
 					BlockID:   msg.PreferredID,
 					Height:    msg.PreferredIDHeight,
-				})
+				}); err != nil {
+					// 重要：原逻辑吞掉 Send 错误，导致“看起来在 requesting，实际没发出去/失败了”很难排查。
+					logs.Warn("[QueryManager] Failed to request missing block %s (h=%d) from %s: %v",
+						msg.PreferredID, msg.PreferredIDHeight, msg.From, err)
+				}
 			}
 		}
 		qm.engine.SubmitChit(types.NodeID(msg.From), p.queryKey, msg.PreferredID)

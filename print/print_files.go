@@ -38,7 +38,7 @@ func main() {
 	// 如果希望日志也一起重定向到文件，可以取消下面的注释
 	// log.SetOutput(file)
 
-	dir := `./` // 指定要遍历的目录
+	dir := `./consensus` // 指定要遍历的目录
 	printGoFiles(dir, file)
 }
 

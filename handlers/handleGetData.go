@@ -69,7 +69,15 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blk, err := hm.dbManager.GetBlockByID(req.BlockId)
-	if err != nil || blk == nil {
+	if (err != nil || blk == nil) && hm.consensusManager != nil && hm.consensusManager.Node != nil && hm.adapter != nil {
+		// 重要：/getblockbyid 被共识用来“补齐缺失块”。
+		// 在高并发/高负载下，区块可能还在内存中但尚未落盘（DB 写队列异步刷盘），
+		// 这里允许从共识 store 直接兜底返回，避免 QueryManager 长期缺块导致卡住。
+		if b, ok := hm.consensusManager.Node.GetBlock(req.BlockId); ok && b != nil {
+			blk = hm.adapter.ConsensusBlockToDB(b, nil)
+		}
+	}
+	if blk == nil {
 		http.Error(w, fmt.Sprintf("Block %s not found", req.BlockId), http.StatusNotFound)
 		return
 	}

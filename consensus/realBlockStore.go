@@ -98,18 +98,20 @@ func (s *RealBlockStore) SetEventBus(events interfaces.EventBus) {
 
 // Add 添加新区块
 func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	// 第一步：快速检查是否已存在 + 验证区块（短暂持锁）
+	s.mu.RLock()
 	if _, exists := s.blockCache[block.ID]; exists {
+		s.mu.RUnlock()
 		return false, nil
 	}
-
+	// validateBlock 需要读取 blockCache，必须在锁内
 	if err := s.validateBlock(block); err != nil {
+		s.mu.RUnlock()
 		return false, err
 	}
+	s.mu.RUnlock()
 
-	// VM预执行：在添加区块前先验证其有效性
+	// 第二步：VM预执行（不持锁，这是耗时操作）
 	// 获取完整的 pb.Block（包含交易）
 	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
 		// 调用 VM 预执行
@@ -133,7 +135,14 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 		}
 	}
 
-	// 添加到内存缓存
+	// 第四步：更新内存缓存（短暂持锁）
+	s.mu.Lock()
+	// 再次检查是否已存在（防止并发添加）
+	if _, exists := s.blockCache[block.ID]; exists {
+		s.mu.Unlock()
+		return false, nil
+	}
+
 	s.blockCache[block.ID] = block
 	s.heightIndex[block.Height] = append(s.heightIndex[block.Height], block)
 
@@ -142,9 +151,9 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 		// 更新数据库中的最新高度
 		s.dbManager.EnqueueSet(db.KeyLatestHeight(), strconv.FormatUint(block.Height, 10))
 	}
+	s.mu.Unlock()
 
-	// 异步保存到数据库（非最终化的区块暂时只在内存中）
-	// 异步保存到数据库
+	// 第五步：异步保存到数据库（不持锁）
 	go func() {
 		logs.SetThreadNodeContext(string(s.nodeID))
 		s.saveBlockToDB(block)
@@ -299,9 +308,8 @@ func (s *RealBlockStore) GetCurrentHeight() uint64 {
 
 // 设置区块为最终化状态（内部使用）
 func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
+	// 第一步：获取区块并验证（短暂持锁）
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	block, exists := s.blockCache[blockID]
 	if !exists {
 		// 从数据库通过ID加载
@@ -312,6 +320,7 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 	}
 
 	if block == nil {
+		s.mu.Unlock()
 		logs.Error("[RealBlockStore] Cannot finalize block %s: block not found", blockID)
 		return
 	}
@@ -321,17 +330,20 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 	if height > 0 {
 		parentBlock, parentExists := s.finalizedBlocks[height-1]
 		if !parentExists {
+			s.mu.Unlock()
 			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: parent at height %d not finalized",
 				blockID, height, height-1)
 			return
 		}
 		if block.ParentID != parentBlock.ID {
+			s.mu.Unlock()
 			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: parent mismatch (expected %s, got %s)",
 				blockID, height, parentBlock.ID, block.ParentID)
 			return
 		}
 	}
 
+	// 更新内存状态
 	s.finalizedBlocks[height] = block
 	s.lastAccepted = block
 	s.lastAcceptedHeight = height
@@ -347,7 +359,11 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 	}
 	s.heightIndex[height] = newBlocks
 
-	// VM提交：使用VM统一提交机制替代手动保存交易
+	// 获取事件总线引用
+	events := s.events
+	s.mu.Unlock()
+
+	// 第二步：VM提交（不持锁，这是耗时操作）
 	// 获取完整的 pb.Block（包含交易）
 	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
 		// 调用 VM 提交最终化区块
@@ -374,9 +390,9 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 
 	logs.Info("[RealBlockStore] Finalized block %s at height %d", blockID, height)
 
-	// 发布区块最终化事件
-	if s.events != nil {
-		s.events.PublishAsync(types.BaseEvent{
+	// 第三步：发布事件（不持锁）
+	if events != nil {
+		events.PublishAsync(types.BaseEvent{
 			EventType: types.EventBlockFinalized,
 			EventData: block,
 		})
@@ -616,10 +632,16 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 			Height:        block.Height,
 			BlockHash:     block.ID,
 			PrevBlockHash: block.ParentID,
-			Miner:         fmt.Sprintf(db.KeyNode()+"%d", block.Proposer),
+			Miner:         fmt.Sprintf(db.KeyNode()+"%s", block.Proposer),
+			Window:        int32(block.Window),
+			VrfProof:      block.VRFProof,
+			VrfOutput:     block.VRFOutput,
+			BlsPublicKey:  block.BLSPublicKey,
 		}
 		if err := s.dbManager.SaveBlock(dbBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save simple block to DB: %v", err)
+		} else {
+			s.dbManager.ForceFlush() // 立刻刷盘，避免 /getblockbyid 读不到导致缺块卡住
 		}
 	}
 }
