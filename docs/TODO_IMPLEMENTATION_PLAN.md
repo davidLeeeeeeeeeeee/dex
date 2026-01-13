@@ -261,8 +261,6 @@ message Transaction {
 |------|------|
 | 转账手续费 | 当前只有 `base.fee` 字段，需实现扣除逻辑 |
 | 手续费销毁/分配 | 手续费去向（销毁/矿工/国库） |
-| 批量转账 | 可选：支持一次转给多人 |
-| 转账备注 | 可选：增加 `memo` 字段 |
 
 **实现要点**:
 
@@ -300,18 +298,6 @@ if fromBalance.Cmp(totalDeduct) < 0 {
 **后端 API 增强** (`cmd/explorer/main.go`):
 - 交易详情返回 `to_address`, `amount`, `token_symbol`
 
-#### 4.3.3 Proto 扩展（可选）
-
-```protobuf
-message Transaction {
-  BaseMessage base = 1;
-  string to = 2;
-  string token_address = 3;
-  string amount = 4;
-  string memo = 5;           // 新增：备注
-}
-```
-
 ### 4.4 需修改的文件
 
 | 文件 | 修改内容 |
@@ -319,7 +305,6 @@ message Transaction {
 | `vm/transfer_handler.go` | 手续费扣除逻辑 |
 | `cmd/explorer/main.go` | 交易详情增强 |
 | `explorer/src/components/TxDetail.vue` | 转账类型渲染 |
-| `pb/data.proto` | 可选：增加 memo 字段 |
 
 ### 4.5 工作量估算
 
@@ -327,9 +312,8 @@ message Transaction {
 |------|---------|
 | 手续费逻辑 | 0.5 天 |
 | Explorer 展示 | 0.5 天 |
-| Proto 扩展（可选） | 0.5 天 |
 | 测试 | 0.5 天 |
-| **总计** | **1.5-2 天** |
+| **总计** | **1-1.5 天** |
 
 ---
 
@@ -338,11 +322,11 @@ message Transaction {
 | 优先级 | TODO | 工作量 | 理由 |
 |--------|------|--------|------|
 | **P0** | 3. VM 金额安全检查 | 3-4 天 | 涉及资金安全，必须优先 |
-| **P1** | 4. 转账 TX 完善 | 1.5-2 天 | 基础功能，用户可见 |
+| **P1** | 4. 转账 TX 完善 | 1-1.5 天 | 基础功能，用户可见 |
 | **P2** | 2. 上账挖矿奖励 | 3-4 天 | 经济模型核心 |
 | **P3** | 1. Explorer 可视化 | 7-10 天 | 体验优化，可分阶段 |
 
-**总工作量**: 约 15-20 天
+**总工作量**: 约 14-19 天
 
 ---
 
