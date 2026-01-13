@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand/v2"
 	"net/http"
 	"reflect"
 	"runtime"
@@ -27,11 +28,11 @@ type SendTask struct {
 	Message     interface{}
 	RetryCount  int
 	MaxRetries  int
+	CreatedAt   time.Time // 任务创建时间，用于检测过期
 	NextAttempt time.Time
 	SendFunc    func(task *SendTask, client *http.Client) error
 	HttpClient  *http.Client
 	Priority    TaskPriority // 任务优先级
-
 }
 
 // SendQueue 负责管理任务队列 + worker
@@ -117,6 +118,10 @@ func (sq *SendQueue) Enqueue(task *SendTask) {
 	if task == nil {
 		return
 	}
+	// 首次入队时设置创建时间
+	if task.CreatedAt.IsZero() {
+		task.CreatedAt = time.Now()
+	}
 	if task.NextAttempt.IsZero() {
 		task.NextAttempt = time.Now()
 	}
@@ -129,8 +134,8 @@ func (sq *SendQueue) Enqueue(task *SendTask) {
 			defer timer.Stop()
 			select {
 			case <-timer.C:
-				sq.enqueueNow(t) // 见下
-			case <-sq.stopChan: // 若你有 stopChan
+				sq.enqueueNow(t)
+			case <-sq.stopChan:
 				return
 			}
 		}(task, delay)
@@ -167,6 +172,7 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 // workerLoop 逐个获取队列任务并执行
 func (sq *SendQueue) workerLoop(workerID int, taskChan chan *SendTask, queueType string) {
 	defer sq.wg.Done()
+	cfg := config.DefaultConfig()
 
 	for {
 		select {
@@ -176,6 +182,16 @@ func (sq *SendQueue) workerLoop(workerID int, taskChan chan *SendTask, queueType
 			if task == nil {
 				return
 			}
+
+			// 检查任务是否过期（超过 QueryTimeout 的请求直接丢弃）
+			// 过期阈值 = QueryTimeout (3s)，避免发送已经无意义的请求
+			taskAge := time.Since(task.CreatedAt)
+			if taskAge > cfg.Sender.TaskExpireTimeout {
+				sq.Logger.Debug("[SendQueue][%s] Dropping stale task: age=%v target=%s func=%s",
+					queueType, taskAge, task.Target, task.FuncName())
+				continue
+			}
+
 			now := time.Now()
 			if task.NextAttempt.After(now) {
 				sleepDur := task.NextAttempt.Sub(now)
@@ -225,15 +241,37 @@ func (sq *SendQueue) doSend(task *SendTask, workerID int, queueType string) erro
 
 func (sq *SendQueue) handleRetry(task *SendTask, sendErr error) {
 	task.RetryCount++
+	cfg := config.DefaultConfig()
+
+	// 检查是否超过最大重试次数
 	if task.RetryCount > task.MaxRetries {
-		sq.Logger.Debug("[SendQueue] Exceed max retries(%d) target=%s, giving up",
-			task.MaxRetries, task.Target)
+		sq.Logger.Debug("[SendQueue] Exceed max retries(%d) target=%s func=%s, giving up",
+			task.MaxRetries, task.Target, task.FuncName())
 		return
 	}
-	cfg := config.DefaultConfig()
-	// 幂次退避
+
+	// 检查任务是否已过期（即使还有重试次数，过期也放弃）
+	if time.Since(task.CreatedAt) > cfg.Sender.TaskExpireTimeout {
+		sq.Logger.Debug("[SendQueue] Task expired after %v, giving up retry target=%s func=%s",
+			time.Since(task.CreatedAt), task.Target, task.FuncName())
+		return
+	}
+
+	// 指数退避 + 随机抖动
+	// backoff = baseDelay * 2^(retryCount-1) * (1 ± jitter)
 	baseDelay := cfg.Sender.BaseRetryDelay
 	backoff := baseDelay * time.Duration(math.Pow(2, float64(task.RetryCount-1)))
+
+	// 限制最大退避时间
+	if backoff > cfg.Sender.MaxRetryDelay {
+		backoff = cfg.Sender.MaxRetryDelay
+	}
+
+	// 添加随机抖动：±JitterFactor (例如 ±30%)
+	jitterRange := float64(backoff) * cfg.Sender.JitterFactor
+	jitter := time.Duration(jitterRange * (rand.Float64()*2 - 1)) // -jitterRange 到 +jitterRange
+	backoff += jitter
+
 	task.NextAttempt = time.Now().Add(backoff)
 	sq.Enqueue(task)
 	sq.Logger.Debug("[SendQueue] Retry %d/%d after %v for %s (err=%v)",

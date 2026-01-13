@@ -105,16 +105,17 @@ type SenderConfig struct {
 	QueueCapacity int // 10000
 
 	// 重试配置
-	DefaultMaxRetries int // 3
-	ControlMaxRetries int // 2
-	DataMaxRetries    int // 1
+	DefaultMaxRetries int           // 3
+	ControlMaxRetries int           // 2
+	DataMaxRetries    int           // 1
+	JitterFactor      float64       // 0.3 (±30% 随机抖动)
+	TaskExpireTimeout time.Duration // 3s，超过此时间的任务直接丢弃
 
 	// 超时配置
-	BaseRetryDelay      time.Duration // 1 * time.Second
-	MaxRetryDelay       time.Duration // 30 * time.Second
+	BaseRetryDelay      time.Duration // 100ms (指数退避基础延迟)
+	MaxRetryDelay       time.Duration // 2s (最大退避延迟)
 	ControlTaskTimeout  time.Duration // 80 * time.Millisecond
 	DataTaskDropTimeout time.Duration // 0 (立即丢弃)
-
 }
 
 // AuthConfig 认证配置
@@ -203,11 +204,13 @@ func DefaultConfig() *Config {
 		Sender: SenderConfig{
 			WorkerCount:         10000,
 			QueueCapacity:       10000,
-			DefaultMaxRetries:   3,
-			ControlMaxRetries:   2,
-			DataMaxRetries:      1,
-			BaseRetryDelay:      1 * time.Second,
-			MaxRetryDelay:       30 * time.Second,
+			DefaultMaxRetries:   0, // 不重试，依赖 QueryManager 周期性发起新 Query
+			ControlMaxRetries:   0, // 共识消息不重试
+			DataMaxRetries:      0, // 数据消息不重试
+			JitterFactor:        0.3,
+			TaskExpireTimeout:   3 * time.Second, // 超过 3s 的任务直接丢弃
+			BaseRetryDelay:      100 * time.Millisecond,
+			MaxRetryDelay:       2 * time.Second,
 			ControlTaskTimeout:  180 * time.Millisecond,
 			DataTaskDropTimeout: 0,
 		},
