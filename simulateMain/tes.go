@@ -9,6 +9,8 @@ import (
 	"dex/consensus"
 	"dex/logs"
 	"dex/pb"
+	"dex/stats"
+	"dex/types"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -16,12 +18,40 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
 	"google.golang.org/protobuf/proto"
 )
+
+// 每个节点的 API 统计
+var (
+	nodeStatsMap   = make(map[types.NodeID]*stats.Stats)
+	nodeStatsMapMu sync.RWMutex
+)
+
+// getOrCreateNodeStats 获取或创建节点的统计实例
+func getOrCreateNodeStats(nodeID types.NodeID) *stats.Stats {
+	nodeStatsMapMu.RLock()
+	s, ok := nodeStatsMap[nodeID]
+	nodeStatsMapMu.RUnlock()
+	if ok {
+		return s
+	}
+
+	nodeStatsMapMu.Lock()
+	defer nodeStatsMapMu.Unlock()
+	// double check
+	if s, ok = nodeStatsMap[nodeID]; ok {
+		return s
+	}
+	s = stats.NewStats()
+	nodeStatsMap[nodeID] = s
+	return s
+}
 
 func main() {
 	mathrand.Seed(time.Now().UnixNano())
@@ -81,8 +111,12 @@ func main() {
 func startNodeWeb(node *consensus.Node, port int) {
 	mux := http.NewServeMux()
 
+	// 获取该节点的统计实例
+	nodeStats := getOrCreateNodeStats(node.ID)
+
 	// 1. 状态接口
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		nodeStats.RecordAPICall("HandleStatus")
 		blockID, height := node.GetLastAccepted()
 		resProto := &pb.StatusResponse{
 			Status: "ok",
@@ -93,6 +127,7 @@ func startNodeWeb(node *consensus.Node, port int) {
 
 	// 2. 高度接口 (Explorer 强依赖且会循环调用)
 	mux.HandleFunc("/heightquery", func(w http.ResponseWriter, r *http.Request) {
+		nodeStats.RecordAPICall("HandleHeightQuery")
 		_, height := node.GetLastAccepted()
 		resProto := &pb.HeightResponse{
 			CurrentHeight:      height,
@@ -104,6 +139,7 @@ func startNodeWeb(node *consensus.Node, port int) {
 
 	// 3. 获取区块详情 (详情页依赖)
 	mux.HandleFunc("/getblock", func(w http.ResponseWriter, r *http.Request) {
+		nodeStats.RecordAPICall("HandleGetBlock")
 		blockID, height := node.GetLastAccepted()
 		miner := string(node.ID)
 
@@ -124,6 +160,7 @@ func startNodeWeb(node *consensus.Node, port int) {
 
 	// 4. 获取最近区块
 	mux.HandleFunc("/getrecentblocks", func(w http.ResponseWriter, r *http.Request) {
+		nodeStats.RecordAPICall("HandleGetRecentBlocks")
 		blockID, height := node.GetLastAccepted()
 		miner := string(node.ID)
 
@@ -145,9 +182,37 @@ func startNodeWeb(node *consensus.Node, port int) {
 
 	// 5. 日志接口
 	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
+		nodeStats.RecordAPICall("HandleLogs")
 		logLines := logs.GetLogsForNode(string(node.ID))
 		resp := &pb.LogsResponse{
 			Logs: logLines,
+		}
+		sendProto(w, resp)
+	})
+
+	// 6. Metrics 接口（真实统计数据）
+	mux.HandleFunc("/frost/metrics", func(w http.ResponseWriter, r *http.Request) {
+		nodeStats.RecordAPICall("GetMetrics")
+
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+
+		// 获取 HTTP API 调用统计
+		apiStats := nodeStats.GetAPICallStats()
+
+		// 合并共识消息处理统计（PushQuery, PullQuery, Chits, Gossip 等）
+		msgStats := node.GetMessageStats()
+		for k, v := range msgStats {
+			apiStats[k] = v
+		}
+
+		resp := &pb.MetricsResponse{
+			HeapAlloc:      m.HeapAlloc,
+			HeapSys:        m.HeapSys,
+			NumGoroutine:   int32(runtime.NumGoroutine()),
+			FrostJobs:      0,
+			FrostWithdraws: 0,
+			ApiCallStats:   apiStats,
 		}
 		sendProto(w, resp)
 	})

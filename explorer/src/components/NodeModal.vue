@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import type { NodeDetails } from '../types'
 import { fetchNodeDetails } from '../api'
 
@@ -23,6 +23,19 @@ function formatNumber(value?: number | string | null): string {
   if (typeof value === 'string') return value
   return numberFormat.format(value)
 }
+
+// API 统计计算属性
+const sortedApiStats = computed(() => {
+  const stats = details.value?.frost_metrics?.api_call_stats
+  if (!stats) return []
+  return Object.entries(stats).sort((a, b) => b[1] - a[1])
+})
+
+const totalApiCalls = computed(() => {
+  const stats = details.value?.frost_metrics?.api_call_stats
+  if (!stats) return 0
+  return Object.values(stats).reduce((sum, count) => sum + count, 0)
+})
 
 async function loadDetails() {
   if (!props.address) return
@@ -91,9 +104,34 @@ watch(() => props.address, () => {
             </template>
           </div>
           
+          <!-- API Call Stats -->
+          <div v-if="details.frost_metrics?.api_call_stats && Object.keys(details.frost_metrics.api_call_stats).length > 0" class="log-container">
+            <h4>API Call Statistics</h4>
+            <table class="block-table">
+              <thead>
+                <tr>
+                  <th>API</th>
+                  <th>Calls</th>
+                  <th>%</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="[api, count] in sortedApiStats" :key="api">
+                  <td>{{ api }}</td>
+                  <td>{{ formatNumber(count) }}</td>
+                  <td>{{ ((count / totalApiCalls) * 100).toFixed(1) }}%</td>
+                </tr>
+                <tr class="total-row">
+                  <td><strong>TOTAL</strong></td>
+                  <td><strong>{{ formatNumber(totalApiCalls) }}</strong></td>
+                  <td><strong>100%</strong></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
           <!-- Logs -->
           <div class="log-container">
-            <h4>Recent Logs</h4>
             <div class="log-list">
               <template v-if="details.logs && details.logs.length > 0">
                 <div v-for="(log, i) in details.logs" :key="i" class="log-line">

@@ -85,12 +85,16 @@ func (hm *HandlerManager) HandleGetMetrics(w http.ResponseWriter, r *http.Reques
 		frostWithdraws = len(withdrawResults)
 	}
 
+	// 获取 API 调用统计
+	apiCallStats := hm.Stats.GetAPICallStats()
+
 	resp := &pb.MetricsResponse{
 		HeapAlloc:      m.HeapAlloc,
 		HeapSys:        m.HeapSys,
 		NumGoroutine:   int32(runtime.NumGoroutine()),
 		FrostJobs:      int32(frostJobs),
 		FrostWithdraws: int32(frostWithdraws),
+		ApiCallStats:   apiCallStats,
 	}
 
 	// 序列化为 protobuf

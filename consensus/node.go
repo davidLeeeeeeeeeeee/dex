@@ -116,3 +116,11 @@ func (n *Node) GetLastAccepted() (string, uint64) {
 func (n *Node) GetBlock(id string) (*types.Block, bool) {
 	return n.store.Get(id)
 }
+
+// GetMessageStats 获取消息处理统计
+func (n *Node) GetMessageStats() map[string]uint64 {
+	if n.messageHandler != nil && n.messageHandler.stats != nil {
+		return n.messageHandler.stats.GetAPICallStats()
+	}
+	return nil
+}

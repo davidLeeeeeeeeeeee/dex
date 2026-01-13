@@ -28,6 +28,23 @@ function statusClass(node: NodeSummary): string {
   if (node.status?.toLowerCase() === 'ok') return 'status-good'
   return 'status-warn'
 }
+
+// 计算 API 调用总数
+function totalApiCalls(node: NodeSummary): number {
+  const stats = node.frost_metrics?.api_call_stats
+  if (!stats) return 0
+  return Object.values(stats).reduce((sum, count) => sum + count, 0)
+}
+
+// 获取 Top N API 调用
+function topApiCalls(node: NodeSummary, n: number = 3): Array<{ name: string, count: number }> {
+  const stats = node.frost_metrics?.api_call_stats
+  if (!stats) return []
+  return Object.entries(stats)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([name, count]) => ({ name, count }))
+}
 </script>
 
 <template>
@@ -110,9 +127,34 @@ function statusClass(node: NodeSummary): string {
             <span>Goroutines</span>
             <span>{{ formatNumber(node.frost_metrics.num_goroutine) }}</span>
           </div>
+
+          <!-- API Call Stats -->
+          <div v-if="totalApiCalls(node) > 0" class="kv api-stats-header">
+            <span>API Calls</span>
+            <span>{{ formatNumber(totalApiCalls(node)) }} total</span>
+          </div>
+          <div v-for="api in topApiCalls(node)" :key="api.name" class="kv api-stat">
+            <span class="api-name">{{ api.name }}</span>
+            <span>{{ formatNumber(api.count) }}</span>
+          </div>
         </template>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.api-stats-header {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.api-stat {
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+.api-name {
+  font-family: monospace;
+}
+</style>
 

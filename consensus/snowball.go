@@ -38,6 +38,28 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 
 	sb.lastVotes = votes
 
+	// 关键修复：如果没有偏好，首先从所有候选中选择 hash 最小的作为初始偏好
+	// 这确保了所有节点从相同的初始状态开始
+	if sb.preference == "" && len(candidates) > 0 {
+		sb.preference = selectByMinHash(candidates)
+	}
+
+	// 如果当前偏好不在候选列表中，重置为 hash 最小的候选
+	// 这可能发生在区块被发现无效或网络分区后恢复
+	if sb.preference != "" {
+		inCandidates := false
+		for _, c := range candidates {
+			if c == sb.preference {
+				inCandidates = true
+				break
+			}
+		}
+		if !inCandidates && len(candidates) > 0 {
+			sb.preference = selectByMinHash(candidates)
+			sb.confidence = 0
+		}
+	}
+
 	// 找出最高票数
 	maxVotes := 0
 	for _, v := range votes {
@@ -54,13 +76,14 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 		}
 	}
 
-	// 确定性选择：按 hash 最小（使用 extractBlockHash 提取 hash 部分）
+	// 确定性选择：按 hash 最小
 	var winner string
 	if len(topCandidates) > 0 {
 		winner = selectByMinHash(topCandidates)
 	}
 
 	if maxVotes >= alpha {
+		// 关键：只有当 winner 获得足够票数时才考虑切换
 		if winner != sb.preference {
 			sb.events.PublishAsync(types.BaseEvent{
 				EventType: types.EventPreferenceChanged,
@@ -71,20 +94,9 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 		} else {
 			sb.confidence++
 		}
-	} else {
-		// 票数不足 alpha，从所有候选中选 hash 最小的
-		if len(candidates) > 0 {
-			smallestBlock := selectByMinHash(candidates)
-			if smallestBlock != sb.preference {
-				sb.events.PublishAsync(types.BaseEvent{
-					EventType: types.EventPreferenceChanged,
-					EventData: PreferenceSwitch{BlockID: sb.preference, Confidence: sb.confidence, Winner: winner, Alpha: alpha},
-				})
-				sb.preference = smallestBlock
-				sb.confidence = 0
-			}
-		}
 	}
+	// 移除票数不足时切换偏好的逻辑 - 这是导致不一致的根源
+	// 票数不足 alpha 时，保持当前偏好不变，等待下一轮投票
 }
 
 // extractBlockHash 从 blockID 中提取 hash 部分

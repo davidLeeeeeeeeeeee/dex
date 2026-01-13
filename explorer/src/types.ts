@@ -55,6 +55,7 @@ export interface FrostMetrics {
   num_goroutine: number
   frost_jobs: number
   frost_withdraws: number
+  api_call_stats?: Record<string, number>
 }
 
 // 节点列表响应

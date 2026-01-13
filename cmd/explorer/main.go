@@ -87,11 +87,12 @@ type blockSummary struct {
 }
 
 type frostMetrics struct {
-	HeapAlloc      uint64 `json:"heap_alloc"`
-	HeapSys        uint64 `json:"heap_sys"`
-	NumGoroutine   int32  `json:"num_goroutine"`
-	FrostJobs      int32  `json:"frost_jobs"`
-	FrostWithdraws int32  `json:"frost_withdraws"`
+	HeapAlloc      uint64            `json:"heap_alloc"`
+	HeapSys        uint64            `json:"heap_sys"`
+	NumGoroutine   int32             `json:"num_goroutine"`
+	FrostJobs      int32             `json:"frost_jobs"`
+	FrostWithdraws int32             `json:"frost_withdraws"`
+	ApiCallStats   map[string]uint64 `json:"api_call_stats,omitempty"`
 }
 
 // Block/Tx search request/response types
@@ -646,6 +647,7 @@ func (s *server) collectSummary(ctx context.Context, nodes []string, includeBloc
 						NumGoroutine:   metrics.NumGoroutine,
 						FrostJobs:      metrics.FrostJobs,
 						FrostWithdraws: metrics.FrostWithdraws,
+						ApiCallStats:   metrics.ApiCallStats,
 					}
 				}
 			}

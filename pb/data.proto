@@ -846,6 +846,7 @@ message MetricsResponse {
   int32 num_goroutine = 3; // Goroutine 数量
   int32 frost_jobs = 4; // Frost 任务数
   int32 frost_withdraws = 5; // Frost 提现数
+  map<string, uint64> api_call_stats = 6; // API 调用统计
 }
 
 // ForceRescanRequest 强制重扫请求
@@ -868,8 +869,8 @@ message LogsRequest {
 // LogLine 单条日志行
 message LogLine {
   string timestamp = 1; // 格式化时间
-  string level = 2;     // 级别
-  string message = 3;   // 内容
+  string level = 2; // 级别
+  string message = 3; // 内容
 }
 
 // LogsResponse 日志响应
