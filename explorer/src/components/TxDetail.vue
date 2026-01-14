@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { TxInfo } from '../types'
+import TxTypeRenderer from './TxTypeRenderer.vue'
 
 defineProps<{
   tx: TxInfo
@@ -22,15 +23,6 @@ function statusClass(status?: string): string {
   if (s === 'SUCCEED' || s === 'SUCCESS') return 'status-good'
   if (s === 'FAILED' || s === 'FAIL') return 'status-bad'
   return 'status-warn'
-}
-
-function formatDetails(details?: Record<string, unknown>): string {
-  if (!details || Object.keys(details).length === 0) return '-'
-  try {
-    return JSON.stringify(details, null, 2)
-  } catch {
-    return String(details)
-  }
 }
 </script>
 
@@ -77,9 +69,8 @@ function formatDetails(details?: Record<string, unknown>): string {
     </div>
 
     <div v-if="tx.details && Object.keys(tx.details).length > 0" class="details-section">
-      <h3>Details</h3>
-      <pre class="details-json">{{ formatDetails(tx.details) }}</pre>
+      <h3>Structured Data</h3>
+      <TxTypeRenderer :type="tx.tx_type || ''" :details="tx.details" />
     </div>
   </section>
 </template>
-

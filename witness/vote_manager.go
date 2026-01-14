@@ -243,4 +243,3 @@ func (vm *VoteManager) emitEvent(event *Event) {
 		// 通道满了，丢弃事件
 	}
 }
-

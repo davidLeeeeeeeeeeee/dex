@@ -51,3 +51,20 @@ export async function fetchTx(request: TxRequest): Promise<TxResponse> {
   return resp.json()
 }
 
+
+// 获取 Frost 提现队列
+export async function fetchFrostWithdrawQueue(node: string, chain: string = '', asset: string = ''): Promise<any[]> {
+  const resp = await fetch(`/api/frost/withdraw/queue?node=${encodeURIComponent(node)}&chain=${chain}&asset=${asset}`)
+  return resp.json()
+}
+
+// 获取见证者上账请求
+export async function fetchWitnessRequests(node: string): Promise<any[]> {
+  const resp = await fetch(`/api/witness/requests?node=${encodeURIComponent(node)}`)
+  return resp.json()
+}
+// 获取 Frost DKG 会话
+export async function fetchFrostDKGSessions(node: string): Promise<any[]> {
+  const resp = await fetch(`/api/frost/dkg/list?node=${encodeURIComponent(node)}`)
+  return resp.json()
+}

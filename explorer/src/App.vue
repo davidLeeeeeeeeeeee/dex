@@ -7,9 +7,10 @@ import NodeModal from './components/NodeModal.vue'
 import SearchPanel from './components/SearchPanel.vue'
 import type { NodeSummary, NodesResponse } from './types'
 import { fetchNodes, fetchSummary } from './api'
+import FrostDashboard from './components/frost/FrostDashboard.vue'
 
 // Tab 状态
-const activeTab = ref<'overview' | 'search'>('overview')
+const activeTab = ref<'overview' | 'search' | 'frost'>('overview')
 
 // 状态
 const nodes = ref<string[]>([])
@@ -209,6 +210,10 @@ onMounted(() => {
       :class="['tab-btn', { active: activeTab === 'search' }]"
       @click="activeTab = 'search'"
     >Search</button>
+    <button
+      :class="['tab-btn', { active: activeTab === 'frost' }]"
+      @click="activeTab = 'frost'"
+    >Protocol</button>
   </nav>
 
   <main v-if="activeTab === 'overview'" class="layout">
@@ -257,6 +262,13 @@ onMounted(() => {
     />
   </main>
 
+  <main v-else-if="activeTab === 'frost'" class="layout frost-layout">
+    <FrostDashboard
+      :nodes="nodes"
+      :default-node="firstSelectedNode"
+    />
+  </main>
+
   <footer class="footer">
     <span>{{ statusText }}</span>
     <span class="muted">{{ elapsedMs ? `Elapsed ${elapsedMs} ms` : '' }}</span>
@@ -268,4 +280,3 @@ onMounted(() => {
     @close="handleCloseModal"
   />
 </template>
-

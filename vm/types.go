@@ -41,10 +41,15 @@ func (w *WriteOp) IsDel() bool {
 
 // 记录执行结果
 type Receipt struct {
-	TxID       string
-	Status     string // "SUCCEED" or "FAILED"
-	Error      string
-	WriteCount int
+	TxID        string
+	Status      string // "SUCCEED" or "FAILED"
+	Error       string
+	BlockHeight uint64
+	Timestamp   int64
+	GasUsed     uint64
+	Fee         string
+	Logs        []string
+	WriteCount  int
 }
 
 // SpecResult 执行结果

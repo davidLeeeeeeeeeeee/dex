@@ -30,6 +30,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	mrand "math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -545,11 +546,7 @@ ContinueWithConsensus:
 	}
 	// Create initial transactions
 	fmt.Println("📝 Creating initial transactions...")
-	for _, node := range nodes {
-		if node != nil && node.ConsensusManager != nil {
-			generateTransactions(node)
-		}
-	}
+	generateTransactions(nodes)
 	time.Sleep(2 * time.Second)
 
 	// 第四阶段：启动共识
@@ -813,41 +810,9 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 }
 
 // Option 2: Generate transactions continuously
-func generateTransactions(node *NodeInstance) {
-	go func() {
-		logs.SetThreadNodeContext(node.Address)
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-
-		txCounter := uint64(0)
-		for range ticker.C {
-			// Generate multiple transactions
-			for i := 0; i < 2; i++ {
-				txCounter++
-				// 生成正确格式的十六进制 TxId (0x + 64位十六进制)
-				txID := fmt.Sprintf("0x%016x%016x", time.Now().UnixNano(), txCounter)
-
-				tx := &pb.Transaction{
-					Base: &pb.BaseMessage{
-						TxId:        txID,
-						FromAddress: node.Address,
-						Status:      pb.Status_PENDING,
-						Nonce:       txCounter,
-					},
-					To:           node.Address,
-					TokenAddress: "FB",
-					Amount:       "100",
-				}
-				anyTx := &pb.AnyTx{
-					Content: &pb.AnyTx_Transaction{Transaction: tx},
-				}
-				// Add to transaction pool
-				if err := node.TxPool.StoreAnyTx(anyTx); err == nil {
-					logs.Trace("Added transaction %s to pool", tx.Base.TxId)
-				}
-			}
-		}
-	}()
+func generateTransactions(nodes []*NodeInstance) {
+	simulator := NewTxSimulator(nodes)
+	simulator.Start()
 }
 
 // 注册所有节点信息到每个节点的数据库
@@ -1145,4 +1110,542 @@ func shutdownAllNodes(nodes []*NodeInstance) {
 	}
 
 	wg.Wait()
+}
+
+// --- Merged from tx_generators.go ---
+
+// generateTxID 生成正确格式的十六进制 TxId (0x + 64位十六进制)
+func generateTxID(counter uint64) string {
+	return fmt.Sprintf("0x%016x%016x", time.Now().UnixNano(), counter)
+}
+
+// generateTransferTx 生成转账交易
+func generateTransferTx(from, to, token, amount, fee string, nonce uint64) *pb.AnyTx {
+	tx := &pb.Transaction{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: from,
+			Fee:         fee,
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		To:           to,
+		TokenAddress: token,
+		Amount:       amount,
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_Transaction{Transaction: tx},
+	}
+}
+
+// generateIssueTokenTx 生成发币交易
+func generateIssueTokenTx(from, name, symbol, supply string, canMint bool, nonce uint64) *pb.AnyTx {
+	tx := &pb.IssueTokenTx{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: from,
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		TokenName:   name,
+		TokenSymbol: symbol,
+		TotalSupply: supply,
+		CanMint:     canMint,
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_IssueTokenTx{IssueTokenTx: tx},
+	}
+}
+
+// generateMinerTx 生成矿工注册交易
+func generateMinerTx(from string, op pb.OrderOp, amount string, nonce uint64) *pb.AnyTx {
+	tx := &pb.MinerTx{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: from,
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		Op:     op,
+		Amount: amount,
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_MinerTx{MinerTx: tx},
+	}
+}
+
+// generateWitnessStakeTx 生成见证者质押交易
+func generateWitnessStakeTx(from string, op pb.OrderOp, amount string, nonce uint64) *pb.AnyTx {
+	tx := &pb.WitnessStakeTx{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: from,
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		Op:     op,
+		Amount: amount,
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_WitnessStakeTx{WitnessStakeTx: tx},
+	}
+}
+
+// generateWitnessRequestTx 生成上账请求交易
+func generateWitnessRequestTx(from, chain, nativeHash, token, amount, receiver, fee string, nonce uint64) *pb.AnyTx {
+	tx := &pb.WitnessRequestTx{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: from,
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		NativeChain:     chain,
+		NativeTxHash:    nativeHash,
+		TokenAddress:    token,
+		Amount:          amount,
+		ReceiverAddress: receiver,
+		RechargeFee:     fee,
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_WitnessRequestTx{WitnessRequestTx: tx},
+	}
+}
+
+// generateWitnessVoteTx 生成见证投票交易
+func generateWitnessVoteTx(witness, requestID string, voteType pb.WitnessVoteType, nonce uint64) *pb.AnyTx {
+	tx := &pb.WitnessVoteTx{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: witness,
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		Vote: &pb.WitnessVote{
+			RequestId:      requestID,
+			WitnessAddress: witness,
+			VoteType:       voteType,
+			Timestamp:      uint64(time.Now().Unix()),
+		},
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_WitnessVoteTx{WitnessVoteTx: tx},
+	}
+}
+
+// generateWithdrawRequestTx 生成提现请求交易
+func generateWithdrawRequestTx(from, chain, asset, to, amount string, nonce uint64) *pb.AnyTx {
+	tx := &pb.FrostWithdrawRequestTx{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: from,
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		Chain:  chain,
+		Asset:  asset,
+		To:     to,
+		Amount: amount,
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_FrostWithdrawRequestTx{FrostWithdrawRequestTx: tx},
+	}
+}
+
+// generateDkgCommitTx 生成 DKG 承诺交易
+func generateDkgCommitTx(from, chain string, vaultID uint32, epochID uint64, algo pb.SignAlgo, nonce uint64) *pb.AnyTx {
+	tx := &pb.FrostVaultDkgCommitTx{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: from,
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		Chain:            chain,
+		VaultId:          vaultID,
+		EpochId:          epochID,
+		SignAlgo:         algo,
+		CommitmentPoints: [][]byte{[]byte("point1"), []byte("point2")}, // 模拟数据
+		AI0:              []byte("ai0"),
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_FrostVaultDkgCommitTx{FrostVaultDkgCommitTx: tx},
+	}
+}
+
+// generateDkgShareTx 生成 DKG Share 交易
+func generateDkgShareTx(from, to, chain string, vaultID uint32, epochID uint64, nonce uint64) *pb.AnyTx {
+	tx := &pb.FrostVaultDkgShareTx{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: from,
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		Chain:      chain,
+		VaultId:    vaultID,
+		EpochId:    epochID,
+		DealerId:   from,
+		ReceiverId: to,
+		Ciphertext: []byte("encrypted_share"),
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_FrostVaultDkgShareTx{FrostVaultDkgShareTx: tx},
+	}
+}
+
+// --- Merged from tx_simulator.go ---
+
+// TxSimulator 交易模拟器
+type TxSimulator struct {
+	nodes []*NodeInstance
+}
+
+func NewTxSimulator(nodes []*NodeInstance) *TxSimulator {
+	return &TxSimulator{nodes: nodes}
+}
+
+func (s *TxSimulator) Start() {
+	go s.runRandomTransfers()
+	go s.runWitnessScenario()
+	go s.runWithdrawScenario()
+	go s.runDkgScenario()
+	go s.runProtocolStateInjector() // 直接注入 Protocol 状态数据
+}
+
+func (s *TxSimulator) runDkgScenario() {
+	// 约每 60 秒触发一次 DKG 模拟
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	nonceMap := make(map[string]uint64)
+
+	for range ticker.C {
+		logs.Info("Simulator: Starting DKG Scenario...")
+
+		chain := "BTC"
+		vaultID := uint32(1)
+		epochID := uint64(time.Now().Unix())
+		algo := pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340
+
+		// 1. Committing Phase
+		for _, node := range s.nodes {
+			nonceMap[node.Address]++
+			tx := generateDkgCommitTx(node.Address, chain, vaultID, epochID, algo, nonceMap[node.Address])
+			_ = node.TxPool.StoreAnyTx(tx)
+		}
+
+		time.Sleep(10 * time.Second)
+
+		// 2. Sharing Phase (模拟部分 Share)
+		for i := 0; i < 3 && i < len(s.nodes); i++ {
+			fromNode := s.nodes[i]
+			for j := 0; j < 3 && j < len(s.nodes); j++ {
+				if i == j {
+					continue
+				}
+				toNode := s.nodes[j]
+				nonceMap[fromNode.Address]++
+				tx := generateDkgShareTx(fromNode.Address, toNode.Address, chain, vaultID, epochID, nonceMap[fromNode.Address])
+				_ = fromNode.TxPool.StoreAnyTx(tx)
+			}
+		}
+
+		logs.Info("Simulator: DKG Scenario transactions sent for Epoch %d", epochID)
+	}
+}
+
+func (s *TxSimulator) runRandomTransfers() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	nonceMap := make(map[string]uint64)
+
+	for range ticker.C {
+		// 随机选择一个发送方和接收方
+		fromIdx := mrand.Intn(len(s.nodes))
+		toIdx := mrand.Intn(len(s.nodes))
+		fromNode := s.nodes[fromIdx]
+		toNode := s.nodes[toIdx]
+
+		if fromNode == nil || toNode == nil {
+			continue
+		}
+
+		nonceMap[fromNode.Address]++
+		nonce := nonceMap[fromNode.Address]
+
+		tx := generateTransferTx(fromNode.Address, toNode.Address, "FB", "10", "1", nonce)
+
+		if err := fromNode.TxPool.StoreAnyTx(tx); err == nil {
+			logs.Trace("Simulator: Added random transfer %s from %s to %s", tx.GetBase().TxId, fromNode.Address, toNode.Address)
+		}
+	}
+}
+
+func (s *TxSimulator) runWitnessScenario() {
+	// 周期性模拟完整的见证流程
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	nonceMap := make(map[string]uint64)
+
+	for range ticker.C {
+		logs.Info("Simulator: Starting Witness Scenario...")
+
+		// 1. 用户发起上账请求
+		userNode := s.nodes[0]
+		nonceMap[userNode.Address]++
+
+		reqTx := generateWitnessRequestTx(
+			userNode.Address,
+			"BTC",
+			"tx_hash_"+time.Now().Format("150405"),
+			"FB",
+			"500",
+			userNode.Address,
+			"5",
+			nonceMap[userNode.Address],
+		)
+
+		reqID := reqTx.GetBase().TxId
+		if err := userNode.TxPool.StoreAnyTx(reqTx); err != nil {
+			continue
+		}
+
+		// 等待几秒让共识完成请求入链
+		time.Sleep(10 * time.Second)
+
+		// 2. 模拟见证者投票
+		for i := 1; i < 5 && i < len(s.nodes); i++ {
+			witnessNode := s.nodes[i]
+			nonceMap[witnessNode.Address]++
+
+			voteTx := generateWitnessVoteTx(
+				witnessNode.Address,
+				reqID,
+				0, // VOTE_PASS
+				nonceMap[witnessNode.Address],
+			)
+			_ = witnessNode.TxPool.StoreAnyTx(voteTx)
+		}
+
+		logs.Info("Simulator: Witness Scenario transactions sent for Request %s", reqID)
+	}
+}
+
+func (s *TxSimulator) runWithdrawScenario() {
+	ticker := time.NewTicker(45 * time.Second)
+	defer ticker.Stop()
+
+	nonceMap := make(map[string]uint64)
+
+	for range ticker.C {
+		logs.Info("Simulator: Starting Withdraw Scenario...")
+
+		userNode := s.nodes[mrand.Intn(len(s.nodes))]
+		if userNode == nil {
+			continue
+		}
+
+		nonceMap[userNode.Address]++
+
+		withdrawTx := generateWithdrawRequestTx(
+			userNode.Address,
+			"BTC",
+			"BTC",
+			"bc1qtestaddress",
+			"50",
+			nonceMap[userNode.Address],
+		)
+
+		if err := userNode.TxPool.StoreAnyTx(withdrawTx); err == nil {
+			logs.Info("Simulator: Withdraw Request %s sent", withdrawTx.GetBase().TxId)
+		}
+	}
+}
+
+// runProtocolStateInjector 直接注入 Protocol 状态数据到数据库
+// 这确保 Explorer 的 Protocol 页面有数据可显示
+func (s *TxSimulator) runProtocolStateInjector() {
+	// 首次启动时等待节点初始化完成
+	time.Sleep(5 * time.Second)
+
+	// 初始注入一批数据
+	s.injectProtocolStates()
+
+	// 然后周期性更新
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.injectProtocolStates()
+	}
+}
+
+// injectProtocolStates 注入各种 Protocol 状态
+func (s *TxSimulator) injectProtocolStates() {
+	if len(s.nodes) == 0 || s.nodes[0] == nil || s.nodes[0].DBManager == nil {
+		return
+	}
+
+	node := s.nodes[0]
+	now := time.Now().Unix()
+
+	logs.Info("Simulator: Injecting Protocol states...")
+
+	// 1. 注入 Withdraw 状态
+	s.injectWithdrawStates(node, now)
+
+	// 2. 注入 Recharge Request 状态
+	s.injectRechargeRequests(node, now)
+
+	// 3. 注入 DKG/Vault Transition 状态
+	s.injectDkgTransitions(node, now)
+
+	node.DBManager.ForceFlush()
+	logs.Info("Simulator: Protocol states injected successfully")
+}
+
+func (s *TxSimulator) injectWithdrawStates(node *NodeInstance, timestamp int64) {
+	chains := []string{"BTC", "ETH", "TRON"}
+	assets := []string{"BTC", "USDT", "ETH"}
+	statuses := []string{"QUEUED", "SIGNED", "QUEUED", "QUEUED"}
+
+	for i := 0; i < 8; i++ {
+		withdrawID := fmt.Sprintf("wd_%d_%d", timestamp, i)
+		chain := chains[i%len(chains)]
+		asset := assets[i%len(assets)]
+		status := statuses[i%len(statuses)]
+
+		state := &pb.FrostWithdrawState{
+			WithdrawId:    withdrawID,
+			TxId:          fmt.Sprintf("0x%016x%04d", timestamp, i),
+			Seq:           uint64(i + 1),
+			Chain:         chain,
+			Asset:         asset,
+			To:            fmt.Sprintf("0x%040d", i+1),
+			Amount:        fmt.Sprintf("%d00000000", (i+1)*10), // 10, 20, 30...
+			RequestHeight: uint64(1000 + i*10),
+			Status:        status,
+			VaultId:       uint32(i % 3),
+		}
+
+		if status == "SIGNED" {
+			state.JobId = fmt.Sprintf("job_%d_%d", timestamp, i)
+		}
+
+		data, _ := proto.Marshal(state)
+		key := keys.KeyFrostWithdraw(withdrawID)
+		node.DBManager.EnqueueSet(key, string(data))
+	}
+}
+
+func (s *TxSimulator) injectRechargeRequests(node *NodeInstance, timestamp int64) {
+	chains := []string{"BTC", "ETH", "TRON", "SOL"}
+	statuses := []pb.RechargeRequestStatus{
+		pb.RechargeRequestStatus_RECHARGE_PENDING,
+		pb.RechargeRequestStatus_RECHARGE_VOTING,
+		pb.RechargeRequestStatus_RECHARGE_VOTING,
+		pb.RechargeRequestStatus_RECHARGE_CHALLENGE_PERIOD,
+		pb.RechargeRequestStatus_RECHARGE_FINALIZED,
+	}
+
+	for i := 0; i < 6; i++ {
+		requestID := fmt.Sprintf("req_%d_%d", timestamp, i)
+		chain := chains[i%len(chains)]
+		status := statuses[i%len(statuses)]
+
+		// 生成模拟见证者
+		witnesses := make([]string, 3)
+		for j := 0; j < 3; j++ {
+			if j < len(s.nodes) && s.nodes[j] != nil {
+				witnesses[j] = s.nodes[j].Address
+			} else {
+				witnesses[j] = fmt.Sprintf("0x%040d", j+100)
+			}
+		}
+
+		// 生成模拟投票
+		var votes []*pb.WitnessVote
+		if status >= pb.RechargeRequestStatus_RECHARGE_VOTING {
+			for j := 0; j < 2 && j < len(witnesses); j++ {
+				votes = append(votes, &pb.WitnessVote{
+					RequestId:      requestID,
+					WitnessAddress: witnesses[j],
+					VoteType:       pb.WitnessVoteType_VOTE_PASS,
+					Timestamp:      uint64(timestamp) + uint64(j),
+				})
+			}
+		}
+
+		req := &pb.RechargeRequest{
+			RequestId:         requestID,
+			NativeChain:       chain,
+			NativeTxHash:      fmt.Sprintf("0x%064d", timestamp+int64(i)),
+			TokenAddress:      "FB",
+			Amount:            fmt.Sprintf("%d00000000", (i+1)*50),
+			ReceiverAddress:   witnesses[0],
+			RequesterAddress:  witnesses[0],
+			Status:            status,
+			CreateHeight:      uint64(1000 + i*10),
+			DeadlineHeight:    uint64(1100 + i*10),
+			Round:             1,
+			SelectedWitnesses: witnesses,
+			Votes:             votes,
+			PassCount:         uint32(len(votes)),
+			VaultId:           uint32(i % 3),
+		}
+
+		data, _ := proto.Marshal(req)
+		key := keys.KeyRechargeRequest(requestID)
+		node.DBManager.EnqueueSet(key, string(data))
+	}
+}
+
+func (s *TxSimulator) injectDkgTransitions(node *NodeInstance, timestamp int64) {
+	chains := []string{"BTC", "ETH", "TRON"}
+	dkgStatuses := []string{"COMMITTING", "SHARING", "KEY_READY", "COMMITTING"}
+
+	for i := 0; i < 4; i++ {
+		chain := chains[i%len(chains)]
+		vaultID := uint32(i)
+		epochID := uint64(timestamp/1000 + int64(i))
+		dkgStatus := dkgStatuses[i%len(dkgStatuses)]
+
+		// 使用真实节点地址作为委员会成员
+		members := make([]string, 0)
+		for j := 0; j < 5 && j < len(s.nodes); j++ {
+			if s.nodes[j] != nil {
+				members = append(members, s.nodes[j].Address)
+			}
+		}
+
+		state := &pb.VaultTransitionState{
+			Chain:               chain,
+			VaultId:             vaultID,
+			EpochId:             epochID,
+			SignAlgo:            pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
+			TriggerHeight:       uint64(900 + i*100),
+			OldCommitteeMembers: members,
+			NewCommitteeMembers: members,
+			DkgStatus:           dkgStatus,
+			DkgSessionId:        fmt.Sprintf("dkg_%s_%d_%d", chain, vaultID, epochID),
+			DkgThresholdT:       3,
+			DkgN:                uint32(len(members)),
+			DkgCommitDeadline:   uint64(950 + i*100),
+			DkgDisputeDeadline:  uint64(980 + i*100),
+			ValidationStatus:    "NOT_STARTED",
+			Lifecycle:           "ACTIVE",
+		}
+
+		if dkgStatus == "KEY_READY" {
+			state.NewGroupPubkey = []byte(fmt.Sprintf("pubkey_%d_%d", timestamp, i))
+			state.ValidationStatus = "PASSED"
+		}
+
+		data, _ := proto.Marshal(state)
+		key := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
+		node.DBManager.EnqueueSet(key, string(data))
+	}
 }

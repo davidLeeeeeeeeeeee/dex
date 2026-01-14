@@ -104,8 +104,15 @@ message Block {
   bytes vrf_output = 13; // VRF输出
   bytes bls_public_key = 14; // 提案者的BLS公钥（用于VRF验证）
 }
-message RewordInfo {
-
+// 区块奖励发放记录
+message BlockReward {
+  uint64 height = 1;
+  string miner = 2;
+  string miner_reward = 3;
+  string witness_reward = 4;
+  string total_fees = 5;
+  string block_reward = 6; // 系统增发部分
+  int64 timestamp = 7;
 }
 message OrderPriceIndex {// 快速检索到价格区间的订单，与orderTx一并存入
   bool ok = 1; //占位符,不需要，主要是需要这个字段的key(pair:...|price:...|is_filled：...|order_id:...)来快速查询到价格区间内，还未完全成交（is_filled:false）的tx
@@ -446,23 +453,48 @@ enum ChallengeStatus {
 }
 
 // 挑战记录
+// 注意：字段编号不可更改，否则会导致数据不兼容
 message ChallengeRecord {
-  string challenge_id = 1; // 挑战ID
-  string request_id = 2; // 被挑战的请求ID
-  string challenger_address = 3; // 挑战者地址
-  string stake_amount = 4; // 挑战质押金额
-  string reason = 5; // 挑战理由
-  uint64 create_height = 6; // 创建高度
-  uint64 deadline_height = 7; // 仲裁截止高度
-  uint32 arbitration_round = 8; // 仲裁轮次
-  repeated string arbitrators = 9; // 仲裁者列表
+  string challenge_id = 1;          // 挑战ID
+  string request_id = 2;            // 被挑战的请求ID
+  string challenger_address = 3;    // 挑战者地址
+  string stake_amount = 4;          // 挑战质押金额
+  string reason = 5;                // 挑战理由
+  uint64 create_height = 6;         // 创建高度
+  uint64 deadline_height = 7;       // 仲裁截止高度
+  uint32 arbitration_round = 8;     // 仲裁轮次
+  repeated string arbitrators = 9;  // 仲裁者列表
   repeated WitnessVote arbitration_votes = 10; // 仲裁投票
-  uint32 pass_count = 11; // 支持原判定的票数
-  uint32 fail_count = 12; // 反对原判定的票数
-  bool challenge_success = 13; // 挑战是否成功
-  bool finalized = 14; // 是否已完成
-  uint32 consensus_threshold = 15; // 当前共识阈值（80->70->60->50）
-  ChallengeStatus status = 16; // 挑战状态
+  uint32 pass_count = 11;           // 支持原判定的票数
+  uint32 fail_count = 12;           // 反对原判定的票数
+  bool challenge_success = 13;      // 挑战是否成功
+  bool finalized = 14;              // 是否已完成
+  uint32 consensus_threshold = 15;  // 当前共识阈值（80->70->60->50）
+  ChallengeStatus status = 16;      // 挑战状态
+  // 新增字段使用 17+
+  string evidence = 17;             // 证据（新增）
+}
+
+// 入账请求列表（用于 API）
+message RechargeRequestListRequest {
+  int32 limit = 1;
+}
+
+message RechargeRequestList {
+  repeated RechargeRequest requests = 1;
+}
+
+message FrostWithdrawListRequest {
+  string chain = 1;
+  string asset = 2;
+}
+
+message FrostWithdrawStateList {
+  repeated FrostWithdrawState states = 1;
+}
+
+message VaultTransitionStateList {
+  repeated VaultTransitionState states = 1;
 }
 
 // 仲裁投票交易

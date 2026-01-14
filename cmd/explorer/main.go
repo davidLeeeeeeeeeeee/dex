@@ -184,6 +184,9 @@ func main() {
 	mux.HandleFunc("/api/node/details", srv.handleNodeDetails)
 	mux.HandleFunc("/api/block", srv.handleBlock)
 	mux.HandleFunc("/api/tx", srv.handleTx)
+	mux.HandleFunc("/api/frost/withdraw/queue", srv.handleFrostWithdrawQueue)
+	mux.HandleFunc("/api/witness/requests", srv.handleWitnessRequests)
+	mux.HandleFunc("/api/frost/dkg/list", srv.handleFrostDKGSessions)
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	log.Printf("Explorer listening at http://%s (ui: %s)", *listenAddr, webDir)

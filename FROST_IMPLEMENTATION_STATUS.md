@@ -22,10 +22,16 @@
 - ✅ FrostVaultDkgValidationSignedTxHandler
 - ✅ FrostVaultTransitionSignedTxHandler
 
-### 3. HTTP API 部分实现
+### 3. HTTP API 与 UI 可视化
 - ✅ GetFrostConfig
 - ✅ GetWithdrawStatus
 - ✅ ListWithdraws
+- ✅ **Explorer 增强**: 
+  - ✅ 新增 `/api/frost/withdraw/queue`
+  - ✅ 新增 `/api/witness/requests`
+  - ✅ 新增 `/api/frost/dkg/list`
+  - ✅ 前端 `FrostDashboard` (提现队列、上账流、DKG 时间轴)
+  - ✅ 交易详情增强渲染 (`TxTypeRenderer`)
 
 ---
 

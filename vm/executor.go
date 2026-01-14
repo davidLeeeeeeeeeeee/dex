@@ -7,8 +7,10 @@ import (
 	"dex/utils"
 	"dex/witness"
 	"fmt"
+	"math/big"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
@@ -188,11 +190,95 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 				}
 			}
 		}
+		// 填充 Receipt 元数据
+		if rc != nil {
+			rc.BlockHeight = b.Height
+			rc.Timestamp = time.Now().Unix() // 实际应取区块时间，这里简化
+		}
 		receipts = append(receipts, rc)
 	}
 
 	if err := x.applyWitnessFinalizedEvents(sv, b.Height); err != nil {
 		return nil, err
+	}
+
+	// ========== 区块奖励与手续费分发 ==========
+	if b.Miner != "" {
+		// 1. 计算区块基础奖励（系统增发）
+		blockReward := CalculateBlockReward(b.Height, DefaultBlockRewardParams)
+
+		// 2. 汇总交易手续费
+		totalFees := big.NewInt(0)
+		for _, rc := range receipts {
+			if rc.Fee != "" {
+				fee, err := ParseBalance(rc.Fee)
+				if err == nil {
+					totalFees, _ = SafeAdd(totalFees, fee)
+				}
+			}
+		}
+
+		// 3. 计算总奖励
+		totalReward, _ := SafeAdd(blockReward, totalFees)
+
+		if totalReward.Sign() > 0 {
+			// 4. 按比例分配
+			ratio := DefaultBlockRewardParams.WitnessRewardRatio
+			totalRewardDec := decimal.NewFromBigInt(totalReward, 0)
+
+			witnessRewardDec := totalRewardDec.Mul(ratio)
+			minerRewardDec := totalRewardDec.Sub(witnessRewardDec)
+
+			witnessReward := witnessRewardDec.BigInt()
+			minerReward := minerRewardDec.BigInt()
+
+			// 5. 分配给矿工 (70%)
+			minerAccountKey := keys.KeyAccount(b.Miner)
+			minerAccountData, exists, err := sv.Get(minerAccountKey)
+			if err == nil && exists {
+				var minerAccount pb.Account
+				if err := proto.Unmarshal(minerAccountData, &minerAccount); err == nil {
+					if minerAccount.Balances == nil {
+						minerAccount.Balances = make(map[string]*pb.TokenBalance)
+					}
+					const RewardToken = "FB"
+					if minerAccount.Balances[RewardToken] == nil {
+						minerAccount.Balances[RewardToken] = &pb.TokenBalance{Balance: "0"}
+					}
+					currentBal, _ := ParseBalance(minerAccount.Balances[RewardToken].Balance)
+					newBal, _ := SafeAdd(currentBal, minerReward)
+					minerAccount.Balances[RewardToken].Balance = newBal.String()
+
+					rewardedData, _ := proto.Marshal(&minerAccount)
+					sv.Set(minerAccountKey, rewardedData)
+				}
+			}
+
+			// 6. 分配给见证者奖励池 (30%)
+			if witnessReward.Sign() > 0 {
+				rewardPoolKey := keys.KeyWitnessRewardPool()
+				currentPoolData, exists, _ := sv.Get(rewardPoolKey)
+				currentPool := big.NewInt(0)
+				if exists {
+					currentPool, _ = ParseBalance(string(currentPoolData))
+				}
+				newPool, _ := SafeAdd(currentPool, witnessReward)
+				sv.Set(rewardPoolKey, []byte(newPool.String()))
+			}
+
+			// 7. 保存奖励记录
+			rewardRecord := &pb.BlockReward{
+				Height:        b.Height,
+				Miner:         b.Miner,
+				MinerReward:   minerReward.String(),
+				WitnessReward: witnessReward.String(),
+				TotalFees:     totalFees.String(),
+				BlockReward:   blockReward.String(),
+				Timestamp:     time.Now().Unix(),
+			}
+			rewardData, _ := proto.Marshal(rewardRecord)
+			sv.Set(keys.KeyBlockReward(b.Height), rewardData)
+		}
 	}
 
 	// 创建执行结果

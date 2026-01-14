@@ -56,11 +56,21 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 
 	// 解析账户数据
 	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil{
+	if err := proto.Unmarshal(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   issueTx.Base.TxId,
 			Status: "FAILED",
 			Error:  "failed to parse account data",
+		}, err
+	}
+
+	// Validate TotalSupply
+	totalSupply, err := ParseBalance(issueTx.TotalSupply)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   issueTx.Base.TxId,
+			Status: "FAILED",
+			Error:  fmt.Sprintf("invalid total supply: %v", err),
 		}, err
 	}
 
@@ -84,7 +94,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 		Symbol:      issueTx.TokenSymbol,
 		Name:        issueTx.TokenName,
 		Owner:       issueTx.Base.FromAddress,
-		TotalSupply: issueTx.TotalSupply,
+		TotalSupply: totalSupply.String(),
 		CanMint:     issueTx.CanMint,
 	}
 
@@ -116,15 +126,15 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 
 	if account.Balances[tokenAddress] == nil {
 		account.Balances[tokenAddress] = &pb.TokenBalance{
-			Balance:              issueTx.TotalSupply,
-			MinerLockedBalance:   "0",
-			LiquidLockedBalance:  "0",
-			WitnessLockedBalance: "0",
+			Balance:               totalSupply.String(),
+			MinerLockedBalance:    "0",
+			LiquidLockedBalance:   "0",
+			WitnessLockedBalance:  "0",
 			LeverageLockedBalance: "0",
 		}
 	} else {
 		// 如果已存在余额（理论上不应该发生），累加
-		account.Balances[tokenAddress].Balance = issueTx.TotalSupply
+		account.Balances[tokenAddress].Balance = totalSupply.String()
 	}
 
 	// 保存更新后的账户
@@ -191,4 +201,3 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 func (h *IssueTokenTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
-

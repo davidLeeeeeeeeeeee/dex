@@ -402,4 +402,3 @@ func (cm *ChallengeManager) emitEvent(event *Event) {
 	default:
 	}
 }
-

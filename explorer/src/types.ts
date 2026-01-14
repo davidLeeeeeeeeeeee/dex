@@ -153,3 +153,51 @@ export interface TxResponse {
   error?: string
 }
 
+// FROST 提现队列项
+export interface FrostWithdrawQueueItem {
+  withdraw_id: string
+  chain: string
+  asset: string
+  to: string
+  amount: string
+  status: string
+  vault_id?: number
+  request_height?: number
+  job_id?: string
+}
+
+// 见证人上账请求
+export interface WitnessRequest {
+  request_id: string
+  native_chain: string
+  native_tx_hash: string
+  token_address: string
+  amount: string
+  receiver_address: string
+  requester_address?: string
+  status: string
+  create_height?: number
+  pass_count?: number
+  fail_count?: number
+  abstain_count?: number
+  vault_id?: number
+}
+
+// DKG 会话
+export interface DKGSession {
+  chain: string
+  vault_id: number
+  epoch_id: number
+  sign_algo: string
+  trigger_height: number
+  old_committee_members: string[]
+  new_committee_members: string[]
+  dkg_status: string
+  dkg_session_id: string
+  dkg_threshold_t: number
+  dkg_n: number
+  dkg_commit_deadline: number
+  dkg_dispute_deadline: number
+  validation_status: string
+  lifecycle: string
+}

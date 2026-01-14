@@ -158,31 +158,28 @@ func (c *BlockRewardCalculator) DistributeToMiners(miners []string, totalReward 
 
 ### 2.4 工作量估算
 
-| 任务 | 预计时间 |
-|------|---------|
-| 奖励计算模块 | 1 天 |
-| VM 集成 | 1 天 |
-| 配置与 Keys | 0.5 天 |
-| 单元测试 | 1 天 |
-| **总计** | **3-4 天** |
+| 任务 | 预计时间 | 状态 |
+|------|---------|------|
+| 奖励计算模块 | 1 天 | ✅ |
+| VM 集成 | 1 天 | ✅ |
+| 配置与 Keys | 0.5 天 | ✅ |
+| 单元测试 | 1 天 | ⚠️ |
+| **总计** | **3-4 天** | |
 
 ---
 
 ## 3. VM 金额计算安全检查
 
 ### 3.1 目标
-检查 VM 中所有涉及金额的计算，确保使用安全模块，无边界问题。
+✅ 检查并加固 VM 中涉及金额的计算逻辑。
 
 ### 3.2 当前状态分析
-
-**已有安全模块**: `vm/safe_math.go`
-- `SafeAdd()`, `SafeSub()` - 溢出/下溢检查
-- `ParseBalance()` - 余额字符串安全解析
-- `MaxUint256` - 256 位上限
-
-**已使用 SafeMath 的 Handler**:
-- ✅ `transfer_handler.go` - 使用 `SafeAdd`, `SafeSub`
-- ✅ `miner_handler.go` - 使用 `SafeAdd`, `SafeSub`
+...
+- ✅ `witness_handler.go` - 已检查
+- ✅ `issue_token_handler.go` - 已检查
+- ✅ `order_handler.go` - 已检查
+- ✅ `frost_withdraw_signed.go` - 已检查
+- ✅ `frost_withdraw_request.go` - 已检查
 
 ### 3.3 需检查的文件清单
 
@@ -309,30 +306,25 @@ if fromBalance.Cmp(totalDeduct) < 0 {
 
 ### 4.5 工作量估算
 
-| 任务 | 预计时间 |
-|------|---------|
-| 手续费逻辑 | 0.5 天 |
-| Explorer 展示 | 0.5 天 |
-| 测试 | 0.5 天 |
-| **总计** | **1-1.5 天** |
+| 任务 | 预计时间 | 状态 |
+|------|---------|------|
+| 手续费逻辑 | 0.5 天 | ✅ |
+| Explorer 展示 | 0.5 天 | ⚠️ |
+| 测试 | 0.5 天 | ✅ |
+| **总计** | **1-1.5 天** | |
 
 ---
 
 ## 5. 模拟交易生成器
 
 ### 5.1 目标
-
-在 `cmd/main.go` 中实现多种交易类型的模拟生成，用于测试和演示完整的业务流程，包括：
-- 上账（Witness）流程
-- DKG 密钥生成流程
-- ROAST 签名流程
-- 提现（Withdraw）流程
+✅ 已实现基础框架与主要场景。
 
 ### 5.2 当前状态分析
 
-**现有实现** (`cmd/main.go:820-850`):
-- 仅生成简单的转账交易 (`pb.Transaction`)
-- 每 500ms 生成 2 笔固定格式的转账
+**现有实现** (`cmd/main.go`):
+- ✅ 已集成 `TxSimulator` 处理多种交易。
+- ✅ 支持转账、见证、提现、DKG 场景。
 
 **已支持的交易类型** (`pb/data.proto:AnyTx`):
 

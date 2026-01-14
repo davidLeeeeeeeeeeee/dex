@@ -8,3 +8,4 @@ explorer/package-lock.json
 *.key
 *.crt
 *debug_bin*
+explorer/dist/

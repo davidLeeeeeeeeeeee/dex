@@ -83,6 +83,23 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		}, fmt.Errorf("invalid order price: %s", ord.Price)
 	}
 
+	// 检查是否超过 MaxUint256
+	maxUint256Dec := decimal.NewFromBigInt(MaxUint256, 0)
+	if amountDec.GreaterThan(maxUint256Dec) {
+		return nil, &Receipt{
+			TxID:   ord.Base.TxId,
+			Status: "FAILED",
+			Error:  "amount overflow",
+		}, fmt.Errorf("amount overflow")
+	}
+	if priceDec.GreaterThan(maxUint256Dec) {
+		return nil, &Receipt{
+			TxID:   ord.Base.TxId,
+			Status: "FAILED",
+			Error:  "price overflow",
+		}, fmt.Errorf("price overflow")
+	}
+
 	// 2. 读取账户
 	accountKey := keys.KeyAccount(ord.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
@@ -429,6 +446,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 // - Alice 卖单：base_token=BTC, quote_token=USDT, amount=1, price=50000
 //   - 成交 0.5 BTC
 //   - Alice: BTC -= 0.5, USDT += 0.5 * 50000 = 25000
+//
 // - Bob 买单：base_token=USDT, quote_token=BTC, amount=25000, price=50000
 //   - 成交 25000 USDT
 //   - Bob: USDT -= 25000, BTC += 25000 / 50000 = 0.5
@@ -521,6 +539,15 @@ func (h *OrderTxHandler) updateAccountBalances(
 		}
 
 		newQuoteBalance = quoteBalance.Add(quoteIncrease)
+
+		// 检查是否超过 MaxUint256（两个余额都检查，确保完整性）
+		maxUint256Dec := decimal.NewFromBigInt(MaxUint256, 0)
+		if newBaseBalance.GreaterThan(maxUint256Dec) {
+			return nil, fmt.Errorf("balance overflow for %s", orderTx.BaseToken)
+		}
+		if newQuoteBalance.GreaterThan(maxUint256Dec) {
+			return nil, fmt.Errorf("balance overflow for %s", orderTx.QuoteToken)
+		}
 
 		// 更新余额
 		account.Balances[orderTx.BaseToken].Balance = newBaseBalance.String()

@@ -56,6 +56,12 @@ func KeyLatestHeight() string {
 	return withVer("latest_block_height")
 }
 
+// KeyBlockReward 区块奖励发放记录
+// 例：v1_block_reward_<height>
+func KeyBlockReward(height uint64) string {
+	return withVer(fmt.Sprintf("block_reward_%020d", height))
+}
+
 // ===================== 交易相关 =====================
 
 // KeyAnyTx 交易通用映射（映射到 tx_<txID> 或 order_<txID> 等）

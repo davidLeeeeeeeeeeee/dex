@@ -66,6 +66,13 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "missing required fields"}, errors.New("missing required fields")
 	}
 
+	// 校验金额
+	amountBI, err := ParseBalance(amount)
+	if err != nil {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid amount format"}, err
+	}
+	amount = amountBI.String()
+
 	// 幂等检查：使用 tx_id 作为唯一标识
 	txRefKey := keys.KeyFrostWithdrawTxRef(txID)
 	existingWithdrawID, exists, _ := sv.Get(txRefKey)

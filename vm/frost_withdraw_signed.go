@@ -9,6 +9,7 @@ import (
 	"dex/keys"
 	"dex/pb"
 	"errors"
+	"math/big"
 	"strconv"
 
 	"google.golang.org/protobuf/proto"
@@ -249,7 +250,7 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		}
 
 		// 计算总提现金额
-		var totalAmount uint64
+		totalAmount := big.NewInt(0)
 		for _, wid := range withdrawIDs {
 			withdrawKey := keys.KeyFrostWithdraw(wid)
 			withdrawData, exists, _ := sv.Get(withdrawKey)
@@ -258,15 +259,18 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 			}
 			withdraw, _ := unmarshalWithdrawRequest(withdrawData)
 			if withdraw != nil {
-				amount, _ := strconv.ParseUint(withdraw.Amount, 10, 64)
-				totalAmount += amount
+				amount, err := ParseBalance(withdraw.Amount)
+				if err != nil {
+					continue
+				}
+				totalAmount, _ = SafeAdd(totalAmount, amount)
 			}
 		}
 
 		// 从该 Vault 的 FIFO 消耗 lot，直到覆盖 totalAmount
 		// 注意：这里简化处理，实际应该按 lot 的 finalize_height + seq 递增顺序消耗
-		consumedAmount := uint64(0)
-		for consumedAmount < totalAmount {
+		consumedAmount := big.NewInt(0)
+		for consumedAmount.Cmp(totalAmount) < 0 {
 			requestID, ok := GetFundsLotAtHead(sv, chainName, asset, vaultID)
 			if !ok {
 				// 没有更多 lot，但金额可能不足
@@ -290,8 +294,12 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 				continue
 			}
 
-			lotAmount, _ := strconv.ParseUint(recharge.Amount, 10, 64)
-			consumedAmount += lotAmount
+			lotAmount, err := ParseBalance(recharge.Amount)
+			if err != nil {
+				AdvanceFundsLotHead(sv, chainName, asset, vaultID)
+				continue
+			}
+			consumedAmount, _ = SafeAdd(consumedAmount, lotAmount)
 
 			// 推进 FIFO 头指针（标记该 lot 为 consumed）
 			AdvanceFundsLotHead(sv, chainName, asset, vaultID)

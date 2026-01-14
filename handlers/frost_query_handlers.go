@@ -426,6 +426,150 @@ func (hm *HandlerManager) HandleGetVaultDkgCommitments(w http.ResponseWriter, r 
 	w.Write(respData)
 }
 
+// HandleFrostWithdrawList 获取提现列表（供 Explorer 使用）
+// 路由: /frost/withdraw/list
+func (hm *HandlerManager) HandleFrostWithdrawList(w http.ResponseWriter, r *http.Request) {
+	hm.Stats.RecordAPICall("FrostWithdrawList")
+
+	chain := r.URL.Query().Get("chain")
+	asset := r.URL.Query().Get("asset")
+
+	// 扫描所有提现（使用统一的 key 前缀）
+	prefix := "v1_frost_withdraw_"
+
+	results, err := hm.dbManager.Scan(prefix)
+	if err != nil {
+		http.Error(w, "scan failed", http.StatusInternalServerError)
+		return
+	}
+
+	var states []*pb.FrostWithdrawState
+	for _, data := range results {
+		var state pb.FrostWithdrawState
+		if err := proto.Unmarshal(data, &state); err != nil {
+			continue
+		}
+
+		// 过滤 chain
+		if chain != "" && state.Chain != chain {
+			continue
+		}
+
+		// 过滤 asset
+		if asset != "" && state.Asset != asset {
+			continue
+		}
+
+		states = append(states, &state)
+	}
+
+	resp := &pb.FrostWithdrawStateList{
+		States: states,
+	}
+
+	// 序列化为 protobuf
+	respData, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Write(respData)
+}
+
+// HandleWitnessRequests 获取上账请求列表（供 Explorer 使用）
+// 路由: /witness/requests
+func (hm *HandlerManager) HandleWitnessRequests(w http.ResponseWriter, r *http.Request) {
+	hm.Stats.RecordAPICall("WitnessRequests")
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 500 {
+			limit = l
+		}
+	}
+
+	// 扫描所有入账请求
+	// key 前缀：v1_recharge_request_
+	prefix := keys.KeyRechargeRequestPrefix()
+
+	results, err := hm.dbManager.Scan(prefix)
+	if err != nil {
+		http.Error(w, "scan failed", http.StatusInternalServerError)
+		return
+	}
+
+	var requests []*pb.RechargeRequest
+	for _, data := range results {
+		var req pb.RechargeRequest
+		if err := proto.Unmarshal(data, &req); err != nil {
+			continue
+		}
+
+		requests = append(requests, &req)
+
+		if len(requests) >= limit {
+			break
+		}
+	}
+
+	resp := &pb.RechargeRequestList{
+		Requests: requests,
+	}
+
+	// 序列化为 protobuf
+	respData, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Write(respData)
+}
+
+// HandleFrostDkgList 获取 DKG 会话列表（供 Explorer 使用）
+// 路由: /frost/dkg/list
+func (hm *HandlerManager) HandleFrostDkgList(w http.ResponseWriter, r *http.Request) {
+	hm.Stats.RecordAPICall("FrostDkgList")
+
+	// 扫描所有 Vault Transition 状态
+	// key 前缀：v1_frost_vault_transition_
+	prefix := "v1_frost_vault_transition_"
+
+	results, err := hm.dbManager.Scan(prefix)
+	if err != nil {
+		http.Error(w, "scan failed", http.StatusInternalServerError)
+		return
+	}
+
+	var states []*pb.VaultTransitionState
+	for _, data := range results {
+		var state pb.VaultTransitionState
+		if err := proto.Unmarshal(data, &state); err != nil {
+			continue
+		}
+
+		states = append(states, &state)
+	}
+
+	resp := &pb.VaultTransitionStateList{
+		States: states,
+	}
+
+	// 序列化为 protobuf
+	respData, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Write(respData)
+}
+
 // HandleDownloadSignedPackage 下载签名包
 func (hm *HandlerManager) HandleDownloadSignedPackage(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("DownloadSignedPackage")

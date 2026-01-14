@@ -520,7 +520,11 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "insufficient balance"}, fmt.Errorf("insufficient balance")
 	}
 
-	newBalance := new(big.Int).Sub(balance, stakeAmount)
+	// 使用安全减法
+	newBalance, err := SafeSub(balance, stakeAmount)
+	if err != nil {
+		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "balance underflow"}, fmt.Errorf("balance underflow: %w", err)
+	}
 	fbBalance.Balance = newBalance.String()
 
 	updatedAccountData, err := proto.Marshal(&account)
@@ -706,14 +710,21 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	if currentBalance == nil {
 		currentBalance = big.NewInt(0)
 	}
-	newBalance := new(big.Int).Add(currentBalance, pendingReward)
+	newBalance, err := SafeAdd(currentBalance, pendingReward)
+	if err != nil {
+		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "balance overflow"}, fmt.Errorf("balance overflow: %w", err)
+	}
 	fbBalance.Balance = newBalance.String()
 
 	totalReward, _ := new(big.Int).SetString(witnessInfo.TotalReward, 10)
 	if totalReward == nil {
 		totalReward = big.NewInt(0)
 	}
-	witnessInfo.TotalReward = new(big.Int).Add(totalReward, pendingReward).String()
+	newTotalReward, err := SafeAdd(totalReward, pendingReward)
+	if err != nil {
+		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "total reward overflow"}, fmt.Errorf("total reward overflow: %w", err)
+	}
+	witnessInfo.TotalReward = newTotalReward.String()
 	witnessInfo.PendingReward = "0"
 
 	updatedAccountData, err := proto.Marshal(&account)

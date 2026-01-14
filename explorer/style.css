@@ -131,7 +131,8 @@ body::before {
   gap: 24px;
 }
 
-.layout.search-layout {
+.layout.search-layout,
+.layout.frost-layout {
   grid-template-columns: 1fr;
 }
 

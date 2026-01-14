@@ -103,7 +103,45 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, fmt.Errorf("insufficient balance: has %s, need %s", fromBalance.String(), amount.String())
 	}
 
-	// 5. 读取接收方账户（如果不存在则创建）
+	// 5. 扣除交易手续费（如果是 native token）
+	// 假设手续费始终用 FB 支付
+	const FeeToken = "FB"
+	feeAmount, _ := ParseBalance(transfer.Base.Fee)
+	if feeAmount == nil {
+		feeAmount = big.NewInt(0)
+	}
+
+	// 读取 FB 余额用于扣费
+	var fbBalance *big.Int
+	if transfer.TokenAddress == FeeToken {
+		fbBalance = fromBalance
+	} else {
+		fbBal := fromAccount.Balances[FeeToken]
+		if fbBal == nil {
+			fbBalance = big.NewInt(0)
+		} else {
+			fbBalance, _ = ParseBalance(fbBal.Balance)
+		}
+	}
+
+	// 检查是否足够支付手续费
+	if transfer.TokenAddress == FeeToken {
+		// 如果转账的是 FB，总额 = amount + fee
+		totalNeeded, err := SafeAdd(amount, feeAmount)
+		if err != nil {
+			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "amount+fee overflow"}, err
+		}
+		if fbBalance.Cmp(totalNeeded) < 0 {
+			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "insufficient FB balance for amount + fee"}, fmt.Errorf("insufficient FB balance")
+		}
+	} else {
+		// 如果转账不是 FB，独立检查 FB 余额支付 fee
+		if fbBalance.Cmp(feeAmount) < 0 {
+			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "insufficient FB balance for fee"}, fmt.Errorf("insufficient FB balance for fee")
+		}
+	}
+
+	// 6. 读取接收方账户（如果不存在则创建）
 	toAccountKey := keys.KeyAccount(transfer.To)
 	toAccountData, toExists, _ := sv.Get(toAccountKey)
 
@@ -124,17 +162,44 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}
 	}
 
-	// 6. 执行转账
+	// 7. 执行转账与扣费
 	// 减少发送方余额（使用安全减法）
-	newFromBalance, err := SafeSub(fromBalance, amount)
-	if err != nil {
-		return nil, &Receipt{
-			TxID:   transfer.Base.TxId,
-			Status: "FAILED",
-			Error:  "balance underflow",
-		}, fmt.Errorf("balance underflow: %w", err)
+	if transfer.TokenAddress == FeeToken {
+		// FB 转账：一次性扣除 total (amount + fee)
+		totalDeduct, err := SafeAdd(amount, feeAmount)
+		if err != nil {
+			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "amount+fee overflow"}, err
+		}
+		newFromBalance, err := SafeSub(fbBalance, totalDeduct)
+		if err != nil {
+			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
+		}
+		fromAccount.Balances[FeeToken].Balance = newFromBalance.String()
+	} else {
+		// 非 FB 转账：分别扣除 amount 和 fee
+		newFromBalance, err := SafeSub(fromBalance, amount)
+		if err != nil {
+			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
+		}
+		fromAccount.Balances[transfer.TokenAddress].Balance = newFromBalance.String()
+
+		// 扣除 FB Fee
+		fbBalRecord := fromAccount.Balances[FeeToken]
+		if fbBalRecord == nil {
+			// 理论上前面检查过，这里做个保险
+			fbBalRecord = &pb.TokenBalance{Balance: "0"}
+			fromAccount.Balances[FeeToken] = fbBalRecord
+		}
+		currentFB, err := ParseBalance(fbBalRecord.Balance)
+		if err != nil {
+			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "invalid FB balance"}, err
+		}
+		newFB, err := SafeSub(currentFB, feeAmount)
+		if err != nil {
+			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "FB fee underflow"}, err
+		}
+		fbBalRecord.Balance = newFB.String()
 	}
-	fromAccount.Balances[transfer.TokenAddress].Balance = newFromBalance.String()
 
 	// 增加接收方余额
 	if toAccount.Balances == nil {
@@ -142,10 +207,10 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 	if toAccount.Balances[transfer.TokenAddress] == nil {
 		toAccount.Balances[transfer.TokenAddress] = &pb.TokenBalance{
-			Balance:              "0",
-			MinerLockedBalance:   "0",
-			LiquidLockedBalance:  "0",
-			WitnessLockedBalance: "0",
+			Balance:               "0",
+			MinerLockedBalance:    "0",
+			LiquidLockedBalance:   "0",
+			WitnessLockedBalance:  "0",
 			LeverageLockedBalance: "0",
 		}
 	}
@@ -216,6 +281,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	return ws, &Receipt{
 		TxID:       transfer.Base.TxId,
 		Status:     "SUCCEED",
+		Fee:        transfer.Base.Fee,
 		WriteCount: len(ws),
 	}, nil
 }
