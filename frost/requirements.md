@@ -78,13 +78,12 @@ e.g. btc直接聚合公钥地址管理，而智能合约用合约来管理资产
 答：share和承诺一起上链，解决1和2.1. share用receiver公钥加密，当2.2情况出现的时候，dealer公开share明文r,，节点重复加密过程，链上验证裁决.
 
 ### TODO
-8. cmd/main.go 中模拟产生不同的tx 尤其是上账 dkg roast相关。
 
-9. 想想用什么方法可以在浏览器上可视化看到 dkg 、 roast 、上账过程、各种TX的状态。
 
-10. 上账也可以挖矿，每个区块都给固定奖励，给每个区块矿工均分，按年递减。
+12. explorer上查看转账tx 需要有from, to字段
 
-11. 检查vm中金额的计算是不是大数。不要有边界问题的bug.
+13.接下来的开发重点是测试协议实现的正确性，我们需要关闭这些 Injector，让 VM 的 Handler（如 
+vm/transfer_handler.go
+ 等）去驱动状态变化。
 
-12. 转账tx逻辑完善
-
+ 14.Search 中新增对address的搜索。以及对单个address的详情页面。
