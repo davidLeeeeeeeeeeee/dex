@@ -9,3 +9,4 @@ explorer/package-lock.json
 *.crt
 *debug_bin*
 explorer/dist/
+explorer_data/

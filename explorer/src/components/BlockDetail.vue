@@ -7,6 +7,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   txClick: [txId: string]
+  addressClick: [address: string]
 }>()
 
 const numberFormat = new Intl.NumberFormat('en-US')
@@ -28,6 +29,13 @@ function statusClass(status?: string): string {
   if (s === 'SUCCEED' || s === 'SUCCESS') return 'status-good'
   if (s === 'FAILED' || s === 'FAIL') return 'status-bad'
   return 'status-warn'
+}
+
+function handleAddressClick(e: Event, address?: string) {
+  e.stopPropagation()  // 防止触发行点击事件
+  if (address) {
+    emit('addressClick', address)
+  }
 }
 </script>
 
@@ -76,22 +84,38 @@ function statusClass(status?: string): string {
             <th>Tx ID</th>
             <th>Type</th>
             <th>From</th>
+            <th>To</th>
+            <th>Value</th>
             <th>Status</th>
-            <th>Summary</th>
           </tr>
         </thead>
         <tbody>
-          <tr 
-            v-for="tx in block.transactions" 
+          <tr
+            v-for="tx in block.transactions"
             :key="tx.tx_id"
             class="clickable"
             @click="emit('txClick', tx.tx_id)"
           >
             <td class="mono">{{ truncateHash(tx.tx_id, 8) }}</td>
             <td>{{ tx.tx_type || '-' }}</td>
-            <td class="mono">{{ truncateHash(tx.from_address, 8) }}</td>
+            <td class="mono">
+              <span
+                v-if="tx.from_address"
+                class="address-link"
+                @click="handleAddressClick($event, tx.from_address)"
+              >{{ truncateHash(tx.from_address, 8) }}</span>
+              <span v-else>-</span>
+            </td>
+            <td class="mono">
+              <span
+                v-if="tx.to_address"
+                class="address-link"
+                @click="handleAddressClick($event, tx.to_address)"
+              >{{ truncateHash(tx.to_address, 8) }}</span>
+              <span v-else>-</span>
+            </td>
+            <td>{{ tx.value || '-' }}</td>
             <td :class="statusClass(tx.status)">{{ tx.status || '-' }}</td>
-            <td class="summary">{{ tx.summary || '-' }}</td>
           </tr>
         </tbody>
       </table>
@@ -103,3 +127,16 @@ function statusClass(status?: string): string {
   </section>
 </template>
 
+<style scoped>
+.address-link {
+  cursor: pointer;
+  color: var(--accent, #60a5fa);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.address-link:hover {
+  color: var(--accent-hover, #93c5fd);
+  text-decoration-style: solid;
+}
+</style>

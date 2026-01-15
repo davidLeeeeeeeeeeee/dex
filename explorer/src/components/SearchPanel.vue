@@ -2,8 +2,9 @@
 import { ref, watch } from 'vue'
 import BlockDetail from './BlockDetail.vue'
 import TxDetail from './TxDetail.vue'
-import type { BlockInfo, TxInfo, TxSummary } from '../types'
-import { fetchBlock, fetchTx } from '../api'
+import AddressDetail from './AddressDetail.vue'
+import type { BlockInfo, TxInfo, TxSummary, AccountInfo } from '../types'
+import { fetchBlock, fetchTx, fetchAddress } from '../api'
 
 const props = defineProps<{
   nodes: string[]
@@ -12,7 +13,7 @@ const props = defineProps<{
 
 // 状态
 const searchQuery = ref('')
-const searchType = ref<'block' | 'tx'>('block')
+const searchType = ref<'block' | 'tx' | 'address'>('block')
 const selectedNode = ref('')
 const loading = ref(false)
 const error = ref('')
@@ -20,9 +21,12 @@ const error = ref('')
 // 结果
 const blockResult = ref<BlockInfo | null>(null)
 const txResult = ref<TxInfo | null>(null)
+const addressResult = ref<AccountInfo | null>(null)
 
 // 查看交易详情时的状态
 const viewingTx = ref<TxInfo | null>(null)
+// 查看地址详情时的状态
+const viewingAddress = ref<AccountInfo | null>(null)
 
 // 初始化选中节点
 watch(() => props.defaultNode, (val) => {
@@ -51,7 +55,9 @@ async function handleSearch() {
   error.value = ''
   blockResult.value = null
   txResult.value = null
+  addressResult.value = null
   viewingTx.value = null
+  viewingAddress.value = null
 
   try {
     if (searchType.value === 'block') {
@@ -72,7 +78,7 @@ async function handleSearch() {
       } else {
         error.value = 'Block not found'
       }
-    } else {
+    } else if (searchType.value === 'tx') {
       const result = await fetchTx({
         node: selectedNode.value,
         tx_id: searchQuery.value.trim(),
@@ -84,6 +90,19 @@ async function handleSearch() {
         txResult.value = result.transaction
       } else {
         error.value = 'Transaction not found'
+      }
+    } else if (searchType.value === 'address') {
+      const result = await fetchAddress({
+        node: selectedNode.value,
+        address: searchQuery.value.trim(),
+      })
+
+      if (result.error) {
+        error.value = result.error
+      } else if (result.account) {
+        addressResult.value = result.account
+      } else {
+        error.value = 'Address not found'
       }
     }
   } catch (err: any) {
@@ -99,8 +118,12 @@ function txSummaryToInfo(summary: TxSummary, blockHeight?: number): TxInfo {
     tx_id: summary.tx_id,
     tx_type: summary.tx_type,
     from_address: summary.from_address,
+    to_address: summary.to_address,
+    value: summary.value,
     status: summary.status,
     executed_height: blockHeight,
+    fee: summary.fee,
+    nonce: summary.nonce,
     details: summary.summary ? { summary: summary.summary } : undefined,
   }
 }
@@ -121,7 +144,45 @@ function handleTxClick(txId: string) {
 
 function handleBack() {
   viewingTx.value = null
+  viewingAddress.value = null
   error.value = ''
+}
+
+// 点击地址时的处理
+async function handleAddressClick(address: string) {
+  if (!selectedNode.value || !address) return
+
+  loading.value = true
+  error.value = ''
+
+  try {
+    const result = await fetchAddress({
+      node: selectedNode.value,
+      address: address,
+    })
+
+    if (result.error) {
+      error.value = result.error
+    } else if (result.account) {
+      viewingAddress.value = result.account
+    } else {
+      error.value = 'Address not found'
+    }
+  } catch (err: any) {
+    error.value = err.message || 'Request failed'
+  } finally {
+    loading.value = false
+  }
+}
+
+// 计算 placeholder 文本
+function getPlaceholder(): string {
+  switch (searchType.value) {
+    case 'block': return 'Height or Block Hash'
+    case 'tx': return 'Transaction Hash'
+    case 'address': return 'Account Address'
+    default: return 'Search...'
+  }
 }
 </script>
 
@@ -141,12 +202,13 @@ function handleBack() {
         <select v-model="searchType">
           <option value="block">Block</option>
           <option value="tx">Transaction</option>
+          <option value="address">Address</option>
         </select>
-        
-        <input 
+
+        <input
           v-model="searchQuery"
           type="text"
-          :placeholder="searchType === 'block' ? 'Height or Block Hash' : 'Transaction Hash'"
+          :placeholder="getPlaceholder()"
           @keyup.enter="handleSearch"
         />
         
@@ -160,25 +222,41 @@ function handleBack() {
 
     <div v-if="loading" class="loading-state">Loading...</div>
 
-    <TxDetail 
-      v-else-if="viewingTx" 
-      :tx="viewingTx" 
+    <AddressDetail
+      v-else-if="viewingAddress"
+      :account="viewingAddress"
       @back="handleBack"
-    />
-
-    <BlockDetail 
-      v-else-if="blockResult" 
-      :block="blockResult"
       @tx-click="handleTxClick"
     />
 
-    <TxDetail 
-      v-else-if="txResult" 
+    <TxDetail
+      v-else-if="viewingTx"
+      :tx="viewingTx"
+      @back="handleBack"
+      @address-click="handleAddressClick"
+    />
+
+    <BlockDetail
+      v-else-if="blockResult"
+      :block="blockResult"
+      @tx-click="handleTxClick"
+      @address-click="handleAddressClick"
+    />
+
+    <TxDetail
+      v-else-if="txResult"
       :tx="txResult"
+      @address-click="handleAddressClick"
+    />
+
+    <AddressDetail
+      v-else-if="addressResult"
+      :account="addressResult"
+      @tx-click="handleTxClick"
     />
 
     <div v-else-if="!loading && !error" class="empty-state">
-      Enter a block height, block hash, or transaction hash to search.
+      Enter a block height, block hash, transaction hash, or account address to search.
     </div>
   </div>
 </template>

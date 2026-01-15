@@ -928,3 +928,14 @@ message GetRecentBlocksRequest {
 message GetRecentBlocksResponse {
   repeated BlockHeader blocks = 1;
 }
+
+// GetAccountRequest 获取账户信息请求
+message GetAccountRequest {
+  string address = 1; // 账户地址
+}
+
+// GetAccountResponse 获取账户信息响应
+message GetAccountResponse {
+  Account account = 1;   // 账户信息
+  string error = 2;      // 错误信息
+}

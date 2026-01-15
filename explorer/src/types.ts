@@ -111,7 +111,11 @@ export interface TxSummary {
   tx_id: string
   tx_type?: string
   from_address?: string
+  to_address?: string
+  value?: string
   status?: string
+  fee?: string
+  nonce?: number
   summary?: string
 }
 
@@ -121,6 +125,7 @@ export interface TxInfo {
   tx_type?: string
   from_address?: string
   to_address?: string
+  value?: string
   status?: string
   executed_height?: number
   fee?: string
@@ -150,6 +155,37 @@ export interface TxRequest {
 // 交易查询响应
 export interface TxResponse {
   transaction?: TxInfo
+  error?: string
+}
+
+// 地址（账户）查询请求
+export interface AddressRequest {
+  node: string
+  address: string
+}
+
+// Token 余额
+export interface TokenBalance {
+  balance: string
+  miner_locked_balance?: string
+  liquid_locked_balance?: string
+  witness_locked_balance?: string
+  leverage_locked_balance?: string
+}
+
+// 账户信息
+export interface AccountInfo {
+  address: string
+  nonce: number
+  balances?: Record<string, TokenBalance>
+  unclaimed_reward?: string
+  is_miner: boolean
+  index?: number
+}
+
+// 地址查询响应
+export interface AddressResponse {
+  account?: AccountInfo
   error?: string
 }
 
@@ -200,4 +236,35 @@ export interface DKGSession {
   dkg_dispute_deadline: number
   validation_status: string
   lifecycle: string
+}
+
+// 交易历史记录
+export interface TxRecord {
+  tx_id: string
+  tx_type: string
+  from_address: string
+  to_address?: string
+  value?: string
+  status: string
+  fee?: string
+  nonce?: number
+  height: number
+  tx_index: number
+}
+
+// 交易历史响应
+export interface TxHistoryResponse {
+  address: string
+  total_count: number
+  limit: number
+  txs: TxRecord[]
+}
+
+// 同步状态响应
+export interface SyncStatusResponse {
+  sync_height: number
+  sync_node: string
+  status: string
+  last_sync?: string
+  last_sync_ago?: string
 }

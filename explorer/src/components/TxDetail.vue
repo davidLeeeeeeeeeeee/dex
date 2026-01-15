@@ -8,6 +8,7 @@ defineProps<{
 
 const emit = defineEmits<{
   back: []
+  addressClick: [address: string]
 }>()
 
 const numberFormat = new Intl.NumberFormat('en-US')
@@ -23,6 +24,12 @@ function statusClass(status?: string): string {
   if (s === 'SUCCEED' || s === 'SUCCESS') return 'status-good'
   if (s === 'FAILED' || s === 'FAIL') return 'status-bad'
   return 'status-warn'
+}
+
+function handleAddressClick(address?: string) {
+  if (address) {
+    emit('addressClick', address)
+  }
 }
 </script>
 
@@ -48,11 +55,23 @@ function statusClass(status?: string): string {
       </div>
       <div class="meta-row">
         <span class="label">From Address</span>
-        <span class="value mono">{{ tx.from_address || '-' }}</span>
+        <span
+          v-if="tx.from_address"
+          class="value mono address-link"
+          @click="handleAddressClick(tx.from_address)"
+        >{{ tx.from_address }}</span>
+        <span v-else class="value mono">-</span>
       </div>
       <div v-if="tx.to_address" class="meta-row">
         <span class="label">To Address</span>
-        <span class="value mono">{{ tx.to_address }}</span>
+        <span
+          class="value mono address-link"
+          @click="handleAddressClick(tx.to_address)"
+        >{{ tx.to_address }}</span>
+      </div>
+      <div v-if="tx.value" class="meta-row">
+        <span class="label">Value</span>
+        <span class="value">{{ tx.value }}</span>
       </div>
       <div class="meta-row">
         <span class="label">Executed Height</span>
@@ -74,3 +93,17 @@ function statusClass(status?: string): string {
     </div>
   </section>
 </template>
+
+<style scoped>
+.address-link {
+  cursor: pointer;
+  color: var(--accent, #60a5fa);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.address-link:hover {
+  color: var(--accent-hover, #93c5fd);
+  text-decoration-style: solid;
+}
+</style>

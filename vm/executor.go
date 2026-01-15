@@ -435,6 +435,42 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 		x.DB.EnqueueSet(heightKey, fmt.Sprintf("%d", b.Height))
 	}
 
+	// ========== 第四步补充：保存完整交易数据 ==========
+	// 将区块中的交易保存到数据库，以便后续查询
+	// 使用类型断言检查 DB 是否支持 SaveAnyTx
+	type anyTxSaver interface {
+		SaveAnyTx(tx *pb.AnyTx) error
+	}
+	if saver, ok := x.DB.(anyTxSaver); ok {
+		for _, tx := range b.Body {
+			if tx == nil {
+				continue
+			}
+			base := tx.GetBase()
+			if base == nil {
+				continue
+			}
+			// 更新交易状态为已执行
+			base.ExecutedHeight = b.Height
+			// 从 receipts 中查找状态
+			for _, rc := range res.Receipts {
+				if rc.TxID == base.TxId {
+					if rc.Status == "SUCCEED" || rc.Status == "" {
+						base.Status = pb.Status_SUCCEED
+					} else {
+						base.Status = pb.Status_FAILED
+					}
+					break
+				}
+			}
+			// 保存交易
+			if err := saver.SaveAnyTx(tx); err != nil {
+				// 记录错误但不中断提交
+				fmt.Printf("[VM] Warning: failed to save tx %s: %v\n", base.TxId, err)
+			}
+		}
+	}
+
 	// ========== 第五步：写入区块提交标记 ==========
 	// 用于幂等性检查
 	commitKey := keys.KeyVMCommitHeight(b.Height)

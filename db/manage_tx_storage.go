@@ -5,6 +5,7 @@ import (
 	"dex/pb"
 	"dex/utils"
 	"fmt"
+	"strings"
 
 	"github.com/shopspring/decimal"
 )
@@ -279,10 +280,51 @@ func (mgr *Manager) GetAnyTxById(txID string) (*pb.AnyTx, error) {
 		return nil, fmt.Errorf("empty transaction data for key %s", specificKey)
 	}
 
-	// 3. 反序列化为 AnyTx 对象
-	var anyTx pb.AnyTx
-	if err := ProtoUnmarshal([]byte(txData), &anyTx); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal AnyTx data: %v", err)
+	// 3. 根据 specificKey 的前缀判断类型并反序列化
+	// 注意：key 格式是 v1_tx_xxx, v1_order_xxx, v1_minerTx_xxx 等
+	anyTx := &pb.AnyTx{}
+	switch {
+	case strings.Contains(specificKey, "_tx_"):
+		var tx pb.Transaction
+		if err := ProtoUnmarshal([]byte(txData), &tx); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal Transaction: %v", err)
+		}
+		anyTx.Content = &pb.AnyTx_Transaction{Transaction: &tx}
+	case strings.Contains(specificKey, "_order_"):
+		var tx pb.OrderTx
+		if err := ProtoUnmarshal([]byte(txData), &tx); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal OrderTx: %v", err)
+		}
+		anyTx.Content = &pb.AnyTx_OrderTx{OrderTx: &tx}
+	case strings.Contains(specificKey, "_minerTx_"):
+		var tx pb.MinerTx
+		if err := ProtoUnmarshal([]byte(txData), &tx); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal MinerTx: %v", err)
+		}
+		anyTx.Content = &pb.AnyTx_MinerTx{MinerTx: &tx}
+	case strings.Contains(specificKey, "_issuetoken_"):
+		var tx pb.IssueTokenTx
+		if err := ProtoUnmarshal([]byte(txData), &tx); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal IssueTokenTx: %v", err)
+		}
+		anyTx.Content = &pb.AnyTx_IssueTokenTx{IssueTokenTx: &tx}
+	case strings.Contains(specificKey, "_freeze_"):
+		var tx pb.FreezeTx
+		if err := ProtoUnmarshal([]byte(txData), &tx); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal FreezeTx: %v", err)
+		}
+		anyTx.Content = &pb.AnyTx_FreezeTx{FreezeTx: &tx}
+	case strings.Contains(specificKey, "_witnessstake_"):
+		var tx pb.WitnessStakeTx
+		if err := ProtoUnmarshal([]byte(txData), &tx); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal WitnessStakeTx: %v", err)
+		}
+		anyTx.Content = &pb.AnyTx_WitnessStakeTx{WitnessStakeTx: &tx}
+	default:
+		// 尝试直接反序列化为 AnyTx（兼容旧数据）
+		if err := ProtoUnmarshal([]byte(txData), anyTx); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal AnyTx data (key=%s): %v", specificKey, err)
+		}
 	}
-	return &anyTx, nil
+	return anyTx, nil
 }

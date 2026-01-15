@@ -80,7 +80,7 @@ e.g. btc直接聚合公钥地址管理，而智能合约用合约来管理资产
 ### TODO
 
 
-12. explorer上查看转账tx 需要有from, to字段
+12. explorer上查看转账tx详情页面 需要有from, to字段
 
 13.接下来的开发重点是测试协议实现的正确性，我们需要关闭这些 Injector，让 VM 的 Handler（如 
 vm/transfer_handler.go

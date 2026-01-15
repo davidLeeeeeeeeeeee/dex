@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"dex/cmd/explorer/indexdb"
+	"dex/cmd/explorer/syncer"
 	"dex/config"
 	"dex/logs"
 	"dex/pb"
@@ -34,6 +36,10 @@ type server struct {
 	defaultNodes []string
 	basePort     int
 	count        int
+
+	// 索引数据库和同步器
+	indexDB *indexdb.IndexDB
+	syncer  *syncer.Syncer
 }
 
 type nodesResponse struct {
@@ -123,7 +129,11 @@ type txSummary struct {
 	TxID        string `json:"tx_id"`
 	TxType      string `json:"tx_type,omitempty"`
 	FromAddress string `json:"from_address,omitempty"`
+	ToAddress   string `json:"to_address,omitempty"`
+	Value       string `json:"value,omitempty"`
 	Status      string `json:"status,omitempty"`
+	Fee         string `json:"fee,omitempty"`
+	Nonce       uint64 `json:"nonce,omitempty"`
 	Summary     string `json:"summary,omitempty"`
 }
 
@@ -142,11 +152,40 @@ type txInfo struct {
 	TxType         string                 `json:"tx_type,omitempty"`
 	FromAddress    string                 `json:"from_address,omitempty"`
 	ToAddress      string                 `json:"to_address,omitempty"`
+	Value          string                 `json:"value,omitempty"`
 	Status         string                 `json:"status,omitempty"`
 	ExecutedHeight uint64                 `json:"executed_height,omitempty"`
 	Fee            string                 `json:"fee,omitempty"`
 	Nonce          uint64                 `json:"nonce,omitempty"`
 	Details        map[string]interface{} `json:"details,omitempty"`
+}
+
+// Address (账户) 相关类型
+type addressRequest struct {
+	Node    string `json:"node"`
+	Address string `json:"address"`
+}
+
+type addressResponse struct {
+	Account *accountInfo `json:"account,omitempty"`
+	Error   string       `json:"error,omitempty"`
+}
+
+type accountInfo struct {
+	Address         string                   `json:"address"`
+	Nonce           uint64                   `json:"nonce"`
+	Balances        map[string]*tokenBalance `json:"balances,omitempty"`
+	UnclaimedReward string                   `json:"unclaimed_reward,omitempty"`
+	IsMiner         bool                     `json:"is_miner"`
+	Index           uint64                   `json:"index,omitempty"`
+}
+
+type tokenBalance struct {
+	Balance               string `json:"balance"`
+	MinerLockedBalance    string `json:"miner_locked_balance,omitempty"`
+	LiquidLockedBalance   string `json:"liquid_locked_balance,omitempty"`
+	WitnessLockedBalance  string `json:"witness_locked_balance,omitempty"`
+	LeverageLockedBalance string `json:"leverage_locked_balance,omitempty"`
 }
 
 func main() {
@@ -159,6 +198,9 @@ func main() {
 	nodesFlag := flag.String("nodes", "", "Comma-separated node addresses (host:port)")
 	webDirFlag := flag.String("web-dir", "", "Path to explorer static files")
 	timeout := flag.Duration("timeout", 3*time.Second, "Per-request timeout")
+	dataDir := flag.String("data-dir", "./explorer_data", "Path to explorer index database")
+	syncNode := flag.String("sync-node", "127.0.0.1:6000", "Node to sync blocks from (e.g., 127.0.0.1:6000)")
+	syncInterval := flag.Duration("sync-interval", 5*time.Second, "Block sync interval")
 	flag.Parse()
 
 	defaultNodes := buildNodes(*nodesFlag, *host, *basePort, *count)
@@ -170,12 +212,40 @@ func main() {
 	client, transport := newHTTP3Client(*timeout)
 	defer transport.Close()
 
+	// 初始化索引数据库
+	idb, err := indexdb.New(*dataDir)
+	if err != nil {
+		log.Fatalf("failed to open index database: %v", err)
+	}
+	defer idb.Close()
+
+	// 确定同步节点
+	syncNodeAddr := *syncNode
+	if syncNodeAddr == "" && len(defaultNodes) > 0 {
+		syncNodeAddr = defaultNodes[0]
+	}
+
+	// 创建同步器
+	var blockSyncer *syncer.Syncer
+	if syncNodeAddr != "" {
+		blockSyncer = syncer.New(idb, "https://"+syncNodeAddr, *syncInterval)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if err := blockSyncer.Start(ctx); err != nil {
+			log.Printf("Warning: failed to start syncer: %v", err)
+		} else {
+			log.Printf("Started block syncer, syncing from %s", syncNodeAddr)
+		}
+	}
+
 	srv := &server{
 		client:       client,
 		timeout:      *timeout,
 		defaultNodes: defaultNodes,
 		basePort:     *basePort,
 		count:        *count,
+		indexDB:      idb,
+		syncer:       blockSyncer,
 	}
 
 	mux := http.NewServeMux()
@@ -184,12 +254,15 @@ func main() {
 	mux.HandleFunc("/api/node/details", srv.handleNodeDetails)
 	mux.HandleFunc("/api/block", srv.handleBlock)
 	mux.HandleFunc("/api/tx", srv.handleTx)
+	mux.HandleFunc("/api/address", srv.handleAddress)
+	mux.HandleFunc("/api/txhistory", srv.handleTxHistory)
+	mux.HandleFunc("/api/sync/status", srv.handleSyncStatus)
 	mux.HandleFunc("/api/frost/withdraw/queue", srv.handleFrostWithdrawQueue)
 	mux.HandleFunc("/api/witness/requests", srv.handleWitnessRequests)
 	mux.HandleFunc("/api/frost/dkg/list", srv.handleFrostDKGSessions)
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
-	log.Printf("Explorer listening at http://%s (ui: %s)", *listenAddr, webDir)
+	log.Printf("Explorer listening at http://%s (ui: %s, data: %s)", *listenAddr, webDir, *dataDir)
 	if err := http.ListenAndServe(*listenAddr, logRequests(mux)); err != nil {
 		log.Fatal(err)
 	}
@@ -440,10 +513,86 @@ func (s *server) fetchBlockByID(ctx context.Context, node string, blockID string
 func (s *server) fetchTxByID(ctx context.Context, node string, txID string) (*pb.AnyTx, error) {
 	var resp pb.AnyTx
 	req := &pb.GetData{TxId: txID}
+
+	log.Printf("[DEBUG-TX] Request: node=%s, txID=%s", node, txID)
+	log.Printf("[DEBUG-TX] Full URL: https://%s/getdata", node)
+
 	if err := s.fetchProto(ctx, node, "/getdata", req, &resp); err != nil {
+		log.Printf("[DEBUG-TX] Error: %v", err)
 		return nil, err
 	}
+
+	log.Printf("[DEBUG-TX] Response: %+v", &resp)
 	return &resp, nil
+}
+
+func (s *server) handleAddress(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req addressRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, addressResponse{Error: "invalid request body"})
+		return
+	}
+	if req.Node == "" || req.Address == "" {
+		writeJSON(w, addressResponse{Error: "node and address are required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+	defer cancel()
+
+	account, err := s.fetchAccountByAddress(ctx, req.Node, req.Address)
+	if err != nil {
+		writeJSON(w, addressResponse{Error: err.Error()})
+		return
+	}
+
+	info := convertAccountToInfo(account)
+	writeJSON(w, addressResponse{Account: info})
+}
+
+func (s *server) fetchAccountByAddress(ctx context.Context, node string, address string) (*pb.Account, error) {
+	var resp pb.GetAccountResponse
+	req := &pb.GetAccountRequest{Address: address}
+	if err := s.fetchProto(ctx, node, "/getaccount", req, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return nil, fmt.Errorf("%s", resp.Error)
+	}
+	if resp.Account == nil {
+		return nil, errors.New("account not found")
+	}
+	return resp.Account, nil
+}
+
+func convertAccountToInfo(account *pb.Account) *accountInfo {
+	if account == nil {
+		return nil
+	}
+	info := &accountInfo{
+		Address:         account.Address,
+		Nonce:           account.Nonce,
+		UnclaimedReward: account.UnclaimedReward,
+		IsMiner:         account.IsMiner,
+		Index:           account.Index,
+	}
+	if len(account.Balances) > 0 {
+		info.Balances = make(map[string]*tokenBalance)
+		for k, v := range account.Balances {
+			info.Balances[k] = &tokenBalance{
+				Balance:               v.Balance,
+				MinerLockedBalance:    v.MinerLockedBalance,
+				LiquidLockedBalance:   v.LiquidLockedBalance,
+				WitnessLockedBalance:  v.WitnessLockedBalance,
+				LeverageLockedBalance: v.LeverageLockedBalance,
+			}
+		}
+	}
+	return info
 }
 
 func convertBlockToInfo(block *pb.Block) *blockInfo {
@@ -479,7 +628,13 @@ func convertAnyTxToSummary(tx *pb.AnyTx) txSummary {
 	if base := tx.GetBase(); base != nil {
 		summary.FromAddress = base.FromAddress
 		summary.Status = base.Status.String()
+		summary.Fee = base.Fee
+		summary.Nonce = base.Nonce
 	}
+	// 提取 to_address 和 value
+	toAddr, value := extractToAndValue(tx)
+	summary.ToAddress = toAddr
+	summary.Value = value
 	summary.Summary = generateTxSummary(tx)
 	return summary
 }
@@ -500,9 +655,35 @@ func convertAnyTxToInfo(tx *pb.AnyTx) *txInfo {
 		info.Fee = base.Fee
 		info.Nonce = base.Nonce
 	}
+	// 提取 to_address 和 value
+	toAddr, value := extractToAndValue(tx)
+	info.ToAddress = toAddr
+	info.Value = value
 	// 填充详情
 	fillTxDetails(tx, info)
 	return info
+}
+
+// extractToAndValue 从交易中提取目标地址和金额
+func extractToAndValue(tx *pb.AnyTx) (toAddress, value string) {
+	if tx == nil {
+		return "", ""
+	}
+	switch c := tx.GetContent().(type) {
+	case *pb.AnyTx_Transaction:
+		t := c.Transaction
+		return t.To, t.Amount
+	case *pb.AnyTx_WitnessStakeTx:
+		return "", c.WitnessStakeTx.Amount
+	case *pb.AnyTx_MinerTx:
+		return "", c.MinerTx.Amount
+	case *pb.AnyTx_FreezeTx:
+		return c.FreezeTx.TargetAddr, ""
+	case *pb.AnyTx_OrderTx:
+		o := c.OrderTx
+		return "", fmt.Sprintf("%s @ %s", o.Amount, o.Price)
+	}
+	return "", ""
 }
 
 func extractTxType(tx *pb.AnyTx) string {
@@ -910,4 +1091,88 @@ func (s *server) fetchLogs(ctx context.Context, node string) (*pb.LogsResponse, 
 	}
 
 	return nil, err
+}
+
+// ===================== 交易历史 API =====================
+
+// handleTxHistory 处理地址交易历史查询
+func (s *server) handleTxHistory(w http.ResponseWriter, r *http.Request) {
+	address := r.URL.Query().Get("address")
+	if address == "" {
+		http.Error(w, "missing address parameter", http.StatusBadRequest)
+		return
+	}
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	if s.indexDB == nil {
+		http.Error(w, "index database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	txs, err := s.indexDB.GetAddressTxHistory(address, limit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to get tx history: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	count, _ := s.indexDB.GetAddressTxCount(address)
+
+	resp := struct {
+		Address    string              `json:"address"`
+		TotalCount int                 `json:"total_count"`
+		Limit      int                 `json:"limit"`
+		Txs        []*indexdb.TxRecord `json:"txs"`
+	}{
+		Address:    address,
+		TotalCount: count,
+		Limit:      limit,
+		Txs:        txs,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// handleSyncStatus 处理同步状态查询
+func (s *server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
+	if s.indexDB == nil {
+		http.Error(w, "index database not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	syncHeight, _ := s.indexDB.GetSyncHeight()
+	syncNode, _ := s.indexDB.GetSyncNode()
+
+	status := "stopped"
+	var lastSync time.Time
+	if s.syncer != nil {
+		status, lastSync = s.syncer.GetStatus()
+	}
+
+	resp := struct {
+		SyncHeight  uint64 `json:"sync_height"`
+		SyncNode    string `json:"sync_node"`
+		Status      string `json:"status"`
+		LastSync    string `json:"last_sync,omitempty"`
+		LastSyncAgo string `json:"last_sync_ago,omitempty"`
+	}{
+		SyncHeight: syncHeight,
+		SyncNode:   syncNode,
+		Status:     status,
+	}
+
+	if !lastSync.IsZero() {
+		resp.LastSync = lastSync.Format(time.RFC3339)
+		resp.LastSyncAgo = time.Since(lastSync).Round(time.Second).String()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

@@ -45,8 +45,12 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 
 	// 从数据库查找
 	anyTx, err := hm.dbManager.GetAnyTxById(getDataMsg.TxId)
-	if err != nil || anyTx == nil {
-		http.Error(w, fmt.Sprintf("Transaction %s not found", getDataMsg.TxId), http.StatusNotFound)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("[TxPool: not found] [DB error: %v]", err), http.StatusNotFound)
+		return
+	}
+	if anyTx == nil {
+		http.Error(w, fmt.Sprintf("[TxPool: not found] [DB: returned nil for %s]", getDataMsg.TxId), http.StatusNotFound)
 		return
 	}
 
