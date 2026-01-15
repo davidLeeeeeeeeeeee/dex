@@ -1310,7 +1310,9 @@ func (s *TxSimulator) Start() {
 	go s.runWitnessScenario()
 	go s.runWithdrawScenario()
 	go s.runDkgScenario()
-	go s.runProtocolStateInjector() // 直接注入 Protocol 状态数据
+	// 注释掉 Injector，让 VM Handler 驱动状态变化
+	// go s.runProtocolStateInjector() // 直接注入 Protocol 状态数据
+	go s.runOrderScenario() // 订单交易模拟
 }
 
 func (s *TxSimulator) runDkgScenario() {
@@ -1647,5 +1649,75 @@ func (s *TxSimulator) injectDkgTransitions(node *NodeInstance, timestamp int64) 
 		data, _ := proto.Marshal(state)
 		key := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 		node.DBManager.EnqueueSet(key, string(data))
+	}
+}
+
+// runOrderScenario 模拟订单交易（买单/卖单）
+// 注意：OrderTx 使用 base_token 和 quote_token 来区分买卖方向
+// 所有节点只有 FB 余额，所以只能用 FB 作为 base_token（卖出 FB）
+// 买单会因为没有对应代币余额而失败，所以这里只生成卖单
+func (s *TxSimulator) runOrderScenario() {
+	// 延迟启动，等待账户有足够余额
+	time.Sleep(10 * time.Second)
+
+	// 周期性生成新订单
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	nonceMap := make(map[string]uint64)
+
+	for range ticker.C {
+		if len(s.nodes) == 0 {
+			continue
+		}
+
+		// 随机选择一个节点
+		nodeIdx := mrand.Intn(len(s.nodes))
+		node := s.nodes[nodeIdx]
+		if node == nil {
+			continue
+		}
+
+		nonceMap[node.Address]++
+
+		// 随机价格和数量（使用较小的数量，避免余额不足）
+		basePrice := 1.0 + float64(mrand.Intn(10))*0.1
+		amount := 1.0 + float64(mrand.Intn(5))
+
+		// 卖出 FB 换取 USDT（节点只有 FB 余额）
+		tx := generateOrderTx(
+			node.Address,
+			"FB",   // base_token - 我们有 FB 余额
+			"USDT", // quote_token - 想要获得 USDT
+			fmt.Sprintf("%.2f", amount),
+			fmt.Sprintf("%.2f", basePrice),
+			nonceMap[node.Address],
+		)
+
+		if err := node.TxPool.StoreAnyTx(tx); err == nil {
+			logs.Trace("Simulator: Added sell order %s from %s, price=%.2f, amount=%.2f",
+				tx.GetBase().TxId, node.Address, basePrice, amount)
+		}
+	}
+}
+
+// generateOrderTx 生成订单交易
+func generateOrderTx(from, baseToken, quoteToken, amount, price string, nonce uint64) *pb.AnyTx {
+	tx := &pb.OrderTx{
+		Base: &pb.BaseMessage{
+			TxId:        generateTxID(nonce),
+			FromAddress: from,
+			Fee:         "1",
+			Status:      pb.Status_PENDING,
+			Nonce:       nonce,
+		},
+		BaseToken:  baseToken,
+		QuoteToken: quoteToken,
+		Op:         pb.OrderOp_ADD,
+		Amount:     amount,
+		Price:      price,
+	}
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_OrderTx{OrderTx: tx},
 	}
 }

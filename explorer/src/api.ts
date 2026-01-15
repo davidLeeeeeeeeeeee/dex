@@ -93,3 +93,23 @@ export async function fetchSyncStatus(): Promise<SyncStatusResponse> {
   const resp = await fetch('/api/sync/status')
   return resp.json()
 }
+
+// 获取订单簿数据
+import type { OrderBookData, TradeRecord } from './types'
+
+export async function fetchOrderBook(node: string, pair: string): Promise<OrderBookData> {
+  const resp = await fetch(`/api/orderbook?node=${encodeURIComponent(node)}&pair=${encodeURIComponent(pair)}`)
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch order book: ${resp.status}`)
+  }
+  return resp.json()
+}
+
+// 获取最近成交记录
+export async function fetchRecentTrades(node: string, pair: string): Promise<TradeRecord[]> {
+  const resp = await fetch(`/api/trades?node=${encodeURIComponent(node)}&pair=${encodeURIComponent(pair)}`)
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch trades: ${resp.status}`)
+  }
+  return resp.json()
+}

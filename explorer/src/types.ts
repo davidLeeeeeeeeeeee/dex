@@ -268,3 +268,29 @@ export interface SyncStatusResponse {
   last_sync?: string
   last_sync_ago?: string
 }
+
+// 订单簿条目
+export interface OrderBookEntry {
+  price: string
+  amount: string
+  total: string
+}
+
+// 订单簿数据
+export interface OrderBookData {
+  pair: string
+  bids: OrderBookEntry[]
+  asks: OrderBookEntry[]
+  lastUpdate: string
+}
+
+// 成交记录
+export interface TradeRecord {
+  id: string
+  time: string
+  price: string
+  amount: string
+  side: 'buy' | 'sell'
+  maker_order_id?: string
+  taker_order_id?: string
+}

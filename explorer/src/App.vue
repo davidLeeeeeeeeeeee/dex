@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import ControlPanel from './components/ControlPanel.vue'
 import NodeList from './components/NodeList.vue'
 import NodeCards from './components/NodeCards.vue'
@@ -7,10 +7,13 @@ import NodeModal from './components/NodeModal.vue'
 import SearchPanel from './components/SearchPanel.vue'
 import type { NodeSummary, NodesResponse } from './types'
 import { fetchNodes, fetchSummary } from './api'
-import FrostDashboard from './components/frost/FrostDashboard.vue'
+import WithdrawQueue from './components/frost/WithdrawQueue.vue'
+import WitnessFlow from './components/frost/WitnessFlow.vue'
+import DkgTimeline from './components/frost/DkgTimeline.vue'
+import TradingPanel from './components/TradingPanel.vue'
 
 // Tab 状态
-const activeTab = ref<'overview' | 'search' | 'frost'>('overview')
+const activeTab = ref<'overview' | 'search' | 'trading' | 'withdrawals' | 'recharges' | 'dkg'>('overview')
 
 // 状态
 const nodes = ref<string[]>([])
@@ -38,6 +41,16 @@ const firstSelectedNode = computed(() => {
   const arr = Array.from(selected.value)
   return arr.length > 0 ? arr[0] : ''
 })
+
+// Protocol 页面选中的节点
+const selectedProtocolNode = ref('')
+
+// 监视 nodes 变化，设置默认选中节点
+watch(nodes, (newNodes) => {
+  if (newNodes.length > 0 && !selectedProtocolNode.value) {
+    selectedProtocolNode.value = newNodes[0]
+  }
+}, { immediate: true })
 
 // 存储键
 const storageKeys = {
@@ -211,9 +224,21 @@ onMounted(() => {
       @click="activeTab = 'search'"
     >Search</button>
     <button
-      :class="['tab-btn', { active: activeTab === 'frost' }]"
-      @click="activeTab = 'frost'"
-    >Protocol</button>
+      :class="['tab-btn', { active: activeTab === 'trading' }]"
+      @click="activeTab = 'trading'"
+    >Trading</button>
+    <button
+      :class="['tab-btn', { active: activeTab === 'withdrawals' }]"
+      @click="activeTab = 'withdrawals'"
+    >🏦 Withdrawals</button>
+    <button
+      :class="['tab-btn', { active: activeTab === 'recharges' }]"
+      @click="activeTab = 'recharges'"
+    >👁️ Recharges</button>
+    <button
+      :class="['tab-btn', { active: activeTab === 'dkg' }]"
+      @click="activeTab = 'dkg'"
+    >🔐 DKG Sessions</button>
   </nav>
 
   <main v-if="activeTab === 'overview'" class="layout">
@@ -262,11 +287,47 @@ onMounted(() => {
     />
   </main>
 
-  <main v-else-if="activeTab === 'frost'" class="layout frost-layout">
-    <FrostDashboard
+  <main v-else-if="activeTab === 'trading'" class="layout trading-layout">
+    <TradingPanel
       :nodes="nodes"
       :default-node="firstSelectedNode"
     />
+  </main>
+
+  <main v-else-if="activeTab === 'withdrawals'" class="layout protocol-layout">
+    <div class="protocol-container">
+      <div class="node-selector">
+        <label>Select Node:</label>
+        <select v-model="selectedProtocolNode" class="node-select">
+          <option v-for="node in nodes" :key="node" :value="node">{{ node }}</option>
+        </select>
+      </div>
+      <WithdrawQueue v-if="selectedProtocolNode" :node="selectedProtocolNode" />
+    </div>
+  </main>
+
+  <main v-else-if="activeTab === 'recharges'" class="layout protocol-layout">
+    <div class="protocol-container">
+      <div class="node-selector">
+        <label>Select Node:</label>
+        <select v-model="selectedProtocolNode" class="node-select">
+          <option v-for="node in nodes" :key="node" :value="node">{{ node }}</option>
+        </select>
+      </div>
+      <WitnessFlow v-if="selectedProtocolNode" :node="selectedProtocolNode" />
+    </div>
+  </main>
+
+  <main v-else-if="activeTab === 'dkg'" class="layout protocol-layout">
+    <div class="protocol-container">
+      <div class="node-selector">
+        <label>Select Node:</label>
+        <select v-model="selectedProtocolNode" class="node-select">
+          <option v-for="node in nodes" :key="node" :value="node">{{ node }}</option>
+        </select>
+      </div>
+      <DkgTimeline v-if="selectedProtocolNode" :node="selectedProtocolNode" />
+    </div>
   </main>
 
   <footer class="footer">

@@ -260,6 +260,8 @@ func main() {
 	mux.HandleFunc("/api/frost/withdraw/queue", srv.handleFrostWithdrawQueue)
 	mux.HandleFunc("/api/witness/requests", srv.handleWitnessRequests)
 	mux.HandleFunc("/api/frost/dkg/list", srv.handleFrostDKGSessions)
+	mux.HandleFunc("/api/orderbook", srv.handleOrderBook)
+	mux.HandleFunc("/api/trades", srv.handleTrades)
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	log.Printf("Explorer listening at http://%s (ui: %s, data: %s)", *listenAddr, webDir, *dataDir)
@@ -1175,4 +1177,150 @@ func (s *server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// ===================== Trading API =====================
+
+// OrderBookEntry 订单簿条目
+type OrderBookEntry struct {
+	Price  string `json:"price"`
+	Amount string `json:"amount"`
+	Total  string `json:"total"`
+}
+
+// OrderBookData 订单簿数据
+type OrderBookData struct {
+	Pair       string           `json:"pair"`
+	Bids       []OrderBookEntry `json:"bids"`
+	Asks       []OrderBookEntry `json:"asks"`
+	LastUpdate string           `json:"lastUpdate"`
+}
+
+// TradeRecord 成交记录
+type TradeRecord struct {
+	ID           string `json:"id"`
+	Time         string `json:"time"`
+	Price        string `json:"price"`
+	Amount       string `json:"amount"`
+	Side         string `json:"side"`
+	MakerOrderID string `json:"maker_order_id,omitempty"`
+	TakerOrderID string `json:"taker_order_id,omitempty"`
+}
+
+// handleOrderBook 处理订单簿查询
+func (s *server) handleOrderBook(w http.ResponseWriter, r *http.Request) {
+	node := r.URL.Query().Get("node")
+	pair := r.URL.Query().Get("pair")
+
+	if node == "" || pair == "" {
+		http.Error(w, "missing node or pair parameter", http.StatusBadRequest)
+		return
+	}
+
+	// 从节点获取订单簿数据
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+	defer cancel()
+
+	orderBook, err := s.fetchOrderBookFromNode(ctx, node, pair)
+	if err != nil {
+		// 返回模拟数据用于开发测试
+		orderBook = s.generateMockOrderBook(pair)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(orderBook)
+}
+
+// handleTrades 处理最近成交查询
+func (s *server) handleTrades(w http.ResponseWriter, r *http.Request) {
+	node := r.URL.Query().Get("node")
+	pair := r.URL.Query().Get("pair")
+
+	if node == "" || pair == "" {
+		http.Error(w, "missing node or pair parameter", http.StatusBadRequest)
+		return
+	}
+
+	// 从节点获取成交数据
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+	defer cancel()
+
+	trades, err := s.fetchTradesFromNode(ctx, node, pair)
+	if err != nil {
+		// 返回模拟数据用于开发测试
+		trades = s.generateMockTrades(pair)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(trades)
+}
+
+// fetchOrderBookFromNode 从节点获取订单簿（TODO: 实现真实 API 调用）
+func (s *server) fetchOrderBookFromNode(ctx context.Context, node, pair string) (*OrderBookData, error) {
+	// TODO: 调用节点的 /getorderbook API
+	// 目前返回错误，触发模拟数据
+	return nil, fmt.Errorf("not implemented")
+}
+
+// fetchTradesFromNode 从节点获取成交记录（TODO: 实现真实 API 调用）
+func (s *server) fetchTradesFromNode(ctx context.Context, node, pair string) ([]TradeRecord, error) {
+	// TODO: 调用节点的 /gettrades API
+	// 目前返回错误，触发模拟数据
+	return nil, fmt.Errorf("not implemented")
+}
+
+// generateMockOrderBook 生成模拟订单簿数据
+func (s *server) generateMockOrderBook(pair string) *OrderBookData {
+	bids := make([]OrderBookEntry, 0, 10)
+	asks := make([]OrderBookEntry, 0, 10)
+
+	basePrice := 100.0
+	for i := 0; i < 10; i++ {
+		bidPrice := basePrice - float64(i)*0.5
+		askPrice := basePrice + float64(i+1)*0.5
+		amount := 10.0 + float64(i)*5
+
+		bids = append(bids, OrderBookEntry{
+			Price:  fmt.Sprintf("%.2f", bidPrice),
+			Amount: fmt.Sprintf("%.2f", amount),
+			Total:  fmt.Sprintf("%.2f", bidPrice*amount),
+		})
+		asks = append(asks, OrderBookEntry{
+			Price:  fmt.Sprintf("%.2f", askPrice),
+			Amount: fmt.Sprintf("%.2f", amount),
+			Total:  fmt.Sprintf("%.2f", askPrice*amount),
+		})
+	}
+
+	return &OrderBookData{
+		Pair:       pair,
+		Bids:       bids,
+		Asks:       asks,
+		LastUpdate: time.Now().Format(time.RFC3339),
+	}
+}
+
+// generateMockTrades 生成模拟成交数据
+func (s *server) generateMockTrades(pair string) []TradeRecord {
+	trades := make([]TradeRecord, 0, 20)
+	baseTime := time.Now()
+
+	for i := 0; i < 20; i++ {
+		side := "buy"
+		if i%2 == 0 {
+			side = "sell"
+		}
+		price := 100.0 + float64(i%5)*0.1
+		amount := 5.0 + float64(i%10)
+
+		trades = append(trades, TradeRecord{
+			ID:     fmt.Sprintf("trade_%d", i+1),
+			Time:   baseTime.Add(-time.Duration(i) * time.Minute).Format("15:04:05"),
+			Price:  fmt.Sprintf("%.2f", price),
+			Amount: fmt.Sprintf("%.2f", amount),
+			Side:   side,
+		})
+	}
+
+	return trades
 }
