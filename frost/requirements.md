@@ -80,10 +80,12 @@ e.g. btc直接聚合公钥地址管理，而智能合约用合约来管理资产
 ### TODO
 
 
-12. explorer上查看转账tx详情页面 需要有from, to字段
+8. explorer上添加一个交易页面，可以看到不同币种的挂单情况、最新成交list。
 
-13.接下来的开发重点是测试协议实现的正确性，我们需要关闭这些 Injector，让 VM 的 Handler（如 
-vm/transfer_handler.go
- 等）去驱动状态变化。
+8.1 模拟tx模块需要生成一些orderTx方便交易页面有数据展示。
 
- 14.Search 中新增对address的搜索。以及对单个address的详情页面。
+9.接下来的开发重点是测试协议实现的正确性，我们需要关闭这些 Injector，让 VM 的 Handler（如 vm/transfer_handler.go等）去驱动状态变化。
+
+ 10. Withdrawals  Recharges  DKG Sessions 这三个tab提级，和节点总览 Search平级，取消Protocol tab
+
+ 
