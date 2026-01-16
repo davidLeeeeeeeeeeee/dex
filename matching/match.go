@@ -13,6 +13,9 @@ import (
 // 只保留 [0.5*markPrice, 2.0*markPrice] 区间内的所有订单
 // OrderBook 的 PruneByMarkPrice 现在只负责内存中的清理工作
 func (ob *OrderBook) PruneByMarkPrice(markPrice decimal.Decimal) {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+
 	lowerBound := markPrice.Mul(decimal.NewFromFloat(0.5)) // 0.5 * markPrice
 	upperBound := markPrice.Mul(decimal.NewFromFloat(2.0)) // 2.0 * markPrice
 
@@ -59,6 +62,10 @@ func (ob *OrderBook) AddOrder(o *Order) error {
 	if o.Price.Cmp(lowerBound) < 0 || o.Price.Cmp(upperBound) > 0 {
 		return fmt.Errorf("price out of range in OrderBook: %s", o.Price.String())
 	}
+
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+
 	// 1. 加入/更新对应 priceMap
 	var lvl *PriceLevel
 	if o.Side == BUY {
@@ -311,6 +318,9 @@ func (ob *OrderBook) emitTrade(ev TradeUpdate) {
 
 // CancelOrder 通过订单ID删除订单
 func (ob *OrderBook) CancelOrder(orderID string) error {
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+
 	ref, ok := ob.orderIndex[orderID]
 	if !ok {
 		return errors.New("order not found")
@@ -329,7 +339,7 @@ func (ob *OrderBook) CancelOrder(orderID string) error {
 	return nil
 }
 
-// getBestBuyPrice 获取当前最高买价
+// getBestBuyPrice 获取当前最高买价（调用者需持有锁）
 func (ob *OrderBook) getBestBuyPrice() decimal.Decimal {
 	if ob.buyHeap.Len() == 0 {
 		return decimal.Zero
@@ -337,7 +347,7 @@ func (ob *OrderBook) getBestBuyPrice() decimal.Decimal {
 	return (*ob.buyHeap)[0].Price
 }
 
-// getBestSellPrice 获取当前最低卖价
+// getBestSellPrice 获取当前最低卖价（调用者需持有锁）
 func (ob *OrderBook) getBestSellPrice() decimal.Decimal {
 	if ob.sellHeap.Len() == 0 {
 		// 表示无卖单时
@@ -356,12 +366,26 @@ func minDecimal(a, b decimal.Decimal) decimal.Decimal {
 	return b
 }
 
-// BuyMap 返回买单 price->PriceLevel 的映射
+// BuyMap 返回买单 price->PriceLevel 的映射（返回副本以保证并发安全）
 func (ob *OrderBook) BuyMap() map[decimal.Decimal]*PriceLevel {
-	return ob.buyMap
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+	result := make(map[decimal.Decimal]*PriceLevel, len(ob.buyMap))
+	for k, v := range ob.buyMap {
+		result[k] = v
+	}
+	return result
 }
+
+// SellMap 返回卖单 price->PriceLevel 的映射（返回副本以保证并发安全）
 func (ob *OrderBook) SellMap() map[decimal.Decimal]*PriceLevel {
-	return ob.sellMap
+	ob.mu.RLock()
+	defer ob.mu.RUnlock()
+	result := make(map[decimal.Decimal]*PriceLevel, len(ob.sellMap))
+	for k, v := range ob.sellMap {
+		result[k] = v
+	}
+	return result
 }
 
 // 每轮按如下步骤调用，即可保证内存可控

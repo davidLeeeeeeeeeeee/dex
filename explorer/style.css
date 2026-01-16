@@ -132,8 +132,29 @@ body::before {
 }
 
 .layout.search-layout,
-.layout.frost-layout {
+.layout.frost-layout,
+.layout.protocol-layout {
   grid-template-columns: 1fr;
+}
+
+.protocol-container {
+  width: 100%;
+}
+
+.protocol-container .node-selector {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.protocol-container .node-selector label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.protocol-container .node-select {
+  min-width: 200px;
 }
 
 .left,

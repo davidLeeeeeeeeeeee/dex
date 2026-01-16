@@ -4,6 +4,7 @@ import (
 	"dex/pb"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/shopspring/decimal"
 )
@@ -30,6 +31,8 @@ type TradeSink func(TradeUpdate)
 
 // OrderBook 包含买、卖双方的价格映射、堆，以及订单ID索引
 type OrderBook struct {
+	mu sync.RWMutex // 保护并发访问
+
 	buyMap  map[decimal.Decimal]*PriceLevel
 	sellMap map[decimal.Decimal]*PriceLevel
 
