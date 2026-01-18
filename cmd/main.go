@@ -266,12 +266,26 @@ func (v *TestValidator) CheckAnyTx(tx *pb.AnyTx) error {
 	}
 	return nil
 }
+
+// 全局创世配置
+var genesisConfig *config.GenesisConfig
+
 func main() {
 	// 加载配置
 	cfg := config.DefaultConfig()
 	// 配置参数
 	numNodes := cfg.Network.DefaultNumNodes
 	basePort := cfg.Network.BasePort
+
+	// 加载创世配置
+	var err error
+	genesisConfig, err = config.LoadGenesisConfig("config/genesis.json")
+	if err != nil {
+		fmt.Printf("⚠️  Warning: Failed to load genesis config: %v, using defaults\n", err)
+		genesisConfig = config.DefaultGenesisConfig()
+	} else {
+		fmt.Println("📜 Loaded genesis config from config/genesis.json")
+	}
 
 	fmt.Printf("🚀 Starting %d real consensus nodes...\n", numNodes)
 
@@ -791,11 +805,8 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 		Balances: make(map[string]*pb.TokenBalance),
 	}
 
-	// 初始化FB代币余额
-	account.Balances["FB"] = &pb.TokenBalance{
-		Balance:            "1000000",
-		MinerLockedBalance: "100000",
-	}
+	// 从创世配置初始化余额
+	applyGenesisBalances(account)
 
 	if err := dbManager.SaveAccount(account); err != nil {
 		return fmt.Errorf("failed to save account: %v", err)
@@ -804,6 +815,14 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	indexKey := db.KeyIndexToAccount(account.Index)
 	accountKey := db.KeyAccount(account.Address)
 	dbManager.EnqueueSet(indexKey, accountKey)
+
+	// 初始化创世代币（只在第一个节点时执行一次）
+	if node.ID == 0 {
+		if err := initGenesisTokens(dbManager); err != nil {
+			logs.Error("Failed to init genesis tokens: %v", err)
+		}
+	}
+
 	// Force flush to ensure miner registration is persisted
 	dbManager.ForceFlush()
 	return nil
@@ -891,10 +910,8 @@ func registerAllNodes(nodes []*NodeInstance) {
 				Balances: make(map[string]*pb.TokenBalance),
 			}
 
-			account.Balances["FB"] = &pb.TokenBalance{
-				Balance:            "1000000",
-				MinerLockedBalance: "100000",
-			}
+			// 从创世配置初始化余额
+			applyGenesisBalances(account)
 
 			node.DBManager.SaveAccount(account)
 
@@ -924,6 +941,85 @@ func registerAllNodes(nodes []*NodeInstance) {
 			logs.Error("Failed to rebuild bitmap: %v", err)
 		}
 	}
+}
+
+// applyGenesisBalances 从创世配置应用余额到账户
+func applyGenesisBalances(account *pb.Account) {
+	if genesisConfig == nil {
+		// 没有创世配置，使用默认值
+		account.Balances["FB"] = &pb.TokenBalance{
+			Balance:            "1000000",
+			MinerLockedBalance: "100000",
+		}
+		return
+	}
+
+	// 查找账户特定的配置，如果没有则使用 "default"
+	alloc, exists := genesisConfig.Alloc[account.Address]
+	if !exists {
+		alloc, exists = genesisConfig.Alloc["default"]
+	}
+
+	if !exists {
+		// 没有配置，使用默认值
+		account.Balances["FB"] = &pb.TokenBalance{
+			Balance:            "1000000",
+			MinerLockedBalance: "100000",
+		}
+		return
+	}
+
+	// 应用配置中的余额
+	for tokenAddr, balance := range alloc.Balances {
+		account.Balances[tokenAddr] = &pb.TokenBalance{
+			Balance:            balance.Balance,
+			MinerLockedBalance: balance.MinerLockedBalance,
+		}
+	}
+}
+
+// initGenesisTokens 初始化创世代币到数据库
+func initGenesisTokens(dbManager *db.Manager) error {
+	if genesisConfig == nil {
+		return nil
+	}
+
+	// 获取或创建 TokenRegistry
+	registry := &pb.TokenRegistry{
+		Tokens: make(map[string]*pb.Token),
+	}
+
+	for _, tokenCfg := range genesisConfig.Tokens {
+		token := &pb.Token{
+			Address:     tokenCfg.Address,
+			Symbol:      tokenCfg.Symbol,
+			Name:        tokenCfg.Name,
+			TotalSupply: tokenCfg.TotalSupply,
+			Owner:       tokenCfg.Owner,
+			CanMint:     tokenCfg.CanMint,
+		}
+
+		// 保存 Token
+		tokenData, err := proto.Marshal(token)
+		if err != nil {
+			return fmt.Errorf("failed to marshal token %s: %w", tokenCfg.Symbol, err)
+		}
+		tokenKey := keys.KeyToken(tokenCfg.Address)
+		dbManager.EnqueueSet(tokenKey, string(tokenData))
+
+		// 添加到 registry
+		registry.Tokens[tokenCfg.Address] = token
+	}
+
+	// 保存 TokenRegistry
+	registryData, err := proto.Marshal(registry)
+	if err != nil {
+		return fmt.Errorf("failed to marshal token registry: %w", err)
+	}
+	registryKey := keys.KeyTokenRegistry()
+	dbManager.EnqueueSet(registryKey, string(registryData))
+
+	return nil
 }
 
 // 生成自签名证书
@@ -1653,9 +1749,9 @@ func (s *TxSimulator) injectDkgTransitions(node *NodeInstance, timestamp int64) 
 }
 
 // runOrderScenario 模拟订单交易（买单/卖单）
-// 注意：OrderTx 使用 base_token 和 quote_token 来区分买卖方向
-// 所有节点只有 FB 余额，所以只能用 FB 作为 base_token（卖出 FB）
-// 买单会因为没有对应代币余额而失败，所以这里只生成卖单
+// 现在节点有 FB 和 USDT 余额（通过 genesis.json 配置），可以双向交易
+// - 卖单：用 FB 换 USDT（base_token=FB, quote_token=USDT）
+// - 买单：用 USDT 换 FB（base_token=USDT, quote_token=FB）
 func (s *TxSimulator) runOrderScenario() {
 	// 延迟启动，等待账户有足够余额
 	time.Sleep(10 * time.Second)
@@ -1684,25 +1780,48 @@ func (s *TxSimulator) runOrderScenario() {
 		basePrice := 1.0 + float64(mrand.Intn(10))*0.1
 		amount := 1.0 + float64(mrand.Intn(5))
 
-		// 卖出 FB 换取 USDT（节点只有 FB 余额）
-		tx := generateOrderTx(
-			node.Address,
-			"FB",   // base_token - 我们有 FB 余额
-			"USDT", // quote_token - 想要获得 USDT
-			fmt.Sprintf("%.2f", amount),
-			fmt.Sprintf("%.2f", basePrice),
-			nonceMap[node.Address],
-		)
+		// 随机决定买单还是卖单
+		isBuyOrder := mrand.Intn(2) == 0
 
-		if err := node.TxPool.StoreAnyTx(tx); err == nil {
-			logs.Trace("Simulator: Added sell order %s from %s, price=%.2f, amount=%.2f",
-				tx.GetBase().TxId, node.Address, basePrice, amount)
+		var tx *pb.AnyTx
+		if isBuyOrder {
+			// 买单：用 USDT 买 FB
+			// base_token=FB (想买的), quote_token=USDT (支付的)
+			tx = generateOrderTx(
+				node.Address,
+				"FB",                           // base_token - 想要买入的代币
+				"USDT",                         // quote_token - 用于支付的代币
+				fmt.Sprintf("%.2f", amount),    // 想买入的 FB 数量
+				fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
+				nonceMap[node.Address],
+				pb.OrderSide_BUY,
+			)
+			logs.Trace("Simulator: Added BUY order %s from %s, buy %.2f FB @ %.2f USDT",
+				tx.GetBase().TxId, node.Address, amount, basePrice)
+		} else {
+			// 卖单：卖 FB 换 USDT
+			// base_token=FB (要卖的), quote_token=USDT (想要获得的)
+			tx = generateOrderTx(
+				node.Address,
+				"FB",                           // base_token - 要卖出的代币
+				"USDT",                         // quote_token - 想要获得的代币
+				fmt.Sprintf("%.2f", amount),    // 要卖出的 FB 数量
+				fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
+				nonceMap[node.Address],
+				pb.OrderSide_SELL,
+			)
+			logs.Trace("Simulator: Added SELL order %s from %s, sell %.2f FB @ %.2f USDT",
+				tx.GetBase().TxId, node.Address, amount, basePrice)
+		}
+
+		if err := node.TxPool.StoreAnyTx(tx); err != nil {
+			logs.Error("Simulator: Failed to add order: %v", err)
 		}
 	}
 }
 
 // generateOrderTx 生成订单交易
-func generateOrderTx(from, baseToken, quoteToken, amount, price string, nonce uint64) *pb.AnyTx {
+func generateOrderTx(from, baseToken, quoteToken, amount, price string, nonce uint64, side pb.OrderSide) *pb.AnyTx {
 	tx := &pb.OrderTx{
 		Base: &pb.BaseMessage{
 			TxId:        generateTxID(nonce),
@@ -1716,6 +1835,7 @@ func generateOrderTx(from, baseToken, quoteToken, amount, price string, nonce ui
 		Op:         pb.OrderOp_ADD,
 		Amount:     amount,
 		Price:      price,
+		Side:       side,
 	}
 	return &pb.AnyTx{
 		Content: &pb.AnyTx_OrderTx{OrderTx: tx},

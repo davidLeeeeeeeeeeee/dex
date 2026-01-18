@@ -145,6 +145,22 @@ func KeyOrderPriceIndexPrefix(pair string, isFilled bool) string {
 	return withVer(fmt.Sprintf("pair:%s|is_filled:%t|", pair, isFilled))
 }
 
+// ===================== 成交记录相关 =====================
+
+// KeyTradeRecord 成交记录
+// 例：v1_trade_<pair>_<timestamp>_<tradeID>
+func KeyTradeRecord(pair string, timestamp int64, tradeID string) string {
+	// 使用倒序时间戳，让最新的成交记录排在前面
+	invertedTimestamp := ^uint64(timestamp)
+	return withVer(fmt.Sprintf("trade_%s_%020d_%s", pair, invertedTimestamp, tradeID))
+}
+
+// KeyTradeRecordPrefix 成交记录前缀（按交易对）
+// 例：v1_trade_<pair>_
+func KeyTradeRecordPrefix(pair string) string {
+	return withVer(fmt.Sprintf("trade_%s_", pair))
+}
+
 // ===================== Token 相关 =====================
 
 // KeyToken Token 数据

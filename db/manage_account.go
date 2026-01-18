@@ -162,3 +162,37 @@ func (mgr *Manager) getAccountByIndex(idx uint64) (*pb.Account, error) {
 	}
 	return acc, nil
 }
+
+// GetToken 获取 Token 信息
+func (mgr *Manager) GetToken(tokenAddress string) (*pb.Token, error) {
+	key := KeyToken(tokenAddress)
+	val, err := mgr.Read(key)
+	if err != nil {
+		return nil, err
+	}
+	if val == "" {
+		return nil, nil
+	}
+	token := &pb.Token{}
+	if err := ProtoUnmarshal([]byte(val), token); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+// GetTokenRegistry 获取 Token 注册表
+func (mgr *Manager) GetTokenRegistry() (*pb.TokenRegistry, error) {
+	key := KeyTokenRegistry()
+	val, err := mgr.Read(key)
+	if err != nil {
+		return nil, err
+	}
+	if val == "" {
+		return nil, nil
+	}
+	registry := &pb.TokenRegistry{}
+	if err := ProtoUnmarshal([]byte(val), registry); err != nil {
+		return nil, err
+	}
+	return registry, nil
+}

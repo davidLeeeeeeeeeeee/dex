@@ -94,13 +94,34 @@ export async function fetchSyncStatus(): Promise<SyncStatusResponse> {
   return resp.json()
 }
 
+// API 错误类型
+interface APIError {
+  error: string
+  code?: string
+  details?: string
+}
+
+// 解析 API 错误
+async function parseAPIError(resp: Response): Promise<string> {
+  try {
+    const data: APIError = await resp.json()
+    if (data.details) {
+      return `${data.error}: ${data.details}`
+    }
+    return data.error
+  } catch {
+    return `Request failed with status ${resp.status}`
+  }
+}
+
 // 获取订单簿数据
 import type { OrderBookData, TradeRecord } from './types'
 
 export async function fetchOrderBook(node: string, pair: string): Promise<OrderBookData> {
   const resp = await fetch(`/api/orderbook?node=${encodeURIComponent(node)}&pair=${encodeURIComponent(pair)}`)
   if (!resp.ok) {
-    throw new Error(`Failed to fetch order book: ${resp.status}`)
+    const errorMessage = await parseAPIError(resp)
+    throw new Error(errorMessage)
   }
   return resp.json()
 }
@@ -109,7 +130,9 @@ export async function fetchOrderBook(node: string, pair: string): Promise<OrderB
 export async function fetchRecentTrades(node: string, pair: string): Promise<TradeRecord[]> {
   const resp = await fetch(`/api/trades?node=${encodeURIComponent(node)}&pair=${encodeURIComponent(pair)}`)
   if (!resp.ok) {
-    throw new Error(`Failed to fetch trades: ${resp.status}`)
+    const errorMessage = await parseAPIError(resp)
+    throw new Error(errorMessage)
   }
-  return resp.json()
+  const data = await resp.json()
+  return data || [] // 确保返回数组而不是 null
 }

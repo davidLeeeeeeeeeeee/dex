@@ -377,11 +377,26 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 			logs.Info("[RealBlockStore] VM committed finalized block %s with %d txs at height %d",
 				block.ID, len(pbBlock.Body), height)
 
-			// 从交易池移除已提交的交易
+			// 更新交易状态并保存到数据库
 			for _, tx := range pbBlock.Body {
 				if base := tx.GetBase(); base != nil {
+					// 更新交易状态
+					base.Status = pb.Status_SUCCEED
+					base.ExecutedHeight = height
+
+					// 从交易池移除
 					s.pool.RemoveAnyTx(base.TxId)
+
+					// 保存到数据库
+					if err := s.dbManager.SaveAnyTx(tx); err != nil {
+						logs.Error("[RealBlockStore] Failed to save finalized tx %s: %v", base.TxId, err)
+					}
 				}
+			}
+
+			// 保存最终化的区块
+			if err := s.dbManager.SaveBlock(pbBlock); err != nil {
+				logs.Error("[RealBlockStore] Failed to save finalized block: %v", err)
 			}
 		}
 	} else {

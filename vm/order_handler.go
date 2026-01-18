@@ -423,6 +423,13 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		}
 	}
 
+	// 生成成交记录（每两个 TradeUpdate 事件生成一条成交记录）
+	tradeRecordOps, err := h.generateTradeRecords(newOrd, tradeEvents, orderUpdates, pair)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate trade records: %w", err)
+	}
+	ws = append(ws, tradeRecordOps...)
+
 	// 更新账户余额
 	// 根据撮合事件更新买卖双方的余额
 	accountBalanceOps, err := h.updateAccountBalances(tradeEvents, orderUpdates, sv)
@@ -630,6 +637,79 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		SyncStateDB: false,
 		Category:    "index",
 	})
+
+	return ws, nil
+}
+
+// generateTradeRecords 根据撮合事件生成成交记录
+// 撮合事件成对出现（taker 和 maker 各一个），需要合并成一条成交记录
+func (h *OrderTxHandler) generateTradeRecords(
+	newOrd *pb.OrderTx,
+	tradeEvents []matching.TradeUpdate,
+	orderUpdates map[string]*pb.OrderTx,
+	pair string,
+) ([]WriteOp, error) {
+	ws := make([]WriteOp, 0)
+
+	// 新订单是 taker，撮合事件成对出现
+	// 遍历事件，每两个事件生成一条成交记录
+	for i := 0; i < len(tradeEvents)-1; i += 2 {
+		takerEv := tradeEvents[i]
+		makerEv := tradeEvents[i+1]
+
+		// 确定 taker 和 maker
+		var takerOrderID, makerOrderID string
+		var tradePrice, tradeAmount string
+		var takerSide pb.OrderSide
+
+		if takerEv.OrderID == newOrd.Base.TxId {
+			takerOrderID = takerEv.OrderID
+			makerOrderID = makerEv.OrderID
+			tradePrice = takerEv.TradePrice.String()
+			tradeAmount = takerEv.TradeAmt.String()
+			takerSide = newOrd.Side
+		} else {
+			takerOrderID = makerEv.OrderID
+			makerOrderID = takerEv.OrderID
+			tradePrice = makerEv.TradePrice.String()
+			tradeAmount = makerEv.TradeAmt.String()
+			if makerOrd, ok := orderUpdates[makerOrderID]; ok {
+				takerSide = makerOrd.Side
+			}
+		}
+
+		// 生成成交 ID（使用 taker 订单 ID + maker 订单 ID + 索引）
+		tradeID := fmt.Sprintf("%s_%s_%d", takerOrderID[:8], makerOrderID[:8], i/2)
+		timestamp := utils.NowRFC3339()
+
+		// 创建成交记录
+		tradeRecord := &pb.TradeRecord{
+			TradeId:      tradeID,
+			Pair:         pair,
+			Price:        tradePrice,
+			Amount:       tradeAmount,
+			MakerOrderId: makerOrderID,
+			TakerOrderId: takerOrderID,
+			TakerSide:    takerSide,
+			Timestamp:    timestamp,
+			Height:       newOrd.Base.ExecutedHeight,
+		}
+
+		tradeData, err := proto.Marshal(tradeRecord)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal trade record: %w", err)
+		}
+
+		// 使用时间戳作为 key 前缀，让最新的成交记录排在前面
+		tradeKey := keys.KeyTradeRecord(pair, utils.NowUnixNano(), tradeID)
+		ws = append(ws, WriteOp{
+			Key:         tradeKey,
+			Value:       tradeData,
+			Del:         false,
+			SyncStateDB: false,
+			Category:    "trade",
+		})
+	}
 
 	return ws, nil
 }

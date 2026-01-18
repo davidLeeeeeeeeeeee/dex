@@ -719,33 +719,18 @@ func convertToMatchingOrder(ord *pb.OrderTx) (*matching.Order, error) {
 		return nil, fmt.Errorf("order already filled")
 	}
 
-	// 确定订单方向和数量
-	// 交易对的定义：按字母排序后的结果，例如 "BTC_USDT"
-	// - 如果 base_token 是交易对的第一个币种（BTC），说明是卖出该币种 → SELL
-	// - 如果 base_token 是交易对的第二个币种（USDT），说明是买入第一个币种 → BUY
-	//
-	// 例如：
-	// - 卖 BTC：base_token=BTC, quote_token=USDT, amount=1（卖出 1 BTC）→ SELL, Amount=1
-	// - 买 BTC：base_token=USDT, quote_token=BTC, amount=25000（支付 25000 USDT）, price=50000 → BUY, Amount=25000/50000=0.5
+	// 使用 Side 字段确定订单方向
 	var side matching.OrderSide
-	var matchingAmount decimal.Decimal
-
-	if ord.BaseToken < ord.QuoteToken {
-		// base_token 是交易对的第一个币种 → SELL
-		// Amount 直接使用 remainingAmount（卖出的数量）
-		side = matching.SELL
-		matchingAmount = remainingAmount
-	} else {
-		// base_token 是交易对的第二个币种 → BUY
-		// Amount 需要转换为交易对的基础币种：remainingAmount / price
+	if ord.Side == pb.OrderSide_BUY {
 		side = matching.BUY
-		matchingAmount = remainingAmount.Div(price)
+	} else {
+		side = matching.SELL
 	}
 
 	return &matching.Order{
 		ID:     ord.Base.TxId,
 		Side:   side,
 		Price:  price,
-		Amount: matchingAmount,
+		Amount: remainingAmount,
 	}, nil
 }

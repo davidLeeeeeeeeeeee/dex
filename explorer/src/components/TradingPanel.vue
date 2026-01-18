@@ -11,7 +11,10 @@ const props = defineProps<{
 const selectedNode = ref(props.defaultNode || '')
 const selectedPair = ref('FB_USDT')
 const loading = ref(false)
-const error = ref('')
+
+// 分开管理两个 API 的错误
+const orderBookError = ref('')
+const tradesError = ref('')
 
 // 订单簿数据
 const orderBook = ref<OrderBookData>({
@@ -33,23 +36,34 @@ watch(() => props.defaultNode, (val) => {
 
 const loadData = async () => {
   if (!selectedNode.value || !selectedPair.value) return
-  
+
   loading.value = true
-  error.value = ''
-  
-  try {
-    const [obData, tradesData] = await Promise.all([
-      fetchOrderBook(selectedNode.value, selectedPair.value),
-      fetchRecentTrades(selectedNode.value, selectedPair.value)
-    ])
-    orderBook.value = obData
-    recentTrades.value = tradesData
-  } catch (e: any) {
-    error.value = e.message || 'Failed to load trading data'
-    console.error('Failed to load trading data', e)
-  } finally {
-    loading.value = false
+  orderBookError.value = ''
+  tradesError.value = ''
+
+  // 并行请求，分别处理错误
+  const [obResult, tradesResult] = await Promise.allSettled([
+    fetchOrderBook(selectedNode.value, selectedPair.value),
+    fetchRecentTrades(selectedNode.value, selectedPair.value)
+  ])
+
+  // 处理订单簿结果
+  if (obResult.status === 'fulfilled') {
+    orderBook.value = obResult.value
+  } else {
+    orderBookError.value = obResult.reason?.message || 'Failed to load order book'
+    orderBook.value = { bids: [], asks: [], pair: selectedPair.value, lastUpdate: '' }
   }
+
+  // 处理成交记录结果
+  if (tradesResult.status === 'fulfilled') {
+    recentTrades.value = tradesResult.value
+  } else {
+    tradesError.value = tradesResult.reason?.message || 'Failed to load trades'
+    recentTrades.value = []
+  }
+
+  loading.value = false
 }
 
 onMounted(() => {
@@ -94,13 +108,18 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <div v-if="error" class="error-message">{{ error }}</div>
-
     <div class="trading-content">
       <!-- 订单簿 -->
       <div class="order-book glass-panel">
         <h3>📊 Order Book</h3>
-        <div class="order-book-content">
+
+        <!-- 订单簿错误提示 -->
+        <div v-if="orderBookError" class="error-message">
+          <span class="error-icon">⚠️</span>
+          {{ orderBookError }}
+        </div>
+
+        <div v-else class="order-book-content">
           <!-- 卖单 (Asks) -->
           <div class="asks-section">
             <div class="order-header">
@@ -108,27 +127,32 @@ onUnmounted(() => {
               <span>Amount</span>
               <span>Total</span>
             </div>
-            <div v-for="ask in orderBook.asks.slice(0, 10)" :key="ask.price" class="order-row ask">
+            <div v-for="ask in (orderBook.asks || []).slice(0, 10)" :key="ask.price" class="order-row ask">
               <span class="price sell">{{ ask.price }}</span>
               <span>{{ ask.amount }}</span>
               <span>{{ ask.total }}</span>
             </div>
-            <div v-if="orderBook.asks.length === 0" class="empty-message">No sell orders</div>
+            <div v-if="!orderBook.asks || orderBook.asks.length === 0" class="empty-message">No sell orders</div>
           </div>
-          
+
           <!-- 当前价格 -->
           <div class="spread-indicator">
             <span class="current-price">{{ orderBook.asks[0]?.price || '--' }}</span>
           </div>
-          
+
           <!-- 买单 (Bids) -->
           <div class="bids-section">
-            <div v-for="bid in orderBook.bids.slice(0, 10)" :key="bid.price" class="order-row bid">
+            <div class="order-header">
+              <span>Price</span>
+              <span>Amount</span>
+              <span>Total</span>
+            </div>
+            <div v-for="bid in (orderBook.bids || []).slice(0, 10)" :key="bid.price" class="order-row bid">
               <span class="price buy">{{ bid.price }}</span>
               <span>{{ bid.amount }}</span>
               <span>{{ bid.total }}</span>
             </div>
-            <div v-if="orderBook.bids.length === 0" class="empty-message">No buy orders</div>
+            <div v-if="!orderBook.bids || orderBook.bids.length === 0" class="empty-message">No buy orders</div>
           </div>
         </div>
       </div>
@@ -136,21 +160,30 @@ onUnmounted(() => {
       <!-- 最近成交 -->
       <div class="recent-trades glass-panel">
         <h3>📈 Recent Trades</h3>
-        <div class="trades-header">
-          <span>Time</span>
-          <span>Price</span>
-          <span>Amount</span>
-          <span>Side</span>
+
+        <!-- 成交记录错误提示 -->
+        <div v-if="tradesError" class="error-message">
+          <span class="error-icon">⚠️</span>
+          {{ tradesError }}
         </div>
-        <div class="trades-list">
-          <div v-for="trade in recentTrades.slice(0, 20)" :key="trade.id" class="trade-row">
-            <span class="time">{{ trade.time }}</span>
-            <span :class="['price', trade.side]">{{ trade.price }}</span>
-            <span>{{ trade.amount }}</span>
-            <span :class="['side-badge', trade.side]">{{ trade.side.toUpperCase() }}</span>
+
+        <template v-else>
+          <div class="trades-header">
+            <span>Time</span>
+            <span>Price</span>
+            <span>Amount</span>
+            <span>Side</span>
           </div>
-          <div v-if="recentTrades.length === 0" class="empty-message">No recent trades</div>
-        </div>
+          <div class="trades-list">
+            <div v-for="trade in (recentTrades || []).slice(0, 20)" :key="trade.id" class="trade-row">
+              <span class="time">{{ trade.time }}</span>
+              <span :class="['price', trade.side]">{{ trade.price }}</span>
+              <span>{{ trade.amount }}</span>
+              <span :class="['side-badge', trade.side]">{{ trade.side?.toUpperCase() }}</span>
+            </div>
+            <div v-if="!recentTrades || recentTrades.length === 0" class="empty-message">No recent trades</div>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -208,12 +241,21 @@ onUnmounted(() => {
 }
 
 .error-message {
-  background: rgba(239, 68, 68, 0.2);
-  border: 1px solid rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
   color: #fca5a5;
-  padding: 12px;
+  padding: 16px;
   border-radius: 8px;
-  margin-bottom: 20px;
+  margin: 8px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.error-icon {
+  flex-shrink: 0;
 }
 
 .trading-content {

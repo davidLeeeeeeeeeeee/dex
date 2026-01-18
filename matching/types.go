@@ -78,9 +78,9 @@ func convertOrderTxToOrder(o *pb.OrderTx) (*Order, error) {
 	if o == nil || o.Base == nil {
 		return nil, errors.New("orderTx invalid")
 	}
-	// side：示例中, OrderOp_ADD = BUY, OrderOp_REMOVE = SELL
+	// 使用 Side 字段判断买卖方向
 	var side OrderSide
-	if o.Op == pb.OrderOp_ADD {
+	if o.Side == pb.OrderSide_BUY {
 		side = BUY
 	} else {
 		side = SELL

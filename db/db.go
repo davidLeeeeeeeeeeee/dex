@@ -239,6 +239,40 @@ func (manager *Manager) ScanOrdersByPairs(pairs []string) (map[string]map[string
 	return result, nil
 }
 
+// ScanByPrefix 扫描指定前缀的所有键值对
+// 返回 map[key]value，最多返回 limit 条记录
+func (manager *Manager) ScanByPrefix(prefix string, limit int) (map[string]string, error) {
+	result := make(map[string]string)
+
+	err := manager.Db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		p := []byte(prefix)
+		count := 0
+		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
+			if limit > 0 && count >= limit {
+				break
+			}
+			item := it.Item()
+			k := item.KeyCopy(nil)
+			v, err := item.ValueCopy(nil)
+			if err != nil {
+				continue
+			}
+			result[string(k)] = string(v)
+			count++
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // EnqueueDel wraps EnqueueDelete for interface compatibility
 func (manager *Manager) EnqueueDel(key string) {
 	manager.EnqueueDelete(key)

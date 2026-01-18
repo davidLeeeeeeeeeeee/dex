@@ -479,7 +479,52 @@ func (s *server) handleTx(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info := convertAnyTxToInfo(anyTx)
+
+	// 如果是 OrderTx，获取 token symbol 信息
+	if orderTx := anyTx.GetOrderTx(); orderTx != nil {
+		s.enrichTokenInfo(ctx, req.Node, info, orderTx.BaseToken, orderTx.QuoteToken)
+	}
+
 	writeJSON(w, txResponse{Transaction: info})
+}
+
+// fetchToken 从节点获取 token 信息
+func (s *server) fetchToken(ctx context.Context, node string, tokenAddress string) (*pb.Token, error) {
+	var resp pb.GetTokenResponse
+	req := &pb.GetTokenRequest{TokenAddress: tokenAddress}
+	if err := s.fetchProto(ctx, node, "/gettoken", req, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Token, nil
+}
+
+// enrichTokenInfo 增强 token 信息，添加 symbol
+func (s *server) enrichTokenInfo(ctx context.Context, node string, info *txInfo, baseTokenAddr, quoteTokenAddr string) {
+	if info == nil || info.Details == nil {
+		return
+	}
+
+	// 获取 base token 信息
+	if baseTokenAddr != "" {
+		baseToken, err := s.fetchToken(ctx, node, baseTokenAddr)
+		if err == nil && baseToken != nil {
+			info.Details["base_token"] = map[string]string{
+				"address": baseTokenAddr,
+				"symbol":  baseToken.Symbol,
+			}
+		}
+	}
+
+	// 获取 quote token 信息
+	if quoteTokenAddr != "" {
+		quoteToken, err := s.fetchToken(ctx, node, quoteTokenAddr)
+		if err == nil && quoteToken != nil {
+			info.Details["quote_token"] = map[string]string{
+				"address": quoteTokenAddr,
+				"symbol":  quoteToken.Symbol,
+			}
+		}
+	}
 }
 
 func (s *server) fetchBlockByHeight(ctx context.Context, node string, height uint64) (*pb.Block, error) {
@@ -777,6 +822,19 @@ func fillTxDetails(tx *pb.AnyTx, info *txInfo) {
 		m := c.MinerTx
 		info.Details["operation"] = m.Op.String()
 		info.Details["amount"] = m.Amount
+	case *pb.AnyTx_OrderTx:
+		o := c.OrderTx
+		info.Details["operation"] = o.Op.String()
+		info.Details["base_token"] = o.BaseToken
+		info.Details["quote_token"] = o.QuoteToken
+		info.Details["amount"] = o.Amount
+		info.Details["price"] = o.Price
+		info.Details["filled_base"] = o.FilledBase
+		info.Details["filled_quote"] = o.FilledQuote
+		info.Details["is_filled"] = o.IsFilled
+		if o.OpTargetId != "" {
+			info.Details["op_target_id"] = o.OpTargetId
+		}
 	}
 }
 
@@ -1207,13 +1265,25 @@ type TradeRecord struct {
 	TakerOrderID string `json:"taker_order_id,omitempty"`
 }
 
+// APIError API 错误响应
+type APIError struct {
+	Error   string `json:"error"`
+	Code    string `json:"code,omitempty"`
+	Details string `json:"details,omitempty"`
+}
+
 // handleOrderBook 处理订单簿查询
 func (s *server) handleOrderBook(w http.ResponseWriter, r *http.Request) {
 	node := r.URL.Query().Get("node")
 	pair := r.URL.Query().Get("pair")
 
 	if node == "" || pair == "" {
-		http.Error(w, "missing node or pair parameter", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(APIError{
+			Error: "missing node or pair parameter",
+			Code:  "INVALID_PARAMS",
+		})
 		return
 	}
 
@@ -1223,8 +1293,14 @@ func (s *server) handleOrderBook(w http.ResponseWriter, r *http.Request) {
 
 	orderBook, err := s.fetchOrderBookFromNode(ctx, node, pair)
 	if err != nil {
-		// 返回模拟数据用于开发测试
-		orderBook = s.generateMockOrderBook(pair)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(APIError{
+			Error:   "failed to fetch order book from node",
+			Code:    "NODE_ERROR",
+			Details: err.Error(),
+		})
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1237,7 +1313,12 @@ func (s *server) handleTrades(w http.ResponseWriter, r *http.Request) {
 	pair := r.URL.Query().Get("pair")
 
 	if node == "" || pair == "" {
-		http.Error(w, "missing node or pair parameter", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(APIError{
+			Error: "missing node or pair parameter",
+			Code:  "INVALID_PARAMS",
+		})
 		return
 	}
 
@@ -1247,80 +1328,72 @@ func (s *server) handleTrades(w http.ResponseWriter, r *http.Request) {
 
 	trades, err := s.fetchTradesFromNode(ctx, node, pair)
 	if err != nil {
-		// 返回模拟数据用于开发测试
-		trades = s.generateMockTrades(pair)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(APIError{
+			Error:   "failed to fetch trades from node",
+			Code:    "NODE_ERROR",
+			Details: err.Error(),
+		})
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(trades)
 }
 
-// fetchOrderBookFromNode 从节点获取订单簿（TODO: 实现真实 API 调用）
+// fetchOrderBookFromNode 从节点获取订单簿
 func (s *server) fetchOrderBookFromNode(ctx context.Context, node, pair string) (*OrderBookData, error) {
-	// TODO: 调用节点的 /getorderbook API
-	// 目前返回错误，触发模拟数据
-	return nil, fmt.Errorf("not implemented")
+	// 构造请求 URL（使用 HTTPS，因为节点使用 HTTP/3）
+	url := fmt.Sprintf("https://%s/orderbook?pair=%s", node, pair)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("node returned status %d", resp.StatusCode)
+	}
+
+	var orderBook OrderBookData
+	if err := json.NewDecoder(resp.Body).Decode(&orderBook); err != nil {
+		return nil, err
+	}
+
+	return &orderBook, nil
 }
 
-// fetchTradesFromNode 从节点获取成交记录（TODO: 实现真实 API 调用）
+// fetchTradesFromNode 从节点获取成交记录
 func (s *server) fetchTradesFromNode(ctx context.Context, node, pair string) ([]TradeRecord, error) {
-	// TODO: 调用节点的 /gettrades API
-	// 目前返回错误，触发模拟数据
-	return nil, fmt.Errorf("not implemented")
-}
+	// 构造请求 URL（使用 HTTPS，因为节点使用 HTTP/3）
+	url := fmt.Sprintf("https://%s/trades?pair=%s", node, pair)
 
-// generateMockOrderBook 生成模拟订单簿数据
-func (s *server) generateMockOrderBook(pair string) *OrderBookData {
-	bids := make([]OrderBookEntry, 0, 10)
-	asks := make([]OrderBookEntry, 0, 10)
-
-	basePrice := 100.0
-	for i := 0; i < 10; i++ {
-		bidPrice := basePrice - float64(i)*0.5
-		askPrice := basePrice + float64(i+1)*0.5
-		amount := 10.0 + float64(i)*5
-
-		bids = append(bids, OrderBookEntry{
-			Price:  fmt.Sprintf("%.2f", bidPrice),
-			Amount: fmt.Sprintf("%.2f", amount),
-			Total:  fmt.Sprintf("%.2f", bidPrice*amount),
-		})
-		asks = append(asks, OrderBookEntry{
-			Price:  fmt.Sprintf("%.2f", askPrice),
-			Amount: fmt.Sprintf("%.2f", amount),
-			Total:  fmt.Sprintf("%.2f", askPrice*amount),
-		})
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
 	}
 
-	return &OrderBookData{
-		Pair:       pair,
-		Bids:       bids,
-		Asks:       asks,
-		LastUpdate: time.Now().Format(time.RFC3339),
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
 	}
-}
+	defer resp.Body.Close()
 
-// generateMockTrades 生成模拟成交数据
-func (s *server) generateMockTrades(pair string) []TradeRecord {
-	trades := make([]TradeRecord, 0, 20)
-	baseTime := time.Now()
-
-	for i := 0; i < 20; i++ {
-		side := "buy"
-		if i%2 == 0 {
-			side = "sell"
-		}
-		price := 100.0 + float64(i%5)*0.1
-		amount := 5.0 + float64(i%10)
-
-		trades = append(trades, TradeRecord{
-			ID:     fmt.Sprintf("trade_%d", i+1),
-			Time:   baseTime.Add(-time.Duration(i) * time.Minute).Format("15:04:05"),
-			Price:  fmt.Sprintf("%.2f", price),
-			Amount: fmt.Sprintf("%.2f", amount),
-			Side:   side,
-		})
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("node returned status %d", resp.StatusCode)
 	}
 
-	return trades
+	var trades []TradeRecord
+	if err := json.NewDecoder(resp.Body).Decode(&trades); err != nil {
+		return nil, err
+	}
+
+	return trades, nil
 }

@@ -106,6 +106,12 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/frost/withdraw/list", hm.HandleFrostWithdrawList)
 	mux.HandleFunc("/frost/dkg/list", hm.HandleFrostDkgList)
 	mux.HandleFunc("/witness/requests", hm.HandleWitnessRequests)
+	// 订单簿和成交记录
+	mux.HandleFunc("/orderbook", hm.HandleOrderBook)
+	mux.HandleFunc("/trades", hm.HandleTrades)
+	// Token 查询
+	mux.HandleFunc("/gettoken", hm.HandleGetToken)
+	mux.HandleFunc("/gettokenregistry", hm.HandleGetTokenRegistry)
 	// Frost 管理接口
 	mux.HandleFunc("/frost/health", hm.HandleGetHealth)
 	mux.HandleFunc("/frost/metrics", hm.HandleGetMetrics)

@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"github.com/btcsuite/btcd/btcec/v2"
 	"math/big"
+	"time"
+
+	"github.com/btcsuite/btcd/btcec/v2"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
@@ -144,4 +146,14 @@ func GeneratePairKey(baseToken, quoteToken string) string {
 		return baseToken + "_" + quoteToken
 	}
 	return quoteToken + "_" + baseToken
+}
+
+// NowRFC3339 返回当前时间的 RFC3339 格式字符串
+func NowRFC3339() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+// NowUnixNano 返回当前时间的纳秒时间戳
+func NowUnixNano() int64 {
+	return time.Now().UnixNano()
 }

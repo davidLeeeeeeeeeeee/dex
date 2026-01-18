@@ -77,15 +77,6 @@ e.g. btc直接聚合公钥地址管理，而智能合约用合约来管理资产
 7、dkg过程 1、保证dealer诚实发出share（被receiver 的公钥加密C = Enc(pk, share; r)） 2、保证receiver 不说谎（2.1 说自己没收到 2.2 收到的是假的）
 答：share和承诺一起上链，解决1和2.1. share用receiver公钥加密，当2.2情况出现的时候，dealer公开share明文r,，节点重复加密过程，链上验证裁决.
 
-### TODO
 
-
-8. explorer上添加一个交易页面，可以看到不同币种的挂单情况、最新成交list。
-
-8.1 为了实现8.模拟tx生成模块 需要生成一些orderTx方便交易页面有数据展示。
-
-9.测试协议（DKG、提现、权力交接）实现的正确性，我们需要关闭这些 Injector，让 VM 的 Handler（如 vm/transfer_handler.go等）去驱动状态变化。tx生成模块也需要兼顾这些tx的生成。
-
- 10. Withdrawals  Recharges  DKG Sessions 这三个tab提级，和节点总览 Search平级，取消Protocol tab
 
  

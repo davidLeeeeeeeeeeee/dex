@@ -2,7 +2,9 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -248,5 +250,94 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("MaxTxsPerBlock must be positive")
 	}
 	// ... 其他验证
+	return nil
+}
+
+// ===================== Genesis 配置 =====================
+
+// GenesisConfig 创世配置
+type GenesisConfig struct {
+	// 系统代币
+	Tokens []GenesisToken `json:"tokens"`
+	// 预分配账户余额
+	Alloc map[string]GenesisAlloc `json:"alloc"`
+}
+
+// GenesisToken 创世代币定义
+type GenesisToken struct {
+	Address     string `json:"address"`      // 代币地址（系统代币可用符号如 "FB"）
+	Symbol      string `json:"symbol"`       // 代币符号
+	Name        string `json:"name"`         // 代币名称
+	TotalSupply string `json:"total_supply"` // 总供应量
+	Owner       string `json:"owner"`        // 拥有者地址（"0x0" 表示无拥有者）
+	CanMint     bool   `json:"can_mint"`     // 是否可增发
+}
+
+// GenesisAlloc 创世余额分配
+type GenesisAlloc struct {
+	Balances map[string]GenesisBalance `json:"balances"` // key 为代币地址/符号
+}
+
+// GenesisBalance 代币余额
+type GenesisBalance struct {
+	Balance            string `json:"balance"`                        // 可用余额
+	MinerLockedBalance string `json:"miner_locked_balance,omitempty"` // 挖矿锁定余额
+}
+
+// DefaultGenesisConfig 返回默认创世配置
+func DefaultGenesisConfig() *GenesisConfig {
+	return &GenesisConfig{
+		Tokens: []GenesisToken{
+			{
+				Address:     "FB",
+				Symbol:      "FB",
+				Name:        "FrostBit Native Token",
+				TotalSupply: "1000000000000",
+				Owner:       "0x0",
+				CanMint:     false,
+			},
+			{
+				Address:     "USDT",
+				Symbol:      "USDT",
+				Name:        "Tether USD",
+				TotalSupply: "1000000000000",
+				Owner:       "0x0",
+				CanMint:     true,
+			},
+		},
+		Alloc: make(map[string]GenesisAlloc),
+	}
+}
+
+// LoadGenesisConfig 从文件加载创世配置
+func LoadGenesisConfig(path string) (*GenesisConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// 文件不存在，返回默认配置
+			return DefaultGenesisConfig(), nil
+		}
+		return nil, fmt.Errorf("failed to read genesis config: %w", err)
+	}
+
+	var genesis GenesisConfig
+	if err := json.Unmarshal(data, &genesis); err != nil {
+		return nil, fmt.Errorf("failed to parse genesis config: %w", err)
+	}
+
+	return &genesis, nil
+}
+
+// SaveGenesisConfig 保存创世配置到文件
+func SaveGenesisConfig(path string, genesis *GenesisConfig) error {
+	data, err := json.MarshalIndent(genesis, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal genesis config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write genesis config: %w", err)
+	}
+
 	return nil
 }

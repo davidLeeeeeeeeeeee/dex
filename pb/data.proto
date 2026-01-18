@@ -117,6 +117,20 @@ message BlockReward {
 message OrderPriceIndex {// 快速检索到价格区间的订单，与orderTx一并存入
   bool ok = 1; //占位符,不需要，主要是需要这个字段的key(pair:...|price:...|is_filled：...|order_id:...)来快速查询到价格区间内，还未完全成交（is_filled:false）的tx
 }
+
+// 成交记录
+message TradeRecord {
+  string trade_id = 1; // 成交ID
+  string pair = 2; // 交易对
+  string price = 3; // 成交价格
+  string amount = 4; // 成交数量
+  string maker_order_id = 5; // Maker订单ID
+  string taker_order_id = 6; // Taker订单ID
+  OrderSide taker_side = 7; // Taker方向（BUY=买单，SELL=卖单）
+  string timestamp = 8; // 成交时间
+  uint64 height = 9; // 成交区块高度
+}
+
 // --------------------- 交易相关消息 ---------------------
 message IssueTokenTx {// 发币tx
   BaseMessage base = 1;
@@ -140,17 +154,24 @@ message Transaction {//转账tx
   string amount = 4;
 }
 
+// 买卖方向枚举
+enum OrderSide {
+  BUY = 0; // 买单
+  SELL = 1; // 卖单
+}
+
 message OrderTx {//下单tx
   BaseMessage base = 1;
   string base_token = 2; // 例如 "bc1q6156"代表USDT
   string quote_token = 3; // 例如 "bc1q0000"代表BTC
-  OrderOp op = 4; // ADD是更新订单状态REMOVE是撤单，买单和买单是按base_token和quote_token来决定的。比如买BTC，那么base_token=USDT的地址,quote_token=BTC的地址
+  OrderOp op = 4; // ADD是更新订单状态REMOVE是撤单
   string op_target_id = 5; // 如果要更新/移除订单id
   string amount = 6;
   string price = 7;
   string filled_base = 8; // 表示该订单已经成交的base数量
   string filled_quote = 9; // 表示该订单已经成交的quote数量
   bool is_filled = 10; // 是否已经完全成交标签
+  OrderSide side = 11; // 买卖方向: BUY=买单, SELL=卖单
 }
 
 
@@ -455,24 +476,24 @@ enum ChallengeStatus {
 // 挑战记录
 // 注意：字段编号不可更改，否则会导致数据不兼容
 message ChallengeRecord {
-  string challenge_id = 1;          // 挑战ID
-  string request_id = 2;            // 被挑战的请求ID
-  string challenger_address = 3;    // 挑战者地址
-  string stake_amount = 4;          // 挑战质押金额
-  string reason = 5;                // 挑战理由
-  uint64 create_height = 6;         // 创建高度
-  uint64 deadline_height = 7;       // 仲裁截止高度
-  uint32 arbitration_round = 8;     // 仲裁轮次
-  repeated string arbitrators = 9;  // 仲裁者列表
+  string challenge_id = 1; // 挑战ID
+  string request_id = 2; // 被挑战的请求ID
+  string challenger_address = 3; // 挑战者地址
+  string stake_amount = 4; // 挑战质押金额
+  string reason = 5; // 挑战理由
+  uint64 create_height = 6; // 创建高度
+  uint64 deadline_height = 7; // 仲裁截止高度
+  uint32 arbitration_round = 8; // 仲裁轮次
+  repeated string arbitrators = 9; // 仲裁者列表
   repeated WitnessVote arbitration_votes = 10; // 仲裁投票
-  uint32 pass_count = 11;           // 支持原判定的票数
-  uint32 fail_count = 12;           // 反对原判定的票数
-  bool challenge_success = 13;      // 挑战是否成功
-  bool finalized = 14;              // 是否已完成
-  uint32 consensus_threshold = 15;  // 当前共识阈值（80->70->60->50）
-  ChallengeStatus status = 16;      // 挑战状态
+  uint32 pass_count = 11; // 支持原判定的票数
+  uint32 fail_count = 12; // 反对原判定的票数
+  bool challenge_success = 13; // 挑战是否成功
+  bool finalized = 14; // 是否已完成
+  uint32 consensus_threshold = 15; // 当前共识阈值（80->70->60->50）
+  ChallengeStatus status = 16; // 挑战状态
   // 新增字段使用 17+
-  string evidence = 17;             // 证据（新增）
+  string evidence = 17; // 证据（新增）
 }
 
 // 入账请求列表（用于 API）
@@ -936,6 +957,21 @@ message GetAccountRequest {
 
 // GetAccountResponse 获取账户信息响应
 message GetAccountResponse {
-  Account account = 1;   // 账户信息
-  string error = 2;      // 错误信息
+  Account account = 1; // 账户信息
+  string error = 2; // 错误信息
+}
+
+// GetTokenRequest 获取 Token 信息请求
+message GetTokenRequest {
+  string token_address = 1; // Token 地址
+}
+
+// GetTokenResponse 获取 Token 信息响应
+message GetTokenResponse {
+  Token token = 1; // Token 信息
+}
+
+// GetTokenRegistryResponse 获取 Token 注册表响应
+message GetTokenRegistryResponse {
+  TokenRegistry registry = 1; // Token 注册表
 }
