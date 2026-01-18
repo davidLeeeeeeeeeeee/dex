@@ -123,7 +123,7 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 
 		// 检查预执行结果
 		if !result.Valid {
-			logs.Warn("[RealBlockStore] Block %s failed VM validation: %s", block.ID, result.Reason)
+			logs.Error("[RealBlockStore] Block %s failed VM validation: %s", block.ID, result.Reason)
 			return false, fmt.Errorf("block failed VM validation: %s", result.Reason)
 		}
 

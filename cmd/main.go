@@ -1754,10 +1754,10 @@ func (s *TxSimulator) injectDkgTransitions(node *NodeInstance, timestamp int64) 
 // - 买单：用 USDT 换 FB（base_token=USDT, quote_token=FB）
 func (s *TxSimulator) runOrderScenario() {
 	// 延迟启动，等待账户有足够余额
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 
-	// 周期性生成新订单
-	ticker := time.NewTicker(10 * time.Second)
+	// 周期性生成新订单（每 2 秒生成一笔订单）
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	nonceMap := make(map[string]uint64)
@@ -1767,55 +1767,59 @@ func (s *TxSimulator) runOrderScenario() {
 			continue
 		}
 
-		// 随机选择一个节点
-		nodeIdx := mrand.Intn(len(s.nodes))
-		node := s.nodes[nodeIdx]
-		if node == nil {
-			continue
-		}
+		// 每次生成 5-10 笔订单
+		orderCount := 5 + mrand.Intn(6)
+		for i := 0; i < orderCount; i++ {
+			// 随机选择一个节点
+			nodeIdx := mrand.Intn(len(s.nodes))
+			node := s.nodes[nodeIdx]
+			if node == nil {
+				continue
+			}
 
-		nonceMap[node.Address]++
+			nonceMap[node.Address]++
 
-		// 随机价格和数量（使用较小的数量，避免余额不足）
-		basePrice := 1.0 + float64(mrand.Intn(10))*0.1
-		amount := 1.0 + float64(mrand.Intn(5))
+			// 随机价格和数量（使用较小的数量，避免余额不足）
+			basePrice := 1.0 + float64(mrand.Intn(10))*0.1
+			amount := 1.0 + float64(mrand.Intn(5))
 
-		// 随机决定买单还是卖单
-		isBuyOrder := mrand.Intn(2) == 0
+			// 随机决定买单还是卖单
+			isBuyOrder := mrand.Intn(2) == 0
 
-		var tx *pb.AnyTx
-		if isBuyOrder {
-			// 买单：用 USDT 买 FB
-			// base_token=FB (想买的), quote_token=USDT (支付的)
-			tx = generateOrderTx(
-				node.Address,
-				"FB",                           // base_token - 想要买入的代币
-				"USDT",                         // quote_token - 用于支付的代币
-				fmt.Sprintf("%.2f", amount),    // 想买入的 FB 数量
-				fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
-				nonceMap[node.Address],
-				pb.OrderSide_BUY,
-			)
-			logs.Trace("Simulator: Added BUY order %s from %s, buy %.2f FB @ %.2f USDT",
-				tx.GetBase().TxId, node.Address, amount, basePrice)
-		} else {
-			// 卖单：卖 FB 换 USDT
-			// base_token=FB (要卖的), quote_token=USDT (想要获得的)
-			tx = generateOrderTx(
-				node.Address,
-				"FB",                           // base_token - 要卖出的代币
-				"USDT",                         // quote_token - 想要获得的代币
-				fmt.Sprintf("%.2f", amount),    // 要卖出的 FB 数量
-				fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
-				nonceMap[node.Address],
-				pb.OrderSide_SELL,
-			)
-			logs.Trace("Simulator: Added SELL order %s from %s, sell %.2f FB @ %.2f USDT",
-				tx.GetBase().TxId, node.Address, amount, basePrice)
-		}
+			var tx *pb.AnyTx
+			if isBuyOrder {
+				// 买单：用 USDT 买 FB
+				// base_token=FB (想买的), quote_token=USDT (支付的)
+				tx = generateOrderTx(
+					node.Address,
+					"FB",                           // base_token - 想要买入的代币
+					"USDT",                         // quote_token - 用于支付的代币
+					fmt.Sprintf("%.2f", amount),    // 想买入的 FB 数量
+					fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
+					nonceMap[node.Address],
+					pb.OrderSide_BUY,
+				)
+				logs.Trace("Simulator: Added BUY order %s from %s, buy %.2f FB @ %.2f USDT",
+					tx.GetBase().TxId, node.Address, amount, basePrice)
+			} else {
+				// 卖单：卖 FB 换 USDT
+				// base_token=FB (要卖的), quote_token=USDT (想要获得的)
+				tx = generateOrderTx(
+					node.Address,
+					"FB",                           // base_token - 要卖出的代币
+					"USDT",                         // quote_token - 想要获得的代币
+					fmt.Sprintf("%.2f", amount),    // 要卖出的 FB 数量
+					fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
+					nonceMap[node.Address],
+					pb.OrderSide_SELL,
+				)
+				logs.Trace("Simulator: Added SELL order %s from %s, sell %.2f FB @ %.2f USDT",
+					tx.GetBase().TxId, node.Address, amount, basePrice)
+			}
 
-		if err := node.TxPool.StoreAnyTx(tx); err != nil {
-			logs.Error("Simulator: Failed to add order: %v", err)
+			if err := node.TxPool.StoreAnyTx(tx); err != nil {
+				logs.Error("Simulator: Failed to add order: %v", err)
+			}
 		}
 	}
 }
@@ -1830,12 +1834,15 @@ func generateOrderTx(from, baseToken, quoteToken, amount, price string, nonce ui
 			Status:      pb.Status_PENDING,
 			Nonce:       nonce,
 		},
-		BaseToken:  baseToken,
-		QuoteToken: quoteToken,
-		Op:         pb.OrderOp_ADD,
-		Amount:     amount,
-		Price:      price,
-		Side:       side,
+		BaseToken:   baseToken,
+		QuoteToken:  quoteToken,
+		Op:          pb.OrderOp_ADD,
+		Amount:      amount,
+		Price:       price,
+		Side:        side,
+		FilledBase:  "0", // 新订单初始成交量为 0
+		FilledQuote: "0",
+		IsFilled:    false,
 	}
 	return &pb.AnyTx{
 		Content: &pb.AnyTx_OrderTx{OrderTx: tx},

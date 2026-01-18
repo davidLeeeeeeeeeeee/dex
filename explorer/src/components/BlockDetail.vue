@@ -8,6 +8,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   txClick: [txId: string]
   addressClick: [address: string]
+  back: []
 }>()
 
 const numberFormat = new Intl.NumberFormat('en-US')
@@ -42,6 +43,7 @@ function handleAddressClick(e: Event, address?: string) {
 <template>
   <section class="panel block-detail">
     <div class="panel-header">
+      <button class="btn-back" @click="emit('back')">← Back to Blocks</button>
       <h2>Block #{{ formatNumber(block.height) }}</h2>
     </div>
 
@@ -128,6 +130,26 @@ function handleAddressClick(e: Event, address?: string) {
 </template>
 
 <style scoped>
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.btn-back {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  background: var(--bg-secondary, #2a2a3e);
+  border: 1px solid var(--border-color, #444);
+  color: var(--text-primary, #fff);
+  border-radius: 4px;
+}
+
+.btn-back:hover {
+  background: var(--bg-hover, #3a3a4e);
+}
+
 .address-link {
   cursor: pointer;
   color: var(--accent, #60a5fa);

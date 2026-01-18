@@ -716,7 +716,8 @@ func convertToMatchingOrder(ord *pb.OrderTx) (*matching.Order, error) {
 	// 计算剩余数量
 	remainingAmount := totalAmount.Sub(filledBase)
 	if remainingAmount.LessThanOrEqual(decimal.Zero) {
-		return nil, fmt.Errorf("order already filled")
+		return nil, fmt.Errorf("order already filled (txId=%s, amount=%s, filledBase=%s, isFilled=%v)",
+			ord.Base.TxId, ord.Amount, ord.FilledBase, ord.IsFilled)
 	}
 
 	// 使用 Side 字段确定订单方向

@@ -327,8 +327,8 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		// 加载订单
 		var orderTx *pb.OrderTx
 		if ev.OrderID == newOrd.Base.TxId {
-			// 这是新订单
-			orderTx = newOrd
+			// 这是新订单 - 必须深拷贝，避免修改原始交易对象（交易池中的对象）
+			orderTx = proto.Clone(newOrd).(*pb.OrderTx)
 		} else {
 			// 这是已存在的订单，从StateView加载
 			orderKey := keys.KeyOrder(ev.OrderID)

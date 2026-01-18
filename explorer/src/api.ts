@@ -65,6 +65,35 @@ export async function fetchAddress(request: AddressRequest): Promise<AddressResp
   return resp.json()
 }
 
+// 获取最近区块列表
+export interface RecentBlocksRequest {
+  node: string
+  count?: number
+}
+
+export interface BlockHeaderInfo {
+  height: number
+  block_hash: string
+  miner?: string
+  tx_count: number
+  accumulated_reward?: string
+  window?: number
+}
+
+export interface RecentBlocksResponse {
+  blocks: BlockHeaderInfo[]
+  error?: string
+}
+
+export async function fetchRecentBlocks(request: RecentBlocksRequest): Promise<RecentBlocksResponse> {
+  const resp = await fetch('/api/recentblocks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  return resp.json()
+}
+
 // 获取 Frost 提现队列
 export async function fetchFrostWithdrawQueue(node: string, chain: string = '', asset: string = ''): Promise<any[]> {
   const resp = await fetch(`/api/frost/withdraw/queue?node=${encodeURIComponent(node)}&chain=${chain}&asset=${asset}`)

@@ -3,8 +3,8 @@ import { ref, watch } from 'vue'
 import BlockDetail from './BlockDetail.vue'
 import TxDetail from './TxDetail.vue'
 import AddressDetail from './AddressDetail.vue'
-import type { BlockInfo, TxInfo, TxSummary, AccountInfo } from '../types'
-import { fetchBlock, fetchTx, fetchAddress } from '../api'
+import type { BlockInfo, TxInfo, AccountInfo } from '../types'
+import { fetchBlock, fetchTx, fetchAddress, fetchRecentBlocks, type BlockHeaderInfo } from '../api'
 
 const props = defineProps<{
   nodes: string[]
@@ -28,18 +28,75 @@ const viewingTx = ref<TxInfo | null>(null)
 // 查看地址详情时的状态
 const viewingAddress = ref<AccountInfo | null>(null)
 
+// 最近区块列表（默认显示）
+const recentBlocks = ref<BlockHeaderInfo[]>([])
+const loadingRecentBlocks = ref(false)
+
 // 初始化选中节点
 watch(() => props.defaultNode, (val) => {
   if (!selectedNode.value && val) {
     selectedNode.value = val
+    // 加载最近区块
+    loadRecentBlocks()
   }
 }, { immediate: true })
 
 watch(() => props.nodes, (nodes) => {
   if (!selectedNode.value && nodes.length > 0) {
     selectedNode.value = nodes[0]
+    // 加载最近区块
+    loadRecentBlocks()
   }
 }, { immediate: true })
+
+// 加载最近区块
+async function loadRecentBlocks() {
+  if (!selectedNode.value) return
+
+  loadingRecentBlocks.value = true
+  try {
+    const result = await fetchRecentBlocks({
+      node: selectedNode.value,
+      count: 100,
+    })
+    if (result.error) {
+      console.error('Failed to load recent blocks:', result.error)
+    } else {
+      recentBlocks.value = result.blocks || []
+    }
+  } catch (err: any) {
+    console.error('Failed to load recent blocks:', err)
+  } finally {
+    loadingRecentBlocks.value = false
+  }
+}
+
+// 点击区块行查看详情
+async function handleBlockClick(height: number) {
+  if (!selectedNode.value) return
+
+  loading.value = true
+  error.value = ''
+
+  try {
+    const result = await fetchBlock({
+      node: selectedNode.value,
+      height: height,
+    })
+
+    if (result.error) {
+      error.value = result.error
+    } else if (result.block) {
+      blockResult.value = result.block
+    } else {
+      error.value = 'Block not found'
+    }
+  } catch (err: any) {
+    error.value = err.message || 'Request failed'
+  } finally {
+    loading.value = false
+  }
+}
 
 async function handleSearch() {
   if (!searchQuery.value.trim()) {
@@ -112,39 +169,38 @@ async function handleSearch() {
   }
 }
 
-// 将 TxSummary 转换为 TxInfo（用于从区块内点击交易时）
-function txSummaryToInfo(summary: TxSummary, blockHeight?: number): TxInfo {
-  return {
-    tx_id: summary.tx_id,
-    tx_type: summary.tx_type,
-    from_address: summary.from_address,
-    to_address: summary.to_address,
-    value: summary.value,
-    status: summary.status,
-    executed_height: blockHeight,
-    fee: summary.fee,
-    nonce: summary.nonce,
-    details: summary.summary ? { summary: summary.summary } : undefined,
-  }
-}
+async function handleTxClick(txId: string) {
+  if (!selectedNode.value || !txId) return
 
-function handleTxClick(txId: string) {
-  // 先尝试从当前区块结果中找到交易
-  if (blockResult.value?.transactions) {
-    const txSummary = blockResult.value.transactions.find(tx => tx.tx_id === txId)
-    if (txSummary) {
-      viewingTx.value = txSummaryToInfo(txSummary, blockResult.value.height)
-      return
+  loading.value = true
+  error.value = ''
+
+  try {
+    const result = await fetchTx({
+      node: selectedNode.value,
+      tx_id: txId,
+    })
+
+    if (result.error) {
+      error.value = result.error
+    } else if (result.transaction) {
+      viewingTx.value = result.transaction
+    } else {
+      error.value = 'Transaction not found'
     }
+  } catch (err: any) {
+    error.value = err.message || 'Request failed'
+  } finally {
+    loading.value = false
   }
-
-  // 如果找不到，显示错误（不再尝试 API 调用，因为节点的 /getdata 可能没有索引）
-  error.value = `Transaction ${txId} details not available`
 }
 
 function handleBack() {
   viewingTx.value = null
   viewingAddress.value = null
+  blockResult.value = null
+  txResult.value = null
+  addressResult.value = null
   error.value = ''
 }
 
@@ -241,6 +297,7 @@ function getPlaceholder(): string {
       :block="blockResult"
       @tx-click="handleTxClick"
       @address-click="handleAddressClick"
+      @back="handleBack"
     />
 
     <TxDetail
@@ -255,9 +312,134 @@ function getPlaceholder(): string {
       @tx-click="handleTxClick"
     />
 
-    <div v-else-if="!loading && !error" class="empty-state">
-      Enter a block height, block hash, transaction hash, or account address to search.
-    </div>
+    <!-- 默认显示最近区块列表 -->
+    <section v-else-if="!loading && !error" class="panel recent-blocks">
+      <div class="panel-header">
+        <h2>Recent Blocks</h2>
+        <button class="btn-refresh" @click="loadRecentBlocks" :disabled="loadingRecentBlocks">
+          {{ loadingRecentBlocks ? 'Loading...' : '↻ Refresh' }}
+        </button>
+      </div>
+
+      <div v-if="loadingRecentBlocks" class="loading-state">Loading recent blocks...</div>
+
+      <div v-else-if="recentBlocks.length === 0" class="empty-state">
+        No blocks found. Select a node to view recent blocks.
+      </div>
+
+      <table v-else class="blocks-table">
+        <thead>
+          <tr>
+            <th>Height</th>
+            <th>Block Hash</th>
+            <th>Miner</th>
+            <th>Tx Count</th>
+            <th>Reward</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="block in recentBlocks"
+            :key="block.height"
+            @click="handleBlockClick(block.height)"
+            class="clickable-row"
+          >
+            <td class="height">{{ block.height }}</td>
+            <td class="hash" :title="block.block_hash">
+              {{ block.block_hash ? block.block_hash.substring(0, 16) + '...' : '-' }}
+            </td>
+            <td class="miner" :title="block.miner">
+              {{ block.miner ? block.miner.substring(0, 12) + '...' : '-' }}
+            </td>
+            <td class="tx-count">{{ block.tx_count }}</td>
+            <td class="reward">{{ block.accumulated_reward || '0' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   </div>
 </template>
+
+<style scoped>
+.recent-blocks {
+  margin-top: 1rem;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.btn-refresh {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  background: var(--bg-secondary, #2a2a3e);
+  border: 1px solid var(--border-color, #444);
+  color: var(--text-primary, #fff);
+  border-radius: 4px;
+}
+
+.btn-refresh:hover:not(:disabled) {
+  background: var(--bg-hover, #3a3a4e);
+}
+
+.btn-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.blocks-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.blocks-table th,
+.blocks-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color, #333);
+}
+
+.blocks-table th {
+  background: var(--bg-secondary, #2a2a3e);
+  font-weight: 600;
+  color: var(--text-secondary, #aaa);
+}
+
+.blocks-table .clickable-row {
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.blocks-table .clickable-row:hover {
+  background: var(--bg-hover, #3a3a4e);
+}
+
+.blocks-table .height {
+  font-weight: 600;
+  color: var(--accent-color, #4dabf7);
+}
+
+.blocks-table .hash {
+  font-family: monospace;
+  color: var(--text-secondary, #aaa);
+}
+
+.blocks-table .miner {
+  font-family: monospace;
+  color: var(--text-secondary, #aaa);
+}
+
+.blocks-table .tx-count {
+  text-align: center;
+}
+
+.blocks-table .reward {
+  text-align: right;
+  font-family: monospace;
+}
+</style>
 

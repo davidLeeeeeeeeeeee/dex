@@ -10,3 +10,4 @@ explorer/package-lock.json
 *debug_bin*
 explorer/dist/
 explorer_data/
+*.exe~

@@ -257,6 +257,7 @@ func main() {
 	mux.HandleFunc("/api/address", srv.handleAddress)
 	mux.HandleFunc("/api/txhistory", srv.handleTxHistory)
 	mux.HandleFunc("/api/sync/status", srv.handleSyncStatus)
+	mux.HandleFunc("/api/recentblocks", srv.handleRecentBlocks) // 获取最近区块列表
 	mux.HandleFunc("/api/frost/withdraw/queue", srv.handleFrostWithdrawQueue)
 	mux.HandleFunc("/api/witness/requests", srv.handleWitnessRequests)
 	mux.HandleFunc("/api/frost/dkg/list", srv.handleFrostDKGSessions)
@@ -452,6 +453,81 @@ func (s *server) handleBlock(w http.ResponseWriter, r *http.Request) {
 
 	info := convertBlockToInfo(block)
 	writeJSON(w, blockResponse{Block: info})
+}
+
+// blockHeaderInfo 区块头摘要信息（用于区块列表）
+type blockHeaderInfo struct {
+	Height      uint64 `json:"height"`
+	BlockHash   string `json:"block_hash"`
+	Miner       string `json:"miner,omitempty"`
+	TxCount     int    `json:"tx_count"`
+	Accumulated string `json:"accumulated_reward,omitempty"`
+	Window      int32  `json:"window,omitempty"`
+}
+
+// recentBlocksRequest 最近区块请求
+type recentBlocksRequest struct {
+	Node  string `json:"node"`
+	Count int    `json:"count,omitempty"` // 默认 100
+}
+
+// recentBlocksResponse 最近区块响应
+type recentBlocksResponse struct {
+	Blocks []blockHeaderInfo `json:"blocks"`
+	Error  string            `json:"error,omitempty"`
+}
+
+// handleRecentBlocks 获取最近区块列表
+func (s *server) handleRecentBlocks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req recentBlocksRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, recentBlocksResponse{Error: "invalid request body"})
+		return
+	}
+	if req.Node == "" {
+		writeJSON(w, recentBlocksResponse{Error: "node is required"})
+		return
+	}
+
+	count := req.Count
+	if count <= 0 {
+		count = 100
+	}
+	if count > 100 {
+		count = 100
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+	defer cancel()
+
+	// 使用 fetchRecentBlocks 获取区块列表
+	protoReq := &pb.GetRecentBlocksRequest{Count: int32(count)}
+	var protoResp pb.GetRecentBlocksResponse
+
+	if err := s.fetchProto(ctx, req.Node, "/getrecentblocks", protoReq, &protoResp); err != nil {
+		writeJSON(w, recentBlocksResponse{Error: err.Error()})
+		return
+	}
+
+	// 转换为响应格式
+	blocks := make([]blockHeaderInfo, 0, len(protoResp.Blocks))
+	for _, h := range protoResp.Blocks {
+		blocks = append(blocks, blockHeaderInfo{
+			Height:      h.Height,
+			BlockHash:   h.BlockHash,
+			Miner:       h.Miner,
+			TxCount:     int(h.TxCount),
+			Accumulated: h.AccumulatedReward,
+			Window:      h.Window,
+		})
+	}
+
+	writeJSON(w, recentBlocksResponse{Blocks: blocks})
 }
 
 func (s *server) handleTx(w http.ResponseWriter, r *http.Request) {
