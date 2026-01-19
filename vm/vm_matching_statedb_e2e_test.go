@@ -1,7 +1,6 @@
 package vm_test
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -82,8 +81,9 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 				BaseToken:   "BTC",
 				QuoteToken:  "USDT",
 				Op:          pb.OrderOp_ADD,
-				Price:       "50000", // 卖价 50000 USDT/BTC
-				Amount:      "1.0",   // 卖 1 BTC
+				Side:        pb.OrderSide_SELL, // 明确设置卖单方向
+				Price:       "50000",           // 卖价 50000 USDT/BTC
+				Amount:      "1.0",             // 卖 1 BTC
 				FilledBase:  "0",
 				FilledQuote: "0",
 				IsFilled:    false,
@@ -101,6 +101,9 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 	t.Log("📦 Executing Block 1: Alice places sell order (1 BTC @ 50000 USDT)")
 	result1, err := executor.PreExecuteBlock(block1)
 	require.NoError(t, err)
+	if !result1.Valid {
+		t.Logf("Block 1 failed, reason: %s", result1.Reason)
+	}
 	require.True(t, result1.Valid, "Block 1 should be valid")
 	require.Equal(t, 1, len(result1.Receipts))
 	assert.Equal(t, "SUCCEED", result1.Receipts[0].Status)
@@ -120,6 +123,7 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 	// - Bob 的买单：花费 25000 USDT，按 price=50000 买入 25000 / 50000 = 0.5 BTC
 	// - Alice 的卖单：卖出 BTC，按 price=50000 得到 USDT
 	// - 撮合时价格匹配：都是 50000 USDT/BTC
+	// 买单：BaseToken=BTC（要买的币），QuoteToken=USDT（支付的币），Side=BUY
 	buyOrderTx := &pb.AnyTx{
 		Content: &pb.AnyTx_OrderTx{
 			OrderTx: &pb.OrderTx{
@@ -128,11 +132,12 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 					FromAddress: bobAddr,
 					Status:      pb.Status_PENDING,
 				},
-				BaseToken:   "USDT",
-				QuoteToken:  "BTC",
+				BaseToken:   "BTC",
+				QuoteToken:  "USDT",
 				Op:          pb.OrderOp_ADD,
-				Price:       "50000", // USDT/BTC (1 BTC = 50000 USDT)
-				Amount:      "25000", // 支付 25000 USDT
+				Side:        pb.OrderSide_BUY, // 明确设置买单方向
+				Price:       "50000",          // USDT/BTC (1 BTC = 50000 USDT)
+				Amount:      "0.5",            // 买 0.5 BTC
 				FilledBase:  "0",
 				FilledQuote: "0",
 				IsFilled:    false,
@@ -214,8 +219,9 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 	assert.False(t, sellOrder.IsFilled, "Sell order should not be fully filled")
 
 	// 验证买单完全成交
+	// 买单：BaseToken=BTC，Amount=0.5，成交后 FilledBase=0.5
 	buyOrder := getE2EOrder(t, dbMgr, "buy_order_001")
-	assert.Equal(t, "0.5", buyOrder.FilledQuote, "Buy order should have 0.5 BTC filled")
+	assert.Equal(t, "0.5", buyOrder.FilledBase, "Buy order should have 0.5 BTC filled")
 	assert.True(t, buyOrder.IsFilled, "Buy order should be fully filled")
 
 	t.Log("✅ Order status verified")
@@ -257,7 +263,8 @@ func createE2ETestAccount(t *testing.T, dbMgr *db.Manager, address string, balan
 		}
 	}
 
-	accountData, err := json.Marshal(account)
+	// 使用 proto 序列化（与生产代码保持一致）
+	accountData, err := proto.Marshal(account)
 	require.NoError(t, err)
 
 	accountKey := keys.KeyAccount(address)
@@ -272,7 +279,8 @@ func getE2EAccount(t *testing.T, dbMgr *db.Manager, address string) *pb.Account 
 	require.NotNil(t, accountData)
 
 	var account pb.Account
-	require.NoError(t, json.Unmarshal(accountData, &account))
+	// 使用 proto 反序列化（与生产代码保持一致）
+	require.NoError(t, proto.Unmarshal(accountData, &account))
 	return &account
 }
 
@@ -508,6 +516,7 @@ func createSellOrder(txID, from, base, quote, price, amount string) *pb.AnyTx {
 				BaseToken:   base,
 				QuoteToken:  quote,
 				Op:          pb.OrderOp_ADD,
+				Side:        pb.OrderSide_SELL, // 明确设置卖单方向
 				Price:       price,
 				Amount:      amount,
 				FilledBase:  "0",
@@ -530,6 +539,7 @@ func createBuyOrder(txID, from, base, quote, price, amount string) *pb.AnyTx {
 				BaseToken:   base,
 				QuoteToken:  quote,
 				Op:          pb.OrderOp_ADD,
+				Side:        pb.OrderSide_BUY, // 明确设置买单方向
 				Price:       price,
 				Amount:      amount,
 				FilledBase:  "0",

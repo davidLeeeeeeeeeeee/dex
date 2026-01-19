@@ -241,6 +241,7 @@ func TestBatchOrderBookRebuild_Matching(t *testing.T) {
 		BaseToken:   "BTC",
 		QuoteToken:  "USDT",
 		Op:          pb.OrderOp_ADD,
+		Side:        pb.OrderSide_SELL,
 		Price:       "50000",
 		Amount:      "1.0",
 		FilledBase:  "0",
@@ -255,7 +256,7 @@ func TestBatchOrderBookRebuild_Matching(t *testing.T) {
 		PrevBlockHash: "",
 		Height:        1,
 		Body: []*pb.AnyTx{
-			createOrderAnyTx("buy_order_1", "USDT", "BTC", "50000", "0.5"),
+			createBuyOrderAnyTx("buy_order_1", "BTC", "USDT", "50000", "0.5"),
 		},
 	}
 
@@ -265,10 +266,16 @@ func TestBatchOrderBookRebuild_Matching(t *testing.T) {
 	// 验证
 	require.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.True(t, result.Valid)
-	assert.Equal(t, 1, len(result.Receipts))
+	if !result.Valid {
+		t.Logf("Block not valid, reason: %s", result.Reason)
+	}
+	require.True(t, result.Valid, "Block should be valid")
+	require.Equal(t, 1, len(result.Receipts), "Should have 1 receipt")
 
 	receipt := result.Receipts[0]
+	if receipt.Status != "SUCCEED" {
+		t.Logf("Receipt failed: %s", receipt.Error)
+	}
 	assert.Equal(t, "SUCCEED", receipt.Status)
 
 	// 验证生成了 WriteOps（撮合结果）
@@ -398,6 +405,7 @@ func createTestOrders(t *testing.T, db *MockDB, pair string, count int) []*pb.Or
 			BaseToken:   tokens[0],
 			QuoteToken:  tokens[1],
 			Op:          pb.OrderOp_ADD,
+			Side:        pb.OrderSide_SELL, // 默认创建卖单
 			Price:       fmt.Sprintf("%d", 50000+i*100),
 			Amount:      "1.0",
 			FilledBase:  "0",
@@ -446,7 +454,7 @@ func saveOrderToDB(t *testing.T, db *MockDB, order *pb.OrderTx, pair string) {
 	db.mu.Unlock()
 }
 
-// createOrderAnyTx 创建订单 AnyTx
+// createOrderAnyTx 创建订单 AnyTx（默认为卖单）
 func createOrderAnyTx(txID, baseToken, quoteToken, price, amount string) *pb.AnyTx {
 	return &pb.AnyTx{
 		Content: &pb.AnyTx_OrderTx{
@@ -458,6 +466,30 @@ func createOrderAnyTx(txID, baseToken, quoteToken, price, amount string) *pb.Any
 				BaseToken:   baseToken,
 				QuoteToken:  quoteToken,
 				Op:          pb.OrderOp_ADD,
+				Side:        pb.OrderSide_SELL, // 默认为卖单
+				Price:       price,
+				Amount:      amount,
+				FilledBase:  "0",
+				FilledQuote: "0",
+				IsFilled:    false,
+			},
+		},
+	}
+}
+
+// createBuyOrderAnyTx 创建买单 AnyTx
+func createBuyOrderAnyTx(txID, baseToken, quoteToken, price, amount string) *pb.AnyTx {
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_OrderTx{
+			OrderTx: &pb.OrderTx{
+				Base: &pb.BaseMessage{
+					TxId:        txID,
+					FromAddress: "test_user",
+				},
+				BaseToken:   baseToken,
+				QuoteToken:  quoteToken,
+				Op:          pb.OrderOp_ADD,
+				Side:        pb.OrderSide_BUY, // 买单
 				Price:       price,
 				Amount:      amount,
 				FilledBase:  "0",
@@ -568,6 +600,7 @@ func TestBatchRebuild_Correctness(t *testing.T) {
 			BaseToken:   "BTC",
 			QuoteToken:  "USDT",
 			Op:          pb.OrderOp_ADD,
+			Side:        pb.OrderSide_SELL,
 			Price:       price,
 			Amount:      "1.0",
 			FilledBase:  "0",
@@ -635,6 +668,7 @@ func TestBatchRebuild_EdgeCases(t *testing.T) {
 						BaseToken:   "BTC",
 						QuoteToken:  "USDT",
 						Op:          pb.OrderOp_ADD,
+						Side:        pb.OrderSide_SELL,
 						Price:       fmt.Sprintf("%d", 50000+i*100),
 						Amount:      "1.0",
 						FilledBase:  "0",
@@ -665,6 +699,7 @@ func TestBatchRebuild_EdgeCases(t *testing.T) {
 						BaseToken:   "BTC",
 						QuoteToken:  "USDT",
 						Op:          pb.OrderOp_ADD,
+						Side:        pb.OrderSide_SELL,
 						Price:       fmt.Sprintf("%d", 50000+i*100),
 						Amount:      "1.0",
 						FilledBase:  "0",

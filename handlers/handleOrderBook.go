@@ -85,13 +85,10 @@ func (hm *HandlerManager) HandleOrderBookDebug(w http.ResponseWriter, r *http.Re
 
 		amount, _ := decimal.NewFromString(order.Amount)
 		filledBase, _ := decimal.NewFromString(order.FilledBase)
-		filledQuote, _ := decimal.NewFromString(order.FilledQuote)
 
-		filledTrade := filledBase
-		if order.BaseToken > order.QuoteToken {
-			filledTrade = filledQuote
-		}
-		remain := amount.Sub(filledTrade)
+		// 剩余量 = Amount - filledBase
+		// Amount 是用户要交易的 BaseToken 数量，filledBase 是已成交的 BaseToken 数量
+		remain := amount.Sub(filledBase)
 
 		// 直接使用订单的 Side 字段判断买卖方向
 		side := "buy"
@@ -182,12 +179,9 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		filledBase, _ := decimal.NewFromString(order.FilledBase)
-		filledQuote, _ := decimal.NewFromString(order.FilledQuote)
-		filledTrade := filledBase
-		if order.BaseToken > order.QuoteToken {
-			filledTrade = filledQuote
-		}
-		remainAmount := amount.Sub(filledTrade)
+		// 剩余量 = Amount - filledBase
+		// Amount 是用户要交易的 BaseToken 数量，filledBase 是已成交的 BaseToken 数量
+		remainAmount := amount.Sub(filledBase)
 		if remainAmount.LessThanOrEqual(decimal.Zero) {
 			continue
 		}

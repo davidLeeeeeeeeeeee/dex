@@ -120,13 +120,35 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		}, err
 	}
 
-	// 3. 检查base_token余额
-	if account.Balances == nil || account.Balances[ord.BaseToken] == nil {
+	// 3. 根据订单方向检查余额
+	// - 卖单：需要有 BaseToken 余额（要卖出的币）
+	// - 买单：需要有 QuoteToken 余额（要支付的币）
+	if account.Balances == nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
-			Error:  "insufficient base token balance",
-		}, fmt.Errorf("no balance for base token: %s", ord.BaseToken)
+			Error:  "account has no balances",
+		}, fmt.Errorf("account %s has no balances", ord.Base.FromAddress)
+	}
+
+	if ord.Side == pb.OrderSide_SELL {
+		// 卖单：检查 BaseToken 余额
+		if account.Balances[ord.BaseToken] == nil {
+			return nil, &Receipt{
+				TxID:   ord.Base.TxId,
+				Status: "FAILED",
+				Error:  "insufficient base token balance",
+			}, fmt.Errorf("no balance for base token: %s", ord.BaseToken)
+		}
+	} else {
+		// 买单：检查 QuoteToken 余额
+		if account.Balances[ord.QuoteToken] == nil {
+			return nil, &Receipt{
+				TxID:   ord.Base.TxId,
+				Status: "FAILED",
+				Error:  "insufficient quote token balance",
+			}, fmt.Errorf("no balance for quote token: %s", ord.QuoteToken)
+		}
 	}
 
 	// 4. 生成交易对key（使用utils.GeneratePairKey确保一致性）
@@ -357,18 +379,12 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		filledBase, _ := decimal.NewFromString(orderTx.FilledBase)
 		filledQuote, _ := decimal.NewFromString(orderTx.FilledQuote)
 
-		// 根据订单方向更新成交量
-		// ev.TradeAmt 是交易对的 base currency 数量（例如 BTC_USDT 中的 BTC）
-		// ev.TradePrice 是 quote_token/base_token 的价格（例如 USDT/BTC）
-		if orderTx.BaseToken < orderTx.QuoteToken {
-			// 卖单：base_token 是交易对的第一个币种
-			filledBase = filledBase.Add(ev.TradeAmt)
-			filledQuote = filledQuote.Add(ev.TradeAmt.Mul(ev.TradePrice))
-		} else {
-			// 买单：base_token 是交易对的第二个币种
-			filledBase = filledBase.Add(ev.TradeAmt.Mul(ev.TradePrice))
-			filledQuote = filledQuote.Add(ev.TradeAmt)
-		}
+		// 更新成交量
+		// ev.TradeAmt 是撮合引擎中的成交数量（base currency 数量，如 FB_USDT 中的 FB）
+		// ev.TradePrice 是成交价格（quote/base，如 USDT/FB）
+		// filledBase/filledQuote 与买卖方向无关，只记录成交的各币种数量
+		filledBase = filledBase.Add(ev.TradeAmt)
+		filledQuote = filledQuote.Add(ev.TradeAmt.Mul(ev.TradePrice))
 
 		orderTx.FilledBase = filledBase.String()
 		orderTx.FilledQuote = filledQuote.String()
@@ -538,25 +554,29 @@ func (h *OrderTxHandler) updateAccountBalances(
 		}
 
 		var newBaseBalance, newQuoteBalance decimal.Decimal
-		var baseDecrease, quoteIncrease decimal.Decimal
 
-		if orderTx.BaseToken < orderTx.QuoteToken {
-			// 卖单：base_token 是交易对的第一个币种
-			baseDecrease = ev.TradeAmt
-			quoteIncrease = ev.TradeAmt.Mul(ev.TradePrice)
+		// 根据订单的 Side 字段判断买卖方向（而不是用 BaseToken/QuoteToken 字符串比较）
+		// ev.TradeAmt 是成交的 base currency 数量（如 FB_USDT 中的 FB 数量）
+		// ev.TradePrice 是成交价格（quote/base，如 USDT/FB）
+		if orderTx.Side == pb.OrderSide_SELL {
+			// 卖单：减少 BaseToken，增加 QuoteToken
+			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
+			newBaseBalance = baseBalance.Sub(ev.TradeAmt)
+			if newBaseBalance.LessThan(decimal.Zero) {
+				return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
+					orderTx.BaseToken, address, baseBalance, ev.TradeAmt)
+			}
+			newQuoteBalance = quoteBalance.Add(tradeQuoteAmt)
 		} else {
-			// 买单：base_token 是交易对的第二个币种
-			baseDecrease = ev.TradeAmt.Mul(ev.TradePrice)
-			quoteIncrease = ev.TradeAmt
+			// 买单：增加 BaseToken，减少 QuoteToken
+			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
+			newQuoteBalance = quoteBalance.Sub(tradeQuoteAmt)
+			if newQuoteBalance.LessThan(decimal.Zero) {
+				return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
+					orderTx.QuoteToken, address, quoteBalance, tradeQuoteAmt)
+			}
+			newBaseBalance = baseBalance.Add(ev.TradeAmt)
 		}
-
-		newBaseBalance = baseBalance.Sub(baseDecrease)
-		if newBaseBalance.LessThan(decimal.Zero) {
-			return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
-				orderTx.BaseToken, address, baseBalance, baseDecrease)
-		}
-
-		newQuoteBalance = quoteBalance.Add(quoteIncrease)
 
 		// 检查是否超过 MaxUint256（两个余额都检查，确保完整性）
 		maxUint256Dec := decimal.NewFromBigInt(MaxUint256, 0)

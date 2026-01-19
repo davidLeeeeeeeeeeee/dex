@@ -624,7 +624,8 @@ func collectPairsFromBlock(b *pb.Block) []string {
 	return pairs
 }
 
-// rebuildOrderBooksForPairs 一次性重建所有交易对的订单簿
+//	一次性重建所有交易对的订单簿
+//
 // 返回：map[pair]*matching.OrderBook
 func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[string]*matching.OrderBook, error) {
 	if len(pairs) == 0 {

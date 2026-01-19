@@ -5,7 +5,6 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -66,12 +65,13 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 		quoteToken string
 		price      string
 		amount     string
+		side       pb.OrderSide
 	}{
-		{aliceAddr, "BTC", "USDT", "50000", "1.0"},
-		{aliceAddr, "BTC", "USDT", "51000", "0.5"},
-		{aliceAddr, "BTC", "USDT", "49000", "2.0"},
-		{bobAddr, "ETH", "USDT", "3000", "5.0"},
-		{bobAddr, "ETH", "USDT", "3100", "3.0"},
+		{aliceAddr, "BTC", "USDT", "50000", "1.0", pb.OrderSide_SELL},
+		{aliceAddr, "BTC", "USDT", "51000", "0.5", pb.OrderSide_SELL},
+		{aliceAddr, "BTC", "USDT", "49000", "2.0", pb.OrderSide_SELL},
+		{bobAddr, "ETH", "USDT", "3000", "5.0", pb.OrderSide_SELL},
+		{bobAddr, "ETH", "USDT", "3100", "3.0", pb.OrderSide_SELL},
 	}
 
 	orderIDs := make([]string, 0, len(testOrders))
@@ -90,6 +90,7 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 					BaseToken:   tc.baseToken,
 					QuoteToken:  tc.quoteToken,
 					Op:          pb.OrderOp_ADD,
+					Side:        tc.side,
 					Price:       tc.price,
 					Amount:      tc.amount,
 					FilledBase:  "0",
@@ -256,7 +257,8 @@ func createTestAccount(t *testing.T, dbMgr *db.Manager, address string, balances
 		}
 	}
 
-	accountData, err := json.Marshal(account)
+	// 使用 proto 序列化（与生产代码保持一致）
+	accountData, err := proto.Marshal(account)
 	require.NoError(t, err)
 
 	accountKey := keys.KeyAccount(address)
