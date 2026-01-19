@@ -67,6 +67,39 @@ func (hm *HandlerManager) HandleOrderBookDebug(w http.ResponseWriter, r *http.Re
 			continue
 		}
 
+		// 优先从 OrderState 读取（新版本）
+		orderStateKey := keys.KeyOrderState(orderID)
+		orderStateBytes, err := hm.dbManager.Get(orderStateKey)
+		if err == nil && orderStateBytes != nil {
+			var orderState pb.OrderState
+			if err := proto.Unmarshal(orderStateBytes, &orderState); err != nil {
+				continue
+			}
+
+			amount, _ := decimal.NewFromString(orderState.Amount)
+			filledBase, _ := decimal.NewFromString(orderState.FilledBase)
+			remain := amount.Sub(filledBase)
+
+			side := "buy"
+			if orderState.Side == pb.OrderSide_SELL {
+				side = "sell"
+			}
+
+			debugEntries = append(debugEntries, OrderBookDebugEntry{
+				OrderID:     orderID,
+				Price:       orderState.Price,
+				Amount:      orderState.Amount,
+				FilledBase:  orderState.FilledBase,
+				FilledQuote: orderState.FilledQuote,
+				Remain:      remain.String(),
+				IsFilled:    orderState.IsFilled,
+				Side:        side,
+				IndexKey:    indexKey,
+			})
+			continue
+		}
+
+		// 兼容旧数据：从 OrderTx 读取
 		orderKey := keys.KeyOrder(orderID)
 		orderBytes, err := hm.dbManager.Get(orderKey)
 		if err != nil || orderBytes == nil {
@@ -84,13 +117,9 @@ func (hm *HandlerManager) HandleOrderBookDebug(w http.ResponseWriter, r *http.Re
 		}
 
 		amount, _ := decimal.NewFromString(order.Amount)
-		filledBase, _ := decimal.NewFromString(order.FilledBase)
+		// 旧版本没有 FilledBase，假设未成交
+		remain := amount
 
-		// 剩余量 = Amount - filledBase
-		// Amount 是用户要交易的 BaseToken 数量，filledBase 是已成交的 BaseToken 数量
-		remain := amount.Sub(filledBase)
-
-		// 直接使用订单的 Side 字段判断买卖方向
 		side := "buy"
 		if order.Side == pb.OrderSide_SELL {
 			side = "sell"
@@ -100,10 +129,10 @@ func (hm *HandlerManager) HandleOrderBookDebug(w http.ResponseWriter, r *http.Re
 			OrderID:     orderID,
 			Price:       order.Price,
 			Amount:      order.Amount,
-			FilledBase:  order.FilledBase,
-			FilledQuote: order.FilledQuote,
+			FilledBase:  "0",
+			FilledQuote: "0",
 			Remain:      remain.String(),
-			IsFilled:    order.IsFilled,
+			IsFilled:    false,
 			Side:        side,
 			IndexKey:    indexKey,
 		})
@@ -149,14 +178,65 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 	// 从索引 key 中提取订单 ID，然后加载订单数据
 	pairIndexes := indexData[pair]
 	for indexKey := range pairIndexes {
-		// 索引 key 格式: v1_pair:<pair>|is_filled:false|price:<67位>|order_id:<txID>
-		// 从 key 中提取 order_id
 		orderID := extractOrderIDFromIndexKey(indexKey)
 		if orderID == "" {
 			continue
 		}
 
-		// 加载订单数据
+		// 优先从 OrderState 读取（新版本）
+		orderStateKey := keys.KeyOrderState(orderID)
+		orderStateBytes, err := hm.dbManager.Get(orderStateKey)
+		if err == nil && orderStateBytes != nil {
+			var orderState pb.OrderState
+			if err := proto.Unmarshal(orderStateBytes, &orderState); err != nil {
+				continue
+			}
+			if orderState.IsFilled || orderState.Status == pb.OrderStateStatus_ORDER_CANCELLED {
+				continue
+			}
+
+			if _, err := decimal.NewFromString(orderState.Price); err != nil {
+				continue
+			}
+			amount, err := decimal.NewFromString(orderState.Amount)
+			if err != nil {
+				continue
+			}
+			filledBase, _ := decimal.NewFromString(orderState.FilledBase)
+			remainAmount := amount.Sub(filledBase)
+			if remainAmount.LessThanOrEqual(decimal.Zero) {
+				continue
+			}
+
+			priceStr := orderState.Price
+			// OrderState 没有 Base.Status，假设已确认
+			isPending := false
+
+			if orderState.Side == pb.OrderSide_SELL {
+				if askPrices[priceStr] == nil {
+					askPrices[priceStr] = &priceLevelDataForAgg{}
+				}
+				askPrices[priceStr].amount = askPrices[priceStr].amount.Add(remainAmount)
+				if isPending {
+					askPrices[priceStr].pendingCount++
+				} else {
+					askPrices[priceStr].confirmedCount++
+				}
+			} else {
+				if bidPrices[priceStr] == nil {
+					bidPrices[priceStr] = &priceLevelDataForAgg{}
+				}
+				bidPrices[priceStr].amount = bidPrices[priceStr].amount.Add(remainAmount)
+				if isPending {
+					bidPrices[priceStr].pendingCount++
+				} else {
+					bidPrices[priceStr].confirmedCount++
+				}
+			}
+			continue
+		}
+
+		// 兼容旧数据：从 OrderTx 读取
 		orderKey := keys.KeyOrder(orderID)
 		orderBytes, err := hm.dbManager.Get(orderKey)
 		if err != nil || orderBytes == nil {
@@ -167,9 +247,6 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 		if err := proto.Unmarshal(orderBytes, &order); err != nil {
 			continue
 		}
-		if order.IsFilled {
-			continue // 跳过已完全成交的订单
-		}
 
 		if _, err := decimal.NewFromString(order.Price); err != nil {
 			continue
@@ -178,20 +255,15 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			continue
 		}
-		filledBase, _ := decimal.NewFromString(order.FilledBase)
-		// 剩余量 = Amount - filledBase
-		// Amount 是用户要交易的 BaseToken 数量，filledBase 是已成交的 BaseToken 数量
-		remainAmount := amount.Sub(filledBase)
+		// 旧版本没有 FilledBase，假设未成交
+		remainAmount := amount
 		if remainAmount.LessThanOrEqual(decimal.Zero) {
 			continue
 		}
 
 		priceStr := order.Price
-
-		// 判断订单状态：SUCCEED 表示已最终化，其他（PENDING）表示待确认
 		isPending := order.Base == nil || order.Base.Status != pb.Status_SUCCEED
 
-		// 直接使用订单的 Side 字段判断买卖方向
 		if order.Side == pb.OrderSide_SELL {
 			if askPrices[priceStr] == nil {
 				askPrices[priceStr] = &priceLevelDataForAgg{}

@@ -71,7 +71,8 @@ func (mgr *Manager) SaveOrderTx(order *pb.OrderTx) error {
 
 	// 3. 构造索引key
 	//    例如: "pair:BTC_USDT|price:000000000123123|order_id:..."
-	indexKey := KeyOrderPriceIndex(pairKey, order.IsFilled, priceKey, order.Base.TxId)
+	// 新版本 OrderTx 不再有 IsFilled 字段，新订单默认未成交
+	indexKey := KeyOrderPriceIndex(pairKey, false, priceKey, order.Base.TxId)
 
 	// 4. 存储 (跟你现在的逻辑一样，只是把 "base_token_base_quote" 替换成 pairKey)
 	data, err := ProtoMarshal(order)
@@ -230,10 +231,20 @@ func (mgr *Manager) SaveMinerTx(tx *pb.MinerTx) error {
 }
 
 // GetAnyTxById 根据给定的 tx_id 从数据库中读取对应的交易（AnyTx）
-// 这里假设在保存时，除了专用前缀外，还额外保存了一个通用 key "anyTx_<txID>"
-// 其值为实际存储该交易的 key（如 "tx_<txID>" 或 "order_<txID>" 等）。
+// 优先从新的 txraw_ 前缀读取（交易原文，不可变）
+// 如果不存在，则回退到旧的 anyTx_ 间接引用方式（兼容旧数据）
 func (mgr *Manager) GetAnyTxById(txID string) (*pb.AnyTx, error) {
-	// 1. 先读取通用 key "anyTx_<txID>"
+	// 1. 优先尝试从新的 txraw_ 前缀读取（交易原文，不可变）
+	rawKey := KeyTxRaw(txID)
+	if rawData, err := mgr.Read(rawKey); err == nil && rawData != "" {
+		anyTx := &pb.AnyTx{}
+		if err := ProtoUnmarshal([]byte(rawData), anyTx); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal txraw data: %v", err)
+		}
+		return anyTx, nil
+	}
+
+	// 2. 回退：读取旧的通用 key "anyTx_<txID>"（兼容旧数据）
 	anyKey := KeyAnyTx(txID)
 	specificKey, err := mgr.Read(anyKey)
 	if err != nil {
@@ -243,7 +254,7 @@ func (mgr *Manager) GetAnyTxById(txID string) (*pb.AnyTx, error) {
 		return nil, fmt.Errorf("no anyTx record for txID %s", txID)
 	}
 
-	// 2. 根据专用 key读取实际交易数据
+	// 3. 根据专用 key读取实际交易数据
 	txData, err := mgr.Read(specificKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read transaction data for key %s: %v", specificKey, err)
@@ -252,7 +263,7 @@ func (mgr *Manager) GetAnyTxById(txID string) (*pb.AnyTx, error) {
 		return nil, fmt.Errorf("empty transaction data for key %s", specificKey)
 	}
 
-	// 3. 根据 specificKey 的前缀判断类型并反序列化
+	// 4. 根据 specificKey 的前缀判断类型并反序列化
 	// 注意：key 格式是 v1_tx_xxx, v1_order_xxx, v1_minerTx_xxx 等
 	anyTx := &pb.AnyTx{}
 	switch {

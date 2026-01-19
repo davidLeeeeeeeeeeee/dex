@@ -906,9 +906,9 @@ func fillTxDetails(tx *pb.AnyTx, info *txInfo) {
 		info.Details["quote_token"] = o.QuoteToken
 		info.Details["amount"] = o.Amount
 		info.Details["price"] = o.Price
-		info.Details["filled_base"] = o.FilledBase
-		info.Details["filled_quote"] = o.FilledQuote
-		info.Details["is_filled"] = o.IsFilled
+		info.Details["side"] = o.Side.String()
+		// 注意: filled_base, filled_quote, is_filled 已移至 OrderState
+		// 如需查询订单状态，请使用 /api/order/{orderId} 接口
 		if o.OpTargetId != "" {
 			info.Details["op_target_id"] = o.OpTargetId
 		}

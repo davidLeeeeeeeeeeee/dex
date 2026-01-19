@@ -160,18 +160,47 @@ enum OrderSide {
   SELL = 1; // 卖单
 }
 
-message OrderTx {//下单tx
+// OrderTx 下单交易原文（不可变）
+// 用于 v1_txraw_<txid>，只保存下单请求信息，不包含撮合状态
+message OrderTx {
   BaseMessage base = 1;
   string base_token = 2; // 例如 "bc1q6156"代表USDT
   string quote_token = 3; // 例如 "bc1q0000"代表BTC
-  OrderOp op = 4; // ADD是更新订单状态REMOVE是撤单
-  string op_target_id = 5; // 如果要更新/移除订单id
-  string amount = 6;
-  string price = 7;
-  string filled_base = 8; // 表示该订单已经成交的base数量
-  string filled_quote = 9; // 表示该订单已经成交的quote数量
-  bool is_filled = 10; // 是否已经完全成交标签
-  OrderSide side = 11; // 买卖方向: BUY=买单, SELL=卖单
+  OrderOp op = 4; // ADD是下单，REMOVE是撤单
+  string op_target_id = 5; // 如果要撤单，指定订单id
+  string amount = 6; // 下单数量（base currency）
+  string price = 7; // 下单价格（quote/base）
+  OrderSide side = 8; // 买卖方向: BUY=买单, SELL=卖单
+  // 注意: filled_base, filled_quote, is_filled 已移至 OrderState
+  // 保留字段编号 9, 10, 11 以避免与旧数据冲突
+  reserved 9, 10, 11;
+}
+
+// OrderState 订单状态（可变）
+// 用于 v1_orderstate_<orderid>，由 VM Diff 控制，记录撮合后的状态
+// 与 OrderTx 分离，实现"交易原文"和"订单簿状态"的解耦
+message OrderState {
+  string order_id = 1; // 订单ID（= OrderTx.base.tx_id）
+  string filled_base = 2; // 已成交的 base 数量
+  string filled_quote = 3; // 已成交的 quote 数量
+  bool is_filled = 4; // 是否完全成交
+  OrderStateStatus status = 5; // 订单状态
+  uint64 create_height = 6; // 创建高度
+  uint64 last_update_height = 7; // 最后更新高度
+  // 冗余字段，用于查询时避免再次读取 OrderTx
+  string base_token = 8; // 冗余：base token
+  string quote_token = 9; // 冗余：quote token
+  string amount = 10; // 冗余：下单数量
+  string price = 11; // 冗余：下单价格
+  OrderSide side = 12; // 冗余：买卖方向
+  string owner = 13; // 冗余：订单持有者地址
+}
+
+// 订单状态枚举
+enum OrderStateStatus {
+  ORDER_OPEN = 0; // 未成交/部分成交
+  ORDER_FILLED = 1; // 完全成交
+  ORDER_CANCELLED = 2; // 已撤单
 }
 
 

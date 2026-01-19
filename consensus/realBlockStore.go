@@ -377,26 +377,12 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 			logs.Info("[RealBlockStore] VM committed finalized block %s with %d txs at height %d",
 				block.ID, len(pbBlock.Body), height)
 
-			// 更新交易状态并保存到数据库
+			// 从交易池移除已执行的交易
+			// 注意：交易原文的保存已由 VM 的 applyResult 统一处理（使用 SaveTxRaw）
+			// 区块存储层不再保存交易，避免重复写入和索引混乱
 			for _, tx := range pbBlock.Body {
 				if base := tx.GetBase(); base != nil {
-					// 更新交易状态
-					base.Status = pb.Status_SUCCEED
-					base.ExecutedHeight = height
-
-					// 从交易池移除
 					s.pool.RemoveAnyTx(base.TxId)
-
-					// 跳过 OrderTx - VM 的 applyResult 已经正确处理了订单的保存（包括撮合后的状态）
-					// 如果再次调用 SaveAnyTx，会覆盖 VM 写入的撮合结果，导致订单簿中包含未撮合的订单
-					if tx.GetOrderTx() != nil {
-						continue
-					}
-
-					// 保存到数据库（非 OrderTx）
-					if err := s.dbManager.SaveAnyTx(tx); err != nil {
-						logs.Error("[RealBlockStore] Failed to save finalized tx %s: %v", base.TxId, err)
-					}
 				}
 			}
 
@@ -739,26 +725,13 @@ func (s *RealBlockStore) convertDBBlockToTypes(dbBlock *pb.Block) *types.Block {
 func (s *RealBlockStore) finalizeBlockWithTxs(block *types.Block) {
 	// 获取该区块包含的交易
 	if cachedBlock, exists := GetCachedBlock(block.ID); exists {
-		// 更新交易状态
+		// 从交易池移除已执行的交易
+		// 注意：交易原文的保存已由 VM 的 applyResult 统一处理（使用 SaveTxRaw）
+		// 区块存储层不再保存交易，避免重复写入和索引混乱
 		for _, tx := range cachedBlock.Body {
 			base := tx.GetBase()
 			if base != nil {
-				base.Status = pb.Status_SUCCEED
-				base.ExecutedHeight = block.Height
-
-				// 更新交易池
 				s.pool.RemoveAnyTx(base.TxId)
-
-				// 跳过 OrderTx - VM 的 applyResult 已经正确处理了订单的保存（包括撮合后的状态）
-				// 如果再次调用 SaveAnyTx，会覆盖 VM 写入的撮合结果，导致订单簿中包含未撮合的订单
-				if tx.GetOrderTx() != nil {
-					continue
-				}
-
-				// 保存到数据库（非 OrderTx）
-				if err := s.dbManager.SaveAnyTx(tx); err != nil {
-					logs.Error("[RealBlockStore] Failed to save finalized tx %s: %v", base.TxId, err)
-				}
 			}
 		}
 

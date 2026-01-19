@@ -55,6 +55,10 @@ func KeyMinerTx(txID string) string {
 	return keys.KeyMinerTx(txID)
 }
 
+func KeyTxRaw(txID string) string {
+	return keys.KeyTxRaw(txID)
+}
+
 // ===================== 账户相关 =====================
 
 func KeyAccount(addr string) string {
@@ -81,6 +85,14 @@ func KeyStakeIndex(invertedPadded32, addr string) string {
 
 func KeyOrder(orderID string) string {
 	return keys.KeyOrder(orderID)
+}
+
+func KeyOrderState(orderID string) string {
+	return keys.KeyOrderState(orderID)
+}
+
+func KeyOrderStatePrefix() string {
+	return keys.KeyOrderStatePrefix()
 }
 
 func KeyOrderPriceIndex(pair string, isFilled bool, priceKey67 string, orderID string) string {

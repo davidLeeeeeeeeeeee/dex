@@ -1862,15 +1862,13 @@ func generateOrderTx(from, baseToken, quoteToken, amount, price string, nonce ui
 			Status:      pb.Status_PENDING,
 			Nonce:       nonce,
 		},
-		BaseToken:   baseToken,
-		QuoteToken:  quoteToken,
-		Op:          pb.OrderOp_ADD,
-		Amount:      amount,
-		Price:       price,
-		Side:        side,
-		FilledBase:  "0", // 新订单初始成交量为 0
-		FilledQuote: "0",
-		IsFilled:    false,
+		BaseToken:  baseToken,
+		QuoteToken: quoteToken,
+		Op:         pb.OrderOp_ADD,
+		Amount:     amount,
+		Price:      price,
+		Side:       side,
+		// 注意: FilledBase, FilledQuote, IsFilled 已移至 OrderState
 	}
 	return &pb.AnyTx{
 		Content: &pb.AnyTx_OrderTx{OrderTx: tx},

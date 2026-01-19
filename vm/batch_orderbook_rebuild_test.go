@@ -238,15 +238,12 @@ func TestBatchOrderBookRebuild_Matching(t *testing.T) {
 			TxId:        "sell_order_1",
 			FromAddress: "seller",
 		},
-		BaseToken:   "BTC",
-		QuoteToken:  "USDT",
-		Op:          pb.OrderOp_ADD,
-		Side:        pb.OrderSide_SELL,
-		Price:       "50000",
-		Amount:      "1.0",
-		FilledBase:  "0",
-		FilledQuote: "0",
-		IsFilled:    false,
+		BaseToken:  "BTC",
+		QuoteToken: "USDT",
+		Op:         pb.OrderOp_ADD,
+		Side:       pb.OrderSide_SELL,
+		Price:      "50000",
+		Amount:     "1.0",
 	}
 	saveOrderToDB(t, db, sellOrder, pair)
 
@@ -402,15 +399,12 @@ func createTestOrders(t *testing.T, db *MockDB, pair string, count int) []*pb.Or
 				TxId:        fmt.Sprintf("order_%s_%d", pair, i),
 				FromAddress: fmt.Sprintf("user_%d", i),
 			},
-			BaseToken:   tokens[0],
-			QuoteToken:  tokens[1],
-			Op:          pb.OrderOp_ADD,
-			Side:        pb.OrderSide_SELL, // 默认创建卖单
-			Price:       fmt.Sprintf("%d", 50000+i*100),
-			Amount:      "1.0",
-			FilledBase:  "0",
-			FilledQuote: "0",
-			IsFilled:    false,
+			BaseToken:  tokens[0],
+			QuoteToken: tokens[1],
+			Op:         pb.OrderOp_ADD,
+			Side:       pb.OrderSide_SELL, // 默认创建卖单
+			Price:      fmt.Sprintf("%d", 50000+i*100),
+			Amount:     "1.0",
 		}
 		saveOrderToDB(t, db, order, pair)
 		orders[i] = order
@@ -463,15 +457,12 @@ func createOrderAnyTx(txID, baseToken, quoteToken, price, amount string) *pb.Any
 					TxId:        txID,
 					FromAddress: "test_user",
 				},
-				BaseToken:   baseToken,
-				QuoteToken:  quoteToken,
-				Op:          pb.OrderOp_ADD,
-				Side:        pb.OrderSide_SELL, // 默认为卖单
-				Price:       price,
-				Amount:      amount,
-				FilledBase:  "0",
-				FilledQuote: "0",
-				IsFilled:    false,
+				BaseToken:  baseToken,
+				QuoteToken: quoteToken,
+				Op:         pb.OrderOp_ADD,
+				Side:       pb.OrderSide_SELL, // 默认为卖单
+				Price:      price,
+				Amount:     amount,
 			},
 		},
 	}
@@ -486,15 +477,12 @@ func createBuyOrderAnyTx(txID, baseToken, quoteToken, price, amount string) *pb.
 					TxId:        txID,
 					FromAddress: "test_user",
 				},
-				BaseToken:   baseToken,
-				QuoteToken:  quoteToken,
-				Op:          pb.OrderOp_ADD,
-				Side:        pb.OrderSide_BUY, // 买单
-				Price:       price,
-				Amount:      amount,
-				FilledBase:  "0",
-				FilledQuote: "0",
-				IsFilled:    false,
+				BaseToken:  baseToken,
+				QuoteToken: quoteToken,
+				Op:         pb.OrderOp_ADD,
+				Side:       pb.OrderSide_BUY, // 买单
+				Price:      price,
+				Amount:     amount,
 			},
 		},
 	}
@@ -597,15 +585,12 @@ func TestBatchRebuild_Correctness(t *testing.T) {
 				TxId:        fmt.Sprintf("order_%d", i),
 				FromAddress: fmt.Sprintf("user_%d", i),
 			},
-			BaseToken:   "BTC",
-			QuoteToken:  "USDT",
-			Op:          pb.OrderOp_ADD,
-			Side:        pb.OrderSide_SELL,
-			Price:       price,
-			Amount:      "1.0",
-			FilledBase:  "0",
-			FilledQuote: "0",
-			IsFilled:    false,
+			BaseToken:  "BTC",
+			QuoteToken: "USDT",
+			Op:         pb.OrderOp_ADD,
+			Side:       pb.OrderSide_SELL,
+			Price:      price,
+			Amount:     "1.0",
 		}
 		saveOrderToDB(t, db, order, pair)
 	}
@@ -665,15 +650,12 @@ func TestBatchRebuild_EdgeCases(t *testing.T) {
 							TxId:        fmt.Sprintf("order_%d", i),
 							FromAddress: fmt.Sprintf("user_%d", i),
 						},
-						BaseToken:   "BTC",
-						QuoteToken:  "USDT",
-						Op:          pb.OrderOp_ADD,
-						Side:        pb.OrderSide_SELL,
-						Price:       fmt.Sprintf("%d", 50000+i*100),
-						Amount:      "1.0",
-						FilledBase:  "0",
-						FilledQuote: "0",
-						IsFilled:    false,
+						BaseToken:  "BTC",
+						QuoteToken: "USDT",
+						Op:         pb.OrderOp_ADD,
+						Side:       pb.OrderSide_SELL,
+						Price:      fmt.Sprintf("%d", 50000+i*100),
+						Amount:     "1.0",
 					}
 					saveOrderToDB(nil, db, order, "BTC_USDT")
 				}
@@ -696,15 +678,12 @@ func TestBatchRebuild_EdgeCases(t *testing.T) {
 							TxId:        fmt.Sprintf("order_%d", i),
 							FromAddress: "user_0", // 所有订单都由 user_0 创建
 						},
-						BaseToken:   "BTC",
-						QuoteToken:  "USDT",
-						Op:          pb.OrderOp_ADD,
-						Side:        pb.OrderSide_SELL,
-						Price:       fmt.Sprintf("%d", 50000+i*100),
-						Amount:      "1.0",
-						FilledBase:  "0",
-						FilledQuote: "0",
-						IsFilled:    false,
+						BaseToken:  "BTC",
+						QuoteToken: "USDT",
+						Op:         pb.OrderOp_ADD,
+						Side:       pb.OrderSide_SELL,
+						Price:      fmt.Sprintf("%d", 50000+i*100),
+						Amount:     "1.0",
 					}
 					saveOrderToDB(nil, db, order, "BTC_USDT")
 				}

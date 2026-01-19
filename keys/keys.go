@@ -94,6 +94,13 @@ func KeyMinerTx(txID string) string {
 	return withVer("minerTx_" + txID)
 }
 
+// KeyTxRaw 交易原文（不可变）
+// 用于区块存储层保存交易原始数据，独立于订单簿状态
+// 例：v1_txraw_<txID>
+func KeyTxRaw(txID string) string {
+	return withVer("txraw_" + txID)
+}
+
 // ===================== 账户相关 =====================
 
 // KeyAccount 账户数据
@@ -127,10 +134,24 @@ func KeyStakeIndex(invertedPadded32, addr string) string {
 
 // ===================== 订单相关 =====================
 
-// KeyOrder 订单数据
+// KeyOrder 订单数据（已废弃，兼容旧数据）
 // 例：v1_order_<orderID>
+// Deprecated: 新代码应使用 KeyOrderState
 func KeyOrder(orderID string) string {
 	return withVer("order_" + orderID)
+}
+
+// KeyOrderState 订单状态（可变）
+// 用于存储 OrderState，由 VM Diff 控制
+// 例：v1_orderstate_<orderID>
+func KeyOrderState(orderID string) string {
+	return withVer("orderstate_" + orderID)
+}
+
+// KeyOrderStatePrefix 订单状态前缀
+// 例：v1_orderstate_
+func KeyOrderStatePrefix() string {
+	return withVer("orderstate_")
 }
 
 // KeyOrderPriceIndex 订单价格索引

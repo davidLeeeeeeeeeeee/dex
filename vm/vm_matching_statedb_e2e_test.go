@@ -78,15 +78,12 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 					FromAddress: aliceAddr,
 					Status:      pb.Status_PENDING,
 				},
-				BaseToken:   "BTC",
-				QuoteToken:  "USDT",
-				Op:          pb.OrderOp_ADD,
-				Side:        pb.OrderSide_SELL, // 明确设置卖单方向
-				Price:       "50000",           // 卖价 50000 USDT/BTC
-				Amount:      "1.0",             // 卖 1 BTC
-				FilledBase:  "0",
-				FilledQuote: "0",
-				IsFilled:    false,
+				BaseToken:  "BTC",
+				QuoteToken: "USDT",
+				Op:         pb.OrderOp_ADD,
+				Side:       pb.OrderSide_SELL, // 明确设置卖单方向
+				Price:      "50000",           // 卖价 50000 USDT/BTC
+				Amount:     "1.0",             // 卖 1 BTC
 			},
 		},
 	}
@@ -132,15 +129,12 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 					FromAddress: bobAddr,
 					Status:      pb.Status_PENDING,
 				},
-				BaseToken:   "BTC",
-				QuoteToken:  "USDT",
-				Op:          pb.OrderOp_ADD,
-				Side:        pb.OrderSide_BUY, // 明确设置买单方向
-				Price:       "50000",          // USDT/BTC (1 BTC = 50000 USDT)
-				Amount:      "0.5",            // 买 0.5 BTC
-				FilledBase:  "0",
-				FilledQuote: "0",
-				IsFilled:    false,
+				BaseToken:  "BTC",
+				QuoteToken: "USDT",
+				Op:         pb.OrderOp_ADD,
+				Side:       pb.OrderSide_BUY, // 明确设置买单方向
+				Price:      "50000",          // USDT/BTC (1 BTC = 50000 USDT)
+				Amount:     "0.5",            // 买 0.5 BTC
 			},
 		},
 	}
@@ -213,16 +207,16 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 	// ========== 第八步：验证订单状态 ==========
 	t.Log("🔍 Verifying order status...")
 
-	// 验证卖单部分成交
-	sellOrder := getE2EOrder(t, dbMgr, "sell_order_001")
-	assert.Equal(t, "0.5", sellOrder.FilledBase, "Sell order should have 0.5 BTC filled")
-	assert.False(t, sellOrder.IsFilled, "Sell order should not be fully filled")
+	// 验证卖单部分成交 - 使用 OrderState
+	sellOrderState := getE2EOrderState(t, dbMgr, "sell_order_001")
+	assert.Equal(t, "0.5", sellOrderState.FilledBase, "Sell order should have 0.5 BTC filled")
+	assert.False(t, sellOrderState.IsFilled, "Sell order should not be fully filled")
 
-	// 验证买单完全成交
+	// 验证买单完全成交 - 使用 OrderState
 	// 买单：BaseToken=BTC，Amount=0.5，成交后 FilledBase=0.5
-	buyOrder := getE2EOrder(t, dbMgr, "buy_order_001")
-	assert.Equal(t, "0.5", buyOrder.FilledBase, "Buy order should have 0.5 BTC filled")
-	assert.True(t, buyOrder.IsFilled, "Buy order should be fully filled")
+	buyOrderState := getE2EOrderState(t, dbMgr, "buy_order_001")
+	assert.Equal(t, "0.5", buyOrderState.FilledBase, "Buy order should have 0.5 BTC filled")
+	assert.True(t, buyOrderState.IsFilled, "Buy order should be fully filled")
 
 	t.Log("✅ Order status verified")
 
@@ -294,6 +288,18 @@ func getE2EOrder(t *testing.T, dbMgr *db.Manager, orderID string) *pb.OrderTx {
 	var order pb.OrderTx
 	require.NoError(t, proto.Unmarshal(orderData, &order))
 	return &order
+}
+
+// getE2EOrderState 从数据库读取订单状态（E2E 测试专用）
+func getE2EOrderState(t *testing.T, dbMgr *db.Manager, orderID string) *pb.OrderState {
+	orderStateKey := keys.KeyOrderState(orderID)
+	orderStateData, err := dbMgr.Get(orderStateKey)
+	require.NoError(t, err)
+	require.NotNil(t, orderStateData)
+
+	var orderState pb.OrderState
+	require.NoError(t, proto.Unmarshal(orderStateData, &orderState))
+	return &orderState
 }
 
 // TestE2E_MultiBlock_OrderMatching
@@ -408,18 +414,18 @@ func TestE2E_MultiBlock_OrderMatching(t *testing.T) {
 	assert.Equal(t, "1.5", bobAccount.Balances["BTC"].Balance, "Bob should have 1.5 BTC")
 	assert.Equal(t, "126000", bobAccount.Balances["USDT"].Balance, "Bob should have 126000 USDT left")
 
-	// 检查订单状态
-	sell1 := getE2EOrder(t, dbMgr, "sell_1")
-	assert.Equal(t, "1", sell1.FilledBase, "sell_1 should be fully filled (1 BTC)")
-	assert.True(t, sell1.IsFilled, "sell_1 should be marked as filled")
+	// 检查订单状态 - 使用 OrderState
+	sell1State := getE2EOrderState(t, dbMgr, "sell_1")
+	assert.Equal(t, "1", sell1State.FilledBase, "sell_1 should be fully filled (1 BTC)")
+	assert.True(t, sell1State.IsFilled, "sell_1 should be marked as filled")
 
-	sell2 := getE2EOrder(t, dbMgr, "sell_2")
-	assert.Equal(t, "0.5", sell2.FilledBase, "sell_2 should be partially filled (0.5 BTC)")
-	assert.False(t, sell2.IsFilled, "sell_2 should not be fully filled")
+	sell2State := getE2EOrderState(t, dbMgr, "sell_2")
+	assert.Equal(t, "0.5", sell2State.FilledBase, "sell_2 should be partially filled (0.5 BTC)")
+	assert.False(t, sell2State.IsFilled, "sell_2 should not be fully filled")
 
-	buyOrder1 := getE2EOrder(t, dbMgr, "buy_1")
-	assert.Equal(t, "1.5", buyOrder1.FilledQuote, "buy_1 should have bought 1.5 BTC")
-	assert.True(t, buyOrder1.IsFilled, "buy_1 should be fully filled")
+	buyOrder1State := getE2EOrderState(t, dbMgr, "buy_1")
+	assert.Equal(t, "1.5", buyOrder1State.FilledBase, "buy_1 should have bought 1.5 BTC")
+	assert.True(t, buyOrder1State.IsFilled, "buy_1 should be fully filled")
 
 	// ========== Block 3: Charlie 买入 2 BTC ==========
 	// Charlie 想买 2 BTC，愿意支付最高 51000 USDT/BTC
@@ -455,14 +461,14 @@ func TestE2E_MultiBlock_OrderMatching(t *testing.T) {
 	assert.Equal(t, "2", charlieAccount.Balances["BTC"].Balance, "Charlie should have 2 BTC")
 	assert.Equal(t, "99500", charlieAccount.Balances["USDT"].Balance, "Charlie should have 99500 USDT left")
 
-	// 检查订单状态
-	sell2Final := getE2EOrder(t, dbMgr, "sell_2")
-	assert.Equal(t, "2", sell2Final.FilledBase, "sell_2 should be fully filled (2 BTC total)")
-	assert.True(t, sell2Final.IsFilled, "sell_2 should be marked as filled")
+	// 检查订单状态 - 使用 OrderState
+	sell2FinalState := getE2EOrderState(t, dbMgr, "sell_2")
+	assert.Equal(t, "2", sell2FinalState.FilledBase, "sell_2 should be fully filled (2 BTC total)")
+	assert.True(t, sell2FinalState.IsFilled, "sell_2 should be marked as filled")
 
-	sell3 := getE2EOrder(t, dbMgr, "sell_3")
-	assert.Equal(t, "0.5", sell3.FilledBase, "sell_3 should be partially filled (0.5 BTC)")
-	assert.False(t, sell3.IsFilled, "sell_3 should not be fully filled")
+	sell3State := getE2EOrderState(t, dbMgr, "sell_3")
+	assert.Equal(t, "0.5", sell3State.FilledBase, "sell_3 should be partially filled (0.5 BTC)")
+	assert.False(t, sell3State.IsFilled, "sell_3 should not be fully filled")
 
 	// ========== 验证最终状态 ==========
 	t.Log("🔍 Verifying final state...")
@@ -513,15 +519,12 @@ func createSellOrder(txID, from, base, quote, price, amount string) *pb.AnyTx {
 					FromAddress: from,
 					Status:      pb.Status_PENDING,
 				},
-				BaseToken:   base,
-				QuoteToken:  quote,
-				Op:          pb.OrderOp_ADD,
-				Side:        pb.OrderSide_SELL, // 明确设置卖单方向
-				Price:       price,
-				Amount:      amount,
-				FilledBase:  "0",
-				FilledQuote: "0",
-				IsFilled:    false,
+				BaseToken:  base,
+				QuoteToken: quote,
+				Op:         pb.OrderOp_ADD,
+				Side:       pb.OrderSide_SELL, // 明确设置卖单方向
+				Price:      price,
+				Amount:     amount,
 			},
 		},
 	}
@@ -536,15 +539,12 @@ func createBuyOrder(txID, from, base, quote, price, amount string) *pb.AnyTx {
 					FromAddress: from,
 					Status:      pb.Status_PENDING,
 				},
-				BaseToken:   base,
-				QuoteToken:  quote,
-				Op:          pb.OrderOp_ADD,
-				Side:        pb.OrderSide_BUY, // 明确设置买单方向
-				Price:       price,
-				Amount:      amount,
-				FilledBase:  "0",
-				FilledQuote: "0",
-				IsFilled:    false,
+				BaseToken:  base,
+				QuoteToken: quote,
+				Op:         pb.OrderOp_ADD,
+				Side:       pb.OrderSide_BUY, // 明确设置买单方向
+				Price:      price,
+				Amount:     amount,
 			},
 		},
 	}
@@ -647,22 +647,22 @@ func TestE2E_TransactionOrderDeterminism(t *testing.T) {
 	assert.Equal(t, "8.5", aliceAccount.Balances["BTC"].Balance, "Alice should have 8.5 BTC")
 	assert.Equal(t, "74000", aliceAccount.Balances["USDT"].Balance, "Alice should have 74000 USDT")
 
-	// 验证订单状态
-	sell1 := getE2EOrder(t, dbMgr, "sell_order_1")
-	assert.Equal(t, "0", sell1.FilledBase, "sell_order_1 should not be filled (highest price)")
-	assert.False(t, sell1.IsFilled)
+	// 验证订单状态 - 使用 OrderState
+	sell1State := getE2EOrderState(t, dbMgr, "sell_order_1")
+	assert.Equal(t, "0", sell1State.FilledBase, "sell_order_1 should not be filled (highest price)")
+	assert.False(t, sell1State.IsFilled)
 
-	sell2 := getE2EOrder(t, dbMgr, "sell_order_2")
-	assert.Equal(t, "1", sell2.FilledBase, "sell_order_2 should be fully filled (lowest price)")
-	assert.True(t, sell2.IsFilled)
+	sell2State := getE2EOrderState(t, dbMgr, "sell_order_2")
+	assert.Equal(t, "1", sell2State.FilledBase, "sell_order_2 should be fully filled (lowest price)")
+	assert.True(t, sell2State.IsFilled)
 
-	sell3 := getE2EOrder(t, dbMgr, "sell_order_3")
-	assert.Equal(t, "0.5", sell3.FilledBase, "sell_order_3 should be partially filled (middle price)")
-	assert.False(t, sell3.IsFilled)
+	sell3State := getE2EOrderState(t, dbMgr, "sell_order_3")
+	assert.Equal(t, "0.5", sell3State.FilledBase, "sell_order_3 should be partially filled (middle price)")
+	assert.False(t, sell3State.IsFilled)
 
-	buyOrder := getE2EOrder(t, dbMgr, "buy_order_1")
-	assert.Equal(t, "1.5", buyOrder.FilledQuote, "buy_order_1 should have bought 1.5 BTC")
-	assert.True(t, buyOrder.IsFilled)
+	buyOrderState := getE2EOrderState(t, dbMgr, "buy_order_1")
+	assert.Equal(t, "1.5", buyOrderState.FilledBase, "buy_order_1 should have bought 1.5 BTC")
+	assert.True(t, buyOrderState.IsFilled)
 
 	t.Log("✅ Transaction order determinism test passed")
 	t.Log("✅ Matching engine correctly prioritizes by price (lowest first)")

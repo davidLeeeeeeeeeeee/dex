@@ -171,7 +171,8 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	})
 
 	// 7. 将新订单转换为matching.Order并添加到订单簿
-	newOrder, err := convertToMatchingOrder(ord)
+	// 新订单还没有 OrderState，使用 Legacy 函数（假设未成交）
+	newOrder, err := convertToMatchingOrderLegacy(ord)
 	if err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
@@ -207,6 +208,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 }
 
 // handleRemoveOrder 处理撤单
+// 现在使用 OrderState 而不是 OrderTx
 func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	if ord.OpTargetId == "" {
 		return nil, &Receipt{
@@ -216,28 +218,54 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		}, fmt.Errorf("op_target_id is required")
 	}
 
-	// 读取要撤销的订单
-	targetOrderKey := keys.KeyOrder(ord.OpTargetId)
-	targetOrderData, exists, err := sv.Get(targetOrderKey)
+	// 读取要撤销的订单状态
+	targetStateKey := keys.KeyOrderState(ord.OpTargetId)
+	targetStateData, exists, err := sv.Get(targetStateKey)
 	if err != nil || !exists {
-		return nil, &Receipt{
-			TxID:   ord.Base.TxId,
-			Status: "FAILED",
-			Error:  "target order not found",
-		}, fmt.Errorf("target order not found: %s", ord.OpTargetId)
+		// 兼容旧数据：尝试从旧的 OrderTx 加载
+		targetOrderKey := keys.KeyOrder(ord.OpTargetId)
+		targetOrderData, oldExists, oldErr := sv.Get(targetOrderKey)
+		if oldErr != nil || !oldExists {
+			return nil, &Receipt{
+				TxID:   ord.Base.TxId,
+				Status: "FAILED",
+				Error:  "target order not found",
+			}, fmt.Errorf("target order not found: %s", ord.OpTargetId)
+		}
+
+		var oldOrderTx pb.OrderTx
+		if err := proto.Unmarshal(targetOrderData, &oldOrderTx); err != nil {
+			return nil, &Receipt{
+				TxID:   ord.Base.TxId,
+				Status: "FAILED",
+				Error:  "failed to parse target order",
+			}, err
+		}
+
+		// 验证权限
+		if oldOrderTx.Base.FromAddress != ord.Base.FromAddress {
+			return nil, &Receipt{
+				TxID:   ord.Base.TxId,
+				Status: "FAILED",
+				Error:  "only order creator can remove the order",
+			}, fmt.Errorf("permission denied")
+		}
+
+		// 使用旧数据处理撤单
+		return h.handleRemoveOrderLegacy(ord, &oldOrderTx, sv)
 	}
 
-	var targetOrder pb.OrderTx
-	if err := proto.Unmarshal(targetOrderData, &targetOrder); err != nil {
+	var targetState pb.OrderState
+	if err := proto.Unmarshal(targetStateData, &targetState); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
-			Error:  "failed to parse target order",
+			Error:  "failed to parse target order state",
 		}, err
 	}
 
 	// 验证权限：只有订单创建者可以撤单
-	if targetOrder.Base.FromAddress != ord.Base.FromAddress {
+	if targetState.Owner != ord.Base.FromAddress {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -267,13 +295,23 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 
 	ws := make([]WriteOp, 0)
 
-	// 删除订单
+	// 更新订单状态为已撤单（而不是删除）
+	targetState.Status = pb.OrderStateStatus_ORDER_CANCELLED
+	updatedStateData, err := proto.Marshal(&targetState)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   ord.Base.TxId,
+			Status: "FAILED",
+			Error:  "failed to marshal order state",
+		}, err
+	}
+
 	ws = append(ws, WriteOp{
-		Key:         targetOrderKey,
-		Value:       nil,
-		Del:         true,
-		SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
-		Category:    "order",
+		Key:         targetStateKey,
+		Value:       updatedStateData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "orderstate",
 	})
 
 	// 从账户的订单列表中移除
@@ -306,6 +344,94 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	})
 
 	// 删除价格索引
+	pair := utils.GeneratePairKey(targetState.BaseToken, targetState.QuoteToken)
+	priceKey67, err := db.PriceToKey128(targetState.Price)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   ord.Base.TxId,
+			Status: "FAILED",
+			Error:  "failed to convert price to key",
+		}, err
+	}
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetState.IsFilled, priceKey67, ord.OpTargetId)
+
+	ws = append(ws, WriteOp{
+		Key:         priceIndexKey,
+		Value:       nil,
+		Del:         true,
+		SyncStateDB: false,
+		Category:    "index",
+	})
+
+	return ws, &Receipt{
+		TxID:       ord.Base.TxId,
+		Status:     "SUCCEED",
+		WriteCount: len(ws),
+	}, nil
+}
+
+// handleRemoveOrderLegacy 处理旧数据格式的撤单（兼容性）
+func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
+	accountKey := keys.KeyAccount(ord.Base.FromAddress)
+	accountData, exists, err := sv.Get(accountKey)
+	if err != nil || !exists {
+		return nil, &Receipt{
+			TxID:   ord.Base.TxId,
+			Status: "FAILED",
+			Error:  "account not found",
+		}, fmt.Errorf("account not found")
+	}
+
+	var account pb.Account
+	if err := proto.Unmarshal(accountData, &account); err != nil {
+		return nil, &Receipt{
+			TxID:   ord.Base.TxId,
+			Status: "FAILED",
+			Error:  "failed to parse account",
+		}, err
+	}
+
+	ws := make([]WriteOp, 0)
+
+	// 删除旧的订单数据
+	targetOrderKey := keys.KeyOrder(ord.OpTargetId)
+	ws = append(ws, WriteOp{
+		Key:         targetOrderKey,
+		Value:       nil,
+		Del:         true,
+		SyncStateDB: true,
+		Category:    "order",
+	})
+
+	// 从账户的订单列表中移除
+	if account.Orders != nil {
+		newOrders := make([]string, 0)
+		for _, orderId := range account.Orders {
+			if orderId != ord.OpTargetId {
+				newOrders = append(newOrders, orderId)
+			}
+		}
+		account.Orders = newOrders
+	}
+
+	updatedAccountData, err := proto.Marshal(&account)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   ord.Base.TxId,
+			Status: "FAILED",
+			Error:  "failed to marshal account",
+		}, err
+	}
+
+	ws = append(ws, WriteOp{
+		Key:         accountKey,
+		Value:       updatedAccountData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "account",
+	})
+
+	// 删除价格索引
 	pair := utils.GeneratePairKey(targetOrder.BaseToken, targetOrder.QuoteToken)
 	priceKey67, err := db.PriceToKey128(targetOrder.Price)
 	if err != nil {
@@ -315,7 +441,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 			Error:  "failed to convert price to key",
 		}, err
 	}
-	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetOrder.IsFilled, priceKey67, ord.OpTargetId)
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, false, priceKey67, ord.OpTargetId)
 
 	ws = append(ws, WriteOp{
 		Key:         priceIndexKey,
@@ -337,6 +463,7 @@ func (h *OrderTxHandler) Apply(tx *pb.AnyTx) error {
 }
 
 // generateWriteOpsFromTrades 根据撮合事件生成WriteOps
+// 现在使用 OrderState 存储可变状态，OrderTx 只是不可变的交易原文
 func (h *OrderTxHandler) generateWriteOpsFromTrades(
 	newOrd *pb.OrderTx,
 	tradeEvents []matching.TradeUpdate,
@@ -345,73 +472,111 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 ) ([]WriteOp, error) {
 	ws := make([]WriteOp, 0)
 
-	// 如果没有撮合事件，说明订单未成交，直接保存订单
+	// 如果没有撮合事件，说明订单未成交，直接保存订单状态
 	if len(tradeEvents) == 0 {
 		return h.saveNewOrder(newOrd, sv, pair)
 	}
 
-	// 处理每个撮合事件
-	orderUpdates := make(map[string]*pb.OrderTx) // orderID -> updated OrderTx
+	// 处理每个撮合事件 - 使用 OrderState 存储可变状态
+	stateUpdates := make(map[string]*pb.OrderState) // orderID -> updated OrderState
 
 	for _, ev := range tradeEvents {
-		// 加载订单 - 优先从 orderUpdates 中获取已更新的版本
-		var orderTx *pb.OrderTx
-		if cached, ok := orderUpdates[ev.OrderID]; ok {
-			// 已有该订单的更新版本，在其基础上继续更新
-			orderTx = cached
+		// 加载订单状态 - 优先从 stateUpdates 中获取已更新的版本
+		var orderState *pb.OrderState
+		if cached, ok := stateUpdates[ev.OrderID]; ok {
+			// 已有该订单状态的更新版本，在其基础上继续更新
+			orderState = cached
 		} else if ev.OrderID == newOrd.Base.TxId {
-			// 这是新订单 - 必须深拷贝，避免修改原始交易对象（交易池中的对象）
-			orderTx = proto.Clone(newOrd).(*pb.OrderTx)
-		} else {
-			// 这是已存在的订单，从StateView加载
-			orderKey := keys.KeyOrder(ev.OrderID)
-			orderData, exists, err := sv.Get(orderKey)
-			if err != nil || !exists {
-				continue
+			// 这是新订单，创建初始 OrderState
+			orderState = &pb.OrderState{
+				OrderId:          newOrd.Base.TxId,
+				FilledBase:       "0",
+				FilledQuote:      "0",
+				IsFilled:         false,
+				Status:           pb.OrderStateStatus_ORDER_OPEN,
+				CreateHeight:     newOrd.Base.ExecutedHeight,
+				LastUpdateHeight: newOrd.Base.ExecutedHeight,
+				BaseToken:        newOrd.BaseToken,
+				QuoteToken:       newOrd.QuoteToken,
+				Amount:           newOrd.Amount,
+				Price:            newOrd.Price,
+				Side:             newOrd.Side,
+				Owner:            newOrd.Base.FromAddress,
 			}
-			orderTx = &pb.OrderTx{}
-			if err := proto.Unmarshal(orderData, orderTx); err != nil {
-				continue
+		} else {
+			// 这是已存在的订单，从StateView加载 OrderState
+			orderStateKey := keys.KeyOrderState(ev.OrderID)
+			orderStateData, exists, err := sv.Get(orderStateKey)
+			if err != nil || !exists {
+				// 兼容旧数据：尝试从旧的 OrderTx 加载
+				orderKey := keys.KeyOrder(ev.OrderID)
+				orderData, oldExists, oldErr := sv.Get(orderKey)
+				if oldErr != nil || !oldExists {
+					continue
+				}
+				var oldOrderTx pb.OrderTx
+				if err := proto.Unmarshal(orderData, &oldOrderTx); err != nil {
+					continue
+				}
+				// 转换为 OrderState
+				orderState = &pb.OrderState{
+					OrderId:     ev.OrderID,
+					FilledBase:  "0", // 旧数据可能没有这些字段，重新计算
+					FilledQuote: "0",
+					IsFilled:    false,
+					Status:      pb.OrderStateStatus_ORDER_OPEN,
+					BaseToken:   oldOrderTx.BaseToken,
+					QuoteToken:  oldOrderTx.QuoteToken,
+					Amount:      oldOrderTx.Amount,
+					Price:       oldOrderTx.Price,
+					Side:        oldOrderTx.Side,
+					Owner:       oldOrderTx.Base.FromAddress,
+				}
+			} else {
+				orderState = &pb.OrderState{}
+				if err := proto.Unmarshal(orderStateData, orderState); err != nil {
+					continue
+				}
 			}
 		}
 
-		// 更新订单的成交信息
-		filledBase, _ := decimal.NewFromString(orderTx.FilledBase)
-		filledQuote, _ := decimal.NewFromString(orderTx.FilledQuote)
+		// 更新订单状态的成交信息
+		filledBase, _ := decimal.NewFromString(orderState.FilledBase)
+		filledQuote, _ := decimal.NewFromString(orderState.FilledQuote)
 
 		// 更新成交量
-		// ev.TradeAmt 是撮合引擎中的成交数量（base currency 数量，如 FB_USDT 中的 FB）
-		// ev.TradePrice 是成交价格（quote/base，如 USDT/FB）
-		// filledBase/filledQuote 与买卖方向无关，只记录成交的各币种数量
 		filledBase = filledBase.Add(ev.TradeAmt)
 		filledQuote = filledQuote.Add(ev.TradeAmt.Mul(ev.TradePrice))
 
-		orderTx.FilledBase = filledBase.String()
-		orderTx.FilledQuote = filledQuote.String()
-		orderTx.IsFilled = ev.IsFilled
+		orderState.FilledBase = filledBase.String()
+		orderState.FilledQuote = filledQuote.String()
+		orderState.IsFilled = ev.IsFilled
+		if ev.IsFilled {
+			orderState.Status = pb.OrderStateStatus_ORDER_FILLED
+		}
 
-		orderUpdates[ev.OrderID] = orderTx
+		stateUpdates[ev.OrderID] = orderState
 	}
 
-	// 生成WriteOps保存所有更新的订单
-	for orderID, orderTx := range orderUpdates {
-		// 保存订单
-		orderKey := keys.KeyOrder(orderID)
-		orderData, err := proto.Marshal(orderTx)
+	// 生成WriteOps保存所有更新的订单状态
+	for orderID, orderState := range stateUpdates {
+		// 保存订单状态
+		orderStateKey := keys.KeyOrderState(orderID)
+		orderStateData, err := proto.Marshal(orderState)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal order %s: %w", orderID, err)
+			return nil, fmt.Errorf("failed to marshal order state %s: %w", orderID, err)
 		}
 
 		ws = append(ws, WriteOp{
-			Key:         orderKey,
-			Value:       orderData,
+			Key:         orderStateKey,
+			Value:       orderStateData,
 			Del:         false,
-			SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
-			Category:    "order",
+			SyncStateDB: true,
+			Category:    "orderstate",
 		})
 
 		// 更新价格索引
-		priceKey67, err := db.PriceToKey128(orderTx.Price)
+		priceKey67, err := db.PriceToKey128(orderState.Price)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert price to key: %w", err)
 		}
@@ -427,7 +592,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		})
 
 		// 如果订单已完全成交，创建新的已成交索引
-		if orderTx.IsFilled {
+		if orderState.IsFilled {
 			newIndexKey := keys.KeyOrderPriceIndex(pair, true, priceKey67, orderID)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 			ws = append(ws, WriteOp{
@@ -438,7 +603,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 				Category:    "index",
 			})
 		} else {
-			// 如果未完全成交，保留未成交索引（实际上已经存在，这里重新写入）
+			// 如果未完全成交，保留未成交索引
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 			ws = append(ws, WriteOp{
 				Key:         oldIndexKey,
@@ -450,16 +615,15 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		}
 	}
 
-	// 生成成交记录（每两个 TradeUpdate 事件生成一条成交记录）
-	tradeRecordOps, err := h.generateTradeRecords(newOrd, tradeEvents, orderUpdates, pair)
+	// 生成成交记录
+	tradeRecordOps, err := h.generateTradeRecordsFromStates(newOrd, tradeEvents, stateUpdates, pair)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate trade records: %w", err)
 	}
 	ws = append(ws, tradeRecordOps...)
 
 	// 更新账户余额
-	// 根据撮合事件更新买卖双方的余额
-	accountBalanceOps, err := h.updateAccountBalances(tradeEvents, orderUpdates, sv)
+	accountBalanceOps, err := h.updateAccountBalancesFromStates(tradeEvents, stateUpdates, sv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update account balances: %w", err)
 	}
@@ -613,22 +777,40 @@ func (h *OrderTxHandler) updateAccountBalances(
 }
 
 // saveNewOrder 保存新订单（未成交的情况）
+// 现在保存 OrderState 而不是 OrderTx（OrderTx 作为交易原文由 applyResult 统一保存到 v1_txraw_<txid>）
 func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string) ([]WriteOp, error) {
 	ws := make([]WriteOp, 0)
 
-	// 保存订单
-	orderKey := keys.KeyOrder(ord.Base.TxId)
-	orderData, err := proto.Marshal(ord)
+	// 创建 OrderState（可变状态）
+	orderState := &pb.OrderState{
+		OrderId:          ord.Base.TxId,
+		FilledBase:       "0",
+		FilledQuote:      "0",
+		IsFilled:         false,
+		Status:           pb.OrderStateStatus_ORDER_OPEN,
+		CreateHeight:     ord.Base.ExecutedHeight,
+		LastUpdateHeight: ord.Base.ExecutedHeight,
+		// 冗余字段，方便查询
+		BaseToken:  ord.BaseToken,
+		QuoteToken: ord.QuoteToken,
+		Amount:     ord.Amount,
+		Price:      ord.Price,
+		Side:       ord.Side,
+		Owner:      ord.Base.FromAddress,
+	}
+
+	orderStateKey := keys.KeyOrderState(ord.Base.TxId)
+	orderStateData, err := proto.Marshal(orderState)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal order: %w", err)
+		return nil, fmt.Errorf("failed to marshal order state: %w", err)
 	}
 
 	ws = append(ws, WriteOp{
-		Key:         orderKey,
-		Value:       orderData,
+		Key:         orderStateKey,
+		Value:       orderStateData,
 		Del:         false,
-		SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
-		Category:    "order",
+		SyncStateDB: true,
+		Category:    "orderstate",
 	})
 
 	// 读取账户并添加订单到账户的订单列表
@@ -653,13 +835,13 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		}
 	}
 
-	// 创建价格索引
+	// 创建价格索引（基于 OrderState.IsFilled）
 	priceKey67, err := db.PriceToKey128(ord.Price)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert price to key: %w", err)
 	}
 
-	priceIndexKey := keys.KeyOrderPriceIndex(pair, ord.IsFilled, priceKey67, ord.Base.TxId)
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, orderState.IsFilled, priceKey67, ord.Base.TxId)
 	indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 	ws = append(ws, WriteOp{
 		Key:         priceIndexKey,
@@ -739,6 +921,188 @@ func (h *OrderTxHandler) generateTradeRecords(
 			Del:         false,
 			SyncStateDB: false,
 			Category:    "trade",
+		})
+	}
+
+	return ws, nil
+}
+
+// generateTradeRecordsFromStates 使用 OrderState 生成成交记录
+func (h *OrderTxHandler) generateTradeRecordsFromStates(
+	newOrd *pb.OrderTx,
+	tradeEvents []matching.TradeUpdate,
+	stateUpdates map[string]*pb.OrderState,
+	pair string,
+) ([]WriteOp, error) {
+	ws := make([]WriteOp, 0)
+
+	for i := 0; i < len(tradeEvents)-1; i += 2 {
+		takerEv := tradeEvents[i]
+		makerEv := tradeEvents[i+1]
+
+		var takerOrderID, makerOrderID string
+		var tradePrice, tradeAmount string
+		var takerSide pb.OrderSide
+
+		if takerEv.OrderID == newOrd.Base.TxId {
+			takerOrderID = takerEv.OrderID
+			makerOrderID = makerEv.OrderID
+			tradePrice = takerEv.TradePrice.String()
+			tradeAmount = takerEv.TradeAmt.String()
+			takerSide = newOrd.Side
+		} else {
+			takerOrderID = makerEv.OrderID
+			makerOrderID = takerEv.OrderID
+			tradePrice = makerEv.TradePrice.String()
+			tradeAmount = makerEv.TradeAmt.String()
+			if makerState, ok := stateUpdates[makerOrderID]; ok {
+				takerSide = makerState.Side
+			}
+		}
+
+		// 安全截取订单 ID，避免越界
+		takerIDShort := takerOrderID
+		if len(takerIDShort) > 8 {
+			takerIDShort = takerIDShort[:8]
+		}
+		makerIDShort := makerOrderID
+		if len(makerIDShort) > 8 {
+			makerIDShort = makerIDShort[:8]
+		}
+		tradeID := fmt.Sprintf("%s_%s_%d", takerIDShort, makerIDShort, i/2)
+		timestamp := utils.NowRFC3339()
+
+		tradeRecord := &pb.TradeRecord{
+			TradeId:      tradeID,
+			Pair:         pair,
+			Price:        tradePrice,
+			Amount:       tradeAmount,
+			MakerOrderId: makerOrderID,
+			TakerOrderId: takerOrderID,
+			TakerSide:    takerSide,
+			Timestamp:    timestamp,
+			Height:       newOrd.Base.ExecutedHeight,
+		}
+
+		tradeData, err := proto.Marshal(tradeRecord)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal trade record: %w", err)
+		}
+
+		tradeKey := keys.KeyTradeRecord(pair, utils.NowUnixNano(), tradeID)
+		ws = append(ws, WriteOp{
+			Key:         tradeKey,
+			Value:       tradeData,
+			Del:         false,
+			SyncStateDB: false,
+			Category:    "trade",
+		})
+	}
+
+	return ws, nil
+}
+
+// updateAccountBalancesFromStates 使用 OrderState 更新账户余额
+func (h *OrderTxHandler) updateAccountBalancesFromStates(
+	tradeEvents []matching.TradeUpdate,
+	stateUpdates map[string]*pb.OrderState,
+	sv StateView,
+) ([]WriteOp, error) {
+	ws := make([]WriteOp, 0)
+	accountCache := make(map[string]*pb.Account)
+
+	for _, ev := range tradeEvents {
+		orderState, ok := stateUpdates[ev.OrderID]
+		if !ok {
+			continue
+		}
+
+		address := orderState.Owner
+		account, ok := accountCache[address]
+		if !ok {
+			accountKey := keys.KeyAccount(address)
+			accountData, exists, err := sv.Get(accountKey)
+			if err != nil || !exists {
+				return nil, fmt.Errorf("account not found: %s", address)
+			}
+
+			account = &pb.Account{}
+			if err := proto.Unmarshal(accountData, account); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal account %s: %w", address, err)
+			}
+			accountCache[address] = account
+		}
+
+		if account.Balances == nil {
+			account.Balances = make(map[string]*pb.TokenBalance)
+		}
+		if account.Balances[orderState.BaseToken] == nil {
+			account.Balances[orderState.BaseToken] = &pb.TokenBalance{
+				Balance:            "0",
+				MinerLockedBalance: "0",
+			}
+		}
+		if account.Balances[orderState.QuoteToken] == nil {
+			account.Balances[orderState.QuoteToken] = &pb.TokenBalance{
+				Balance:            "0",
+				MinerLockedBalance: "0",
+			}
+		}
+
+		baseBalance, err := decimal.NewFromString(account.Balances[orderState.BaseToken].Balance)
+		if err != nil {
+			baseBalance = decimal.Zero
+		}
+		quoteBalance, err := decimal.NewFromString(account.Balances[orderState.QuoteToken].Balance)
+		if err != nil {
+			quoteBalance = decimal.Zero
+		}
+
+		var newBaseBalance, newQuoteBalance decimal.Decimal
+
+		if orderState.Side == pb.OrderSide_SELL {
+			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
+			newBaseBalance = baseBalance.Sub(ev.TradeAmt)
+			if newBaseBalance.LessThan(decimal.Zero) {
+				return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
+					orderState.BaseToken, address, baseBalance, ev.TradeAmt)
+			}
+			newQuoteBalance = quoteBalance.Add(tradeQuoteAmt)
+		} else {
+			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
+			newQuoteBalance = quoteBalance.Sub(tradeQuoteAmt)
+			if newQuoteBalance.LessThan(decimal.Zero) {
+				return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
+					orderState.QuoteToken, address, quoteBalance, tradeQuoteAmt)
+			}
+			newBaseBalance = baseBalance.Add(ev.TradeAmt)
+		}
+
+		maxUint256Dec := decimal.NewFromBigInt(MaxUint256, 0)
+		if newBaseBalance.GreaterThan(maxUint256Dec) {
+			return nil, fmt.Errorf("balance overflow for %s", orderState.BaseToken)
+		}
+		if newQuoteBalance.GreaterThan(maxUint256Dec) {
+			return nil, fmt.Errorf("balance overflow for %s", orderState.QuoteToken)
+		}
+
+		account.Balances[orderState.BaseToken].Balance = newBaseBalance.String()
+		account.Balances[orderState.QuoteToken].Balance = newQuoteBalance.String()
+	}
+
+	for address, account := range accountCache {
+		accountKey := keys.KeyAccount(address)
+		accountData, err := proto.Marshal(account)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal account %s: %w", address, err)
+		}
+
+		ws = append(ws, WriteOp{
+			Key:         accountKey,
+			Value:       accountData,
+			Del:         false,
+			SyncStateDB: true,
+			Category:    "account",
 		})
 	}
 

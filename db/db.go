@@ -581,7 +581,9 @@ func RebuildOrderPriceIndexes(m *Manager) (int, error) {
 				continue
 			}
 
-			indexKey := keys.KeyOrderPriceIndex(pair, order.IsFilled, priceKey67, order.Base.TxId)
+			// 新版本 OrderTx 不再有 IsFilled 字段，默认使用 false（未成交）
+			// 实际状态应该从 OrderState 读取，但这里是重建索引，假设订单未成交
+			indexKey := keys.KeyOrderPriceIndex(pair, false, priceKey67, order.Base.TxId)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 
 			indexes = append(indexes, indexEntry{

@@ -435,13 +435,19 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 		x.DB.EnqueueSet(heightKey, fmt.Sprintf("%d", b.Height))
 	}
 
-	// ========== 第四步补充：保存完整交易数据 ==========
-	// 将区块中的交易保存到数据库，以便后续查询
-	// 使用类型断言检查 DB 是否支持 SaveAnyTx
-	type anyTxSaver interface {
-		SaveAnyTx(tx *pb.AnyTx) error
+	// ========== 第四步补充：保存交易原文 ==========
+	// 将区块中的交易原文保存到数据库（不可变），以便后续查询
+	// 注意：这里只保存交易原文，不写任何订单簿索引
+	// 订单簿状态（订单状态、价格索引等）全部由 Diff 中的 WriteOp 控制
+	//
+	// 设计原则（解耦交易原文存储和订单簿状态存储）：
+	// - VM（applyResult）只负责状态类 key：订单状态、price index、余额等（全部来自 Diff）
+	// - 交易原文使用独立 key：v1_txraw_<txid>
+	// - OrderTx 在"交易查询"里是不可变原文；在"订单簿"里是可变状态，两者彻底分离
+	type txRawSaver interface {
+		SaveTxRaw(tx *pb.AnyTx) error
 	}
-	if saver, ok := x.DB.(anyTxSaver); ok {
+	if saver, ok := x.DB.(txRawSaver); ok {
 		for _, tx := range b.Body {
 			if tx == nil {
 				continue
@@ -450,7 +456,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 			if base == nil {
 				continue
 			}
-			// 更新交易状态为已执行
+			// 更新交易状态为已执行（这是原文的一部分，记录执行结果）
 			base.ExecutedHeight = b.Height
 			// 从 receipts 中查找状态
 			for _, rc := range res.Receipts {
@@ -463,10 +469,10 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 					break
 				}
 			}
-			// 保存交易
-			if err := saver.SaveAnyTx(tx); err != nil {
+			// 保存交易原文（只存储，不写索引）
+			if err := saver.SaveTxRaw(tx); err != nil {
 				// 记录错误但不中断提交
-				fmt.Printf("[VM] Warning: failed to save tx %s: %v\n", base.TxId, err)
+				fmt.Printf("[VM] Warning: failed to save tx raw %s: %v\n", base.TxId, err)
 			}
 		}
 	}
@@ -656,27 +662,43 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 				continue
 			}
 
-			// 从 StateView 读取完整订单
-			orderKey := keys.KeyOrder(orderID)
-			orderData, exists, err := sv.Get(orderKey)
-			if err != nil || !exists {
+			// 优先从 OrderState 读取（新版本）
+			orderStateKey := keys.KeyOrderState(orderID)
+			orderStateData, exists, err := sv.Get(orderStateKey)
+			if err == nil && exists {
+				var orderState pb.OrderState
+				if err := proto.Unmarshal(orderStateData, &orderState); err != nil {
+					continue
+				}
+
+				// 转换为 matching.Order 并添加到订单簿
+				matchOrder, err := convertOrderStateToMatchingOrder(&orderState)
+				if err != nil {
+					continue
+				}
+
+				ob.AddOrderWithoutMatch(matchOrder)
 				continue
 			}
 
-			// 反序列化订单
+			// 兼容旧数据：从 OrderTx 读取
+			orderKey := keys.KeyOrder(orderID)
+			orderData, oldExists, oldErr := sv.Get(orderKey)
+			if oldErr != nil || !oldExists {
+				continue
+			}
+
 			var orderTx pb.OrderTx
 			if err := proto.Unmarshal(orderData, &orderTx); err != nil {
 				continue
 			}
 
-			// 转换为 matching.Order 并添加到订单簿
-			matchOrder, err := convertToMatchingOrder(&orderTx)
+			// 转换为 matching.Order 并添加到订单簿（旧版本，假设未成交）
+			matchOrder, err := convertToMatchingOrderLegacy(&orderTx)
 			if err != nil {
 				continue
 			}
 
-			// 使用 AddOrderWithoutMatch 避免重建时触发撮合
-			// 这些订单已经在数据库中存在，不应该在重建时被撮合
 			ob.AddOrderWithoutMatch(matchOrder)
 		}
 
@@ -695,8 +717,64 @@ func extractOrderIDFromIndexKey(indexKey string) string {
 	return parts[1]
 }
 
-// convertToMatchingOrder 将 pb.OrderTx 转换为 matching.Order
-func convertToMatchingOrder(ord *pb.OrderTx) (*matching.Order, error) {
+// convertOrderStateToMatchingOrder 将 pb.OrderState 转换为 matching.Order
+func convertOrderStateToMatchingOrder(state *pb.OrderState) (*matching.Order, error) {
+	if state == nil {
+		return nil, fmt.Errorf("invalid order state")
+	}
+
+	price, err := decimal.NewFromString(state.Price)
+	if err != nil {
+		return nil, fmt.Errorf("invalid price: %w", err)
+	}
+
+	totalAmount, err := decimal.NewFromString(state.Amount)
+	if err != nil {
+		return nil, fmt.Errorf("invalid amount: %w", err)
+	}
+
+	filledBase, err := decimal.NewFromString(state.FilledBase)
+	if err != nil {
+		filledBase = decimal.Zero
+	}
+
+	filledQuote, err := decimal.NewFromString(state.FilledQuote)
+	if err != nil {
+		filledQuote = decimal.Zero
+	}
+
+	// 计算剩余数量
+	filledTrade := filledBase
+	if state.BaseToken > state.QuoteToken {
+		filledTrade = filledQuote
+	}
+
+	remainingAmount := totalAmount.Sub(filledTrade)
+	if remainingAmount.LessThanOrEqual(decimal.Zero) {
+		return nil, fmt.Errorf(
+			"order already filled (orderId=%s, amount=%s, filledBase=%s, filledQuote=%s, isFilled=%v)",
+			state.OrderId, state.Amount, state.FilledBase, state.FilledQuote, state.IsFilled,
+		)
+	}
+
+	var side matching.OrderSide
+	if state.Side == pb.OrderSide_SELL {
+		side = matching.SELL
+	} else {
+		side = matching.BUY
+	}
+
+	return &matching.Order{
+		ID:     state.OrderId,
+		Side:   side,
+		Price:  price,
+		Amount: remainingAmount,
+	}, nil
+}
+
+// convertToMatchingOrderLegacy 将旧版 pb.OrderTx 转换为 matching.Order（兼容性）
+// 旧版 OrderTx 没有 FilledBase/FilledQuote 字段，假设订单未成交
+func convertToMatchingOrderLegacy(ord *pb.OrderTx) (*matching.Order, error) {
 	if ord == nil || ord.Base == nil {
 		return nil, fmt.Errorf("invalid order")
 	}
@@ -706,36 +784,11 @@ func convertToMatchingOrder(ord *pb.OrderTx) (*matching.Order, error) {
 		return nil, fmt.Errorf("invalid price: %w", err)
 	}
 
-	totalAmount, err := decimal.NewFromString(ord.Amount)
+	amount, err := decimal.NewFromString(ord.Amount)
 	if err != nil {
 		return nil, fmt.Errorf("invalid amount: %w", err)
 	}
 
-	filledBase, err := decimal.NewFromString(ord.FilledBase)
-	if err != nil {
-		filledBase = decimal.Zero
-	}
-
-	// 计算剩余数量
-	filledQuote, err := decimal.NewFromString(ord.FilledQuote)
-	if err != nil {
-		filledQuote = decimal.Zero
-	}
-
-	filledTrade := filledBase
-	if ord.BaseToken > ord.QuoteToken {
-		filledTrade = filledQuote
-	}
-
-	remainingAmount := totalAmount.Sub(filledTrade)
-	if remainingAmount.LessThanOrEqual(decimal.Zero) {
-		return nil, fmt.Errorf(
-			"order already filled (txId=%s, amount=%s, filledBase=%s, filledQuote=%s, isFilled=%v)",
-			ord.Base.TxId, ord.Amount, ord.FilledBase, ord.FilledQuote, ord.IsFilled,
-		)
-	}
-
-	// 确定订单方向：直接使用 Side 字段
 	var side matching.OrderSide
 	if ord.Side == pb.OrderSide_SELL {
 		side = matching.SELL
@@ -747,6 +800,6 @@ func convertToMatchingOrder(ord *pb.OrderTx) (*matching.Order, error) {
 		ID:     ord.Base.TxId,
 		Side:   side,
 		Price:  price,
-		Amount: remainingAmount,
+		Amount: amount,
 	}, nil
 }

@@ -8,13 +8,12 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-func TestConvertToMatchingOrder_UsesFilledBaseWhenBaseTokenIsFirst(t *testing.T) {
+// 测试使用 OrderState 的转换函数
+func TestConvertOrderStateToMatchingOrder_UsesFilledBaseWhenBaseTokenIsFirst(t *testing.T) {
 	t.Parallel()
 
-	ord := &pb.OrderTx{
-		Base: &pb.BaseMessage{
-			TxId: "sell_order_1",
-		},
+	state := &pb.OrderState{
+		OrderId:     "sell_order_1",
 		BaseToken:   "FB",
 		QuoteToken:  "USDT",
 		Side:        pb.OrderSide_SELL,
@@ -25,9 +24,9 @@ func TestConvertToMatchingOrder_UsesFilledBaseWhenBaseTokenIsFirst(t *testing.T)
 		IsFilled:    false,
 	}
 
-	o, err := convertToMatchingOrder(ord)
+	o, err := convertOrderStateToMatchingOrder(state)
 	if err != nil {
-		t.Fatalf("convertToMatchingOrder returned error: %v", err)
+		t.Fatalf("convertOrderStateToMatchingOrder returned error: %v", err)
 	}
 
 	if !o.Amount.Equal(decimal.RequireFromString("5")) {
@@ -35,14 +34,12 @@ func TestConvertToMatchingOrder_UsesFilledBaseWhenBaseTokenIsFirst(t *testing.T)
 	}
 }
 
-func TestConvertToMatchingOrder_UsesFilledBaseForBuyOrder(t *testing.T) {
+func TestConvertOrderStateToMatchingOrder_UsesFilledBaseForBuyOrder(t *testing.T) {
 	t.Parallel()
 
 	// 买单：用户想买 10 FB，已经买到 5 FB，还剩 5 FB 要买
-	ord := &pb.OrderTx{
-		Base: &pb.BaseMessage{
-			TxId: "buy_order_1",
-		},
+	state := &pb.OrderState{
+		OrderId:     "buy_order_1",
 		BaseToken:   "FB",
 		QuoteToken:  "USDT",
 		Side:        pb.OrderSide_BUY,
@@ -53,9 +50,9 @@ func TestConvertToMatchingOrder_UsesFilledBaseForBuyOrder(t *testing.T) {
 		IsFilled:    false,
 	}
 
-	o, err := convertToMatchingOrder(ord)
+	o, err := convertOrderStateToMatchingOrder(state)
 	if err != nil {
-		t.Fatalf("convertToMatchingOrder returned error: %v", err)
+		t.Fatalf("convertOrderStateToMatchingOrder returned error: %v", err)
 	}
 
 	// 剩余量 = Amount - FilledBase = 10 - 5 = 5
@@ -64,14 +61,12 @@ func TestConvertToMatchingOrder_UsesFilledBaseForBuyOrder(t *testing.T) {
 	}
 }
 
-func TestConvertToMatchingOrder_FullFillReturnsError(t *testing.T) {
+func TestConvertOrderStateToMatchingOrder_FullFillReturnsError(t *testing.T) {
 	t.Parallel()
 
 	// 订单已完全成交：Amount = FilledBase，剩余量为 0
-	ord := &pb.OrderTx{
-		Base: &pb.BaseMessage{
-			TxId: "sell_order_full",
-		},
+	state := &pb.OrderState{
+		OrderId:     "sell_order_full",
 		BaseToken:   "FB",
 		QuoteToken:  "USDT",
 		Side:        pb.OrderSide_SELL,
@@ -82,8 +77,34 @@ func TestConvertToMatchingOrder_FullFillReturnsError(t *testing.T) {
 		IsFilled:    true,
 	}
 
-	_, err := convertToMatchingOrder(ord)
+	_, err := convertOrderStateToMatchingOrder(state)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
+	}
+}
+
+// 测试旧版 OrderTx 的兼容性转换函数
+func TestConvertToMatchingOrderLegacy_NewOrder(t *testing.T) {
+	t.Parallel()
+
+	ord := &pb.OrderTx{
+		Base: &pb.BaseMessage{
+			TxId: "new_order_1",
+		},
+		BaseToken:  "FB",
+		QuoteToken: "USDT",
+		Side:       pb.OrderSide_SELL,
+		Price:      "1.7",
+		Amount:     "10",
+	}
+
+	o, err := convertToMatchingOrderLegacy(ord)
+	if err != nil {
+		t.Fatalf("convertToMatchingOrderLegacy returned error: %v", err)
+	}
+
+	// 新订单没有成交，剩余量 = Amount = 10
+	if !o.Amount.Equal(decimal.RequireFromString("10")) {
+		t.Fatalf("unexpected remaining amount: got=%s want=%s", o.Amount, "10")
 	}
 }
