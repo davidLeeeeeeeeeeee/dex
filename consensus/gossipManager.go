@@ -50,17 +50,39 @@ func (gm *GossipManager) Start(ctx context.Context) {
 	go func() {
 		logs.SetThreadNodeContext(string(gm.nodeID))
 		ticker := time.NewTicker(gm.config.Interval)
+		cleanupTicker := time.NewTicker(60 * time.Second) // 每分钟清理一次旧的 seenBlocks
 		defer ticker.Stop()
+		defer cleanupTicker.Stop()
 
 		for {
 			select {
 			case <-ticker.C:
 				gm.gossipNewBlocks()
+			case <-cleanupTicker.C:
+				gm.cleanupSeenBlocks()
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+}
+
+// cleanupSeenBlocks 清理旧的 seenBlocks，避免内存泄漏
+func (gm *GossipManager) cleanupSeenBlocks() {
+	_, currentHeight := gm.store.GetLastAccepted()
+	if currentHeight < 100 {
+		return
+	}
+
+	gm.mu.Lock()
+	defer gm.mu.Unlock()
+
+	// 如果 seenBlocks 太大，清理掉所有的（因为我们没有存储高度信息）
+	// 简单策略：如果超过 1000 个条目，全部清空
+	if len(gm.seenBlocks) > 1000 {
+		gm.seenBlocks = make(map[string]bool)
+		logs.Debug("[GossipManager] Cleaned up seenBlocks cache (was > 1000 entries)")
+	}
 }
 
 func (gm *GossipManager) gossipNewBlocks() {

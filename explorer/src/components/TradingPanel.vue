@@ -8,6 +8,25 @@ const props = defineProps<{
   defaultNode: string
 }>()
 
+// 格式化时间为北京时区 (UTC+8)
+function formatTimeBeijing(timeStr: string): string {
+  if (!timeStr) return '-'
+  try {
+    const date = new Date(timeStr)
+    if (isNaN(date.getTime())) return timeStr
+    // 使用 Asia/Shanghai 时区格式化
+    return date.toLocaleString('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    })
+  } catch {
+    return timeStr
+  }
+}
+
 const selectedNode = ref(props.defaultNode || '')
 const selectedPair = ref('FB_USDT')
 const loading = ref(false)
@@ -176,7 +195,7 @@ onUnmounted(() => {
           </div>
           <div class="trades-list">
             <div v-for="trade in (recentTrades || []).slice(0, 20)" :key="trade.id" class="trade-row">
-              <span class="time">{{ trade.time }}</span>
+              <span class="time" :title="trade.time">{{ formatTimeBeijing(trade.time) }}</span>
               <span :class="['price', trade.side]">{{ trade.price }}</span>
               <span>{{ trade.amount }}</span>
               <span :class="['side-badge', trade.side]">{{ trade.side?.toUpperCase() }}</span>

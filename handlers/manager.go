@@ -108,6 +108,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/witness/requests", hm.HandleWitnessRequests)
 	// 订单簿和成交记录
 	mux.HandleFunc("/orderbook", hm.HandleOrderBook)
+	mux.HandleFunc("/orderbook/debug", hm.HandleOrderBookDebug)
 	mux.HandleFunc("/trades", hm.HandleTrades)
 	// Token 查询
 	mux.HandleFunc("/gettoken", hm.HandleGetToken)

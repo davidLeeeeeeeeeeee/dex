@@ -284,8 +284,16 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	})
 
 	// 删除价格索引
-	pair := fmt.Sprintf("%s_%s", targetOrder.BaseToken, targetOrder.QuoteToken)
-	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetOrder.IsFilled, targetOrder.Price, ord.OpTargetId)
+	pair := utils.GeneratePairKey(targetOrder.BaseToken, targetOrder.QuoteToken)
+	priceKey67, err := db.PriceToKey128(targetOrder.Price)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   ord.Base.TxId,
+			Status: "FAILED",
+			Error:  "failed to convert price to key",
+		}, err
+	}
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetOrder.IsFilled, priceKey67, ord.OpTargetId)
 
 	ws = append(ws, WriteOp{
 		Key:         priceIndexKey,
@@ -324,9 +332,12 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 	orderUpdates := make(map[string]*pb.OrderTx) // orderID -> updated OrderTx
 
 	for _, ev := range tradeEvents {
-		// 加载订单
+		// 加载订单 - 优先从 orderUpdates 中获取已更新的版本
 		var orderTx *pb.OrderTx
-		if ev.OrderID == newOrd.Base.TxId {
+		if cached, ok := orderUpdates[ev.OrderID]; ok {
+			// 已有该订单的更新版本，在其基础上继续更新
+			orderTx = cached
+		} else if ev.OrderID == newOrd.Base.TxId {
 			// 这是新订单 - 必须深拷贝，避免修改原始交易对象（交易池中的对象）
 			orderTx = proto.Clone(newOrd).(*pb.OrderTx)
 		} else {

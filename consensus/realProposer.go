@@ -209,12 +209,14 @@ func (p *RealBlockProposer) computeSimpleTxsHash(txs []*pb.AnyTx) string {
 
 // cacheBlock 临时缓存区块，等待最终化
 var blockCache = make(map[string]*pb.Block)
+var blockCacheHeights = make(map[string]uint64) // 记录每个区块的高度，用于清理
 var blockCacheMu sync.RWMutex
 
 func (p *RealBlockProposer) cacheBlock(blockID string, block *pb.Block) {
 	blockCacheMu.Lock()
 	defer blockCacheMu.Unlock()
 	blockCache[blockID] = block
+	blockCacheHeights[blockID] = block.Height
 }
 
 // GetCachedBlock 获取缓存的区块
@@ -223,4 +225,39 @@ func GetCachedBlock(blockID string) (*pb.Block, bool) {
 	defer blockCacheMu.RUnlock()
 	block, exists := blockCache[blockID]
 	return block, exists
+}
+
+// RemoveCachedBlock 从缓存中移除区块
+func RemoveCachedBlock(blockID string) {
+	blockCacheMu.Lock()
+	defer blockCacheMu.Unlock()
+	delete(blockCache, blockID)
+	delete(blockCacheHeights, blockID)
+}
+
+// CleanupBlockCacheBelowHeight 清理低于指定高度的所有缓存区块
+func CleanupBlockCacheBelowHeight(height uint64) int {
+	blockCacheMu.Lock()
+	defer blockCacheMu.Unlock()
+
+	toDelete := make([]string, 0)
+	for blockID, h := range blockCacheHeights {
+		if h < height {
+			toDelete = append(toDelete, blockID)
+		}
+	}
+
+	for _, blockID := range toDelete {
+		delete(blockCache, blockID)
+		delete(blockCacheHeights, blockID)
+	}
+
+	return len(toDelete)
+}
+
+// GetBlockCacheSize 返回缓存大小（用于监控）
+func GetBlockCacheSize() int {
+	blockCacheMu.RLock()
+	defer blockCacheMu.RUnlock()
+	return len(blockCache)
 }

@@ -5,6 +5,7 @@ import (
 	"dex/interfaces"
 	"dex/logs"
 	"dex/types"
+	"time"
 )
 
 // ============================================
@@ -94,6 +95,9 @@ func (n *Node) Start() {
 		}
 	}()
 
+	// 启动统计数据清理 goroutine
+	go n.statsCleanupLoop()
+
 	n.engine.Start(n.ctx)
 	n.queryManager.Start(n.ctx)
 	n.gossipManager.Start(n.ctx)
@@ -102,6 +106,28 @@ func (n *Node) Start() {
 
 	if !n.IsByzantine {
 		n.proposalManager.Start(n.ctx)
+	}
+}
+
+// statsCleanupLoop 定期清理统计数据中的旧高度数据
+func (n *Node) statsCleanupLoop() {
+	logs.SetThreadLogger(n.Logger)
+	ticker := time.NewTicker(60 * time.Second) // 每分钟清理一次
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			_, currentHeight := n.store.GetLastAccepted()
+			if currentHeight > 100 {
+				cleanupHeight := currentHeight - 100
+				if n.Stats != nil {
+					n.Stats.CleanupOldHeights(cleanupHeight)
+				}
+			}
+		case <-n.ctx.Done():
+			return
+		}
 	}
 }
 

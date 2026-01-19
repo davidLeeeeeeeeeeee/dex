@@ -262,6 +262,7 @@ func main() {
 	mux.HandleFunc("/api/witness/requests", srv.handleWitnessRequests)
 	mux.HandleFunc("/api/frost/dkg/list", srv.handleFrostDKGSessions)
 	mux.HandleFunc("/api/orderbook", srv.handleOrderBook)
+	mux.HandleFunc("/api/orderbook/debug", srv.handleOrderBookDebug)
 	mux.HandleFunc("/api/trades", srv.handleTrades)
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
@@ -1416,6 +1417,54 @@ func (s *server) handleTrades(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(trades)
+}
+
+// handleOrderBookDebug 处理订单簿诊断查询
+func (s *server) handleOrderBookDebug(w http.ResponseWriter, r *http.Request) {
+	node := r.URL.Query().Get("node")
+	pair := r.URL.Query().Get("pair")
+
+	if node == "" || pair == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(APIError{
+			Error: "missing node or pair parameter",
+			Code:  "INVALID_PARAMS",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+	defer cancel()
+
+	// 构造请求 URL
+	url := fmt.Sprintf("https://%s/orderbook/debug?pair=%s", node, pair)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(APIError{Error: err.Error()})
+		return
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(APIError{
+			Error:   "failed to fetch debug data from node",
+			Code:    "NODE_ERROR",
+			Details: err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// 直接转发响应
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 // fetchOrderBookFromNode 从节点获取订单簿

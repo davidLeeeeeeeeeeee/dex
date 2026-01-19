@@ -409,7 +409,30 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 
 	logs.Info("[RealBlockStore] Finalized block %s at height %d", blockID, height)
 
-	// 第三步：发布事件（不持锁）
+	// 第三步：清理旧的缓存数据（避免内存泄漏）
+	// 保留最近 100 个高度的数据
+	const keepRecentHeights = 100
+	if height > keepRecentHeights {
+		cleanupHeight := height - keepRecentHeights
+
+		// 清理全局 pb.Block 缓存
+		cleanedCount := CleanupBlockCacheBelowHeight(cleanupHeight)
+		if cleanedCount > 0 {
+			logs.Debug("[RealBlockStore] Cleaned %d blocks from global cache below height %d", cleanedCount, cleanupHeight)
+		}
+
+		// 清理本地缓存（需要加锁）
+		s.mu.Lock()
+		s.cleanupOldData(cleanupHeight)
+		s.mu.Unlock()
+
+		// 清理 VM 缓存
+		if s.vmExecutor != nil {
+			s.vmExecutor.CleanupCache(cleanupHeight)
+		}
+	}
+
+	// 第四步：发布事件（不持锁）
 	if events != nil {
 		events.PublishAsync(types.BaseEvent{
 			EventType: types.EventBlockFinalized,
@@ -743,4 +766,40 @@ func (s *RealBlockStore) saveSnapshotToDB(snapshot *types.Snapshot) {
 	data, _ := json.Marshal(snapshot)
 	s.dbManager.EnqueueSet(key, string(data))
 	logs.Debug("[RealBlockStore] Snapshot saved at height %d", snapshot.Height)
+}
+
+// cleanupOldData 清理低于指定高度的旧缓存数据（必须持有写锁调用）
+func (s *RealBlockStore) cleanupOldData(belowHeight uint64) {
+	cleanedBlocks := 0
+	cleanedHeights := 0
+	cleanedFinalized := 0
+
+	// 清理 blockCache 中的旧区块
+	for blockID, block := range s.blockCache {
+		if block.Height < belowHeight {
+			delete(s.blockCache, blockID)
+			cleanedBlocks++
+		}
+	}
+
+	// 清理 heightIndex 中的旧高度
+	for height := range s.heightIndex {
+		if height < belowHeight {
+			delete(s.heightIndex, height)
+			cleanedHeights++
+		}
+	}
+
+	// 清理 finalizedBlocks 中的旧高度
+	for height := range s.finalizedBlocks {
+		if height < belowHeight {
+			delete(s.finalizedBlocks, height)
+			cleanedFinalized++
+		}
+	}
+
+	if cleanedBlocks > 0 || cleanedHeights > 0 || cleanedFinalized > 0 {
+		logs.Debug("[RealBlockStore] Cleaned old data below height %d: blocks=%d, heights=%d, finalized=%d",
+			belowHeight, cleanedBlocks, cleanedHeights, cleanedFinalized)
+	}
 }

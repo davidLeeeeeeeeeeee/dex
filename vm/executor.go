@@ -714,18 +714,38 @@ func convertToMatchingOrder(ord *pb.OrderTx) (*matching.Order, error) {
 	}
 
 	// 计算剩余数量
-	remainingAmount := totalAmount.Sub(filledBase)
-	if remainingAmount.LessThanOrEqual(decimal.Zero) {
-		return nil, fmt.Errorf("order already filled (txId=%s, amount=%s, filledBase=%s, isFilled=%v)",
-			ord.Base.TxId, ord.Amount, ord.FilledBase, ord.IsFilled)
+	filledQuote, err := decimal.NewFromString(ord.FilledQuote)
+	if err != nil {
+		filledQuote = decimal.Zero
 	}
 
-	// 使用 Side 字段确定订单方向
+	filledTrade := filledBase
+	if ord.BaseToken > ord.QuoteToken {
+		filledTrade = filledQuote
+	}
+
+	remainingAmount := totalAmount.Sub(filledTrade)
+	if remainingAmount.LessThanOrEqual(decimal.Zero) {
+		return nil, fmt.Errorf(
+			"order already filled (txId=%s, amount=%s, filledBase=%s, filledQuote=%s, isFilled=%v)",
+			ord.Base.TxId, ord.Amount, ord.FilledBase, ord.FilledQuote, ord.IsFilled,
+		)
+	}
+
+	// 确定订单方向（完全基于 base_token 和 quote_token 的顺序）
+	// 原设计：
+	// - base_token 是用户拥有/支付的币种，quote_token 是用户想要的币种
+	// - 卖 FB：base_token=FB, quote_token=USDT（我有 FB，想换 USDT）
+	// - 买 FB：base_token=USDT, quote_token=FB（我有 USDT，想换 FB）
+	//
+	// 转换为交易对方向：
+	// - base_token < quote_token（字母顺序）→ SELL（卖出 base_token）
+	// - base_token > quote_token（字母顺序）→ BUY（用 base_token 买入 quote_token）
 	var side matching.OrderSide
-	if ord.Side == pb.OrderSide_BUY {
-		side = matching.BUY
-	} else {
+	if ord.BaseToken < ord.QuoteToken {
 		side = matching.SELL
+	} else {
+		side = matching.BUY
 	}
 
 	return &matching.Order{

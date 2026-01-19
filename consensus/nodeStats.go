@@ -72,3 +72,18 @@ func (s *NodeStats) pushPreferenceSwitch(ps PreferenceSwitch) {
 func (s *NodeStats) GetPreferenceSwitchHistory() []PreferenceSwitch {
 	return s.prefHistBuf
 }
+
+// CleanupOldHeights 清理低于指定高度的 QueriesPerHeight 数据，避免内存泄漏
+func (s *NodeStats) CleanupOldHeights(belowHeight uint64) int {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	count := 0
+	for h := range s.QueriesPerHeight {
+		if h < belowHeight {
+			delete(s.QueriesPerHeight, h)
+			count++
+		}
+	}
+	return count
+}
