@@ -1318,9 +1318,11 @@ func (s *server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 
 // OrderBookEntry 订单簿条目
 type OrderBookEntry struct {
-	Price  string `json:"price"`
-	Amount string `json:"amount"`
-	Total  string `json:"total"`
+	Price          string `json:"price"`
+	Amount         string `json:"amount"`
+	Total          string `json:"total"`
+	PendingCount   int    `json:"pendingCount"`   // 待确认订单数量
+	ConfirmedCount int    `json:"confirmedCount"` // 已确认订单数量
 }
 
 // OrderBookData 订单簿数据

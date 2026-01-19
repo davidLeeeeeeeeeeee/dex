@@ -15,9 +15,11 @@ import (
 
 // OrderBookEntry 订单簿条目
 type OrderBookEntry struct {
-	Price  string `json:"price"`
-	Amount string `json:"amount"`
-	Total  string `json:"total"`
+	Price          string `json:"price"`
+	Amount         string `json:"amount"`
+	Total          string `json:"total"`
+	PendingCount   int    `json:"pendingCount"`   // 待确认订单数量
+	ConfirmedCount int    `json:"confirmedCount"` // 已确认订单数量
 }
 
 // OrderBookResponse 订单簿响应
@@ -91,9 +93,9 @@ func (hm *HandlerManager) HandleOrderBookDebug(w http.ResponseWriter, r *http.Re
 		}
 		remain := amount.Sub(filledTrade)
 
-		// 根据 base_token/quote_token 顺序判断买卖方向（向后兼容）
+		// 直接使用订单的 Side 字段判断买卖方向
 		side := "buy"
-		if order.BaseToken < order.QuoteToken {
+		if order.Side == pb.OrderSide_SELL {
 			side = "sell"
 		}
 
@@ -144,8 +146,8 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 	}
 
 	// 聚合买卖盘
-	bidPrices := make(map[string]decimal.Decimal) // price -> total amount
-	askPrices := make(map[string]decimal.Decimal)
+	bidPrices := make(map[string]*priceLevelDataForAgg) // price -> level data
+	askPrices := make(map[string]*priceLevelDataForAgg)
 
 	// 从索引 key 中提取订单 ID，然后加载订单数据
 	pairIndexes := indexData[pair]
@@ -191,20 +193,37 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 		}
 
 		priceStr := order.Price
-		// 根据 base_token/quote_token 顺序判断买卖方向（向后兼容）
-		// - base_token < quote_token（字母顺序在前）→ SELL（卖出 base_token）
-		// - base_token > quote_token（字母顺序在后）→ BUY（用 base_token 买入 quote_token）
-		isSell := order.BaseToken < order.QuoteToken
-		if isSell {
-			askPrices[priceStr] = askPrices[priceStr].Add(remainAmount)
+
+		// 判断订单状态：SUCCEED 表示已最终化，其他（PENDING）表示待确认
+		isPending := order.Base == nil || order.Base.Status != pb.Status_SUCCEED
+
+		// 直接使用订单的 Side 字段判断买卖方向
+		if order.Side == pb.OrderSide_SELL {
+			if askPrices[priceStr] == nil {
+				askPrices[priceStr] = &priceLevelDataForAgg{}
+			}
+			askPrices[priceStr].amount = askPrices[priceStr].amount.Add(remainAmount)
+			if isPending {
+				askPrices[priceStr].pendingCount++
+			} else {
+				askPrices[priceStr].confirmedCount++
+			}
 		} else {
-			bidPrices[priceStr] = bidPrices[priceStr].Add(remainAmount)
+			if bidPrices[priceStr] == nil {
+				bidPrices[priceStr] = &priceLevelDataForAgg{}
+			}
+			bidPrices[priceStr].amount = bidPrices[priceStr].amount.Add(remainAmount)
+			if isPending {
+				bidPrices[priceStr].pendingCount++
+			} else {
+				bidPrices[priceStr].confirmedCount++
+			}
 		}
 	}
 
 	// 转换为响应格式
-	bids := aggregatePriceToEntries(bidPrices, true)  // 降序
-	asks := aggregatePriceToEntries(askPrices, false) // 升序
+	bids := aggregatePriceToEntriesWithStatus(bidPrices, true)  // 降序
+	asks := aggregatePriceToEntriesWithStatus(askPrices, false) // 升序
 
 	resp := OrderBookResponse{
 		Pair:       pair,
@@ -228,7 +247,7 @@ func extractOrderIDFromIndexKey(key string) string {
 	return key[idx+len(marker):]
 }
 
-// aggregatePriceToEntries 将价格聚合转换为条目列表
+// aggregatePriceToEntries 将价格聚合转换为条目列表（兼容旧接口）
 func aggregatePriceToEntries(priceMap map[string]decimal.Decimal, descending bool) []OrderBookEntry {
 	entries := make([]OrderBookEntry, 0, len(priceMap))
 	cumTotal := decimal.Zero
@@ -258,6 +277,58 @@ func aggregatePriceToEntries(priceMap map[string]decimal.Decimal, descending boo
 			Price:  p.price.String(),
 			Amount: p.amount.String(),
 			Total:  cumTotal.String(),
+		})
+	}
+
+	return entries
+}
+
+// priceLevelDataForAgg 用于聚合时存储价格层级数据（避免与局部类型重复）
+type priceLevelDataForAgg struct {
+	amount         decimal.Decimal
+	pendingCount   int
+	confirmedCount int
+}
+
+// aggregatePriceToEntriesWithStatus 将价格聚合转换为条目列表（包含状态信息）
+func aggregatePriceToEntriesWithStatus(priceMap map[string]*priceLevelDataForAgg, descending bool) []OrderBookEntry {
+	entries := make([]OrderBookEntry, 0, len(priceMap))
+	cumTotal := decimal.Zero
+
+	// 先按价格排序
+	type pricePair struct {
+		price          decimal.Decimal
+		amount         decimal.Decimal
+		pendingCount   int
+		confirmedCount int
+	}
+	var pairs []pricePair
+	for priceStr, data := range priceMap {
+		price, _ := decimal.NewFromString(priceStr)
+		pairs = append(pairs, pricePair{
+			price:          price,
+			amount:         data.amount,
+			pendingCount:   data.pendingCount,
+			confirmedCount: data.confirmedCount,
+		})
+	}
+
+	sort.Slice(pairs, func(i, j int) bool {
+		if descending {
+			return pairs[i].price.GreaterThan(pairs[j].price)
+		}
+		return pairs[i].price.LessThan(pairs[j].price)
+	})
+
+	// 计算累计总量
+	for _, p := range pairs {
+		cumTotal = cumTotal.Add(p.amount.Mul(p.price))
+		entries = append(entries, OrderBookEntry{
+			Price:          p.price.String(),
+			Amount:         p.amount.String(),
+			Total:          cumTotal.String(),
+			PendingCount:   p.pendingCount,
+			ConfirmedCount: p.confirmedCount,
 		})
 	}
 

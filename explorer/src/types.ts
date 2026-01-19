@@ -274,6 +274,8 @@ export interface OrderBookEntry {
   price: string
   amount: string
   total: string
+  pendingCount: number   // 待确认订单数量
+  confirmedCount: number // 已确认订单数量
 }
 
 // 订单簿数据

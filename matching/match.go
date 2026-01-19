@@ -107,6 +107,47 @@ func (ob *OrderBook) AddOrder(o *Order) error {
 	return nil
 }
 
+// AddOrderWithoutMatch 添加订单到订单簿，但不触发撮合逻辑
+// 用于从数据库重建订单簿时，避免已存在的订单被错误地撮合
+func (ob *OrderBook) AddOrderWithoutMatch(o *Order) error {
+	if o.Amount.Cmp(decimal.Zero) <= 0 {
+		return errors.New("order amount must be positive")
+	}
+	lowerBound := decimal.NewFromFloat(1e-33)
+	upperBound := decimal.NewFromFloat(1e33)
+	if o.Price.Cmp(lowerBound) < 0 || o.Price.Cmp(upperBound) > 0 {
+		return fmt.Errorf("price out of range in OrderBook: %s", o.Price.String())
+	}
+
+	ob.mu.Lock()
+	defer ob.mu.Unlock()
+
+	// 1. 加入/更新对应 priceMap
+	var lvl *PriceLevel
+	if o.Side == BUY {
+		lvl = ob.buyMap[o.Price]
+		if lvl == nil {
+			lvl = &PriceLevel{Price: o.Price}
+			ob.buyMap[o.Price] = lvl
+			heap.Push(ob.buyHeap, lvl)
+		}
+	} else { // SELL
+		lvl = ob.sellMap[o.Price]
+		if lvl == nil {
+			lvl = &PriceLevel{Price: o.Price}
+			ob.sellMap[o.Price] = lvl
+			heap.Push(ob.sellHeap, lvl)
+		}
+	}
+	lvl.Orders = append(lvl.Orders, o)
+
+	// 2. 加入订单ID索引
+	ob.orderIndex[o.ID] = &OrderRef{Order: o, PriceLevel: lvl}
+
+	// 不触发撮合，直接返回
+	return nil
+}
+
 // getBestBuyOrder 获取买方堆顶的第一个订单(不一定是队列第一个，但下标0不会越界)
 func (ob *OrderBook) getBestBuyOrder() *Order {
 	if ob.buyHeap.Len() == 0 {

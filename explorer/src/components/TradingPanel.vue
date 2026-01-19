@@ -145,11 +145,16 @@ onUnmounted(() => {
               <span>Price</span>
               <span>Amount</span>
               <span>Total</span>
+              <span>Status</span>
             </div>
             <div v-for="ask in (orderBook.asks || []).slice(0, 10)" :key="ask.price" class="order-row ask">
               <span class="price sell">{{ ask.price }}</span>
               <span>{{ ask.amount }}</span>
               <span>{{ ask.total }}</span>
+              <span class="status-cell">
+                <span v-if="ask.confirmedCount > 0" class="status-badge confirmed" :title="`${ask.confirmedCount} confirmed`">✓{{ ask.confirmedCount }}</span>
+                <span v-if="ask.pendingCount > 0" class="status-badge pending" :title="`${ask.pendingCount} pending`">⏳{{ ask.pendingCount }}</span>
+              </span>
             </div>
             <div v-if="!orderBook.asks || orderBook.asks.length === 0" class="empty-message">No sell orders</div>
           </div>
@@ -165,11 +170,16 @@ onUnmounted(() => {
               <span>Price</span>
               <span>Amount</span>
               <span>Total</span>
+              <span>Status</span>
             </div>
             <div v-for="bid in (orderBook.bids || []).slice(0, 10)" :key="bid.price" class="order-row bid">
               <span class="price buy">{{ bid.price }}</span>
               <span>{{ bid.amount }}</span>
               <span>{{ bid.total }}</span>
+              <span class="status-cell">
+                <span v-if="bid.confirmedCount > 0" class="status-badge confirmed" :title="`${bid.confirmedCount} confirmed`">✓{{ bid.confirmedCount }}</span>
+                <span v-if="bid.pendingCount > 0" class="status-badge pending" :title="`${bid.pendingCount} pending`">⏳{{ bid.pendingCount }}</span>
+              </span>
             </div>
             <div v-if="!orderBook.bids || orderBook.bids.length === 0" class="empty-message">No buy orders</div>
           </div>
@@ -298,7 +308,7 @@ onUnmounted(() => {
 
 .order-header, .trades-header {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1fr 1fr 1fr 0.8fr;
   gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid rgba(255,255,255,0.1);
@@ -313,7 +323,7 @@ onUnmounted(() => {
 
 .order-row, .trade-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1fr 1fr 1fr 0.8fr;
   gap: 8px;
   padding: 6px 0;
   font-size: 0.875rem;
@@ -335,6 +345,31 @@ onUnmounted(() => {
 
 .side-badge.buy { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
 .side-badge.sell { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+
+.status-cell {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.status-badge {
+  font-size: 0.7rem;
+  padding: 2px 5px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.status-badge.confirmed {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+
+.status-badge.pending {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
 
 .spread-indicator {
   text-align: center;

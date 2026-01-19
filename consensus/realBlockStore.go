@@ -387,7 +387,13 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 					// 从交易池移除
 					s.pool.RemoveAnyTx(base.TxId)
 
-					// 保存到数据库
+					// 跳过 OrderTx - VM 的 applyResult 已经正确处理了订单的保存（包括撮合后的状态）
+					// 如果再次调用 SaveAnyTx，会覆盖 VM 写入的撮合结果，导致订单簿中包含未撮合的订单
+					if tx.GetOrderTx() != nil {
+						continue
+					}
+
+					// 保存到数据库（非 OrderTx）
 					if err := s.dbManager.SaveAnyTx(tx); err != nil {
 						logs.Error("[RealBlockStore] Failed to save finalized tx %s: %v", base.TxId, err)
 					}
@@ -743,7 +749,13 @@ func (s *RealBlockStore) finalizeBlockWithTxs(block *types.Block) {
 				// 更新交易池
 				s.pool.RemoveAnyTx(base.TxId)
 
-				// 保存到数据库
+				// 跳过 OrderTx - VM 的 applyResult 已经正确处理了订单的保存（包括撮合后的状态）
+				// 如果再次调用 SaveAnyTx，会覆盖 VM 写入的撮合结果，导致订单簿中包含未撮合的订单
+				if tx.GetOrderTx() != nil {
+					continue
+				}
+
+				// 保存到数据库（非 OrderTx）
 				if err := s.dbManager.SaveAnyTx(tx); err != nil {
 					logs.Error("[RealBlockStore] Failed to save finalized tx %s: %v", base.TxId, err)
 				}

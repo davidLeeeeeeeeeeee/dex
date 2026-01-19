@@ -78,11 +78,9 @@ func convertOrderTxToOrder(o *pb.OrderTx) (*Order, error) {
 	if o == nil || o.Base == nil {
 		return nil, errors.New("orderTx invalid")
 	}
-	// 根据 base_token/quote_token 顺序判断买卖方向（向后兼容）
-	// - base_token < quote_token（字母顺序在前）→ SELL（卖出 base_token）
-	// - base_token > quote_token（字母顺序在后）→ BUY（用 base_token 买入 quote_token）
+	// 直接使用订单的 Side 字段判断买卖方向
 	var side OrderSide
-	if o.BaseToken < o.QuoteToken {
+	if o.Side == pb.OrderSide_SELL {
 		side = SELL
 	} else {
 		side = BUY

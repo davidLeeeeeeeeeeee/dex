@@ -26,7 +26,8 @@
                                "mode":  "auto",
                                "program":  "${workspaceFolder}/cmd/explorer",
                                "cwd":  "${workspaceFolder}",
-                               "console":  "integratedTerminal"
+                               "console":  "integratedTerminal",
+                               "preLaunchTask":  "Clean explorer_data directory"
                            },
                            {
                                "name":  "Run npm dev",

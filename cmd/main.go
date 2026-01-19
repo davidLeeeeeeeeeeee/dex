@@ -1778,14 +1778,8 @@ func (s *TxSimulator) injectDkgTransitions(node *NodeInstance, timestamp int64) 
 
 // runOrderScenario 模拟订单交易（买单/卖单）
 // 现在节点有 FB 和 USDT 余额（通过 genesis.json 配置），可以双向交易
-//
-// 订单方向判断规则（基于 base_token 和 quote_token）：
-// - base_token 是用户拥有/支付的币种
-// - quote_token 是用户想要获得的币种
-//
-// 对于交易对 FB_USDT：
-// - 卖 FB：base_token=FB, quote_token=USDT（我有 FB，想换 USDT）→ SELL
-// - 买 FB：base_token=USDT, quote_token=FB（我有 USDT，想换 FB）→ BUY
+// - 卖单：用 FB 换 USDT（base_token=FB, quote_token=USDT）
+// - 买单：用 USDT 换 FB（base_token=USDT, quote_token=FB）
 func (s *TxSimulator) runOrderScenario() {
 	// 延迟启动，等待账户有足够余额
 	time.Sleep(5 * time.Second)
@@ -1823,27 +1817,25 @@ func (s *TxSimulator) runOrderScenario() {
 			var tx *pb.AnyTx
 			if isBuyOrder {
 				// 买单：用 USDT 买 FB
-				// base_token=USDT (我有的，用于支付), quote_token=FB (我想要的)
-				// 买入数量需要转换为支付的 USDT 数量
-				usdtAmount := amount * basePrice
+				// base_token=FB (想买的), quote_token=USDT (支付的)
 				tx = generateOrderTx(
 					node.Address,
-					"USDT",                          // base_token - 我拥有/支付的代币
-					"FB",                            // quote_token - 我想要的代币
-					fmt.Sprintf("%.2f", usdtAmount), // 支付的 USDT 数量
-					fmt.Sprintf("%.2f", basePrice),  // 每个 FB 的价格（以 USDT 计）
+					"FB",                           // base_token - 想要买入的代币
+					"USDT",                         // quote_token - 用于支付的代币
+					fmt.Sprintf("%.2f", amount),    // 想买入的 FB 数量
+					fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
 					nonceMap[node.Address],
 					pb.OrderSide_BUY,
 				)
-				logs.Trace("Simulator: Added BUY order %s from %s, pay %.2f USDT @ %.2f for FB",
-					tx.GetBase().TxId, node.Address, usdtAmount, basePrice)
+				logs.Trace("Simulator: Added BUY order %s from %s, buy %.2f FB @ %.2f USDT",
+					tx.GetBase().TxId, node.Address, amount, basePrice)
 			} else {
 				// 卖单：卖 FB 换 USDT
-				// base_token=FB (我有的，要卖出), quote_token=USDT (我想要的)
+				// base_token=FB (要卖的), quote_token=USDT (想要获得的)
 				tx = generateOrderTx(
 					node.Address,
-					"FB",                           // base_token - 我拥有/要卖出的代币
-					"USDT",                         // quote_token - 我想要获得的代币
+					"FB",                           // base_token - 要卖出的代币
+					"USDT",                         // quote_token - 想要获得的代币
 					fmt.Sprintf("%.2f", amount),    // 要卖出的 FB 数量
 					fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
 					nonceMap[node.Address],
