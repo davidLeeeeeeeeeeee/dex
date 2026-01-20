@@ -1390,6 +1390,7 @@ func (s *server) handleOrderBook(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleTrades(w http.ResponseWriter, r *http.Request) {
 	node := r.URL.Query().Get("node")
 	pair := r.URL.Query().Get("pair")
+	limitStr := r.URL.Query().Get("limit")
 
 	if node == "" || pair == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -1401,11 +1402,18 @@ func (s *server) handleTrades(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limit := 100
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
 	// 从节点获取成交数据
 	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
 	defer cancel()
 
-	trades, err := s.fetchTradesFromNode(ctx, node, pair)
+	trades, err := s.fetchTradesFromNode(ctx, node, pair, limit)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -1415,6 +1423,11 @@ func (s *server) handleTrades(w http.ResponseWriter, r *http.Request) {
 			Details: err.Error(),
 		})
 		return
+	}
+
+	// Double check limit locally
+	if len(trades) > limit {
+		trades = trades[:limit]
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1498,9 +1511,9 @@ func (s *server) fetchOrderBookFromNode(ctx context.Context, node, pair string) 
 }
 
 // fetchTradesFromNode 从节点获取成交记录
-func (s *server) fetchTradesFromNode(ctx context.Context, node, pair string) ([]TradeRecord, error) {
+func (s *server) fetchTradesFromNode(ctx context.Context, node, pair string, limit int) ([]TradeRecord, error) {
 	// 构造请求 URL（使用 HTTPS，因为节点使用 HTTP/3）
-	url := fmt.Sprintf("https://%s/trades?pair=%s", node, pair)
+	url := fmt.Sprintf("https://%s/trades?pair=%s&limit=%d", node, pair, limit)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {

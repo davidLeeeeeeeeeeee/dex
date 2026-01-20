@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -423,8 +424,15 @@ func (hm *HandlerManager) HandleTrades(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 从数据库扫描成交记录
+	limit := 100
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
 	prefix := keys.KeyTradeRecordPrefix(pair)
-	trades, err := hm.dbManager.ScanByPrefix(prefix, 100) // 最多返回100条
+	trades, err := hm.dbManager.ScanByPrefix(prefix, limit)
 	if err != nil {
 		http.Error(w, "failed to scan trades: "+err.Error(), http.StatusInternalServerError)
 		return

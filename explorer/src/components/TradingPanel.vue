@@ -76,7 +76,10 @@ const loadData = async () => {
 
   // 处理成交记录结果
   if (tradesResult.status === 'fulfilled') {
-    recentTrades.value = tradesResult.value
+    const newTrades = tradesResult.value
+    console.log('[TradingPanel] Received trades count:', newTrades?.length, 'First ID:', newTrades?.[0]?.id)
+    recentTrades.value = newTrades
+    console.log('[TradingPanel] After assignment, recentTrades count:', recentTrades.value?.length)
   } else {
     tradesError.value = tradesResult.reason?.message || 'Failed to load trades'
     recentTrades.value = []
@@ -188,7 +191,7 @@ onUnmounted(() => {
 
       <!-- 最近成交 -->
       <div class="recent-trades glass-panel">
-        <h3>📈 Recent Trades</h3>
+        <h3>📈 Recent Trades ({{ recentTrades?.length || 0 }} items)</h3>
 
         <!-- 成交记录错误提示 -->
         <div v-if="tradesError" class="error-message">
@@ -204,7 +207,8 @@ onUnmounted(() => {
             <span>Side</span>
           </div>
           <div class="trades-list">
-            <div v-for="trade in (recentTrades || []).slice(0, 20)" :key="trade.id" class="trade-row">
+            <!-- 使用 index 作为 key 确保正确更新 -->
+            <div v-for="(trade, index) in (recentTrades || []).slice(0, 100)" :key="`trade-${index}-${trade.id}`" class="trade-row">
               <span class="time" :title="trade.time">{{ formatTimeBeijing(trade.time) }}</span>
               <span :class="['price', trade.side]">{{ trade.price }}</span>
               <span>{{ trade.amount }}</span>

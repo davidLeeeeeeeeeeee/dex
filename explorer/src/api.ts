@@ -156,8 +156,8 @@ export async function fetchOrderBook(node: string, pair: string): Promise<OrderB
 }
 
 // 获取最近成交记录
-export async function fetchRecentTrades(node: string, pair: string): Promise<TradeRecord[]> {
-  const resp = await fetch(`/api/trades?node=${encodeURIComponent(node)}&pair=${encodeURIComponent(pair)}`)
+export async function fetchRecentTrades(node: string, pair: string, limit: number = 100): Promise<TradeRecord[]> {
+  const resp = await fetch(`/api/trades?node=${encodeURIComponent(node)}&pair=${encodeURIComponent(pair)}&limit=${limit}`)
   if (!resp.ok) {
     const errorMessage = await parseAPIError(resp)
     throw new Error(errorMessage)
