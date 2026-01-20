@@ -511,6 +511,11 @@ func (m *Manager) onFinalized(ctx context.Context, height uint64) {
 
 // scanAndProcess 扫描并处理提现请求
 func (m *Manager) scanAndProcess(ctx context.Context) {
+	if m.transitionWorker != nil {
+		if err := m.transitionWorker.StartPendingSessions(ctx); err != nil {
+			log.Printf("[FrostManager] StartPendingSessions error: %v", err)
+		}
+	}
 	for _, pair := range m.config.SupportedChains {
 		m.processChainAsset(ctx, pair.Chain, pair.Asset)
 	}

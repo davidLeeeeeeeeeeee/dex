@@ -26,8 +26,10 @@ import (
 	"dex/txpool"
 	"dex/types"
 	"dex/utils"
+	"dex/vm"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	mrand "math/rand"
@@ -41,6 +43,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"google.golang.org/protobuf/proto"
@@ -301,7 +304,12 @@ func main() {
 	for i := 0; i < numNodes; i++ {
 
 		// Pre-derive address to ensure Logger is registered with the correct address
-		privK, err := utils.ParseSecp256k1PrivateKey(privateKeys[i])
+		normalizedKey, err := normalizeSecpPrivKey(privateKeys[i])
+		if err != nil {
+			logs.Error("Failed to normalize private key for node %d: %v", i, err)
+			continue
+		}
+		privK, err := utils.ParseSecp256k1PrivateKey(normalizedKey)
 		if err != nil {
 			logs.Error("Failed to parse private key for node %d: %v", i, err)
 			continue
@@ -315,7 +323,7 @@ func main() {
 		node := &NodeInstance{
 			Address:    address, // Use the correct address immediately
 			ID:         i,
-			PrivateKey: privateKeys[i],
+			PrivateKey: normalizedKey,
 			Port:       fmt.Sprintf("%d", basePort+i),
 			DataPath:   fmt.Sprintf("./data/data_node_%d", i),
 		}
@@ -341,7 +349,7 @@ func main() {
 
 	// 第二阶段：注册所有节点到数据库（让节点互相知道）
 	fmt.Println("🔗 Phase 2: Registering all nodes...")
-	registerAllNodes(nodes)
+	registerAllNodes(nodes, cfg.Frost)
 
 	// 第三阶段：启动所有HTTP服务器
 	fmt.Println("🌐 Phase 3: Starting HTTP servers...")
@@ -476,6 +484,11 @@ ContinueWithConsensus:
 			if stateReader != nil {
 				vaultProvider = committee.NewDefaultVaultCommitteeProvider(stateReader, committee.DefaultVaultCommitteeProviderConfig())
 			}
+			var pubKeyProvider frostrt.MinerPubKeyProvider
+			if stateReader != nil {
+				pubKeyProvider = adapters.NewStatePubKeyProvider(stateReader)
+			}
+			cryptoFactory := adapters.NewDefaultCryptoExecutorFactory()
 
 			// 加载 FrostConfig
 			frostConfig := cfg.Frost
@@ -521,6 +534,8 @@ ContinueWithConsensus:
 				SignerProvider: signerProvider,
 				VaultProvider:  vaultProvider,
 				AdapterFactory: adapterFactory,
+				PubKeyProvider: pubKeyProvider,
+				CryptoFactory:  cryptoFactory,
 			}
 			frostManager := frostrt.NewManager(frostCfg, frostDeps)
 			node.FrostRuntime = frostManager
@@ -835,41 +850,43 @@ func generateTransactions(nodes []*NodeInstance) {
 }
 
 // 注册所有节点信息到每个节点的数据库
-func registerAllNodes(nodes []*NodeInstance) {
+func registerAllNodes(nodes []*NodeInstance, frostCfg config.FrostConfig) {
 	// 准备 Top10000 数据
+	maxCount := len(nodes)
+	if frostCfg.Committee.TopN > 0 && frostCfg.Committee.TopN < maxCount {
+		maxCount = frostCfg.Committee.TopN
+	}
 	top10000 := &pb.FrostTop10000{
 		Height:     0,
-		Indices:    make([]uint64, len(nodes)),
-		Addresses:  make([]string, len(nodes)),
-		PublicKeys: make([][]byte, len(nodes)),
+		Indices:    make([]uint64, maxCount),
+		Addresses:  make([]string, maxCount),
+		PublicKeys: make([][]byte, maxCount),
 	}
 
 	for i, node := range nodes {
+		if i >= maxCount {
+			break
+		}
 		top10000.Indices[i] = uint64(i)
+		if node == nil {
+			continue
+		}
 		top10000.Addresses[i] = node.Address
-		// 简化处理：使用 P256 公钥作为默认公钥
-		// 实际应用中应该从 keyMgr 获取
-		top10000.PublicKeys[i] = []byte(fmt.Sprintf("node_%d_pub", i))
-	}
-	top10000Data, _ := proto.Marshal(top10000)
 
-	// 准备默认 VaultConfig
-	supportedChains := []string{"btc", "eth", "bnb"}
-	vaultConfigs := make(map[string][]byte)
-	for _, chainName := range supportedChains {
-		cfg := &pb.FrostVaultConfig{
-			Chain:          chainName,
-			VaultCount:     3,
-			CommitteeSize:  10,
-			ThresholdRatio: 0.67,
-			SignAlgo:       pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
+		normalizedKey, err := normalizeSecpPrivKey(node.PrivateKey)
+		if err != nil {
+			logs.Warn("Failed to normalize private key for node %d: %v", i, err)
+			continue
 		}
-		if chainName == "eth" || chainName == "bnb" {
-			cfg.SignAlgo = pb.SignAlgo_SIGN_ALGO_SCHNORR_ALT_BN128
+		privKey, err := utils.ParseSecp256k1PrivateKey(normalizedKey)
+		if err != nil {
+			logs.Warn("Failed to parse private key for node %d: %v", i, err)
+			continue
 		}
-		data, _ := proto.Marshal(cfg)
-		vaultConfigs[chainName] = data
+		top10000.PublicKeys[i] = privKey.PubKey().SerializeCompressed()
 	}
+
+	vaultConfigs := buildVaultConfigs(frostCfg, len(top10000.Indices))
 
 	for i, node := range nodes {
 		if node == nil || node.DBManager == nil {
@@ -882,12 +899,8 @@ func registerAllNodes(nodes []*NodeInstance) {
 		logs.RegisterNodeMapping(fmt.Sprintf("127.0.0.1:%s", node.Port), node.Address) // host:port 格式
 		logs.RegisterNodeMapping(node.Address, node.Address)                           // 地址本身也注册，确保日志缓冲区正确初始化
 
-		// 保存 Top10000
-		node.DBManager.EnqueueSet(keys.KeyFrostTop10000(), string(top10000Data))
-
-		// 保存 VaultConfigs
-		for chainName, data := range vaultConfigs {
-			node.DBManager.EnqueueSet(keys.KeyFrostVaultConfig(chainName, 0), string(data))
+		if err := applyFrostBootstrap(node.DBManager, frostCfg, top10000, vaultConfigs); err != nil {
+			logs.Warn("Failed to apply frost bootstrap for node %d: %v", node.ID, err)
 		}
 
 		// 在当前节点的数据库中注册所有其他节点
@@ -941,6 +954,171 @@ func registerAllNodes(nodes []*NodeInstance) {
 			logs.Error("Failed to rebuild bitmap: %v", err)
 		}
 	}
+}
+
+func buildVaultConfigs(frostCfg config.FrostConfig, minerCount int) map[string]*pb.FrostVaultConfig {
+	vaultConfigs := make(map[string]*pb.FrostVaultConfig)
+	thresholdRatio := frostCfg.Vault.ThresholdRatio
+	if thresholdRatio <= 0 {
+		thresholdRatio = frostCfg.Committee.ThresholdRatio
+	}
+	if thresholdRatio <= 0 {
+		thresholdRatio = 0.67
+	}
+
+	for chainName, chainCfg := range frostCfg.Chains {
+		if chainCfg.FrostVariant == "" {
+			continue
+		}
+		vaultCount := chainCfg.VaultsPerChain
+		if vaultCount <= 0 {
+			vaultCount = 1
+		}
+		committeeSize := frostCfg.Vault.DefaultK
+		if committeeSize <= 0 {
+			committeeSize = 1
+		}
+		if minerCount > 0 && committeeSize > minerCount {
+			committeeSize = minerCount
+		}
+
+		signAlgo := parseSignAlgo(chainCfg.SignAlgo)
+		if signAlgo == pb.SignAlgo_SIGN_ALGO_UNSPECIFIED {
+			signAlgo = pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340
+		}
+
+		vaultConfigs[chainName] = &pb.FrostVaultConfig{
+			Chain:          chainName,
+			SignAlgo:       signAlgo,
+			VaultCount:     uint32(vaultCount),
+			CommitteeSize:  uint32(committeeSize),
+			ThresholdRatio: float32(thresholdRatio),
+		}
+	}
+	return vaultConfigs
+}
+
+func parseSignAlgo(raw string) pb.SignAlgo {
+	if raw == "" {
+		return pb.SignAlgo_SIGN_ALGO_UNSPECIFIED
+	}
+	value := strings.TrimSpace(strings.ToUpper(raw))
+	value = strings.TrimPrefix(value, "SIGN_ALGO_")
+	switch value {
+	case "ECDSA_P256":
+		return pb.SignAlgo_SIGN_ALGO_ECDSA_P256
+	case "BLS_BN256_G2":
+		return pb.SignAlgo_SIGN_ALGO_BLS_BN256_G2
+	case "SCHNORR_SECP256K1_BIP340":
+		return pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340
+	case "SCHNORR_ALT_BN128":
+		return pb.SignAlgo_SIGN_ALGO_SCHNORR_ALT_BN128
+	case "ED25519":
+		return pb.SignAlgo_SIGN_ALGO_ED25519
+	case "ECDSA_SECP256K1":
+		return pb.SignAlgo_SIGN_ALGO_ECDSA_SECP256K1
+	default:
+		return pb.SignAlgo_SIGN_ALGO_UNSPECIFIED
+	}
+}
+
+func applyFrostBootstrap(dbManager *db.Manager, frostCfg config.FrostConfig, top10000 *pb.FrostTop10000, vaultConfigs map[string]*pb.FrostVaultConfig) error {
+	if dbManager == nil || top10000 == nil || len(vaultConfigs) == 0 {
+		return nil
+	}
+
+	readFn := func(key string) ([]byte, error) {
+		val, err := dbManager.Get(key)
+		if err != nil {
+			if isNotFoundError(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return val, nil
+	}
+	scanFn := func(prefix string) (map[string][]byte, error) {
+		return dbManager.Scan(prefix)
+	}
+	sv := vm.NewStateView(readFn, scanFn)
+
+	if existing, exists, err := sv.Get(keys.KeyFrostTop10000()); err != nil {
+		return err
+	} else if !exists || len(existing) == 0 {
+		data, err := proto.Marshal(top10000)
+		if err != nil {
+			return err
+		}
+		sv.Set(keys.KeyFrostTop10000(), data)
+	}
+
+	epochID := uint64(1)
+	triggerHeight := uint64(0)
+	commitWindow := uint64(frostCfg.Transition.DkgCommitWindowBlocks)
+	disputeWindow := uint64(frostCfg.Transition.DkgDisputeWindowBlocks)
+
+	for chainName, cfg := range vaultConfigs {
+		if cfg == nil {
+			continue
+		}
+		if err := vm.InitVaultConfig(sv, chainName, cfg); err != nil {
+			logs.Warn("InitVaultConfig failed for chain %s: %v", chainName, err)
+		}
+		if err := vm.InitVaultStates(sv, chainName, epochID); err != nil {
+			logs.Warn("InitVaultStates failed for chain %s: %v", chainName, err)
+		}
+		if err := vm.InitVaultTransitions(sv, chainName, epochID, triggerHeight, commitWindow, disputeWindow); err != nil {
+			logs.Warn("InitVaultTransitions failed for chain %s: %v", chainName, err)
+		}
+	}
+
+	for _, op := range sv.Diff() {
+		if op.Del {
+			dbManager.EnqueueDel(op.Key)
+			continue
+		}
+		dbManager.EnqueueSet(op.Key, string(op.Value))
+	}
+
+	return dbManager.ForceFlush()
+}
+
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "key not found")
+}
+
+func normalizeSecpPrivKey(key string) (string, error) {
+	normalized := strings.TrimSpace(key)
+	if normalized == "" {
+		return "", fmt.Errorf("empty private key")
+	}
+	if strings.HasPrefix(normalized, "0x") || strings.HasPrefix(normalized, "0X") {
+		normalized = normalized[2:]
+	}
+	if !isHexString(normalized) {
+		return "", fmt.Errorf("private key must be hex")
+	}
+	if len(normalized)%2 != 0 {
+		normalized = "0" + normalized
+	}
+	if len(normalized) > 64 {
+		normalized = normalized[len(normalized)-64:]
+	}
+	if len(normalized) < 64 {
+		normalized = strings.Repeat("0", 64-len(normalized)) + normalized
+	}
+	return normalized, nil
+}
+
+func isHexString(value string) bool {
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 // applyGenesisBalances 从创世配置应用余额到账户

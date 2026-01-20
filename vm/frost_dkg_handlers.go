@@ -176,7 +176,7 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	}
 
 	// 3. 检查 DKG 状态
-	if transition.DkgStatus != DKGStatusSharing {
+	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusResolving {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, errors.New("invalid dkg_status")
 	}
 
@@ -667,8 +667,8 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
 	}
 
-	// 2. 检查状态（应在 Sharing 或 Resolving 之后）
-	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusResolving {
+	// 2. 检查状态（允许在 COMMITTING/SHARING/RESOLVING）
+	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusResolving && transition.DkgStatus != DKGStatusCommitting {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, errors.New("invalid dkg_status")
 	}
 

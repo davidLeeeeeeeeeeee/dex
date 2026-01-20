@@ -33,8 +33,9 @@ func (e *Executor) HandleFrostVaultDkgValidationSignedTx(sender string, tx *pb.F
 		return fmt.Errorf("DKGValidationSigned: transition not found: %w", err)
 	}
 
-	// 2. 检查状态：只有在 Resolving 或已完成 DKG 后才能验证
-	if transition.DkgStatus != DKGStatusResolving && transition.DkgStatus != DKGStatusKeyReady {
+	// 2. 检查状态：允许在 COMMITTING/SHARING/RESOLVING 或已完成 DKG 后验证
+	if transition.DkgStatus != DKGStatusResolving && transition.DkgStatus != DKGStatusSharing &&
+		transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusKeyReady {
 		// 允许幂等：如果已经是 KeyReady，直接返回成功
 		if transition.DkgStatus == DKGStatusKeyReady && transition.ValidationStatus == "PASSED" {
 			logs.Debug("[DKGValidationSigned] already KeyReady, idempotent")

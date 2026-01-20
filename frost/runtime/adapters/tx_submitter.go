@@ -112,19 +112,22 @@ func (s *TxPoolSubmitter) Submit(tx any) (txID string, err error) {
 
 // SubmitDkgCommitTx 提交 DKG 承诺交易
 func (s *TxPoolSubmitter) SubmitDkgCommitTx(ctx context.Context, tx *pb.FrostVaultDkgCommitTx) error {
-	_, err := s.Submit(tx)
+	anyTx := &pb.AnyTx{Content: &pb.AnyTx_FrostVaultDkgCommitTx{FrostVaultDkgCommitTx: tx}}
+	_, err := s.Submit(anyTx)
 	return err
 }
 
 // SubmitDkgShareTx 提交 DKG share 交易
 func (s *TxPoolSubmitter) SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error {
-	_, err := s.Submit(tx)
+	anyTx := &pb.AnyTx{Content: &pb.AnyTx_FrostVaultDkgShareTx{FrostVaultDkgShareTx: tx}}
+	_, err := s.Submit(anyTx)
 	return err
 }
 
 // SubmitDkgValidationSignedTx 提交 DKG 验证签名交易
 func (s *TxPoolSubmitter) SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error {
-	_, err := s.Submit(tx)
+	anyTx := &pb.AnyTx{Content: &pb.AnyTx_FrostVaultDkgValidationSignedTx{FrostVaultDkgValidationSignedTx: tx}}
+	_, err := s.Submit(anyTx)
 	return err
 }
 

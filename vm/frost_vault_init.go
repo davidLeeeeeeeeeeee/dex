@@ -160,6 +160,100 @@ func InitVaultStates(sv StateView, chain string, epochID uint64) error {
 	return nil
 }
 
+// InitVaultTransitions 初始化 VaultTransitionState（用于启动初始 DKG）
+// 依赖 VaultConfig/VaultState/Top10000 已就绪，epochID 为目标 epoch
+func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHeight uint64, commitWindow uint64, disputeWindow uint64) error {
+	// 1. 读取 VaultConfig
+	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
+	cfgData, exists, err := sv.Get(vaultCfgKey)
+	if err != nil || !exists || len(cfgData) == 0 {
+		return fmt.Errorf("vault config not found for chain %s, please init vault config first", chain)
+	}
+
+	var cfg pb.FrostVaultConfig
+	if err := proto.Unmarshal(cfgData, &cfg); err != nil {
+		return fmt.Errorf("failed to parse vault config: %w", err)
+	}
+
+	// 2. 为每个 Vault 创建初始 transition（幂等）
+	for vaultID := uint32(0); vaultID < cfg.VaultCount; vaultID++ {
+		vaultKey := keys.KeyFrostVaultState(chain, vaultID)
+		vaultData, vaultExists, err := sv.Get(vaultKey)
+		if err != nil {
+			logs.Warn("[InitVaultTransitions] failed to read vault state for chain=%s vault=%d: %v", chain, vaultID, err)
+			continue
+		}
+
+		var vaultState pb.FrostVaultState
+		if vaultExists && len(vaultData) > 0 {
+			if err := proto.Unmarshal(vaultData, &vaultState); err != nil {
+				logs.Warn("[InitVaultTransitions] failed to parse vault state for chain=%s vault=%d: %v", chain, vaultID, err)
+			}
+		}
+
+		effectiveEpoch := epochID
+		if effectiveEpoch == 0 {
+			if vaultState.KeyEpoch > 0 {
+				effectiveEpoch = vaultState.KeyEpoch
+			} else {
+				effectiveEpoch = 1
+			}
+		}
+
+		transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, effectiveEpoch)
+		existingData, exists, err := sv.Get(transitionKey)
+		if err != nil {
+			logs.Warn("[InitVaultTransitions] failed to check transition for chain=%s vault=%d: %v", chain, vaultID, err)
+			continue
+		}
+		if exists && len(existingData) > 0 {
+			continue // already exists
+		}
+
+		committeeMembers := vaultState.CommitteeMembers
+		if len(committeeMembers) == 0 {
+			logs.Warn("[InitVaultTransitions] empty committee for chain=%s vault=%d, skip transition", chain, vaultID)
+			continue
+		}
+
+		threshold := int(float64(len(committeeMembers))*float64(cfg.ThresholdRatio) + 0.5)
+		if threshold < 1 {
+			threshold = 1
+		}
+
+		transition := &pb.VaultTransitionState{
+			Chain:               chain,
+			VaultId:             vaultID,
+			EpochId:             effectiveEpoch,
+			SignAlgo:            cfg.SignAlgo,
+			TriggerHeight:       triggerHeight,
+			OldCommitteeMembers: committeeMembers,
+			NewCommitteeMembers: committeeMembers,
+			DkgStatus:           DKGStatusCommitting,
+			DkgSessionId:        fmt.Sprintf("%s_%d_%d", chain, vaultID, effectiveEpoch),
+			DkgThresholdT:       uint32(threshold),
+			DkgN:                uint32(len(committeeMembers)),
+			DkgCommitDeadline:   triggerHeight + commitWindow,
+			DkgDisputeDeadline:  triggerHeight + disputeWindow,
+			OldGroupPubkey:      vaultState.GroupPubkey,
+			ValidationStatus:    "NOT_STARTED",
+			Lifecycle:           VaultLifecycleActive,
+		}
+
+		transitionData, err := proto.Marshal(transition)
+		if err != nil {
+			logs.Warn("[InitVaultTransitions] failed to marshal transition for chain=%s vault=%d: %v", chain, vaultID, err)
+			continue
+		}
+
+		sv.Set(transitionKey, transitionData)
+		logs.Info("[InitVaultTransitions] initialized transition for chain=%s vault=%d epoch=%d committee=%d",
+			chain, vaultID, effectiveEpoch, len(committeeMembers))
+	}
+
+	return nil
+}
+
 // UpdateVaultStateAfterDKG 在 DKG 完成后更新 VaultState
 // 由 FrostVaultDkgValidationSignedTxHandler 调用
 func UpdateVaultStateAfterDKG(sv StateView, chain string, vaultID uint32, epochID uint64, groupPubkey []byte, signAlgo pb.SignAlgo, committeeMembers []string) error {

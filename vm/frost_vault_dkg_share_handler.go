@@ -46,8 +46,8 @@ func (e *Executor) HandleFrostVaultDkgShareTx(sender string, tx *pb.FrostVaultDk
 	}
 
 	// 3. 检查 DKG 状态
-	if transition.DkgStatus != DKGStatusSharing {
-		return fmt.Errorf("DKGShare: invalid dkg_status=%s, expected SHARING", transition.DkgStatus)
+	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusResolving {
+		return fmt.Errorf("DKGShare: invalid dkg_status=%s, expected COMMITTING/SHARING/RESOLVING", transition.DkgStatus)
 	}
 
 	// 4. 检查 dealer_id 是否在 new_committee_members 中

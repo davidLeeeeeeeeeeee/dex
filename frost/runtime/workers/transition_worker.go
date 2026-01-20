@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -51,6 +52,8 @@ type TransitionWorker struct {
 	ewmaHistory map[string]float64
 }
 
+var dkgTxCounter uint64
+
 // DKGSession 单个 DKG 会话状态
 type DKGSession struct {
 	Chain     string
@@ -74,6 +77,7 @@ type DKGSession struct {
 	// 委员会信息
 	MyIndex   int      // 本节点在委员会中的索引
 	Committee []string // 委员会成员列表
+	CommitteePubKeys map[string][]byte // 委员会成员公钥
 	Threshold int      // 门限 t
 
 	// 状态
@@ -167,6 +171,45 @@ func NewTransitionWorker(
 func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vaultID uint32, epochID uint64, signAlgo pb.SignAlgo) error {
 	sessionID := fmt.Sprintf("%s_%d_%d", chain, vaultID, epochID)
 
+	committeeInfos, err := w.vaultProvider.VaultCommittee(chain, vaultID, epochID)
+	if err != nil {
+		return fmt.Errorf("load committee: %w", err)
+	}
+	if len(committeeInfos) == 0 {
+		return fmt.Errorf("empty committee for chain=%s vault=%d epoch=%d", chain, vaultID, epochID)
+	}
+
+	threshold, err := w.vaultProvider.CalculateThreshold(chain, vaultID)
+	if err != nil || threshold <= 0 {
+		threshold = int(float64(len(committeeInfos))*0.67 + 0.5)
+	}
+	if threshold < 1 {
+		threshold = 1
+	}
+	if threshold > len(committeeInfos) {
+		threshold = len(committeeInfos)
+	}
+
+	committeeMembers := make([]string, 0, len(committeeInfos))
+	committeePubKeys := make(map[string][]byte, len(committeeInfos))
+	myIndex := 0
+	for i, member := range committeeInfos {
+		memberID := string(member.ID)
+		committeeMembers = append(committeeMembers, memberID)
+		if len(member.PublicKey) > 0 {
+			pubCopy := make([]byte, len(member.PublicKey))
+			copy(pubCopy, member.PublicKey)
+			committeePubKeys[memberID] = pubCopy
+		}
+		if memberID == w.localAddress {
+			myIndex = i + 1
+		}
+	}
+	if myIndex == 0 {
+		w.Logger.Debug("[TransitionWorker] skip DKG session %s, node not in committee", sessionID)
+		return nil
+	}
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -183,6 +226,10 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 		SignAlgo:     signAlgo,
 		Commitments:  make(map[string][]byte),
 		ReceivedShrs: make(map[string][]byte),
+		Committee:    committeeMembers,
+		CommitteePubKeys: committeePubKeys,
+		MyIndex:      myIndex,
+		Threshold:    threshold,
 		Phase:        "COMMITTING",
 		CreatedAt:    time.Now(),
 	}
@@ -269,6 +316,7 @@ func (w *TransitionWorker) submitCommitment(ctx context.Context, session *DKGSes
 	}
 
 	tx := &pb.FrostVaultDkgCommitTx{
+		Base:             w.newBaseMessage(),
 		Chain:            session.Chain,
 		VaultId:          session.VaultID,
 		EpochId:          session.EpochID,
@@ -293,8 +341,7 @@ func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession
 	for idx, receiverID := range session.Committee {
 		receiverIndex := idx + 1 // 1-based index
 
-		// 获取接收者公钥
-		receiverPubKey, err := w.pubKeyProvider.GetMinerSigningPubKey(receiverID, session.SignAlgo)
+		receiverPubKey, err := w.getReceiverPubKey(session, receiverID)
 		if err != nil {
 			w.Logger.Warn("[TransitionWorker] cannot get pubkey for %s: %v", receiverID, err)
 			continue
@@ -311,6 +358,7 @@ func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession
 		}
 
 		tx := &pb.FrostVaultDkgShareTx{
+			Base:       w.newBaseMessage(),
 			Chain:      session.Chain,
 			VaultId:    session.VaultID,
 			EpochId:    session.EpochID,
@@ -326,6 +374,25 @@ func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession
 
 	session.Phase = "RESOLVING"
 	return nil
+}
+
+func (w *TransitionWorker) getReceiverPubKey(session *DKGSession, receiverID string) ([]byte, error) {
+	if w.pubKeyProvider != nil {
+		pub, err := w.pubKeyProvider.GetMinerSigningPubKey(receiverID, session.SignAlgo)
+		if err == nil && len(pub) > 0 {
+			out := make([]byte, len(pub))
+			copy(out, pub)
+			return out, nil
+		}
+	}
+	if session != nil && session.CommitteePubKeys != nil {
+		if pub, ok := session.CommitteePubKeys[receiverID]; ok && len(pub) > 0 {
+			out := make([]byte, len(pub))
+			copy(out, pub)
+			return out, nil
+		}
+	}
+	return nil, fmt.Errorf("pubkey not found")
 }
 
 // generateKey 收集 shares 并生成本地密钥
@@ -509,6 +576,7 @@ func (w *TransitionWorker) submitValidation(ctx context.Context, session *DKGSes
 	}
 
 	tx := &pb.FrostVaultDkgValidationSignedTx{
+		Base:           w.newBaseMessage(),
 		Chain:          session.Chain,
 		VaultId:        session.VaultID,
 		EpochId:        session.EpochID,
@@ -532,6 +600,19 @@ func computeValidationMsgHash(chain string, vaultID uint32, epochID uint64, grou
 	binary.Write(h, binary.BigEndian, epochID)
 	h.Write(groupPubkey)
 	return h.Sum(nil)
+}
+
+func (w *TransitionWorker) newBaseMessage() *pb.BaseMessage {
+	return &pb.BaseMessage{
+		TxId:        generateDkgTxID(),
+		FromAddress: w.localAddress,
+		Status:      pb.Status_PENDING,
+	}
+}
+
+func generateDkgTxID() string {
+	counter := atomic.AddUint64(&dkgTxCounter, 1)
+	return fmt.Sprintf("0x%016x%016x", time.Now().UnixNano(), counter)
 }
 
 // GetSession 获取会话状态
@@ -587,6 +668,25 @@ func (w *TransitionWorker) CheckTriggerConditions(ctx context.Context, height ui
 	}
 
 	return nil
+}
+
+// StartPendingSessions scans transition states and starts DKG sessions when needed.
+func (w *TransitionWorker) StartPendingSessions(ctx context.Context) error {
+	prefix := "v1_frost_vault_transition_"
+	return w.stateReader.Scan(prefix, func(k string, v []byte) bool {
+		var state pb.VaultTransitionState
+		if err := proto.Unmarshal(v, &state); err != nil {
+			return true
+		}
+		if state.DkgStatus == "KEY_READY" || state.DkgStatus == "FAILED" {
+			return true
+		}
+		if err := w.StartSession(ctx, state.Chain, state.VaultId, state.EpochId, state.SignAlgo); err != nil {
+			w.Logger.Warn("[TransitionWorker] start session failed: chain=%s vault=%d epoch=%d: %v",
+				state.Chain, state.VaultId, state.EpochId, err)
+		}
+		return true
+	})
 }
 
 // checkVaultTrigger 检查单个 Vault 的触发条件
