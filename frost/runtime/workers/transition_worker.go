@@ -75,10 +75,10 @@ type DKGSession struct {
 	ReceivedShrs    map[string][]byte // dealer -> ciphertext
 
 	// 委员会信息
-	MyIndex   int      // 本节点在委员会中的索引
-	Committee []string // 委员会成员列表
+	MyIndex          int               // 本节点在委员会中的索引
+	Committee        []string          // 委员会成员列表
 	CommitteePubKeys map[string][]byte // 委员会成员公钥
-	Threshold int      // 门限 t
+	Threshold        int               // 门限 t
 
 	// 状态
 	Phase     string // COMMITTING | SHARING | RESOLVING | KEY_READY
@@ -206,7 +206,8 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 		}
 	}
 	if myIndex == 0 {
-		w.Logger.Debug("[TransitionWorker] skip DKG session %s, node not in committee", sessionID)
+		w.Logger.Warn("[TransitionWorker] node %s not in committee for session %s. Committee: %v",
+			w.localAddress, sessionID, committeeMembers)
 		return nil
 	}
 
@@ -219,19 +220,19 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 	}
 
 	session := &DKGSession{
-		Chain:        chain,
-		VaultID:      vaultID,
-		EpochID:      epochID,
-		SessionID:    sessionID,
-		SignAlgo:     signAlgo,
-		Commitments:  make(map[string][]byte),
-		ReceivedShrs: make(map[string][]byte),
-		Committee:    committeeMembers,
+		Chain:            chain,
+		VaultID:          vaultID,
+		EpochID:          epochID,
+		SessionID:        sessionID,
+		SignAlgo:         signAlgo,
+		Commitments:      make(map[string][]byte),
+		ReceivedShrs:     make(map[string][]byte),
+		Committee:        committeeMembers,
 		CommitteePubKeys: committeePubKeys,
-		MyIndex:      myIndex,
-		Threshold:    threshold,
-		Phase:        "COMMITTING",
-		CreatedAt:    time.Now(),
+		MyIndex:          myIndex,
+		Threshold:        threshold,
+		Phase:            "COMMITTING",
+		CreatedAt:        time.Now(),
 	}
 
 	w.sessions[sessionID] = session
@@ -254,11 +255,17 @@ func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) 
 		return
 	}
 
+	// ⏳ 等待区块确认（承诺阶段上链）
+	time.Sleep(10 * time.Second)
+
 	// Phase 2: 等待所有 commitment 并提交 share
 	if err := w.submitShares(ctx, session); err != nil {
 		w.Logger.Error("[TransitionWorker] submitShares failed: %v", err)
 		return
 	}
+
+	// ⏳ 等待区块确认（分发阶段上链）
+	time.Sleep(15 * time.Second)
 
 	// Phase 3: 收集 share 并生成密钥
 	if err := w.generateKey(ctx, session); err != nil {
@@ -603,9 +610,28 @@ func computeValidationMsgHash(chain string, vaultID uint32, epochID uint64, grou
 }
 
 func (w *TransitionWorker) newBaseMessage() *pb.BaseMessage {
+	// 获取当前账户的 Nonce (从状态机读取)
+	var currentNonce uint64
+	accountKey := fmt.Sprintf("v1_account_%s", w.localAddress)
+	if data, exists, err := w.stateReader.Get(accountKey); err == nil && exists {
+		var acc pb.Account
+		if err := proto.Unmarshal(data, &acc); err == nil {
+			currentNonce = acc.Nonce
+		}
+	}
+
+	// 策略：使用状态 Nonce + 进程内原子计数器，确保绝对不重复
+	// 避免使用 time.Now().UnixNano()，因为它可能在毫秒级并发时导致 Nonce 冲突
+	offset := atomic.AddUint64(&dkgTxCounter, 1)
+	nonce := currentNonce + (offset % 1000)
+
+	w.Logger.Debug("[TransitionWorker] newBaseMessage: sender=%s, base_nonce=%d, offset=%d, final_nonce=%d",
+		w.localAddress, currentNonce, offset, nonce)
+
 	return &pb.BaseMessage{
 		TxId:        generateDkgTxID(),
 		FromAddress: w.localAddress,
+		Nonce:       nonce,
 		Status:      pb.Status_PENDING,
 	}
 }
@@ -672,10 +698,14 @@ func (w *TransitionWorker) CheckTriggerConditions(ctx context.Context, height ui
 
 // StartPendingSessions scans transition states and starts DKG sessions when needed.
 func (w *TransitionWorker) StartPendingSessions(ctx context.Context) error {
-	prefix := "v1_frost_vault_transition_"
+	// 使用更通用的前缀，确保能匹配到 keys.KeyFrostVaultTransition 生成的键
+	prefix := "v1_frost_vault_transition"
+
 	return w.stateReader.Scan(prefix, func(k string, v []byte) bool {
+		w.Logger.Debug("[TransitionWorker] Found transition key: %s", k)
 		var state pb.VaultTransitionState
 		if err := proto.Unmarshal(v, &state); err != nil {
+			w.Logger.Error("[TransitionWorker] Failed to unmarshal transition state for key %s: %v", k, err)
 			return true
 		}
 		if state.DkgStatus == "KEY_READY" || state.DkgStatus == "FAILED" {

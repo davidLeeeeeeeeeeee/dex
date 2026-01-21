@@ -30,6 +30,18 @@ func (m *AnyTx) GetBase() *BaseMessage {
 		return tx.FrostWithdrawRequestTx.GetBase()
 	case *AnyTx_FrostWithdrawSignedTx:
 		return tx.FrostWithdrawSignedTx.GetBase()
+	case *AnyTx_FrostVaultDkgCommitTx:
+		return tx.FrostVaultDkgCommitTx.GetBase()
+	case *AnyTx_FrostVaultDkgShareTx:
+		return tx.FrostVaultDkgShareTx.GetBase()
+	case *AnyTx_FrostVaultDkgComplaintTx:
+		return tx.FrostVaultDkgComplaintTx.GetBase()
+	case *AnyTx_FrostVaultDkgRevealTx:
+		return tx.FrostVaultDkgRevealTx.GetBase()
+	case *AnyTx_FrostVaultDkgValidationSignedTx:
+		return tx.FrostVaultDkgValidationSignedTx.GetBase()
+	case *AnyTx_FrostVaultTransitionSignedTx:
+		return tx.FrostVaultTransitionSignedTx.GetBase()
 	default:
 		return nil
 	}

@@ -51,8 +51,19 @@ func (e *Executor) HandleFrostVaultDkgCommitTx(sender string, tx *pb.FrostVaultD
 	}
 
 	// 3. 检查 DKG 状态
-	if transition.DkgStatus != DKGStatusCommitting {
-		return fmt.Errorf("DKGCommit: invalid dkg_status=%s, expected COMMITTING", transition.DkgStatus)
+	if transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusNotStarted {
+		// 如果 DKG 已经处于后期状态，忽略这笔交易
+		logs.Warn("[DKGCommit] skipping late commit tx from %s: dkg_status=%s", sender, transition.DkgStatus)
+		return nil
+	}
+
+	// 如果当前是 NOT_STARTED，则在接收到第一个 CommitTx 时推进到 COMMITTING 状态
+	if transition.DkgStatus == DKGStatusNotStarted {
+		transition.DkgStatus = DKGStatusCommitting
+		if err := e.DB.SetFrostVaultTransition(transitionKey, transition); err != nil {
+			return fmt.Errorf("DKGCommit: failed to update transition status: %w", err)
+		}
+		logs.Info("[DKGCommit] transition %s status moved to COMMITTING", transitionKey)
 	}
 
 	// 4. 检查 sign_algo 一致性

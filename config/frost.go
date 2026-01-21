@@ -78,7 +78,7 @@ type ChainFrostConfig struct {
 // DefaultFrostConfig 返回 FrostConfig 默认值
 func DefaultFrostConfig() FrostConfig {
 	return FrostConfig{
-		Enabled: false, // 默认关闭
+		Enabled: true, // 默认开启
 		Committee: CommitteeConfig{
 			TopN:           10000,
 			ThresholdRatio: 0.8,
@@ -117,27 +117,27 @@ func DefaultFrostConfig() FrostConfig {
 				FeeSatsPerVByte: 25,
 			},
 			"eth": {
-				SignAlgo:       "SCHNORR_ALT_BN128",
+				SignAlgo:       "SCHNORR_SECP256K1_BIP340",
 				FrostVariant:   "frost-bn128",
 				VaultsPerChain: 100,
 				GasPriceGwei:   30,
 				GasLimit:       180000,
 			},
 			"bnb": {
-				SignAlgo:       "SCHNORR_ALT_BN128",
+				SignAlgo:       "SCHNORR_SECP256K1_BIP340",
 				FrostVariant:   "frost-bn128",
 				VaultsPerChain: 100,
 				GasPriceGwei:   3,
 				GasLimit:       180000,
 			},
 			"trx": {
-				SignAlgo:        "ECDSA_SECP256K1",
+				SignAlgo:        "SCHNORR_SECP256K1_BIP340",
 				ThresholdScheme: "gg20 or cggmp (v1 not supported)",
 				VaultsPerChain:  100,
 				FeeLimitSun:     30000000,
 			},
 			"sol": {
-				SignAlgo:                 "ED25519",
+				SignAlgo:                 "SCHNORR_SECP256K1_BIP340",
 				FrostVariant:             "frost-ed25519",
 				VaultsPerChain:           100,
 				PriorityFeeMicroLamports: 2000,

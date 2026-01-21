@@ -64,8 +64,28 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	}
 
 	// 3. 检查 DKG 状态
-	if transition.DkgStatus != DKGStatusCommitting {
-		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, errors.New("invalid dkg_status")
+	if transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusNotStarted {
+		// 如果 DKG 已经处于后期状态（如 SHARING 或 KEY_READY），这笔承诺交易太晚了。
+		// 返回 nil error 以确保区块能顺利上链，只是该笔交易不生效（Receipt 为 FAILED）。
+		logs.Warn("[DKGCommit] late commit tx from %s: dkg_status=%s", sender, transition.DkgStatus)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, nil
+	}
+
+	// 准备写操作列表
+	ops := []WriteOp{}
+
+	// 如果当前是 NOT_STARTED，则在接收到第一个 CommitTx 时推进到 COMMITTING 状态
+	if transition.DkgStatus == DKGStatusNotStarted {
+		transition.DkgStatus = DKGStatusCommitting
+		transitionData, err := proto.Marshal(transition)
+		if err == nil {
+			ops = append(ops, WriteOp{
+				Key:         transitionKey,
+				Value:       transitionData,
+				SyncStateDB: true,
+				Category:    "frost_vault_transition",
+			})
+		}
 	}
 
 	// 4. 检查 sign_algo 一致性
@@ -100,12 +120,12 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to marshal commitment"}, err
 	}
 
-	ops := []WriteOp{{
+	ops = append(ops, WriteOp{
 		Key:         existingKey,
 		Value:       commitData,
 		SyncStateDB: true,
 		Category:    "frost_dkg_commit",
-	}}
+	})
 
 	for _, op := range ops {
 		sv.Set(op.Key, op.Value)
@@ -176,8 +196,28 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	}
 
 	// 3. 检查 DKG 状态
-	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusResolving {
-		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, errors.New("invalid dkg_status")
+	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusCommitting &&
+		transition.DkgStatus != DKGStatusResolving && transition.DkgStatus != DKGStatusNotStarted {
+		// 如果 DKG 已经完成（KEY_READY），这笔份额交易太晚了。
+		// 返回 nil error 以确保区块能顺利上链。
+		logs.Warn("[DKGShare] late share tx from %s: dkg_status=%s", sender, transition.DkgStatus)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, nil
+	}
+
+	ops := []WriteOp{}
+
+	// 如果当前是 COMMITTING 或 NOT_STARTED，则在接收到第一个 ShareTx 时推进到 SHARING 状态
+	if transition.DkgStatus == DKGStatusCommitting || transition.DkgStatus == DKGStatusNotStarted {
+		transition.DkgStatus = DKGStatusSharing
+		transitionData, err := proto.Marshal(transition)
+		if err == nil {
+			ops = append(ops, WriteOp{
+				Key:         transitionKey,
+				Value:       transitionData,
+				SyncStateDB: true,
+				Category:    "frost_vault_transition",
+			})
+		}
 	}
 
 	// 4. 检查 dealer/receiver 是否在 new_committee_members 中
@@ -209,12 +249,12 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to marshal share"}, err
 	}
 
-	ops := []WriteOp{{
+	ops = append(ops, WriteOp{
 		Key:         existingKey,
 		Value:       shareData,
 		SyncStateDB: true,
 		Category:    "frost_dkg_share",
-	}}
+	})
 
 	for _, op := range ops {
 		sv.Set(op.Key, op.Value)
@@ -668,8 +708,15 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 	}
 
 	// 2. 检查状态（允许在 COMMITTING/SHARING/RESOLVING）
+	// 2. 检查状态
 	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusResolving && transition.DkgStatus != DKGStatusCommitting {
-		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, errors.New("invalid dkg_status")
+		// 如果已经是 KEY_READY，则是延迟到达的重复请求，幂等处理
+		if transition.DkgStatus == DKGStatusKeyReady {
+			return nil, &Receipt{TxID: txID, Status: "SUCCEED", WriteCount: 0}, nil
+		}
+		// 其他不合适的状态，返回 FAILED Receipt 但不返回 error
+		logs.Warn("[DKGValidation] late validation tx: dkg_status=%s", transition.DkgStatus)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, nil
 	}
 
 	// 3. 验证签名

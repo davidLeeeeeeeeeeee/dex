@@ -418,8 +418,9 @@ ContinueWithConsensus:
 	}
 
 	// 第3.6阶段：启动 FROST Runtime（如果配置开启）
+	// 第3.6阶段：启动 FROST Runtime (配置已默认开启)
 	if cfg.Frost.Enabled {
-		fmt.Println("🔐 Phase 3.6: Starting FROST Runtime...")
+		fmt.Println("🔐 Phase 3.6: Initializing FROST Runtime & Handlers...")
 		for _, node := range nodes {
 			if node == nil {
 				continue
@@ -447,8 +448,6 @@ ContinueWithConsensus:
 			if solAdapter := solana.NewSolanaAdapter(""); solAdapter != nil {
 				adapterFactory.RegisterAdapter(solAdapter)
 			}
-
-			// TODO: 注册 Tron 适配器（待决策 - 需要 GG20/CGGMP）
 
 			// 创建 TxSubmitter（适配 txpool）
 			var txSubmitter frostrt.TxSubmitter
@@ -536,6 +535,7 @@ ContinueWithConsensus:
 				AdapterFactory: adapterFactory,
 				PubKeyProvider: pubKeyProvider,
 				CryptoFactory:  cryptoFactory,
+				Logger:         node.Logger, // 修复：注入节点日志器，防止 Start 时出现空指针 Panic
 			}
 			frostManager := frostrt.NewManager(frostCfg, frostDeps)
 			node.FrostRuntime = frostManager
@@ -556,23 +556,31 @@ ContinueWithConsensus:
 				})
 			}
 
-			// 启动 FROST Runtime
-			if err := frostManager.Start(context.Background()); err != nil {
-				logs.Error("Failed to start FROST Runtime for node %d: %v", node.ID, err)
-			} else {
-				// 额外启动一个协程，确保内部协程（如果是由外部控制的）也有上下文
-				go func(n *NodeInstance) {
-					logs.SetThreadNodeContext(n.Address)
-					// 这里实际上 Manager.Start 已经跑在子协程里了(某些后台任务)，
-					// 但我们在这里二次确认，或者通过 wrap 的方式启动更好。
-					// 考虑到 Manager.Start 内部可能有 go func，我们应该在调用前设置。
-				}(node)
+			// 启动 FROST Runtime (异步等待区块产生后再正式工作)
+			go func(n *NodeInstance, fm *frostrt.Manager) {
+				logs.SetThreadNodeContext(n.Address)
 
-				fmt.Printf("  ✓ Node %d FROST Runtime started (StateReader=%v, AdapterFactory=%v)\n",
-					node.ID, stateReader != nil, adapterFactory != nil)
-			}
+				// 等待高度 > 0 且共识引擎就绪
+				for {
+					if n.ConsensusManager == nil {
+						break
+					}
+					_, height := n.ConsensusManager.GetLastAccepted()
+					if height >= 1 {
+						break
+					}
+					time.Sleep(2 * time.Second)
+				}
+
+				if err := fm.Start(context.Background()); err != nil {
+					logs.Error("[Frost] Failed to start runtime for node %d: %v", n.ID, err)
+				} else {
+					fmt.Printf(" ✅ Node %d FROST Runtime started (height >= 1)\n", n.ID)
+				}
+			}(node, frostManager)
 		}
 	}
+
 	// Create initial transactions
 	fmt.Println("📝 Creating initial transactions...")
 	generateTransactions(nodes)
@@ -1583,7 +1591,7 @@ func (s *TxSimulator) Start() {
 	go s.runRandomTransfers()
 	go s.runWitnessScenario()
 	go s.runWithdrawScenario()
-	go s.runDkgScenario()
+	// go s.runDkgScenario()
 	// 注释掉 Injector，让 VM Handler 驱动状态变化
 	// go s.runProtocolStateInjector() // 直接注入 Protocol 状态数据
 	go s.runOrderScenario() // 订单交易模拟

@@ -46,8 +46,20 @@ func (e *Executor) HandleFrostVaultDkgShareTx(sender string, tx *pb.FrostVaultDk
 	}
 
 	// 3. 检查 DKG 状态
-	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusResolving {
-		return fmt.Errorf("DKGShare: invalid dkg_status=%s, expected COMMITTING/SHARING/RESOLVING", transition.DkgStatus)
+	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusCommitting &&
+		transition.DkgStatus != DKGStatusResolving && transition.DkgStatus != DKGStatusNotStarted {
+		// 如果 DKG 已经完成，忽略这笔交易
+		logs.Warn("[DKGShare] skipping late share tx from %s: dkg_status=%s", sender, transition.DkgStatus)
+		return nil
+	}
+
+	// 如果当前是 COMMITTING 或 NOT_STARTED，则在接收到第一个 ShareTx 时推进到 SHARING 状态
+	if transition.DkgStatus == DKGStatusCommitting || transition.DkgStatus == DKGStatusNotStarted {
+		transition.DkgStatus = DKGStatusSharing
+		if err := e.DB.SetFrostVaultTransition(transitionKey, transition); err != nil {
+			return fmt.Errorf("DKGShare: failed to update transition status: %w", err)
+		}
+		logs.Info("[DKGShare] transition %s status moved to SHARING", transitionKey)
 	}
 
 	// 4. 检查 dealer_id 是否在 new_committee_members 中
