@@ -1,7 +1,26 @@
 package vm
 
+import (
+	"dex/config"
+	"dex/witness"
+)
+
 // RegisterDefaultHandlers 注册所有默认的交易处理器
-func RegisterDefaultHandlers(reg *HandlerRegistry) error {
+// 为了兼容旧的测试代码，使用变长参数
+// 推荐用法: RegisterDefaultHandlers(reg, cfg, witnessSvc)
+func RegisterDefaultHandlers(reg *HandlerRegistry, args ...interface{}) error {
+	var cfg *config.Config
+	var witnessSvc *witness.Service
+
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case *config.Config:
+			cfg = v
+		case *witness.Service:
+			witnessSvc = v
+		}
+	}
+
 	handlers := []TxHandler{
 		&IssueTokenTxHandler{}, // 发币交易
 		&FreezeTxHandler{},     // 冻结/解冻Token交易
@@ -28,6 +47,19 @@ func RegisterDefaultHandlers(reg *HandlerRegistry) error {
 	}
 
 	for _, h := range handlers {
+		// 如果 handler 需要 WitnessService，设置它
+		if awareness, ok := h.(WitnessServiceAware); ok && witnessSvc != nil {
+			awareness.SetWitnessService(witnessSvc)
+		}
+
+		// 如果是 WitnessRequestTxHandler，设置 VaultCount
+		if wh, ok := h.(*WitnessRequestTxHandler); ok && cfg != nil {
+			wh.VaultCount = uint32(cfg.Frost.Vault.Count)
+		} else if wh, ok := h.(*WitnessRequestTxHandler); ok {
+			// 默认值保证兼容性
+			wh.VaultCount = 100
+		}
+
 		if err := reg.Register(h); err != nil {
 			return err
 		}

@@ -50,10 +50,17 @@ func (e *Executor) HandleFrostVaultDkgCommitTx(sender string, tx *pb.FrostVaultD
 		return fmt.Errorf("DKGCommit: transition not found: %w", err)
 	}
 
-	// 3. 检查 DKG 状态
+	// 3. 检查 DKG 阶段和高度限制
+	// 规则：高度必须 <= DkgCommitDeadline
+	if height > transition.DkgCommitDeadline {
+		logs.Warn("[DKGCommit] skipping late commit tx from %s: height %d > deadline %d",
+			sender, height, transition.DkgCommitDeadline)
+		return nil // 宽容处理：不报错，只是不处理这笔交易
+	}
+
 	if transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusNotStarted {
 		// 如果 DKG 已经处于后期状态，忽略这笔交易
-		logs.Warn("[DKGCommit] skipping late commit tx from %s: dkg_status=%s", sender, transition.DkgStatus)
+		logs.Warn("[DKGCommit] skipping commit tx from %s: dkg_status=%s", sender, transition.DkgStatus)
 		return nil
 	}
 

@@ -33,18 +33,14 @@ func NewExecutor(db DBManager, reg *HandlerRegistry, cache SpecExecCache) *Execu
 	return NewExecutorWithWitness(db, reg, cache, nil)
 }
 
-// NewExecutorWithWitness 创建带见证者服务的执行器
-func NewExecutorWithWitness(db DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessConfig *witness.Config) *Executor {
+// NewExecutorWithWitnessService 使用已有的见证者服务创建子执行器
+func NewExecutorWithWitnessService(db DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessSvc *witness.Service) *Executor {
 	if reg == nil {
 		reg = NewHandlerRegistry()
 	}
 	if cache == nil {
 		cache = NewSpecExecLRU(1024)
 	}
-
-	// 创建见证者服务
-	witnessSvc := witness.NewService(witnessConfig)
-	_ = witnessSvc.Start()
 
 	executor := &Executor{
 		DB:             db,
@@ -65,6 +61,15 @@ func NewExecutorWithWitness(db DBManager, reg *HandlerRegistry, cache SpecExecCa
 	}
 
 	return executor
+}
+
+// NewExecutorWithWitness 创建带见证者服务的执行器
+func NewExecutorWithWitness(db DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessConfig *witness.Config) *Executor {
+	// 创建并启动见证者服务
+	witnessSvc := witness.NewService(witnessConfig)
+	_ = witnessSvc.Start()
+
+	return NewExecutorWithWitnessService(db, reg, cache, witnessSvc)
 }
 
 // SetWitnessService 设置见证者服务（用于测试或自定义配置）

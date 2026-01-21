@@ -1,5 +1,11 @@
 package config
 
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
 // FrostConfig FROST门限签名配置（参考 frost/design.md §10）
 type FrostConfig struct {
 	Enabled    bool                        `json:"enabled"` // 是否启用 FROST 模块（默认 false）
@@ -22,6 +28,7 @@ type CommitteeConfig struct {
 type VaultConfig struct {
 	DefaultK       int     `json:"defaultK"`       // 每个 Vault 默认委员会规模（默认100）
 	MinK           int     `json:"minK"`           // 最小委员会规模（默认50）
+	Count          int     `json:"count"`          // 每个链的 Vault 数量（默认100）
 	MaxK           int     `json:"maxK"`           // 最大委员会规模（默认500）
 	ThresholdRatio float64 `json:"thresholdRatio"` // Vault 门限比例（默认0.67）
 }
@@ -51,6 +58,7 @@ type TransitionConfig struct {
 	TriggerChangeRatio        float64 `json:"triggerChangeRatio"`        // 触发轮换的委员会变化比例（默认0.2）
 	PauseWithdrawDuringSwitch bool    `json:"pauseWithdrawDuringSwitch"` // 轮换期间暂停提现（默认true）
 	DkgCommitWindowBlocks     int     `json:"dkgCommitWindowBlocks"`     // DKG承诺窗口（默认2000）
+	DkgSharingWindowBlocks    int     `json:"dkgSharingWindowBlocks"`    // DKG份额分发窗口（默认2000）
 	DkgDisputeWindowBlocks    int     `json:"dkgDisputeWindowBlocks"`    // DKG争议窗口（默认2000）
 }
 
@@ -89,6 +97,7 @@ func DefaultFrostConfig() FrostConfig {
 			MinK:           50,
 			MaxK:           500,
 			ThresholdRatio: 0.67,
+			Count:          100,
 		},
 		Timeouts: TimeoutsConfig{
 			NonceCommitBlocks:      2,
@@ -106,8 +115,9 @@ func DefaultFrostConfig() FrostConfig {
 		Transition: TransitionConfig{
 			TriggerChangeRatio:        0.2,
 			PauseWithdrawDuringSwitch: true,
-			DkgCommitWindowBlocks:     2000,
-			DkgDisputeWindowBlocks:    2000,
+			DkgCommitWindowBlocks:     20,
+			DkgSharingWindowBlocks:    20,
+			DkgDisputeWindowBlocks:    20,
 		},
 		Chains: map[string]ChainFrostConfig{
 			"btc": {
@@ -144,4 +154,22 @@ func DefaultFrostConfig() FrostConfig {
 			},
 		},
 	}
+}
+
+// LoadFrostConfig 从文件加载 FrostConfig
+func LoadFrostConfig(path string) (FrostConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return DefaultFrostConfig(), nil
+		}
+		return FrostConfig{}, fmt.Errorf("failed to read frost config: %w", err)
+	}
+
+	var cfg FrostConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return FrostConfig{}, fmt.Errorf("failed to parse frost config: %w", err)
+	}
+
+	return cfg, nil
 }

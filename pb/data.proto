@@ -667,6 +667,7 @@ message VaultTransitionState {
   string validation_status = 16; // NOT_STARTED | SIGNING | PASSED | FAILED
   bytes validation_msg_hash = 17; // 验证消息哈希
   string lifecycle = 18; // ACTIVE | DRAINING | RETIRED
+  uint64 dkg_sharing_deadline = 19; // share 截止高度
 }
 
 // ========== Frost P2P 消息 ==========

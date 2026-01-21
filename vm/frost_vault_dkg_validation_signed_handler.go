@@ -33,7 +33,14 @@ func (e *Executor) HandleFrostVaultDkgValidationSignedTx(sender string, tx *pb.F
 		return fmt.Errorf("DKGValidationSigned: transition not found: %w", err)
 	}
 
-	// 2. 检查状态：允许在 COMMITTING/SHARING/RESOLVING 或已完成 DKG 后验证
+	// 2. 检查阶段和高度限制
+	// 规则：验证只能在 DKG 共享周期结束后进行，以确保所有人都有机会参与
+	if height <= transition.DkgSharingDeadline {
+		logs.Warn("[DKGValidationSigned] sharing stage not finished (height %d <= sharing_deadline %d)",
+			height, transition.DkgSharingDeadline)
+		return nil
+	}
+
 	if transition.DkgStatus != DKGStatusResolving && transition.DkgStatus != DKGStatusSharing &&
 		transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusKeyReady {
 		// 允许幂等：如果已经是 KeyReady，直接返回成功

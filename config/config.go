@@ -16,8 +16,9 @@ type Config struct {
 	TxPool   TxPoolConfig
 	Sender   SenderConfig
 	Auth     AuthConfig
-	Window   WindowConfig // 新增：Window配置
-	Frost    FrostConfig  // FROST门限签名配置
+	Window   WindowConfig  // 新增：Window配置
+	Frost    FrostConfig   // FROST门限签名配置
+	Witness  WitnessConfig // 见证者模块配置
 }
 
 // ServerConfig HTTP/3服务器配置
@@ -76,6 +77,11 @@ type NetworkConfig struct {
 	NetworkLatency    time.Duration // 100 * time.Millisecond
 	ConnectionTimeout time.Duration // 5 * time.Second
 	HandshakeTimeout  time.Duration // 10 * time.Second
+
+	// 网络模拟配置（用于测试和开发）
+	PacketLossRate float64       // 丢包率 (0.0-1.0)
+	MinLatency     time.Duration // 最小延迟
+	MaxLatency     time.Duration // 最大延迟
 }
 
 // TxPoolConfig 交易池配置
@@ -189,6 +195,9 @@ func DefaultConfig() *Config {
 			NetworkLatency:     100 * time.Millisecond,
 			ConnectionTimeout:  5 * time.Second,
 			HandshakeTimeout:   10 * time.Second,
+			PacketLossRate:     0.0,
+			MinLatency:         0,
+			MaxLatency:         0,
 		},
 		TxPool: TxPoolConfig{
 			PendingTxCacheSize:      100000,
@@ -229,15 +238,30 @@ func DefaultConfig() *Config {
 				{Duration: 0, Probability: 0.50},                // Window 3: 20s+, 50%概率（Duration=0表示无限）
 			},
 		},
-		Frost: DefaultFrostConfig(),
+		Frost:   DefaultFrostConfig(),
+		Witness: DefaultWitnessConfig(),
 	}
 }
 
 // LoadFromFile 从文件加载配置（可选实现）
 func LoadFromFile(path string) (*Config, error) {
-	// 可以实现从JSON/YAML文件加载配置
-	// 这里仅返回默认配置作为示例
-	return DefaultConfig(), nil
+	cfg := DefaultConfig()
+
+	// 尝试加载 Frost 配置
+	frostCfg, err := LoadFrostConfig("config/frost_default.json")
+	if err == nil {
+		cfg.Frost = frostCfg
+		fmt.Println("📜 Loaded frost config from config/frost_default.json")
+	}
+
+	// 尝试加载 Witness 配置
+	witnessCfg, err := LoadWitnessConfig("config/witness_default.json")
+	if err == nil {
+		cfg.Witness = witnessCfg
+		fmt.Println("📜 Loaded witness config from config/witness_default.json")
+	}
+
+	return cfg, nil
 }
 
 // Validate 验证配置合法性

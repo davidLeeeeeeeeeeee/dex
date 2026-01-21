@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"dex/config"
 	"dex/db"
 	"dex/interfaces"
 	"dex/logs"
@@ -9,6 +10,7 @@ import (
 	"dex/types"
 	"dex/utils"
 	"dex/vm"
+	"dex/witness"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -40,15 +42,41 @@ type RealBlockStore struct {
 }
 
 // 创建真实的区块存储
-func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots int, pool *txpool.TxPool) interfaces.BlockStore {
+func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots int, pool *txpool.TxPool, cfg *config.Config) interfaces.BlockStore {
+	// 转换见证者配置
+	var witnessCfg *witness.Config
+	if cfg != nil {
+		witnessCfg = &witness.Config{
+			ConsensusThreshold:      cfg.Witness.ConsensusThreshold,
+			AbstainThreshold:        cfg.Witness.AbstainThreshold,
+			VotingPeriodBlocks:      cfg.Witness.VotingPeriodBlocks,
+			ChallengePeriodBlocks:   cfg.Witness.ChallengePeriodBlocks,
+			ArbitrationPeriodBlocks: cfg.Witness.ArbitrationPeriodBlocks,
+			UnstakeLockBlocks:       cfg.Witness.UnstakeLockBlocks,
+			RetryIntervalBlocks:     cfg.Witness.RetryIntervalBlocks,
+			MinStakeAmount:          cfg.Witness.MinStakeAmount,
+			ChallengeStakeAmount:    cfg.Witness.ChallengeStakeAmount,
+			InitialWitnessCount:     cfg.Witness.InitialWitnessCount,
+			ExpandMultiplier:        cfg.Witness.ExpandMultiplier,
+			WitnessRewardRatio:      cfg.Witness.WitnessRewardRatio,
+			SlashRatio:              cfg.Witness.SlashRatio,
+			ChallengerReward:        cfg.Witness.ChallengerReward,
+		}
+	}
+
+	// 初始化见证者服务
+	witnessSvc := witness.NewService(witnessCfg)
+	_ = witnessSvc.Start()
+
 	// 初始化 VM 执行器
 	registry := vm.NewHandlerRegistry()
-	if err := vm.RegisterDefaultHandlers(registry); err != nil {
+	if err := vm.RegisterDefaultHandlers(registry, cfg, witnessSvc); err != nil {
 		logs.Error("Failed to register VM handlers: %v", err)
 		// 继续执行，但VM功能可能不完整
 	}
 	cache := vm.NewSpecExecLRU(1024)
-	vmExecutor := vm.NewExecutor(dbManager, registry, cache)
+
+	vmExecutor := vm.NewExecutorWithWitnessService(dbManager, registry, cache, witnessSvc)
 
 	store := &RealBlockStore{
 		dbManager:       dbManager,

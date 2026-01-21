@@ -275,7 +275,7 @@ var genesisConfig *config.GenesisConfig
 
 func main() {
 	// 加载配置
-	cfg := config.DefaultConfig()
+	cfg, _ := config.LoadFromFile("")
 	// 配置参数
 	numNodes := cfg.Network.DefaultNumNodes
 	basePort := cfg.Network.BasePort
@@ -770,9 +770,9 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	consCfg.Node.ProposalInterval = 5 * time.Second
 
 	// 网络模拟配置
-	packetLossRate := 0.1                // 10% 丢包率
-	minLatency := 100 * time.Millisecond // 最小延迟 100ms
-	maxLatency := 200 * time.Millisecond // 最大延迟 200ms
+	packetLossRate := cfg.Network.PacketLossRate
+	minLatency := cfg.Network.MinLatency
+	maxLatency := cfg.Network.MaxLatency
 
 	consensusManager := consensus.InitConsensusManagerWithSimulation(
 		types.NodeID(strconv.Itoa(node.ID)),
@@ -784,6 +784,7 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 		packetLossRate,
 		minLatency,
 		maxLatency,
+		cfg,
 	)
 	node.ConsensusManager = consensusManager
 
@@ -1063,6 +1064,7 @@ func applyFrostBootstrap(dbManager *db.Manager, frostCfg config.FrostConfig, top
 	epochID := uint64(1)
 	triggerHeight := uint64(0)
 	commitWindow := uint64(frostCfg.Transition.DkgCommitWindowBlocks)
+	sharingWindow := uint64(frostCfg.Transition.DkgSharingWindowBlocks)
 	disputeWindow := uint64(frostCfg.Transition.DkgDisputeWindowBlocks)
 
 	for chainName, cfg := range vaultConfigs {
@@ -1075,7 +1077,7 @@ func applyFrostBootstrap(dbManager *db.Manager, frostCfg config.FrostConfig, top
 		if err := vm.InitVaultStates(sv, chainName, epochID); err != nil {
 			logs.Warn("InitVaultStates failed for chain %s: %v", chainName, err)
 		}
-		if err := vm.InitVaultTransitions(sv, chainName, epochID, triggerHeight, commitWindow, disputeWindow); err != nil {
+		if err := vm.InitVaultTransitions(sv, chainName, epochID, triggerHeight, commitWindow, sharingWindow, disputeWindow); err != nil {
 			logs.Warn("InitVaultTransitions failed for chain %s: %v", chainName, err)
 		}
 	}

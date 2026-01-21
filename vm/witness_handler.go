@@ -5,6 +5,7 @@ package vm
 import (
 	"crypto/sha256"
 	"dex/keys"
+	"dex/logs"
 	"dex/pb"
 	"dex/witness"
 	"encoding/binary"
@@ -161,7 +162,11 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		if h.witnessSvc != nil {
 			amountDec, _ := decimal.NewFromString(stake.Amount)
 			if _, err := h.witnessSvc.ProcessStake(address, amountDec); err != nil {
-				return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: err.Error()}, err
+				if err == witness.ErrWitnessAlreadyActive {
+					logs.Warn("[WitnessStake] witness %s already active, treating as success (idempotent)", address)
+				} else {
+					return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: err.Error()}, err
+				}
 			}
 		}
 
@@ -251,6 +256,7 @@ func (h *WitnessStakeTxHandler) Apply(tx *pb.AnyTx) error {
 // WitnessRequestTxHandler 入账见证请求处理器
 type WitnessRequestTxHandler struct {
 	witnessSvc *witness.Service
+	VaultCount uint32
 }
 
 // SetWitnessService 设置见证者服务
@@ -333,7 +339,11 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 
 	// 确定性分配 vault_id，避免跨 Vault 混用资金
 	// 注意：需要检查 Vault lifecycle，DRAINING 的 Vault 不再分配新入账
-	vaultID, err := allocateVaultIDWithLifecycleCheck(sv, request.NativeChain, requestID, DefaultVaultCount)
+	vCount := h.VaultCount
+	if vCount == 0 {
+		vCount = DefaultVaultCount
+	}
+	vaultID, err := allocateVaultIDWithLifecycleCheck(sv, request.NativeChain, requestID, vCount)
 	if err != nil {
 		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: err.Error()}, err
 	}

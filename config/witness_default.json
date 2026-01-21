@@ -1,0 +1,17 @@
+{
+    "enabled": true,
+    "consensusThreshold": 80,
+    "abstainThreshold": 20,
+    "votingPeriodBlocks": 100,
+    "challengePeriodBlocks": 600,
+    "arbitrationPeriodBlocks": 28800,
+    "unstakeLockBlocks": 201600,
+    "retryIntervalBlocks": 20,
+    "minStakeAmount": "1000000000000000000000",
+    "challengeStakeAmount": "100000000000000000000",
+    "initialWitnessCount": 10,
+    "expandMultiplier": 2,
+    "witnessRewardRatio": 0.5,
+    "slashRatio": 1.0,
+    "challengerReward": 0.2
+}

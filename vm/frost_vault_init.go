@@ -162,7 +162,7 @@ func InitVaultStates(sv StateView, chain string, epochID uint64) error {
 
 // InitVaultTransitions 初始化 VaultTransitionState（用于启动初始 DKG）
 // 依赖 VaultConfig/VaultState/Top10000 已就绪，epochID 为目标 epoch
-func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHeight uint64, commitWindow uint64, disputeWindow uint64) error {
+func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHeight uint64, commitWindow uint64, sharingWindow uint64, disputeWindow uint64) error {
 	// 1. 读取 VaultConfig
 	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
 	cfgData, exists, err := sv.Get(vaultCfgKey)
@@ -221,6 +221,10 @@ func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHei
 			threshold = 1
 		}
 
+		commitDeadline := triggerHeight + commitWindow
+		sharingDeadline := commitDeadline + sharingWindow
+		disputeDeadline := sharingDeadline + disputeWindow
+
 		transition := &pb.VaultTransitionState{
 			Chain:               chain,
 			VaultId:             vaultID,
@@ -233,8 +237,9 @@ func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHei
 			DkgSessionId:        fmt.Sprintf("%s_%d_%d", chain, vaultID, effectiveEpoch),
 			DkgThresholdT:       uint32(threshold),
 			DkgN:                uint32(len(committeeMembers)),
-			DkgCommitDeadline:   triggerHeight + commitWindow,
-			DkgDisputeDeadline:  triggerHeight + disputeWindow,
+			DkgCommitDeadline:   commitDeadline,
+			DkgSharingDeadline:  sharingDeadline,
+			DkgDisputeDeadline:  disputeDeadline,
 			OldGroupPubkey:      vaultState.GroupPubkey,
 			ValidationStatus:    "NOT_STARTED",
 			Lifecycle:           VaultLifecycleActive,

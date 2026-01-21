@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"context"
+	"dex/config"
 	"dex/db"
 	"dex/interfaces"
 	"dex/logs"
@@ -36,8 +37,9 @@ func InitConsensusManager(
 	senderMgr *sender.SenderManager,
 	txPool *txpool.TxPool,
 	logger logs.Logger,
+	globalCfg *config.Config,
 ) *ConsensusNodeManager {
-	return InitConsensusManagerWithSimulation(nodeID, dbManager, config, senderMgr, txPool, logger, 0.0, 0, 0)
+	return InitConsensusManagerWithSimulation(nodeID, dbManager, config, senderMgr, txPool, logger, 0.0, 0, 0, globalCfg)
 }
 
 // InitConsensusManagerWithPacketLoss 初始化共识管理器，支持丢包率模拟（兼容旧接口）
@@ -50,8 +52,9 @@ func InitConsensusManagerWithPacketLoss(
 	txPool *txpool.TxPool,
 	logger logs.Logger,
 	packetLossRate float64,
+	globalCfg *config.Config,
 ) *ConsensusNodeManager {
-	return InitConsensusManagerWithSimulation(nodeID, dbManager, config, senderMgr, txPool, logger, packetLossRate, 0, 0)
+	return InitConsensusManagerWithSimulation(nodeID, dbManager, config, senderMgr, txPool, logger, packetLossRate, 0, 0, globalCfg)
 }
 
 // InitConsensusManagerWithSimulation 初始化共识管理器，支持网络模拟（丢包率+延迟）
@@ -66,12 +69,13 @@ func InitConsensusManagerWithSimulation(
 	logger logs.Logger,
 	packetLossRate float64,
 	minLatency, maxLatency time.Duration,
+	globalCfg *config.Config,
 ) *ConsensusNodeManager {
 	// 创建带网络模拟的 transport
 	transport := NewRealTransportWithSimulation(nodeID, dbManager, senderMgr, context.Background(), packetLossRate, minLatency, maxLatency)
 
 	// 替换默认的 MemoryBlockStore 为 RealBlockStore
-	realStore := NewRealBlockStore(nodeID, dbManager, config.Snapshot.MaxSnapshots, txPool)
+	realStore := NewRealBlockStore(nodeID, dbManager, config.Snapshot.MaxSnapshots, txPool, globalCfg)
 	node := NewNode(nodeID, transport, realStore, false, config, logger)
 
 	// 设置EventBus到RealBlockStore

@@ -27,8 +27,9 @@
   "transition": {
     "triggerChangeRatio": 0.2,
     "pauseWithdrawDuringSwitch": true,
-    "dkgCommitWindowBlocks": 2000,
-    "dkgDisputeWindowBlocks": 2000
+    "dkgCommitWindowBlocks": 20,
+    "dkgSharingWindowBlocks": 20,
+    "dkgDisputeWindowBlocks": 20
   },
   "chains": {
     "btc": {

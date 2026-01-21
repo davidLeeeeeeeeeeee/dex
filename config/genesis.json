@@ -29,8 +29,8 @@
     "default": {
       "balances": {
         "FB": {
-          "balance": "1000000",
-          "miner_locked_balance": "100000"
+          "balance": "1000000000",
+          "miner_locked_balance": "100000000"
         },
         "USDT": {
           "balance": "500000"
@@ -42,4 +42,3 @@
     }
   }
 }
-
