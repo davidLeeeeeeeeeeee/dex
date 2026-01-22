@@ -108,4 +108,3 @@ func (r *FakeStateReader) Scan(prefix string, fn func(k string, v []byte) bool) 
 
 // Ensure FakeStateReader implements runtime.ChainStateReader
 var _ runtime.ChainStateReader = (*FakeStateReader)(nil)
-

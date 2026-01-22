@@ -158,4 +158,3 @@ func ExampleCrashRecovery() {
 		fmt.Println("Crash recovery example completed successfully")
 	}
 }
-

@@ -198,7 +198,7 @@ func TestMultiPrefixFlushAndRotate(t *testing.T) {
 	// 注意：这里我们验证的是 overlay 数据，格式为 s1|ovl|<E>|<shard>|<full_key>
 	// epochOf(99, 100) = 0
 	epoch := uint64(0)
-	
+
 	for _, update := range updates {
 		shard := shardOf(update.Key, cfg.ShardHexWidth)
 		overlayKey := kOvl(epoch, shard, update.Key) // 使用完整 key
@@ -328,4 +328,3 @@ func TestMultiPrefixSharding(t *testing.T) {
 
 	t.Log("✅ Multi-prefix sharding test passed")
 }
-

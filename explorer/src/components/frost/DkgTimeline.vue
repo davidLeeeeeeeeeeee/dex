@@ -70,10 +70,20 @@ const openFlow = (session: any) => {
   if (status === 'COMMITTING') flow += '  style A fill:#6366f1,stroke:#fff,stroke-width:2px\n'
   if (status === 'SHARING') flow += '  style B fill:#8b5cf6,stroke:#fff,stroke-width:2px\n'
   if (status === 'RESOLVING') flow += '  style C fill:#f59e0b,stroke:#fff,stroke-width:2px\n'
-  if (status === 'KEY_READY') flow += '  style D fill:#10b981,stroke:#fff,stroke-width:2px\n'
+  if (status === 'KEY_READY') {
+    flow += '  style D fill:#10b981,stroke:#fff,stroke-width:2px\n'
+    if (session.validation_status === 'PASSED' || session.lifecycle === 'ACTIVE') {
+      flow += '  style E fill:#059669,stroke:#fff,stroke-width:2px\n'
+    }
+  }
   
   mermaidDefinition.value = flow
   modalVisible.value = true
+}
+const copyToClipboard = (text: string) => {
+  navigator.clipboard.writeText(text)
+    .then(() => alert('Public Key copied to clipboard!'))
+    .catch(err => console.error('Failed to copy', err))
 }
 </script>
 
@@ -167,6 +177,22 @@ const openFlow = (session: any) => {
             <span :class="['detail-value', s.validation_status === 'PASSED' ? 'text-emerald-400' : 'text-gray-400']">
               {{ s.validation_status || 'PENDING' }}
             </span>
+          </div>
+        </div>
+        
+        <!-- Group PubKey (Display when ready) -->
+        <div v-if="s.new_group_pubkey" class="mt-4 p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+          <div class="flex justify-between items-center mb-1">
+            <span class="text-[10px] text-emerald-500 font-bold uppercase tracking-wider">Generated Group Public Key</span>
+            <span class="text-[10px] text-gray-500 uppercase font-mono">{{ s.sign_algo }}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <code class="text-xs text-emerald-400 break-all font-mono leading-relaxed bg-black/40 p-2 rounded block w-full border border-emerald-500/10">
+              {{ s.new_group_pubkey }}
+            </code>
+            <button @click.stop="copyToClipboard(s.new_group_pubkey)" class="p-2 hover:bg-emerald-500/20 rounded text-emerald-500 transition-colors shadow-sm" title="Copy PubKey">
+              📋
+            </button>
           </div>
         </div>
 

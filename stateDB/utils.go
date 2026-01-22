@@ -33,4 +33,3 @@ func decodeToken(tok string) string {
 var (
 	ErrNotFound = errors.New("not found")
 )
-

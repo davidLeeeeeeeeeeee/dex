@@ -1,14 +1,14 @@
 {
-  "enabled": false,
+  "enabled": true,
   "committee": {
-    "topN": 10000,
-    "thresholdRatio": 0.8,
+    "topN": 20,
+    "thresholdRatio": 0.67,
     "epochBlocks": 200000
   },
   "vault": {
-    "defaultK": 100,
-    "minK": 50,
-    "maxK": 500,
+    "defaultK": 4,
+    "minK": 3,
+    "maxK": 10,
     "thresholdRatio": 0.67
   },
   "timeouts": {
@@ -35,33 +35,33 @@
     "btc": {
       "signAlgo": "SCHNORR_SECP256K1_BIP340",
       "frostVariant": "frost-secp256k1",
-      "vaultsPerChain": 100,
+      "vaultsPerChain": 5,
       "feeSatsPerVByte": 25
     },
     "eth": {
       "signAlgo": "SCHNORR_ALT_BN128",
       "frostVariant": "frost-bn128",
-      "vaultsPerChain": 100,
+      "vaultsPerChain": 5,
       "gasPriceGwei": 30,
       "gasLimit": 180000
     },
     "bnb": {
       "signAlgo": "SCHNORR_ALT_BN128",
       "frostVariant": "frost-bn128",
-      "vaultsPerChain": 100,
+      "vaultsPerChain": 5,
       "gasPriceGwei": 3,
       "gasLimit": 180000
     },
     "trx": {
       "signAlgo": "ECDSA_SECP256K1",
       "thresholdScheme": "gg20",
-      "vaultsPerChain": 100,
+      "vaultsPerChain": 5,
       "feeLimitSun": 30000000
     },
     "sol": {
       "signAlgo": "ED25519",
       "frostVariant": "frost-ed25519",
-      "vaultsPerChain": 100,
+      "vaultsPerChain": 5,
       "priorityFeeMicroLamports": 2000
     }
   }

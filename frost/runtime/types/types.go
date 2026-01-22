@@ -82,6 +82,9 @@ type ROASTExecutor interface {
 
 	// ScalarBaseMult 基点乘法 k*G
 	ScalarBaseMult(k *big.Int) CurvePoint
+
+	// SerializePoint 序列化曲线点
+	SerializePoint(P CurvePoint) []byte
 }
 
 // ========== DKG 相关接口 ==========
@@ -120,6 +123,9 @@ type DKGExecutor interface {
 
 	// ScalarBaseMult 基点乘法 k*G
 	ScalarBaseMult(k *big.Int) CurvePoint
+
+	// SerializePoint 序列化曲线点
+	SerializePoint(P CurvePoint) []byte
 }
 
 // ========== 工厂接口 ==========

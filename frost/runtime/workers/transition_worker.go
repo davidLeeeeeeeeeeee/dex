@@ -7,10 +7,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"dex/frost/security"
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"dex/utils"
-	"encoding/binary"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -50,6 +50,9 @@ type TransitionWorker struct {
 	// EWMA 状态维护（按 Vault 独立）
 	// key: chain_vaultID, value: ewmaValue
 	ewmaHistory map[string]float64
+
+	// Nonce 管理
+	lastIssuedNonce uint64
 }
 
 var dkgTxCounter uint64
@@ -81,8 +84,12 @@ type DKGSession struct {
 	Threshold        int               // 门限 t
 
 	// 状态
-	Phase     string // COMMITTING | SHARING | RESOLVING | KEY_READY
-	CreatedAt time.Time
+	Phase           string // COMMITTING | SHARING | RESOLVING | KEY_READY
+	TriggerHeight   uint64
+	CommitDeadline  uint64
+	SharingDeadline uint64
+	DisputeDeadline uint64
+	CreatedAt       time.Time
 }
 
 // ChainAdapterFactory 链适配器工厂接口（避免循环依赖）
@@ -164,6 +171,7 @@ func NewTransitionWorker(
 		ewmaAlpha:           0.3,   // EWMA 平滑系数
 		epochBlocks:         40000, // 默认 Epoch 边界（40000 个区块）
 		ewmaHistory:         make(map[string]float64),
+		lastIssuedNonce:     0,
 	}
 }
 
@@ -206,10 +214,12 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 		}
 	}
 	if myIndex == 0 {
-		w.Logger.Warn("[TransitionWorker] node %s not in committee for session %s. Committee: %v",
+		w.Logger.Debug("[TransitionWorker] node %s not in committee for session %s. Committee: %v",
 			w.localAddress, sessionID, committeeMembers)
 		return nil
 	}
+
+	w.Logger.Info("[TransitionWorker] node %s (index %d) starting DKG session %s", w.localAddress, myIndex, sessionID)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -235,6 +245,20 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 		CreatedAt:        time.Now(),
 	}
 
+	// 尝试从链上获取截止日期
+	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
+	if data, exists, err := w.stateReader.Get(transitionKey); err == nil && exists {
+		var transition pb.VaultTransitionState
+		if err := proto.Unmarshal(data, &transition); err == nil {
+			session.TriggerHeight = transition.TriggerHeight
+			session.CommitDeadline = transition.DkgCommitDeadline
+			session.SharingDeadline = transition.DkgSharingDeadline
+			session.DisputeDeadline = transition.DkgDisputeDeadline
+			w.Logger.Info("[TransitionWorker] session %s deadlines: commit=%d, sharing=%d, dispute=%d",
+				sessionID, session.CommitDeadline, session.SharingDeadline, session.DisputeDeadline)
+		}
+	}
+
 	w.sessions[sessionID] = session
 	w.Logger.Info("[TransitionWorker] started DKG session %s", sessionID)
 
@@ -246,28 +270,59 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 
 // runSession 运行 DKG 会话
 func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) {
-	// logs.SetThreadNodeContext(w.localAddress) removed
 	w.Logger.Debug("[TransitionWorker] runSession %s phase=%s", session.SessionID, session.Phase)
 
 	// Phase 1: 提交 commitment
+	// Commitment 阶段在 Session 启动后立即执行（高度应在 [Trigger, CommitDeadline]）
 	if err := w.submitCommitment(ctx, session); err != nil {
 		w.Logger.Error("[TransitionWorker] submitCommitment failed: %v", err)
 		return
 	}
 
-	// ⏳ 等待区块确认（承诺阶段上链）
-	time.Sleep(10 * time.Second)
+	// ⏳ 必须等 CommitDeadline 同步成功且 > 0 才能继续，否则会跳过高度检查
+	if session.CommitDeadline == 0 {
+		w.Logger.Info("[TransitionWorker] session %s CommitDeadline is 0, waiting for sync...", session.SessionID)
+		for {
+			transitionKey := keys.KeyFrostVaultTransition(session.Chain, session.VaultID, session.EpochID)
+			if data, exists, err := w.stateReader.Get(transitionKey); err == nil && exists {
+				var transition pb.VaultTransitionState
+				if err := proto.Unmarshal(data, &transition); err == nil && transition.DkgCommitDeadline > 0 {
+					session.CommitDeadline = transition.DkgCommitDeadline
+					session.SharingDeadline = transition.DkgSharingDeadline
+					session.DisputeDeadline = transition.DkgDisputeDeadline
+					w.Logger.Info("[TransitionWorker] session %s deadlines synced: commit=%d", session.SessionID, session.CommitDeadline)
+					break
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(1 * time.Second):
+			}
+		}
+	}
+
+	// 等待直到进入 Sharing 阶段 (height > CommitDeadline)
+	w.Logger.Info("[TransitionWorker] session %s waiting for sharing stage: height > %d", session.SessionID, session.CommitDeadline)
+	w.waitForHeight(ctx, session.CommitDeadline+1)
 
 	// Phase 2: 等待所有 commitment 并提交 share
+	// 此时高度应在 (CommitDeadline, SharingDeadline]
 	if err := w.submitShares(ctx, session); err != nil {
 		w.Logger.Error("[TransitionWorker] submitShares failed: %v", err)
 		return
 	}
 
-	// ⏳ 等待区块确认（分发阶段上链）
-	time.Sleep(15 * time.Second)
+	// ⏳ 等待 Sharing/Dispute 阶段结束 (必须等高度超过 Deadline)
+	if session.DisputeDeadline > 0 {
+		w.Logger.Info("[TransitionWorker] session %s waiting for dispute window to close (waiting for height %d)...", session.SessionID, session.DisputeDeadline+1)
+		w.waitForHeight(ctx, session.DisputeDeadline+1)
+	} else {
+		time.Sleep(20 * time.Second)
+	}
 
 	// Phase 3: 收集 share 并生成密钥
+	// 此时高度应在 DisputeDeadline 之后
 	if err := w.generateKey(ctx, session); err != nil {
 		w.Logger.Error("[TransitionWorker] generateKey failed: %v", err)
 		return
@@ -282,9 +337,40 @@ func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) 
 	w.Logger.Info("[TransitionWorker] DKG session %s completed", session.SessionID)
 }
 
+// GetCurrentHeight 获取当前区块高度
+func (w *TransitionWorker) GetCurrentHeight() uint64 {
+	data, exists, err := w.stateReader.Get(keys.KeyLatestHeight())
+	if err != nil || !exists || len(data) == 0 {
+		return 0
+	}
+	// 高度在数据库中以字符串形式存储 (strconv.FormatUint)
+	h, _ := strconv.ParseUint(string(data), 10, 64)
+	return h
+}
+
+// waitForHeight 阻塞直到达到指定高度
+func (w *TransitionWorker) waitForHeight(ctx context.Context, targetHeight uint64) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		current := w.GetCurrentHeight()
+		if current >= targetHeight {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			continue
+		}
+	}
+}
+
 // submitCommitment 提交 DKG 承诺
 func (w *TransitionWorker) submitCommitment(ctx context.Context, session *DKGSession) error {
-	w.Logger.Debug("[TransitionWorker] submitCommitment session=%s", session.SessionID)
+	w.Logger.Info("[TransitionWorker] submitCommitment session=%s", session.SessionID)
 
 	// 获取 DKG 执行器
 	dkgExec, err := w.cryptoFactory.NewDKGExecutor(int32(session.SignAlgo))
@@ -416,7 +502,7 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 	myShareBytes := dkgExec.EvaluateShare(session.Polynomial, session.MyIndex)
 
 	// 2) 收集并解密所有发给本节点的 shares，验证后聚合
-	decryptedShares, err := w.collectAndVerifyShares(ctx, session)
+	decryptedShares, err := w.collectAndVerifyShares(ctx, dkgExec, session)
 	if err != nil {
 		return fmt.Errorf("collect shares: %w", err)
 	}
@@ -446,7 +532,7 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 }
 
 // collectAndVerifyShares 扫描链上密文 shares，解密属于本节点的份额并做一致性校验
-func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, session *DKGSession) (map[string][]byte, error) {
+func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec DKGExecutor, session *DKGSession) (map[string][]byte, error) {
 	result := make(map[string][]byte) // dealerID -> share
 
 	// 1. 扫描该 session 的所有 DKG share（按前缀）
@@ -480,7 +566,7 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, session *
 		}
 
 		// 验证与 dealer 承诺点一致
-		if ok := w.verifyShareAgainstCommitments(session, share.DealerId, plain, session.MyIndex); !ok {
+		if ok := w.verifyShareAgainstCommitments(dkgExec, session, share.DealerId, plain, session.MyIndex); !ok {
 			w.Logger.Warn("[DKG] share verification failed for dealer=%s", share.DealerId)
 			return true
 		}
@@ -496,8 +582,8 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, session *
 	return result, nil
 }
 
-// verifyShareAgainstCommitments 使用 Feldman VSS 校验 share 与 dealer 承诺点一致性
-func (w *TransitionWorker) verifyShareAgainstCommitments(session *DKGSession, dealerID string, share []byte, receiverIndex int) bool {
+// verifyShareAgainstCommitments 使用 DKG 执行器校验 share 与 dealer 承诺点一致性
+func (w *TransitionWorker) verifyShareAgainstCommitments(dkgExec DKGExecutor, session *DKGSession, dealerID string, share []byte, receiverIndex int) bool {
 	// 读取 dealer 的 commitment
 	commitKey := fmt.Sprintf("v1_frost_vault_dkg_commit_%s_%d_%s_%s", session.Chain, session.VaultID, padUint(session.EpochID), dealerID)
 	data, exists, err := w.stateReader.Get(commitKey)
@@ -508,8 +594,8 @@ func (w *TransitionWorker) verifyShareAgainstCommitments(session *DKGSession, de
 	if err := proto.Unmarshal(data, &commit); err != nil {
 		return false
 	}
-	// Verify: g^share == Π(A_k^(x^k)), x=receiverIndex
-	return security.VerifyShareAgainstCommitment(share, commit.CommitmentPoints, big.NewInt(int64(receiverIndex)))
+	// Verify: 使用 dkgExec 进行验证，以支持不同曲线
+	return dkgExec.VerifyShare(share, commit.CommitmentPoints, 0, receiverIndex) // senderIndex 暂未使用
 }
 
 // aggregateGroupPubkey 收集所有 dealer 的 a_i0 聚合得到 group_pubkey
@@ -543,7 +629,7 @@ func (w *TransitionWorker) aggregateGroupPubkey(ctx context.Context, session *DK
 			return nil, fmt.Errorf("no commitments found and local polynomial empty")
 		}
 		pt := dkgExec.ScalarBaseMult(coeffs[0])
-		return serializeCurvePoint(pt), nil
+		return dkgExec.SerializePoint(pt), nil
 	}
 
 	// 使用 DKG 执行器聚合公钥
@@ -551,24 +637,12 @@ func (w *TransitionWorker) aggregateGroupPubkey(ctx context.Context, session *DK
 	return groupPubkey, nil
 }
 
-// serializeCurvePoint 序列化 CurvePoint 为压缩格式
-func serializeCurvePoint(p CurvePoint) []byte {
-	result := make([]byte, 33)
-	if p.Y.Bit(0) == 0 {
-		result[0] = 0x02
-	} else {
-		result[0] = 0x03
-	}
-	p.X.FillBytes(result[1:])
-	return result
-}
-
 // submitValidation 提交验证签名
 func (w *TransitionWorker) submitValidation(ctx context.Context, session *DKGSession) error {
 	w.Logger.Debug("[TransitionWorker] submitValidation session=%s", session.SessionID)
 
 	// 构造验证消息：chain || vault_id || epoch_id || group_pubkey
-	msgHash := computeValidationMsgHash(session.Chain, session.VaultID, session.EpochID, session.GroupPubkey)
+	msgHash := computeValidationMsgHash(session.Chain, session.VaultID, session.EpochID, session.SignAlgo, session.GroupPubkey)
 
 	// 获取 DKG 执行器
 	dkgExec, err := w.cryptoFactory.NewDKGExecutor(int32(session.SignAlgo))
@@ -599,12 +673,15 @@ func (w *TransitionWorker) submitValidation(ctx context.Context, session *DKGSes
 	return nil
 }
 
-// computeValidationMsgHash 计算验证消息哈希
-func computeValidationMsgHash(chain string, vaultID uint32, epochID uint64, groupPubkey []byte) []byte {
+// computeValidationMsgHash 计算 DKG 验证消息哈希（需与 VM 实现一致）
+func computeValidationMsgHash(chain string, vaultID uint32, epochID uint64, signAlgo pb.SignAlgo, groupPubkey []byte) []byte {
 	h := sha256.New()
+	h.Write([]byte("frost_vault_dkg_validation"))
 	h.Write([]byte(chain))
-	binary.Write(h, binary.BigEndian, vaultID)
-	binary.Write(h, binary.BigEndian, epochID)
+	h.Write([]byte{byte(vaultID >> 24), byte(vaultID >> 16), byte(vaultID >> 8), byte(vaultID)})
+	h.Write([]byte{byte(epochID >> 56), byte(epochID >> 48), byte(epochID >> 40), byte(epochID >> 32),
+		byte(epochID >> 24), byte(epochID >> 16), byte(epochID >> 8), byte(epochID)})
+	h.Write([]byte{byte(signAlgo)})
 	h.Write(groupPubkey)
 	return h.Sum(nil)
 }
@@ -620,13 +697,18 @@ func (w *TransitionWorker) newBaseMessage() *pb.BaseMessage {
 		}
 	}
 
-	// 策略：使用状态 Nonce + 进程内原子计数器，确保绝对不重复
-	// 避免使用 time.Now().UnixNano()，因为它可能在毫秒级并发时导致 Nonce 冲突
-	offset := atomic.AddUint64(&dkgTxCounter, 1)
-	nonce := currentNonce + (offset % 1000)
+	// 策略：使用状态 Nonce + 进程内 Nonce 追踪，防止同一高度多笔交易冲突
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
-	w.Logger.Debug("[TransitionWorker] newBaseMessage: sender=%s, base_nonce=%d, offset=%d, final_nonce=%d",
-		w.localAddress, currentNonce, offset, nonce)
+	nonce := currentNonce + 1
+	if nonce <= w.lastIssuedNonce {
+		nonce = w.lastIssuedNonce + 1
+	}
+	w.lastIssuedNonce = nonce
+
+	w.Logger.Info("[TransitionWorker] newBaseMessage: sender=%s, base_nonce=%d, final_nonce=%d",
+		w.localAddress, currentNonce, nonce)
 
 	return &pb.BaseMessage{
 		TxId:        generateDkgTxID(),
@@ -701,7 +783,9 @@ func (w *TransitionWorker) StartPendingSessions(ctx context.Context) error {
 	// 使用更通用的前缀，确保能匹配到 keys.KeyFrostVaultTransition 生成的键
 	prefix := "v1_frost_vault_transition"
 
-	return w.stateReader.Scan(prefix, func(k string, v []byte) bool {
+	count := 0
+	err := w.stateReader.Scan(prefix, func(k string, v []byte) bool {
+		count++
 		w.Logger.Debug("[TransitionWorker] Found transition key: %s", k)
 		var state pb.VaultTransitionState
 		if err := proto.Unmarshal(v, &state); err != nil {
@@ -717,6 +801,10 @@ func (w *TransitionWorker) StartPendingSessions(ctx context.Context) error {
 		}
 		return true
 	})
+	if count > 0 {
+		w.Logger.Debug("[TransitionWorker] StartPendingSessions scanned %d transition keys", count)
+	}
+	return err
 }
 
 // checkVaultTrigger 检查单个 Vault 的触发条件

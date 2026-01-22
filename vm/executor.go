@@ -130,15 +130,11 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	// 遍历执行每个交易
 	for idx, tx := range b.Body {
 		// 提取交易类型
-		kind, err := x.KFn(tx)
-		if err != nil {
-			return &SpecResult{
-				BlockID:  b.BlockHash,
-				ParentID: b.PrevBlockHash,
-				Height:   b.Height,
-				Valid:    false,
-				Reason:   fmt.Sprintf("tx %d: %v", idx, err),
-			}, nil
+		kind, _ := x.KFn(tx)
+
+		// 统一注入当前执行高度到交易 BaseMessage 中，供 Handler 使用
+		if base := getBaseMessage(tx); base != nil {
+			base.ExecutedHeight = b.Height
 		}
 
 		// 获取对应的Handler
@@ -807,4 +803,52 @@ func convertToMatchingOrderLegacy(ord *pb.OrderTx) (*matching.Order, error) {
 		Price:  price,
 		Amount: amount,
 	}, nil
+}
+
+// getBaseMessage 辅助函数：从 AnyTx 中提取 BaseMessage
+func getBaseMessage(tx *pb.AnyTx) *pb.BaseMessage {
+	if tx == nil {
+		return nil
+	}
+	switch v := tx.Content.(type) {
+	case *pb.AnyTx_Transaction:
+		return v.Transaction.Base
+	case *pb.AnyTx_OrderTx:
+		return v.OrderTx.Base
+	case *pb.AnyTx_MinerTx:
+		return v.MinerTx.Base
+	case *pb.AnyTx_IssueTokenTx:
+		return v.IssueTokenTx.Base
+	case *pb.AnyTx_FreezeTx:
+		return v.FreezeTx.Base
+	case *pb.AnyTx_WitnessStakeTx:
+		return v.WitnessStakeTx.Base
+	case *pb.AnyTx_WitnessRequestTx:
+		return v.WitnessRequestTx.Base
+	case *pb.AnyTx_WitnessVoteTx:
+		return v.WitnessVoteTx.Base
+	case *pb.AnyTx_WitnessChallengeTx:
+		return v.WitnessChallengeTx.Base
+	case *pb.AnyTx_ArbitrationVoteTx:
+		return v.ArbitrationVoteTx.Base
+	case *pb.AnyTx_WitnessClaimRewardTx:
+		return v.WitnessClaimRewardTx.Base
+	case *pb.AnyTx_FrostWithdrawRequestTx:
+		return v.FrostWithdrawRequestTx.Base
+	case *pb.AnyTx_FrostWithdrawSignedTx:
+		return v.FrostWithdrawSignedTx.Base
+	case *pb.AnyTx_FrostVaultDkgCommitTx:
+		return v.FrostVaultDkgCommitTx.Base
+	case *pb.AnyTx_FrostVaultDkgShareTx:
+		return v.FrostVaultDkgShareTx.Base
+	case *pb.AnyTx_FrostVaultDkgComplaintTx:
+		return v.FrostVaultDkgComplaintTx.Base
+	case *pb.AnyTx_FrostVaultDkgRevealTx:
+		return v.FrostVaultDkgRevealTx.Base
+	case *pb.AnyTx_FrostVaultDkgValidationSignedTx:
+		return v.FrostVaultDkgValidationSignedTx.Base
+	case *pb.AnyTx_FrostVaultTransitionSignedTx:
+		return v.FrostVaultTransitionSignedTx.Base
+	}
+	return nil
 }

@@ -39,12 +39,12 @@ var (
 
 // SolanaTemplate Solana 交易模板
 type SolanaTemplate struct {
-	ProgramID       string         `json:"program_id"`        // 程序 ID（PDA）
-	VaultID         uint32         `json:"vault_id"`          // Vault ID
-	KeyEpoch        uint64         `json:"key_epoch"`         // 密钥版本
-	WithdrawIDs     []string       `json:"withdraw_ids"`      // 提现 ID 列表
-	Outputs         []SolanaOutput `json:"outputs"`           // 输出列表
-	RecentBlockhash string         `json:"recent_blockhash"`  // 最近区块哈希
+	ProgramID       string         `json:"program_id"`       // 程序 ID（PDA）
+	VaultID         uint32         `json:"vault_id"`         // Vault ID
+	KeyEpoch        uint64         `json:"key_epoch"`        // 密钥版本
+	WithdrawIDs     []string       `json:"withdraw_ids"`     // 提现 ID 列表
+	Outputs         []SolanaOutput `json:"outputs"`          // 输出列表
+	RecentBlockhash string         `json:"recent_blockhash"` // 最近区块哈希
 }
 
 // SolanaOutput Solana 输出

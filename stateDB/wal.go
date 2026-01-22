@@ -138,7 +138,6 @@ func ReplayWAL(fn string, apply func(WalRecord) error) error {
 	}
 }
 
-
 // 获取 WAL 文件路径
 func GetWALPath(dir string, epoch uint64) string {
 	walDir := filepath.Join(dir, "wal")

@@ -83,4 +83,3 @@ func (m *memWindow) clearAll() {
 		m.muByShard[s].Unlock()
 	}
 }
-

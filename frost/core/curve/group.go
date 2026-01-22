@@ -28,6 +28,9 @@ type Group interface {
 	ScalarBaseMultBytes(k []byte) Point
 	ScalarMultBytes(P Point, k []byte) Point
 
-	// 从压缩格式解析点
+	// 序列化点
+	SerializePoint(P Point) []byte
+
+	// 解析点
 	DecompressPoint(data []byte) Point
 }

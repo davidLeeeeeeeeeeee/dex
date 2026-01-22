@@ -165,5 +165,3 @@ func (s *DB) recoverFromWAL() error {
 
 	return err
 }
-
-

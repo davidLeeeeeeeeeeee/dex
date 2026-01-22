@@ -15,7 +15,7 @@ import (
 // TestSlashBond 测试罚没 bond
 func TestSlashBond(t *testing.T) {
 	sv := NewMockStateView()
-	
+
 	// 创建测试账户
 	account := &pb.Account{
 		Address: "0x0001",
@@ -57,13 +57,13 @@ func TestSlashBond(t *testing.T) {
 // TestSlashMinerStake 测试罚没矿工质押金
 func TestSlashMinerStake(t *testing.T) {
 	sv := NewMockStateView()
-	
+
 	// 创建测试账户（有质押金）
 	account := &pb.Account{
 		Address: "0x0002",
 		Balances: map[string]*pb.TokenBalance{
 			"FB": {
-				Balance:            "500000000000000000000", // 500 FB
+				Balance:            "500000000000000000000",  // 500 FB
 				MinerLockedBalance: "1000000000000000000000", // 1000 FB 质押
 			},
 		},

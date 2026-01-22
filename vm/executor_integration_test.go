@@ -107,8 +107,8 @@ func TestWriteOpSyncStateDB(t *testing.T) {
 		Address: aliceAddr,
 		Balances: map[string]*pb.TokenBalance{
 			"FB": {
-				Balance:                "1000",
-				MinerLockedBalance:     "0",
+				Balance:            "1000",
+				MinerLockedBalance: "0",
 			},
 		},
 	}
@@ -200,8 +200,8 @@ func TestWriteOpNoSyncStateDB(t *testing.T) {
 		Address: issuerAddr,
 		Balances: map[string]*pb.TokenBalance{
 			"FB": {
-				Balance:                "10000",
-				MinerLockedBalance:     "0",
+				Balance:            "10000",
+				MinerLockedBalance: "0",
 			},
 		},
 	}
@@ -274,8 +274,8 @@ func TestIdempotency(t *testing.T) {
 		Address: aliceAddr,
 		Balances: map[string]*pb.TokenBalance{
 			"FB": {
-				Balance:                "1000",
-				MinerLockedBalance:     "0",
+				Balance:            "1000",
+				MinerLockedBalance: "0",
 			},
 		},
 	}
@@ -328,4 +328,3 @@ func TestIdempotency(t *testing.T) {
 
 	t.Logf("✅ Idempotency check working: second commit returned nil (already committed)")
 }
-

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"dex/frost/runtime/workers"
 	"dex/frost/runtime/session"
+	"dex/frost/runtime/workers"
 	"dex/pb"
 )
 

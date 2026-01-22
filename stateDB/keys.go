@@ -41,4 +41,3 @@ func kMetaH2Seq(h uint64) []byte {
 func kMetaSeq2H(seq uint64) []byte {
 	return []byte(fmt.Sprintf("meta:seq2h:%020d", seq))
 }
-

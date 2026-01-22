@@ -117,6 +117,7 @@ export interface TxSummary {
   fee?: string
   nonce?: number
   summary?: string
+  error?: string
 }
 
 // 交易详情
@@ -130,6 +131,7 @@ export interface TxInfo {
   executed_height?: number
   fee?: string
   nonce?: number
+  error?: string
   details?: Record<string, unknown>
 }
 

@@ -11,6 +11,7 @@ import (
 	"dex/txpool"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -46,18 +47,20 @@ func (a *TxPoolAdapter) AddTx(tx proto.Message) error {
 	// 将 proto.Message 转换为 pb.AnyTx
 	anyTx, ok := tx.(*pb.AnyTx)
 	if !ok {
-		// 如果不是 AnyTx，尝试包装
-		anyTx = &pb.AnyTx{}
-		// TODO: 根据实际类型设置 Content
+		return fmt.Errorf("AddTx: expected *pb.AnyTx, got %T", tx)
 	}
-	
+
 	// 使用 txpool 的 SubmitTx 方法
-	return a.txPool.SubmitTx(anyTx, "", func(txID string) {
+	err := a.txPool.SubmitTx(anyTx, "", func(txID string) {
 		// 广播回调
 		if a.sender != nil {
 			a.sender.BroadcastTx(anyTx)
 		}
 	})
+	if err != nil {
+		return fmt.Errorf("AddTx: SubmitTx failed: %w", err)
+	}
+	return nil
 }
 
 // Broadcast 广播交易

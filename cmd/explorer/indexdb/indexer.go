@@ -133,4 +133,3 @@ func (idb *IndexDB) GetAddressTxCount(address string) (int, error) {
 	}
 	return strconv.Atoi(val)
 }
-

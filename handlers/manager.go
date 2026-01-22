@@ -86,6 +86,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/getblock", hm.HandleGetBlock)
 	mux.HandleFunc("/getrecentblocks", hm.HandleGetRecentBlocks)
 	mux.HandleFunc("/getdata", hm.HandleGetData)
+	mux.HandleFunc("/gettxreceipt", hm.HandleGetTxReceipt)
 	mux.HandleFunc("/batchgetdata", hm.HandleBatchGetTx)
 	mux.HandleFunc("/getaccount", hm.HandleGetAccount)
 	mux.HandleFunc("/nodes", hm.HandleNodes)

@@ -145,4 +145,3 @@ func (r *seededRNG) Intn(n int) int {
 	val := binary.BigEndian.Uint32(bytes)
 	return int(val % uint32(n))
 }
-

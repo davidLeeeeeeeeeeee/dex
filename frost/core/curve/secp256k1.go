@@ -54,6 +54,18 @@ func (g *Secp256k1Group) ScalarMultBytes(P Point, k []byte) Point {
 	return Point{X: x, Y: y}
 }
 
+// SerializePoint 序列化点为压缩格式 (33 字节)
+func (g *Secp256k1Group) SerializePoint(P Point) []byte {
+	result := make([]byte, 33)
+	if P.Y.Bit(0) == 0 {
+		result[0] = 0x02
+	} else {
+		result[0] = 0x03
+	}
+	P.X.FillBytes(result[1:])
+	return result
+}
+
 // DecompressPoint 从压缩格式解析点
 // 压缩格式：1 字节前缀 (0x02/0x03) + 32 字节 X 坐标
 func (g *Secp256k1Group) DecompressPoint(data []byte) Point {

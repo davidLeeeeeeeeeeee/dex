@@ -32,11 +32,11 @@ func (s *DB) isStatefulKey(key string) bool {
 
 	// 定义需要同步到 StateDB 的数据前缀
 	statefulPrefixes := []string{
-		"v1_account_",          // 账户数据
-		"v1_freeze_",           // 冻结标记（但不包括 freeze_history）
-		"v1_order_",            // 订单数据（但不包括 pair: 索引）
-		"v1_token_",            // Token 数据（包括 v1_token_registry）
-		"v1_recharge_record_",  // 充值记录（但不包括 recharge_history）
+		"v1_account_",         // 账户数据
+		"v1_freeze_",          // 冻结标记（但不包括 freeze_history）
+		"v1_order_",           // 订单数据（但不包括 pair: 索引）
+		"v1_token_",           // Token 数据（包括 v1_token_registry）
+		"v1_recharge_record_", // 充值记录（但不包括 recharge_history）
 	}
 
 	for _, prefix := range statefulPrefixes {

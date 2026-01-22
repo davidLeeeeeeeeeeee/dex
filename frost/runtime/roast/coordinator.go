@@ -685,7 +685,7 @@ func (c *Coordinator) HandleRoastNonceCommit(env *Envelope) error {
 		return ErrParticipantNotFound
 	}
 
-	hiding, binding, err := splitNonceCommitPayload(env.Payload)
+	hiding, binding, err := splitNonceCommitPayload(env.Payload, env.SignAlgo)
 	if err != nil {
 		return err
 	}
@@ -768,8 +768,9 @@ func participantIndexFor(sess *roastsession.Session, nodeID NodeID) (int, bool) 
 	return -1, false
 }
 
-func splitNonceCommitPayload(payload []byte) ([][]byte, [][]byte, error) {
-	chunks, err := splitFixedPayload(payload, 64)
+func splitNonceCommitPayload(payload []byte, signAlgo pb.SignAlgo) ([][]byte, [][]byte, error) {
+	pointSize := getPointSize(signAlgo)
+	chunks, err := splitFixedPayload(payload, 2*pointSize)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -777,8 +778,8 @@ func splitNonceCommitPayload(payload []byte) ([][]byte, [][]byte, error) {
 	hiding := make([][]byte, len(chunks))
 	binding := make([][]byte, len(chunks))
 	for i, chunk := range chunks {
-		hiding[i] = chunk[:32]
-		binding[i] = chunk[32:]
+		hiding[i] = chunk[:pointSize]
+		binding[i] = chunk[pointSize:]
 	}
 	return hiding, binding, nil
 }

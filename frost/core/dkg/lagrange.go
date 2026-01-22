@@ -66,4 +66,3 @@ func ComputeLagrangeCoefficients(selectedIDs []*big.Int, N *big.Int) []*big.Int 
 	}
 	return coeffs
 }
-

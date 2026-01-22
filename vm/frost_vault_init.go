@@ -221,9 +221,11 @@ func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHei
 			threshold = 1
 		}
 
-		commitDeadline := triggerHeight + commitWindow
+		commitDeadline := triggerHeight + commitWindow - 1
 		sharingDeadline := commitDeadline + sharingWindow
 		disputeDeadline := sharingDeadline + disputeWindow
+
+		logs.Info("[InitVaultTransitions] logic: trigger(%d) + window(%d) - 1 = deadline(%d)", triggerHeight, commitWindow, commitDeadline)
 
 		transition := &pb.VaultTransitionState{
 			Chain:               chain,

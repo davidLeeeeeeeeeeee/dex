@@ -51,7 +51,12 @@ function handleAddressClick(address?: string) {
       </div>
       <div class="meta-row">
         <span class="label">Status</span>
-        <span :class="['value', statusClass(tx.status)]">{{ tx.status || '-' }}</span>
+        <div class="value-group">
+          <span :class="['value', statusClass(tx.status)]">{{ tx.status || '-' }}</span>
+          <div v-if="tx.error" class="error-msg mt-1">
+            {{ tx.error }}
+          </div>
+        </div>
       </div>
       <div class="meta-row">
         <span class="label">From Address</span>
@@ -105,5 +110,26 @@ function handleAddressClick(address?: string) {
 .address-link:hover {
   color: var(--accent-hover, #93c5fd);
   text-decoration-style: solid;
+}
+
+.error-msg {
+  color: #ef4444;
+  font-size: 0.8rem;
+  background: rgba(239, 68, 68, 0.1);
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.value-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.mt-1 {
+  margin-top: 0.25rem;
 }
 </style>

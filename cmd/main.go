@@ -517,7 +517,7 @@ ContinueWithConsensus:
 			// 创建 FROST Runtime Manager
 			frostCfg := frostrt.ManagerConfig{
 				NodeID:          frostrt.NodeID(node.Address),
-				ScanInterval:    5 * time.Second,
+				ScanInterval:    1 * time.Second,
 				SupportedChains: supportedChains,
 			}
 			var roastMessenger frostrt.RoastMessenger

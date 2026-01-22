@@ -4,6 +4,7 @@
 package vm
 
 import (
+	"dex/frost/core/frost"
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
@@ -63,11 +64,17 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
 	}
 
-	// 3. 检查 DKG 状态
+	// 3. 严格校验 Commit 窗口：只能在 [Trigger, CommitDeadline] 区间
+	if height < transition.TriggerHeight || height > transition.DkgCommitDeadline {
+		logs.Warn("[DKGCommit] height out of window: height=%d window=[%d, %d]", height, transition.TriggerHeight, transition.DkgCommitDeadline)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("commit window violation (height %d, window [%d, %d])", height, transition.TriggerHeight, transition.DkgCommitDeadline)}, nil
+	}
+
+	// 4. 检查 DKG 状态
 	if transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusNotStarted {
-		// 如果 DKG 已经处于后期状态（如 SHARING 或 KEY_READY），这笔承诺交易太晚了。
-		// 返回 nil error 以确保区块能顺利上链，只是该笔交易不生效（Receipt 为 FAILED）。
-		logs.Warn("[DKGCommit] late commit tx from %s: dkg_status=%s", sender, transition.DkgStatus)
+		// 既然有了严格的高度区间，逻辑状态检查可以更严格。
+		// 如果状态已经推进到 SHARING，说明已经过了 Commit 阶段（或者有人违规提前推状态，但高度检测是第一道防线）
+		logs.Warn("[DKGCommit] invalid dkg_status for commit: %s", transition.DkgStatus)
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, nil
 	}
 
@@ -195,12 +202,20 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
 	}
 
-	// 3. 检查 DKG 状态
+	// 3. 严格校验 Sharing 窗口：只能在 (CommitDeadline, SharingDeadline] 区间
+	if height <= transition.DkgCommitDeadline {
+		logs.Warn("[DKGShare] too early: height=%d <= deadline=%d", height, transition.DkgCommitDeadline)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("sharing window violation (too early: height %d <= commit_deadline %d)", height, transition.DkgCommitDeadline)}, nil
+	}
+	if height > transition.DkgSharingDeadline {
+		logs.Warn("[DKGShare] too late: height=%d > deadline=%d", height, transition.DkgSharingDeadline)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("sharing window violation (too late: height %d > sharing_deadline %d)", height, transition.DkgSharingDeadline)}, nil
+	}
+
+	// 4. 检查 DKG 状态
 	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusCommitting &&
-		transition.DkgStatus != DKGStatusResolving && transition.DkgStatus != DKGStatusNotStarted {
-		// 如果 DKG 已经完成（KEY_READY），这笔份额交易太晚了。
-		// 返回 nil error 以确保区块能顺利上链。
-		logs.Warn("[DKGShare] late share tx from %s: dkg_status=%s", sender, transition.DkgStatus)
+		transition.DkgStatus != DKGStatusNotStarted {
+		logs.Warn("[DKGShare] invalid dkg_status for share: %s", transition.DkgStatus)
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, nil
 	}
 
@@ -324,7 +339,13 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
 	}
 
-	// 3. 检查 DKG 状态
+	// 3. 严格校验 Dispute 窗口：只能在 (SharingDeadline, DisputeDeadline] 区间
+	if height <= transition.DkgSharingDeadline || height > transition.DkgDisputeDeadline {
+		logs.Warn("[DKGComplaint] height out of window: height=%d window=(%d, %d]", height, transition.DkgSharingDeadline, transition.DkgDisputeDeadline)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("dispute window violation (height %d, window (%d, %d])", height, transition.DkgSharingDeadline, transition.DkgDisputeDeadline)}, nil
+	}
+
+	// 4. 检查 DKG 状态
 	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusResolving {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, errors.New("invalid dkg_status")
 	}
@@ -442,9 +463,13 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse complaint"}, err
 	}
 
-	// 2. 检查投诉状态
+	// 2. 检查投诉状态和 Reveal 截止高度
 	if complaint.Status != ComplaintStatusPending {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("complaint status=%s", complaint.Status)}, errors.New("complaint not pending")
+	}
+	if req.Base.ExecutedHeight > complaint.RevealDeadline {
+		logs.Warn("[DKGReveal] reveal deadline exceeded for complaint: height=%d deadline=%d", req.Base.ExecutedHeight, complaint.RevealDeadline)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "reveal deadline exceeded"}, nil
 	}
 
 	// 3. 验证 reveal 数据
@@ -651,6 +676,7 @@ func checkDkgRestartRule(currentN, initialT uint32) bool {
 // - 清空 disqualified_set
 // - 重置 initial_n 和 initial_t
 // - dkg_status = COMMITTING
+// TODO: 重启时必须更新 DkgCommitDeadline，否则会立即过期。需配合当前区块高度计算。
 func handleDkgRestart(transition *pb.VaultTransitionState, newEpochID uint64, fullCommittee []string, thresholdRatio float64) {
 	transition.EpochId = newEpochID
 	transition.NewCommitteeMembers = fullCommittee // 重新加载完整委员会
@@ -707,24 +733,35 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
 	}
 
-	// 2. 检查状态（允许在 COMMITTING/SHARING/RESOLVING）
-	// 2. 检查状态
+	// 2. 检查高度和状态限制
+	height := req.Base.ExecutedHeight
+	if height <= transition.DkgSharingDeadline {
+		logs.Warn("[DKGValidation] sharing window not closed: height=%d deadline=%d", height, transition.DkgSharingDeadline)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("sharing window not closed (height %d <= deadline %d)", height, transition.DkgSharingDeadline)}, nil
+	}
+
 	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusResolving && transition.DkgStatus != DKGStatusCommitting {
 		// 如果已经是 KEY_READY，则是延迟到达的重复请求，幂等处理
 		if transition.DkgStatus == DKGStatusKeyReady {
 			return nil, &Receipt{TxID: txID, Status: "SUCCEED", WriteCount: 0}, nil
 		}
-		// 其他不合适的状态，返回 FAILED Receipt 但不返回 error
-		logs.Warn("[DKGValidation] late validation tx: dkg_status=%s", transition.DkgStatus)
+		// 其他不合适的状态
+		logs.Warn("[DKGValidation] invalid dkg_status: %s", transition.DkgStatus)
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, nil
 	}
 
-	// 3. 验证签名
+	// 3. 验证签名（使用新生成的群公钥校验）
 	if len(req.Signature) == 0 || len(req.NewGroupPubkey) == 0 {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "empty signature or pubkey"}, errors.New("empty signature or pubkey")
 	}
 
-	// TODO: 使用 group_pubkey 验证签名是否有效
+	// 重新计算哈希并验证签名，确保与 TransitionWorker 逻辑一致
+	expectedHash := computeDkgValidationMsgHash(chain, vaultID, epochID, transition.SignAlgo, req.NewGroupPubkey)
+	valid, err := frost.Verify(transition.SignAlgo, req.NewGroupPubkey, expectedHash, req.Signature)
+	if err != nil || !valid {
+		logs.Warn("[DKGValidation] signature verification failed: chain=%s vault=%d err=%v", chain, vaultID, err)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid dkg group signature"}, nil
+	}
 
 	// 4. 更新 transition 状态
 	transition.DkgStatus = DKGStatusKeyReady

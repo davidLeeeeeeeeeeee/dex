@@ -44,4 +44,3 @@ func KeyTxDetail(txID string) string {
 func KeyAddressCount(address string) string {
 	return fmt.Sprintf("addr_count_%s", address)
 }
-

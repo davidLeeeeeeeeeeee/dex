@@ -32,7 +32,7 @@ func (v *VRFProvider) GenerateVRF(privateKey *ecdsa.PrivateKey, height uint64, w
 
 	// 2. 使用BLS签名作为VRF
 	suite := bn256.NewSuite()
-	
+
 	// 将ECDSA私钥转换为BLS私钥
 	blsPrivateKey, err := GetBLSPrivateKey(privateKey)
 	if err != nil {
@@ -123,23 +123,23 @@ func (v *VRFProvider) VerifyVRFWithBLSPublicKey(blsPublicKey kyber.Point, height
 // 输入格式: Hash(height || window || parentBlockHash || nodeID)
 func (v *VRFProvider) constructVRFInput(height uint64, window int, parentBlockHash string, nodeID types.NodeID) []byte {
 	hasher := sha256.New()
-	
+
 	// 写入高度
 	heightBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(heightBytes, height)
 	hasher.Write(heightBytes)
-	
+
 	// 写入window
 	windowBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(windowBytes, uint32(window))
 	hasher.Write(windowBytes)
-	
+
 	// 写入父区块哈希
 	hasher.Write([]byte(parentBlockHash))
-	
+
 	// 写入节点ID
 	hasher.Write([]byte(nodeID))
-	
+
 	return hasher.Sum(nil)
 }
 
@@ -189,4 +189,3 @@ func GetBLSPublicKeyFromECDSAPublic(pub *ecdsa.PublicKey) (kyber.Point, error) {
 
 	return blsPublicKey, nil
 }
-

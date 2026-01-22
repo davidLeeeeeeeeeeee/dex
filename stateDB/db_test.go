@@ -1068,7 +1068,7 @@ func TestAutoEpochRotationFinal(t *testing.T) {
 			t.Logf("After height %d: curEpoch=%d", h, db.curEpoch)
 
 			// 检查前一个 Epoch 的 overlay
-			prevEpoch := ((h-1) / epochSize - 1) * epochSize
+			prevEpoch := ((h-1)/epochSize - 1) * epochSize
 			if prevEpoch < 0 {
 				prevEpoch = 0
 			}
@@ -1127,4 +1127,3 @@ func min(a, b int) int {
 	}
 	return b
 }
-

@@ -153,4 +153,3 @@ func TestParseBalance_Valid(t *testing.T) {
 		t.Errorf("expected %s, got %s", expected, balance)
 	}
 }
-

@@ -34,4 +34,3 @@ func (s *DB) IterateLatestSnapshot(fn func(key string, value []byte) error) erro
 
 	return nil
 }
-

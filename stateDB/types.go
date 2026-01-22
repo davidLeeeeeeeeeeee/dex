@@ -31,4 +31,3 @@ type ShardInfo struct {
 	Shard string // "0f" / "a" / "7c" ...
 	Count int64  // 该 shard 的键数量（快照或 overlay 维度）
 }
-

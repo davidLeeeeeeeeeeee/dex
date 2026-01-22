@@ -63,7 +63,25 @@ message BaseMessage {
   string fee = 6;
   Status status = 7;
   uint64 nonce = 8;
+  string status_text = 9; // 额外状态描述（通常是失败原因）
 }
+
+message Receipt {
+  string tx_id = 1;
+  string status = 2; // "SUCCEED" | "FAILED"
+  string error = 3;
+  uint64 block_height = 4;
+  int64 timestamp = 5;
+  uint64 gas_used = 6;
+  string fee = 7;
+  repeated string logs = 8;
+}
+
+message GetReceiptResponse {
+  Receipt receipt = 1;
+  string error = 2;
+}
+
 
 // --------------------- 账户 & 区块信息 ---------------------
 message Account {

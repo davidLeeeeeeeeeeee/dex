@@ -93,4 +93,3 @@ func (sm *SenderManager) BroadcastFrost(targetIPs []string, envelope *pb.FrostEn
 		}
 	}
 }
-

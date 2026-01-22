@@ -293,12 +293,11 @@ func TestVRFProbabilityCalculation(t *testing.T) {
 
 	// 测试不同的概率阈值
 	thresholds := []float64{0.05, 0.15, 0.30, 0.50, 1.0}
-	
+
 	t.Logf("VRF Output: %x", vrfOutput)
-	
+
 	for _, threshold := range thresholds {
 		shouldPropose := CalculateBlockProbability(vrfOutput, threshold)
 		t.Logf("Threshold %.2f: Should propose = %v", threshold, shouldPropose)
 	}
 }
-

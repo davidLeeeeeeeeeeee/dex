@@ -14,7 +14,7 @@ import (
 
 // TestSignerService_GenerateNonce 测试 nonce 生成
 func TestSignerService_GenerateNonce(t *testing.T) {
-		signer := NewSignerService(NodeID("node1"), nil, nil)
+	signer := NewSignerService(NodeID("node1"), nil, nil)
 
 	nonce, err := signer.GenerateNonce()
 	if err != nil {

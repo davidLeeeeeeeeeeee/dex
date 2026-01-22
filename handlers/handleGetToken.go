@@ -67,4 +67,3 @@ func (hm *HandlerManager) HandleGetTokenRegistry(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusOK)
 	w.Write(respData)
 }
-

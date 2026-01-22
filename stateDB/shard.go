@@ -13,4 +13,3 @@ func shardOf(addr string, width int) string {
 	hexed := hex.EncodeToString(sum[:])
 	return hexed[:width]
 }
-

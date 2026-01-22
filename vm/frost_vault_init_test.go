@@ -19,11 +19,11 @@ func TestInitVaultStates(t *testing.T) {
 
 	// 1. 创建 VaultConfig
 	vaultCfg := &pb.FrostVaultConfig{
-		Chain:        chain,
-		VaultCount:   3,
-		CommitteeSize: 5,
+		Chain:          chain,
+		VaultCount:     3,
+		CommitteeSize:  5,
 		ThresholdRatio: 0.67,
-		SignAlgo:     pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
+		SignAlgo:       pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
 	}
 	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
 	vaultCfgData, _ := proto.Marshal(vaultCfg)
@@ -110,11 +110,11 @@ func TestInitVaultStatesMissingTop10000(t *testing.T) {
 
 	// 创建 VaultConfig，但不创建 Top10000
 	vaultCfg := &pb.FrostVaultConfig{
-		Chain:        chain,
-		VaultCount:   3,
-		CommitteeSize: 5,
+		Chain:          chain,
+		VaultCount:     3,
+		CommitteeSize:  5,
 		ThresholdRatio: 0.67,
-		SignAlgo:     pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
+		SignAlgo:       pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
 	}
 	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
 	vaultCfgData, _ := proto.Marshal(vaultCfg)

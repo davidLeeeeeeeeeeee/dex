@@ -159,4 +159,3 @@ func TestSortByBitIndex(t *testing.T) {
 		}
 	}
 }
-

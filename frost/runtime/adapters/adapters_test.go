@@ -133,4 +133,3 @@ func (f *fakeDBGetter) Scan(prefix string) (map[string][]byte, error) {
 	}
 	return result, nil
 }
-

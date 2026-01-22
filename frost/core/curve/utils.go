@@ -81,4 +81,3 @@ func BigIntToFieldVal(x *big.Int) *btcec.FieldVal {
 	fv.SetBytes(&be32) // constant‑time pack
 	return &fv
 }
-

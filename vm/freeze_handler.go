@@ -105,7 +105,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 	// 5. 执行冻结/解冻逻辑
 	// 这里使用一个特殊的key来标记账户的某个token是否被冻结
 	freezeKey := keys.KeyFreeze(freeze.TargetAddr, freeze.TokenAddr)
-	
+
 	ws := make([]WriteOp, 0)
 
 	if freeze.Freeze {
@@ -158,4 +158,3 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 func (h *FreezeTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
-

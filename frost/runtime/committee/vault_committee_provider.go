@@ -15,15 +15,15 @@ import (
 // DefaultVaultCommitteeProvider 默认的 VaultCommitteeProvider 实现
 // 从 ChainStateReader 读取链上数据
 type DefaultVaultCommitteeProvider struct {
-	stateReader  runtime.ChainStateReader
-	cfg          VaultCommitteeProviderConfig
-	assigner     *VaultCommitteeAssigner
+	stateReader runtime.ChainStateReader
+	cfg         VaultCommitteeProviderConfig
+	assigner    *VaultCommitteeAssigner
 }
 
 // VaultCommitteeProviderConfig 配置
 type VaultCommitteeProviderConfig struct {
-	DefaultVaultCount     int // 默认 Vault 数量
-	DefaultCommitteeSize  int // 默认委员会规模
+	DefaultVaultCount     int     // 默认 Vault 数量
+	DefaultCommitteeSize  int     // 默认委员会规模
 	DefaultThresholdRatio float64 // 默认门限比例
 }
 
@@ -212,4 +212,3 @@ func (p *DefaultVaultCommitteeProvider) CalculateThreshold(chain string, vaultID
 
 // Ensure DefaultVaultCommitteeProvider implements VaultCommitteeProvider
 var _ runtime.VaultCommitteeProvider = (*DefaultVaultCommitteeProvider)(nil)
-

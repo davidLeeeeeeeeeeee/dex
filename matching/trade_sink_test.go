@@ -82,4 +82,3 @@ func TestOrderBook_WithSink_EmitsTradeUpdates(t *testing.T) {
 		assert.True(t, ev2.RemainAmt.Equal(decimal.Zero))
 	}
 }
-

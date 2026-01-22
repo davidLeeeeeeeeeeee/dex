@@ -311,3 +311,35 @@ func (mgr *Manager) GetAnyTxById(txID string) (*pb.AnyTx, error) {
 	}
 	return anyTx, nil
 }
+
+// GetTxReceipt 获取交易回执
+func (mgr *Manager) GetTxReceipt(txID string) (*pb.Receipt, error) {
+	// 1. 获取状态
+	statusKey := KeyVMAppliedTx(txID)
+	status, err := mgr.Read(statusKey)
+	if err != nil || status == "" {
+		return nil, fmt.Errorf("transaction not applied or not found")
+	}
+
+	// 2. 获取错误（可能有也可能没有）
+	errorKey := KeyVMTxError(txID)
+	errMsg, _ := mgr.Read(errorKey)
+
+	// 3. 获取高度
+	heightKey := KeyVMTxHeight(txID)
+	heightStr, _ := mgr.Read(heightKey)
+	var height uint64
+	if heightStr != "" {
+		fmt.Sscanf(heightStr, "%d", &height)
+	}
+
+	// 4. 重组为 pb.Receipt
+	receipt := &pb.Receipt{
+		TxId:        txID,
+		Status:      status,
+		Error:       errMsg,
+		BlockHeight: height,
+	}
+
+	return receipt, nil
+}

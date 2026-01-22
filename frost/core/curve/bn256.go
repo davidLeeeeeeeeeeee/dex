@@ -9,6 +9,10 @@ import (
 // BN256Group 将 alt_bn128 曲线封装为 Group 接口
 type BN256Group struct{}
 
+func NewBN256Group() *BN256Group {
+	return &BN256Group{}
+}
+
 func (g *BN256Group) Order() *big.Int {
 	return new(big.Int).Set(bn256.Order)
 }
@@ -78,3 +82,19 @@ func (g *BN256Group) ScalarMultBytes(P Point, k []byte) Point {
 	return g.ScalarMult(P, kInt)
 }
 
+// SerializePoint 序列化点为 64 字节 (X||Y)
+func (g *BN256Group) SerializePoint(pt Point) []byte {
+	return append(pad32(pt.X), pad32(pt.Y)...)
+}
+
+// DecompressPoint 从序列化数据解析点
+func (g *BN256Group) DecompressPoint(data []byte) Point {
+	if len(data) != 64 {
+		return Point{}
+	}
+	P := &bn256.G1{}
+	if _, err := P.Unmarshal(data); err != nil {
+		return Point{}
+	}
+	return unmarshalG1(P)
+}

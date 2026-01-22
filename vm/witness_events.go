@@ -2,10 +2,10 @@
 package vm
 
 import (
-	"fmt"
 	"dex/keys"
 	"dex/pb"
 	"dex/witness"
+	"fmt"
 	"strconv"
 
 	"google.golang.org/protobuf/proto"

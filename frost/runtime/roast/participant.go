@@ -299,12 +299,8 @@ func (p *Participant) generateNonces(sess *ParticipantSession, numTasks int) err
 		sess.BindingNonces[i] = bindingBytes
 
 		// 序列化承诺点
-		hidingPointBytes := make([]byte, 32)
-		bindingPointBytes := make([]byte, 32)
-		hidingPt.X.FillBytes(hidingPointBytes)
-		bindingPt.X.FillBytes(bindingPointBytes)
-		sess.HidingPoints[i] = hidingPointBytes
-		sess.BindingPoints[i] = bindingPointBytes
+		sess.HidingPoints[i] = roastExec.SerializePoint(hidingPt)
+		sess.BindingPoints[i] = roastExec.SerializePoint(bindingPt)
 
 		// 绑定 nonce 到会话
 		msg := []byte(sess.JobID)
@@ -415,7 +411,7 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 	myShare := new(big.Int).SetBytes(sess.MyShare)
 
 	// 解析聚合的 nonces 获取所有参与者的 nonce 承诺
-	allNonces := parseAggregatedNonces(sess.AggregatedNonces, numTasks)
+	allNonces := parseAggregatedNonces(sess.AggregatedNonces, numTasks, sess.SignAlgo)
 
 	for i := 0; i < numTasks; i++ {
 		// 获取待签名消息
@@ -514,7 +510,7 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 }
 
 // parseAggregatedNonces 解析聚合的 nonces
-func parseAggregatedNonces(data []byte, numTasks int) [][]NonceInput {
+func parseAggregatedNonces(data []byte, numTasks int, signAlgo pb.SignAlgo) [][]NonceInput {
 	result := make([][]NonceInput, numTasks)
 	for i := range result {
 		result[i] = []NonceInput{}
@@ -524,9 +520,10 @@ func parseAggregatedNonces(data []byte, numTasks int) [][]NonceInput {
 		return result
 	}
 
-	// 简化实现：假设 data 格式为 [task0_nonces...][task1_nonces...]
-	// 每个 nonce 为 64 字节（hiding 32 + binding 32）
-	nonceSize := 64
+	// 动态计算 nonce 大小 (hiding point + binding point)
+	pointSize := getPointSize(signAlgo)
+	nonceSize := 2 * pointSize
+
 	noncesPerTask := len(data) / (nonceSize * numTasks)
 	if noncesPerTask == 0 {
 		noncesPerTask = 1
@@ -535,8 +532,8 @@ func parseAggregatedNonces(data []byte, numTasks int) [][]NonceInput {
 	offset := 0
 	for taskIdx := 0; taskIdx < numTasks && offset < len(data); taskIdx++ {
 		for j := 0; j < noncesPerTask && offset+nonceSize <= len(data); j++ {
-			hiding := data[offset : offset+32]
-			binding := data[offset+32 : offset+64]
+			hiding := data[offset : offset+pointSize]
+			binding := data[offset+pointSize : offset+nonceSize]
 			offset += nonceSize
 
 			result[taskIdx] = append(result[taskIdx], NonceInput{

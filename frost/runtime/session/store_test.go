@@ -154,4 +154,3 @@ func TestMemoryNonceStore(t *testing.T) {
 		t.Error("Deleted nonce should not exist")
 	}
 }
-

@@ -215,8 +215,8 @@ func TestBasicExecution(t *testing.T) {
 		Address: "alice",
 		Balances: map[string]*pb.TokenBalance{
 			"token123": {
-				Balance:                "1000",
-				MinerLockedBalance:     "0",
+				Balance:            "1000",
+				MinerLockedBalance: "0",
 			},
 		},
 	}
@@ -227,8 +227,8 @@ func TestBasicExecution(t *testing.T) {
 		Address: "bob",
 		Balances: map[string]*pb.TokenBalance{
 			"token123": {
-				Balance:                "500",
-				MinerLockedBalance:     "0",
+				Balance:            "500",
+				MinerLockedBalance: "0",
 			},
 		},
 	}
@@ -318,8 +318,8 @@ func TestCacheEffectiveness(t *testing.T) {
 		Address: "alice",
 		Balances: map[string]*pb.TokenBalance{
 			"token123": {
-				Balance:                "1000",
-				MinerLockedBalance:     "0",
+				Balance:            "1000",
+				MinerLockedBalance: "0",
 			},
 		},
 	}
@@ -330,8 +330,8 @@ func TestCacheEffectiveness(t *testing.T) {
 		Address: "bob",
 		Balances: map[string]*pb.TokenBalance{
 			"token123": {
-				Balance:                "0",
-				MinerLockedBalance:     "0",
+				Balance:            "0",
+				MinerLockedBalance: "0",
 			},
 		},
 	}
@@ -441,8 +441,8 @@ func TestConcurrentExecution(t *testing.T) {
 			Address: userAddr,
 			Balances: map[string]*pb.TokenBalance{
 				"token123": {
-					Balance:                "1000",
-					MinerLockedBalance:     "0",
+					Balance:            "1000",
+					MinerLockedBalance: "0",
 				},
 			},
 		}
@@ -611,8 +611,8 @@ func BenchmarkPreExecute(b *testing.B) {
 			Address: userAddr,
 			Balances: map[string]*pb.TokenBalance{
 				"token123": {
-					Balance:                "10000",
-					MinerLockedBalance:     "0",
+					Balance:            "10000",
+					MinerLockedBalance: "0",
 				},
 			},
 		}

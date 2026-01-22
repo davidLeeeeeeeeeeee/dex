@@ -87,11 +87,11 @@ func (p *TransportP2P) SamplePeers(n int, role string) []runtime.NodeID {
 func (p *TransportP2P) toTransportMessage(env *runtime.FrostEnvelope) (types.Message, error) {
 	// 构建 pb.FrostEnvelope
 	pbEnv := &pb.FrostEnvelope{
-		From: string(env.From),
-		Kind: p.toPBEnvelopeKind(env.Kind),
+		From:    string(env.From),
+		Kind:    p.toPBEnvelopeKind(env.Kind),
 		Payload: env.Payload,
-		Sig: env.Sig,
-		JobId: env.SessionID,
+		Sig:     env.Sig,
+		JobId:   env.SessionID,
 	}
 
 	// 序列化
@@ -102,8 +102,8 @@ func (p *TransportP2P) toTransportMessage(env *runtime.FrostEnvelope) (types.Mes
 
 	// 创建 types.Message
 	msg := types.Message{
-		Type:        types.MsgFrost,
-		From:        types.NodeID(env.From),
+		Type:         types.MsgFrost,
+		From:         types.NodeID(env.From),
 		FrostPayload: data,
 	}
 	return msg, nil

@@ -60,6 +60,39 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 	w.Write(respData)
 }
 
+// HandleGetTxReceipt 处理获取交易回执的请求
+func (hm *HandlerManager) HandleGetTxReceipt(w http.ResponseWriter, r *http.Request) {
+	hm.Stats.RecordAPICall("HandleGetTxReceipt")
+	if !hm.checkAuth(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read getdata request body", http.StatusBadRequest)
+		return
+	}
+
+	var getDataMsg pb.GetData
+	if err := proto.Unmarshal(bodyBytes, &getDataMsg); err != nil {
+		http.Error(w, "Invalid GetData proto", http.StatusBadRequest)
+		return
+	}
+
+	// 从数据库获取对应的 Receipt
+	receipt, err := hm.dbManager.GetTxReceipt(getDataMsg.TxId)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Receipt for %s not found: %v", getDataMsg.TxId, err), http.StatusNotFound)
+		return
+	}
+
+	respData, _ := proto.Marshal(receipt)
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.WriteHeader(http.StatusOK)
+	w.Write(respData)
+}
+
 func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("HandleGet")
 	if !hm.checkAuth(r) {

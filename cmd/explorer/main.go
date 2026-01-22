@@ -135,6 +135,7 @@ type txSummary struct {
 	Fee         string `json:"fee,omitempty"`
 	Nonce       uint64 `json:"nonce,omitempty"`
 	Summary     string `json:"summary,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 type txRequest struct {
@@ -154,6 +155,7 @@ type txInfo struct {
 	ToAddress      string                 `json:"to_address,omitempty"`
 	Value          string                 `json:"value,omitempty"`
 	Status         string                 `json:"status,omitempty"`
+	Error          string                 `json:"error,omitempty"`
 	ExecutedHeight uint64                 `json:"executed_height,omitempty"`
 	Fee            string                 `json:"fee,omitempty"`
 	Nonce          uint64                 `json:"nonce,omitempty"`
@@ -557,6 +559,14 @@ func (s *server) handleTx(w http.ResponseWriter, r *http.Request) {
 
 	info := convertAnyTxToInfo(anyTx)
 
+	// 如果交易失败，尝试获取 Receipt 错误信息
+	if info.Status == "FAILED" || info.Status == "1" {
+		receipt, err := s.fetchReceipt(ctx, req.Node, req.TxID)
+		if err == nil && receipt != nil && receipt.Error != "" {
+			info.Error = receipt.Error
+		}
+	}
+
 	// 如果是 OrderTx，获取 token symbol 信息
 	if orderTx := anyTx.GetOrderTx(); orderTx != nil {
 		s.enrichTokenInfo(ctx, req.Node, info, orderTx.BaseToken, orderTx.QuoteToken)
@@ -647,6 +657,17 @@ func (s *server) fetchTxByID(ctx context.Context, node string, txID string) (*pb
 	}
 
 	log.Printf("[DEBUG-TX] Response: %+v", &resp)
+	return &resp, nil
+}
+
+func (s *server) fetchReceipt(ctx context.Context, node string, txID string) (*pb.Receipt, error) {
+	var resp pb.Receipt
+	req := &pb.GetData{TxId: txID}
+
+	if err := s.fetchProto(ctx, node, "/gettxreceipt", req, &resp); err != nil {
+		return nil, err
+	}
+
 	return &resp, nil
 }
 
@@ -754,6 +775,10 @@ func convertAnyTxToSummary(tx *pb.AnyTx) txSummary {
 		summary.Status = base.Status.String()
 		summary.Fee = base.Fee
 		summary.Nonce = base.Nonce
+		// 从基座消息中获取错误信息
+		// 注意：如果 base.Status == FAILED, 这里应该包含 VM 设置的错误
+		// 如果 base 没存，可能需要通过 indexDB 从 receipt 里查，但这里先尝试直接取
+		// 实际上，VM executor 在 applyResult 时会把错误写到 base 里的 status 备注或者独立 key
 	}
 	// 提取 to_address 和 value
 	toAddr, value := extractToAndValue(tx)
@@ -912,6 +937,75 @@ func fillTxDetails(tx *pb.AnyTx, info *txInfo) {
 		if o.OpTargetId != "" {
 			info.Details["op_target_id"] = o.OpTargetId
 		}
+	case *pb.AnyTx_FrostWithdrawRequestTx:
+		r := c.FrostWithdrawRequestTx
+		info.Details["chain"] = r.Chain
+		info.Details["asset"] = r.Asset
+		info.Details["to"] = r.To
+		info.Details["amount"] = r.Amount
+	case *pb.AnyTx_FrostWithdrawSignedTx:
+		s := c.FrostWithdrawSignedTx
+		info.Details["job_id"] = s.JobId
+		info.Details["chain"] = s.Chain
+		info.Details["vault_id"] = s.VaultId
+		info.Details["key_epoch"] = s.KeyEpoch
+		info.Details["withdraw_ids"] = s.WithdrawIds
+		if len(s.SignedPackageBytes) > 0 {
+			info.Details["raw_tx"] = fmt.Sprintf("%x", s.SignedPackageBytes)
+		}
+	case *pb.AnyTx_FrostVaultDkgCommitTx:
+		t := c.FrostVaultDkgCommitTx
+		info.Details["chain"] = t.Chain
+		info.Details["vault_id"] = t.VaultId
+		info.Details["epoch_id"] = t.EpochId
+		info.Details["sign_algo"] = t.SignAlgo.String()
+		info.Details["a_i0"] = fmt.Sprintf("%x", t.AI0)
+		points := make([]string, len(t.CommitmentPoints))
+		for i, p := range t.CommitmentPoints {
+			points[i] = fmt.Sprintf("%x", p)
+		}
+		info.Details["commitment_points"] = points
+	case *pb.AnyTx_FrostVaultDkgShareTx:
+		t := c.FrostVaultDkgShareTx
+		info.Details["chain"] = t.Chain
+		info.Details["vault_id"] = t.VaultId
+		info.Details["epoch_id"] = t.EpochId
+		info.Details["dealer_id"] = t.DealerId
+		info.Details["receiver_id"] = t.ReceiverId
+		info.Details["ciphertext"] = fmt.Sprintf("%x", t.Ciphertext)
+	case *pb.AnyTx_FrostVaultDkgComplaintTx:
+		t := c.FrostVaultDkgComplaintTx
+		info.Details["chain"] = t.Chain
+		info.Details["vault_id"] = t.VaultId
+		info.Details["epoch_id"] = t.EpochId
+		info.Details["dealer_id"] = t.DealerId
+		info.Details["receiver_id"] = t.ReceiverId
+		info.Details["bond"] = t.Bond
+	case *pb.AnyTx_FrostVaultDkgRevealTx:
+		t := c.FrostVaultDkgRevealTx
+		info.Details["chain"] = t.Chain
+		info.Details["vault_id"] = t.VaultId
+		info.Details["epoch_id"] = t.EpochId
+		info.Details["dealer_id"] = t.DealerId
+		info.Details["receiver_id"] = t.ReceiverId
+		info.Details["share"] = fmt.Sprintf("%x", t.Share)
+		info.Details["enc_rand"] = fmt.Sprintf("%x", t.EncRand)
+	case *pb.AnyTx_FrostVaultDkgValidationSignedTx:
+		t := c.FrostVaultDkgValidationSignedTx
+		info.Details["chain"] = t.Chain
+		info.Details["vault_id"] = t.VaultId
+		info.Details["epoch_id"] = t.EpochId
+		info.Details["new_group_pubkey"] = fmt.Sprintf("%x", t.NewGroupPubkey)
+		info.Details["signature"] = fmt.Sprintf("%x", t.Signature)
+		info.Details["msg_hash"] = fmt.Sprintf("%x", t.MsgHash)
+	case *pb.AnyTx_FrostVaultTransitionSignedTx:
+		t := c.FrostVaultTransitionSignedTx
+		info.Details["chain"] = t.Chain
+		info.Details["old_vault_id"] = t.OldVaultId
+		info.Details["new_vault_id"] = t.NewVaultId
+		info.Details["epoch_id"] = t.EpochId
+		info.Details["signature"] = fmt.Sprintf("%x", t.Signature)
+		info.Details["msg_hash"] = fmt.Sprintf("%x", t.MsgHash)
 	}
 }
 

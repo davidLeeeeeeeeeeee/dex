@@ -115,4 +115,3 @@ func TestRouter_DefaultHandlers(t *testing.T) {
 		}
 	}
 }
-

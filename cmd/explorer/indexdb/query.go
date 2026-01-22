@@ -72,4 +72,3 @@ func (idb *IndexDB) GetBlockTxs(height uint64) ([]*TxRecord, error) {
 	}
 	return results, nil
 }
-
