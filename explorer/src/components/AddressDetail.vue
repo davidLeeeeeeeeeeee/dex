@@ -12,7 +12,6 @@ const emit = defineEmits<{
   txClick: [txId: string]
 }>()
 
-// 交易历史
 const txHistory = ref<TxRecord[]>([])
 const txTotalCount = ref(0)
 const txLoading = ref(false)
@@ -33,24 +32,13 @@ async function loadTxHistory() {
   }
 }
 
-onMounted(() => {
-  loadTxHistory()
-})
-
-watch(() => props.account.address, () => {
-  loadTxHistory()
-})
+onMounted(() => { loadTxHistory() })
+watch(() => props.account.address, () => { loadTxHistory() })
 
 function formatBalance(val?: string): string {
   if (!val) return '0'
-  // 简单格式化大数字
   const num = BigInt(val)
   return num.toLocaleString()
-}
-
-function getBalanceEntries(balances?: Record<string, any>): [string, any][] {
-  if (!balances) return []
-  return Object.entries(balances)
 }
 
 function truncateHash(hash?: string, len: number = 8): string {
@@ -59,317 +47,238 @@ function truncateHash(hash?: string, len: number = 8): string {
   return hash.slice(0, len) + '...' + hash.slice(-len)
 }
 
-function statusClass(status?: string): string {
-  if (!status) return ''
-  const s = status.toUpperCase()
-  if (s === 'SUCCEED' || s === 'SUCCESS') return 'status-good'
-  if (s === 'FAILED' || s === 'FAIL') return 'status-bad'
-  return 'status-warn'
-}
-
-function handleTxClick(txId: string) {
-  emit('txClick', txId)
+function statusInfo(status?: string) {
+  const s = (status || '').toUpperCase()
+  if (s === 'SUCCEED' || s === 'SUCCESS') return { class: 'sc-good', label: 'Success' }
+  if (s === 'FAILED' || s === 'FAIL') return { class: 'sc-bad', label: 'Failed' }
+  return { class: 'sc-warn', label: 'Processing' }
 }
 </script>
 
 <template>
-  <section class="panel address-detail">
-    <div class="panel-header">
-      <h2>Address Details</h2>
-      <button class="ghost" @click="emit('back')">← Back</button>
-    </div>
-
-    <div class="address-meta">
-      <div class="meta-row">
-        <span class="label">Address</span>
-        <span class="value mono">{{ account.address || '-' }}</span>
-      </div>
-      <div class="meta-row">
-        <span class="label">Nonce</span>
-        <span class="value">{{ account.nonce ?? 0 }}</span>
-      </div>
-      <div class="meta-row">
-        <span class="label">Is Miner</span>
-        <span class="value">{{ account.is_miner ? 'Yes' : 'No' }}</span>
-      </div>
-      <div v-if="account.index" class="meta-row">
-        <span class="label">Miner Index</span>
-        <span class="value">{{ account.index }}</span>
-      </div>
-      <div v-if="account.unclaimed_reward" class="meta-row">
-        <span class="label">Unclaimed Reward</span>
-        <span class="value">{{ formatBalance(account.unclaimed_reward) }}</span>
+  <div class="account-view animate-fade-in">
+    <!-- Action Header -->
+    <div class="action-header">
+      <button class="back-btn" @click="emit('back')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        Return to Explorer
+      </button>
+      <div class="header-main">
+        <div class="account-orb">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <div class="text-group">
+          <h1>Identity Insight</h1>
+          <p class="mono text-indigo-400">{{ account.address }}</p>
+        </div>
       </div>
     </div>
 
-    <div v-if="getBalanceEntries(account.balances).length > 0" class="balances-section">
-      <h3>Token Balances</h3>
-      <table class="balance-table">
-        <thead>
-          <tr>
-            <th>Token</th>
-            <th>Available</th>
-            <th>Miner Locked</th>
-            <th>Witness Locked</th>
-            <th>Liquid Locked</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="[token, bal] in getBalanceEntries(account.balances)" :key="token">
-            <td class="mono token-cell">{{ token }}</td>
-            <td class="amount">{{ formatBalance(bal.balance) }}</td>
-            <td class="amount muted">{{ formatBalance(bal.miner_locked_balance) }}</td>
-            <td class="amount muted">{{ formatBalance(bal.witness_locked_balance) }}</td>
-            <td class="amount muted">{{ formatBalance(bal.liquid_locked_balance) }}</td>
-          </tr>
-        </tbody>
-      </table>
+    <div class="account-grid">
+      <!-- Summary Card -->
+      <section class="panel summary-panel">
+        <div class="section-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+          Account Profile
+        </div>
+        <div class="profile-rows">
+          <div class="p-row">
+             <span class="p-label">Nonce Counter</span>
+             <span class="p-val">{{ account.nonce ?? 0 }}</span>
+          </div>
+          <div class="p-row">
+             <span class="p-label">Node Authority</span>
+             <span :class="['p-val', account.is_miner ? 'text-emerald-400' : 'text-gray-500']">
+               {{ account.is_miner ? 'Validator Node' : 'Standard User' }}
+             </span>
+          </div>
+          <div v-if="account.index" class="p-row">
+             <span class="p-label">Validator Index</span>
+             <span class="p-val mono"># {{ account.index }}</span>
+          </div>
+          <div v-if="account.unclaimed_reward" class="p-row">
+             <span class="p-label">Unclaimed Rewards</span>
+             <span class="p-val text-amber-500 font-bold">{{ formatBalance(account.unclaimed_reward) }}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Token Balances -->
+      <section class="panel balance-panel">
+        <div class="section-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          Portfolio Assets
+        </div>
+        <div class="balance-grid">
+          <div v-for="(bal, token) in account.balances" :key="token" class="balance-card">
+            <div class="b-header">
+               <span class="token-name">{{ token }}</span>
+               <div class="b-dot" :style="{ background: token === 'FB' ? '#6366f1' : '#f59e0b' }"></div>
+            </div>
+            <div class="b-amount">{{ formatBalance(bal.balance) }}</div>
+            <div class="b-locked-grid">
+               <div class="l-item"><span>Validator</span><b>{{ formatBalance(bal.miner_locked_balance) }}</b></div>
+               <div class="l-item"><span>Witness</span><b>{{ formatBalance(bal.witness_locked_balance) }}</b></div>
+               <div class="l-item"><span>Liquid</span><b>{{ formatBalance(bal.liquid_locked_balance) }}</b></div>
+            </div>
+          </div>
+          <div v-if="!account.balances || Object.keys(account.balances).length === 0" class="empty-state-mini">
+             No registered balances for this identity.
+          </div>
+        </div>
+      </section>
     </div>
 
-    <div v-else class="empty-balances">
-      <p>No token balances found for this address.</p>
-    </div>
-
-    <!-- Transaction History Section -->
-    <div class="tx-history-section">
-      <div class="section-header">
-        <h3>Transaction History</h3>
-        <span v-if="txTotalCount > 0" class="tx-count">{{ txTotalCount }} transactions</span>
-        <button class="ghost refresh-btn" @click="loadTxHistory" :disabled="txLoading">
-          {{ txLoading ? '⟳ Loading...' : '↻ Refresh' }}
+    <!-- Transaction Stream -->
+    <section class="panel history-panel">
+      <div class="panel-header-sub">
+        <div class="title-meta">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+          <h3>Interaction History</h3>
+          <span class="count-tag">{{ txTotalCount }} Events</span>
+        </div>
+        <button class="sync-btn" @click="loadTxHistory" :disabled="txLoading">
+          <svg :class="{ 'spin': txLoading }" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
         </button>
       </div>
 
-      <div v-if="txError" class="error-message">{{ txError }}</div>
-
-      <div v-if="txLoading && txHistory.length === 0" class="loading-state">
-        Loading transaction history...
-      </div>
-
-      <div v-else-if="txHistory.length > 0" class="tx-list">
-        <table class="tx-table">
+      <div class="table-wrap">
+        <table class="premium-table">
           <thead>
             <tr>
-              <th>Tx ID</th>
-              <th>Type</th>
-              <th>From</th>
-              <th>To</th>
-              <th>Value</th>
-              <th>Height</th>
-              <th>Status</th>
+              <th class="pl-6 w-32">Tx Hash</th>
+              <th>Protocol Type</th>
+              <th>Counterparty</th>
+              <th class="text-right">Transfer Value</th>
+              <th class="text-right pr-6">Status</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="tx in txHistory" :key="tx.tx_id" class="tx-row" @click="handleTxClick(tx.tx_id)">
-              <td class="mono tx-id-cell">{{ truncateHash(tx.tx_id, 8) }}</td>
-              <td>{{ tx.tx_type || '-' }}</td>
-              <td class="mono">
-                <span v-if="tx.from_address === account.address" class="self-tag">Self</span>
-                <span v-else>{{ truncateHash(tx.from_address, 6) }}</span>
+            <tr v-for="tx in txHistory" :key="tx.tx_id" @click="emit('txClick', tx.tx_id)" class="table-row">
+              <td class="pl-6">
+                <code class="mono text-indigo-400">{{ truncateHash(tx.tx_id, 6) }}</code>
               </td>
-              <td class="mono">
-                <span v-if="tx.to_address === account.address" class="self-tag">Self</span>
-                <span v-else-if="tx.to_address">{{ truncateHash(tx.to_address, 6) }}</span>
-                <span v-else>-</span>
+              <td><span class="type-pill">{{ tx.tx_type }}</span></td>
+              <td>
+                <div class="counterparty">
+                  <div class="dir-icon" :class="tx.from_address === account.address ? 'out' : 'in'">
+                    <svg v-if="tx.from_address === account.address" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                    <svg v-else xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+                  </div>
+                  <code class="mono text-gray-500">
+                    {{ tx.from_address === account.address ? truncateHash(tx.to_address, 6) : truncateHash(tx.from_address, 6) }}
+                  </code>
+                </div>
               </td>
-              <td class="mono amount">{{ tx.value || '-' }}</td>
-              <td class="mono">{{ tx.height }}</td>
-              <td :class="statusClass(tx.status)">{{ tx.status || '-' }}</td>
+              <td class="text-right">
+                <span class="mono font-bold">{{ tx.value || '0' }}</span>
+              </td>
+              <td class="text-right pr-6">
+                <div :class="['status-chip', statusInfo(tx.status).class]">
+                  {{ statusInfo(tx.status).label }}
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
+        <div v-if="txHistory.length === 0 && !txLoading" class="empty-state-mini py-20">
+           No interaction data detected for this identity.
+        </div>
       </div>
-
-      <div v-else class="empty-tx-history">
-        <p>No transaction history found for this address.</p>
-        <p class="muted hint">Note: Transaction history requires the explorer to sync blocks from the network.</p>
-      </div>
-    </div>
-  </section>
+    </section>
+  </div>
 </template>
 
 <style scoped>
-.address-detail {
-  max-width: 900px;
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+.account-view { display: flex; flex-direction: column; gap: 32px; font-family: 'Outfit', sans-serif; }
+
+.action-header { display: flex; flex-direction: column; gap: 20px; }
+
+.back-btn {
+  width: fit-content; display: flex; align-items: center; gap: 8px;
+  background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 8px 16px; border-radius: 10px; color: #64748b; font-size: 0.75rem;
+  font-weight: 700; cursor: pointer; transition: all 0.3s;
+}
+.back-btn:hover { background: rgba(255, 255, 255, 0.05); color: #fff; transform: translateX(-4px); }
+
+.header-main { display: flex; align-items: center; gap: 24px; }
+.account-orb {
+  width: 64px; height: 64px; background: linear-gradient(135deg, #6366f1, #3b82f6);
+  border-radius: 20px; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3); color: #fff;
+}
+.text-group h1 { margin: 0; font-size: 1.8rem; font-weight: 800; letter-spacing: -0.03em; }
+.text-group p { margin: 4px 0 0; font-size: 0.9rem; }
+
+.account-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 24px; }
+
+.section-title {
+  display: flex; align-items: center; gap: 10px; font-size: 0.65rem;
+  font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.05em;
+  margin-bottom: 24px; border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 12px;
 }
 
-.address-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
+.profile-rows { display: flex; flex-direction: column; gap: 16px; }
+.p-row { display: flex; justify-content: space-between; align-items: center; }
+.p-label { font-size: 0.8rem; color: #64748b; font-weight: 500; }
+.p-val { font-size: 0.9rem; font-weight: 700; color: #e2e8f0; }
 
-.meta-row {
-  display: flex;
-  gap: 1rem;
-  align-items: baseline;
+.balance-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+.balance-card {
+  background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px; padding: 20px;
 }
+.b-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.token-name { font-weight: 800; font-size: 0.8rem; color: #64748b; }
+.b-dot { width: 8px; height: 8px; border-radius: 50%; }
+.b-amount { font-size: 1.5rem; font-weight: 800; color: #fff; margin-bottom: 16px; font-family: 'JetBrains Mono', monospace; }
 
-.meta-row .label {
-  min-width: 140px;
-  color: var(--muted);
-  font-size: 0.875rem;
-}
+.b-locked-grid { display: flex; flex-direction: column; gap: 6px; }
+.l-item { display: flex; justify-content: space-between; font-size: 0.65rem; }
+.l-item span { color: #475569; }
+.l-item b { color: #94a3b8; font-family: 'JetBrains Mono', monospace; }
 
-.meta-row .value {
-  flex: 1;
-  word-break: break-all;
-}
+.panel-header-sub { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+.title-meta { display: flex; align-items: center; gap: 12px; }
+.title-meta h3 { margin: 0; font-size: 1.1rem; color: #fff; }
+.count-tag { font-size: 0.65rem; font-weight: 800; background: rgba(99, 102, 241, 0.1); color: #818cf8; padding: 2px 8px; border-radius: 6px; }
 
-.balances-section h3 {
-  margin-bottom: 1rem;
-  font-size: 1rem;
-  color: var(--fg);
+.sync-btn {
+  background: none; border: none; color: #475569; cursor: pointer; transition: color 0.3s;
 }
+.sync-btn:hover { color: #6366f1; }
 
-.balance-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
+.table-wrap { overflow: hidden; border-radius: 16px; }
+.premium-table { width: 100%; border-collapse: collapse; }
+.premium-table th {
+  padding: 16px; text-align: left; font-size: 0.6rem; font-weight: 800;
+  text-transform: uppercase; color: #475569; background: rgba(0, 0, 0, 0.1);
 }
+.table-row { border-bottom: 1px solid rgba(255,255,255,0.02); cursor: pointer; transition: all 0.2s; }
+.table-row:hover { background: rgba(99, 102, 241, 0.03); }
 
-.balance-table th,
-.balance-table td {
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-}
+.type-pill { font-size: 0.6rem; font-weight: 800; background: rgba(255,255,255,0.03); padding: 2px 8px; border-radius: 4px; color: #94a3b8; }
 
-.balance-table th {
-  color: var(--muted);
-  font-weight: 500;
+.counterparty { display: flex; align-items: center; gap: 12px; }
+.dir-icon {
+  width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
 }
+.dir-icon.out { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+.dir-icon.in { background: rgba(16, 185, 129, 0.1); color: #10b981; }
 
-.token-cell {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.status-chip { font-size: 0.65rem; font-weight: 800; display: inline-block; padding: 2px 10px; border-radius: 99px; }
+.status-chip.sc-good { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+.status-chip.sc-bad { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+.status-chip.sc-warn { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
 
-.amount {
-  text-align: right;
-  font-family: var(--font-mono);
-}
+.empty-state-mini { text-align: center; padding: 40px 0; color: #334155; }
+.mono { font-family: 'JetBrains Mono', monospace; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-.amount.muted {
-  color: var(--muted);
-}
-
-.empty-balances {
-  padding: 2rem;
-  text-align: center;
-  color: var(--muted);
-}
-
-/* Transaction History Styles */
-.tx-history-section {
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--border);
-}
-
-.section-header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.section-header h3 {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--fg);
-}
-
-.tx-count {
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
-.refresh-btn {
-  margin-left: auto;
-  font-size: 0.875rem;
-}
-
-.tx-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-.tx-table th,
-.tx-table td {
-  padding: 0.5rem 0.5rem;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-}
-
-.tx-table th {
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.tx-row {
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-}
-
-.tx-row:hover {
-  background-color: var(--row-hover);
-}
-
-.tx-id-cell {
-  color: var(--accent, #60a5fa);
-  cursor: pointer;
-}
-
-.tx-id-cell:hover {
-  text-decoration: underline;
-}
-
-.self-tag {
-  color: var(--accent);
-  font-weight: 500;
-}
-
-.empty-tx-history {
-  padding: 2rem;
-  text-align: center;
-  color: var(--muted);
-}
-
-.empty-tx-history .hint {
-  font-size: 0.875rem;
-  margin-top: 0.5rem;
-}
-
-.loading-state {
-  padding: 2rem;
-  text-align: center;
-  color: var(--muted);
-}
-
-.error-message {
-  padding: 0.75rem;
-  margin-bottom: 1rem;
-  background-color: var(--error-bg, rgba(239, 68, 68, 0.1));
-  border: 1px solid var(--error-border, #ef4444);
-  border-radius: 4px;
-  color: var(--error, #f87171);
-  font-size: 0.875rem;
-}
-
-.status-good {
-  color: var(--status-good, #22c55e);
-}
-
-.status-bad {
-  color: var(--status-bad, #ef4444);
-}
-
-.status-warn {
-  color: var(--status-warn, #f59e0b);
-}
+@media (max-width: 1024px) { .account-grid { grid-template-columns: 1fr; } }
 </style>
-

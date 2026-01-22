@@ -24,141 +24,223 @@ function truncateHash(hash?: string, chars = 12): string {
   return `${hash.slice(0, chars)}...${hash.slice(-chars)}`
 }
 
-function statusClass(status?: string): string {
-  if (!status) return ''
-  const s = status.toUpperCase()
-  if (s === 'SUCCEED' || s === 'SUCCESS') return 'status-good'
-  if (s === 'FAILED' || s === 'FAIL') return 'status-bad'
-  return 'status-warn'
+function statusInfo(status?: string) {
+  const s = (status || '').toUpperCase()
+  if (s === 'SUCCEED' || s === 'SUCCESS') return { class: 'st-good', label: 'Success' }
+  if (s === 'FAILED' || s === 'FAIL') return { class: 'st-bad', label: 'Failed' }
+  return { class: 'st-warn', label: 'Warning' }
 }
 
 function handleAddressClick(e: Event, address?: string) {
-  e.stopPropagation()  // 防止触发行点击事件
-  if (address) {
-    emit('addressClick', address)
-  }
+  e.stopPropagation()
+  if (address) emit('addressClick', address)
 }
 </script>
 
 <template>
-  <section class="panel block-detail">
-    <div class="panel-header">
-      <button class="btn-back" @click="emit('back')">← Back to Blocks</button>
-      <h2>Block #{{ formatNumber(block.height) }}</h2>
-    </div>
-
-    <div class="block-meta">
-      <div class="meta-row">
-        <span class="label">Block Hash</span>
-        <span class="value mono">{{ block.block_hash || '-' }}</span>
-      </div>
-      <div class="meta-row">
-        <span class="label">Previous Hash</span>
-        <span class="value mono">{{ truncateHash(block.prev_block_hash) }}</span>
-      </div>
-      <div class="meta-row">
-        <span class="label">Txs Hash</span>
-        <span class="value mono">{{ truncateHash(block.txs_hash) }}</span>
-      </div>
-      <div class="meta-row">
-        <span class="label">Miner</span>
-        <span class="value mono">{{ block.miner || '-' }}</span>
-      </div>
-      <div class="meta-row">
-        <span class="label">Transaction Count</span>
-        <span class="value">{{ formatNumber(block.tx_count) }}</span>
-      </div>
-      <div class="meta-row">
-        <span class="label">Accumulated Reward</span>
-        <span class="value">{{ block.accumulated_reward || '-' }}</span>
-      </div>
-      <div class="meta-row">
-        <span class="label">Window</span>
-        <span class="value">{{ block.window ?? '-' }}</span>
+  <div class="block-view animate-fade-in">
+    <!-- Action Header -->
+    <div class="action-header">
+      <button class="back-btn" @click="emit('back')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        Return to Stream
+      </button>
+      <div class="header-main">
+        <div class="block-orb">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" x2="12" y1="22" y2="12"/></svg>
+        </div>
+        <div class="text-group">
+          <h1>Block Analysis</h1>
+          <p class="mono text-indigo-400"># {{ formatNumber(block.height) }}</p>
+        </div>
       </div>
     </div>
 
-    <div v-if="block.transactions && block.transactions.length > 0" class="tx-section">
-      <h3>Transactions ({{ block.transactions.length }})</h3>
-      <table class="tx-table">
-        <thead>
-          <tr>
-            <th>Tx ID</th>
-            <th>Type</th>
-            <th>From</th>
-            <th>To</th>
-            <th>Value</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="tx in block.transactions"
-            :key="tx.tx_id"
-            class="clickable"
-            @click="emit('txClick', tx.tx_id)"
-          >
-            <td class="mono">{{ truncateHash(tx.tx_id, 8) }}</td>
-            <td>{{ tx.tx_type || '-' }}</td>
-            <td class="mono">
-              <span
-                v-if="tx.from_address"
-                class="address-link"
-                @click="handleAddressClick($event, tx.from_address)"
-              >{{ truncateHash(tx.from_address, 8) }}</span>
-              <span v-else>-</span>
-            </td>
-            <td class="mono">
-              <span
-                v-if="tx.to_address"
-                class="address-link"
-                @click="handleAddressClick($event, tx.to_address)"
-              >{{ truncateHash(tx.to_address, 8) }}</span>
-              <span v-else>-</span>
-            </td>
-            <td>{{ tx.value || '-' }}</td>
-            <td :class="statusClass(tx.status)">{{ tx.status || '-' }}</td>
-          </tr>
-        </tbody>
-      </table>
+    <div class="block-details-grid">
+      <!-- Primary Specs -->
+      <section class="panel specs-panel">
+        <div class="section-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          Block Specifications
+        </div>
+        <div class="specs-list">
+          <div class="spec-row">
+            <span class="s-label">Canonical Hash</span>
+            <div class="s-val-group">
+               <code class="mono text-gray-300">{{ block.block_hash || '-' }}</code>
+            </div>
+          </div>
+          <div class="spec-row">
+            <span class="s-label">Preceding Link</span>
+            <code class="mono text-gray-500">{{ truncateHash(block.prev_block_hash, 16) }}</code>
+          </div>
+          <div class="spec-row">
+            <span class="s-label">Proposer / Miner</span>
+            <code class="mono text-indigo-400">{{ block.miner || '-' }}</code>
+          </div>
+        </div>
+      </section>
+
+      <!-- Metrics Panel -->
+      <section class="panel metrics-panel">
+        <div class="section-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6h4v6h-4ZM6 20v-10h4v10H6ZM18 20V4h4v16h-4Z"/></svg>
+          Network Metrics
+        </div>
+        <div class="metrics-grid">
+           <div class="m-box">
+              <span class="m-label">Transactions</span>
+              <span class="m-val">{{ formatNumber(block.tx_count) }}</span>
+           </div>
+           <div class="m-box">
+              <span class="m-label">Height</span>
+              <span class="m-val mono">#{{ block.height }}</span>
+           </div>
+           <div class="m-box highlight">
+              <span class="m-label">Block Reward</span>
+              <span class="m-val text-amber-500">{{ block.accumulated_reward || '0' }}</span>
+           </div>
+           <div class="m-box">
+              <span class="m-label">Consensus Window</span>
+              <span class="m-val">{{ block.window ?? 'N/A' }}</span>
+           </div>
+        </div>
+      </section>
     </div>
 
-    <div v-else class="empty-state">
-      No transactions in this block.
-    </div>
-  </section>
+    <!-- Execution Trace -->
+    <section class="panel transactions-panel">
+      <div class="panel-header-sub">
+        <div class="title-meta">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.06-1.7.21-2.43.44C19.8 15.14 20 14 20 12c0-4.42-3.58-8-8-8s-8 3.58-8 8c0 2 1.2 3.14 2.43 4.44C3.7 16.21 2.87 16.06 2 16l3 8 3-8c-.87-.06-1.7-.21-2.43-.44C19.8 15.14 20 14 20 12Z"/></svg>
+          <h3>Payload Trace</h3>
+          <span class="count-tag">{{ block.transactions?.length || 0 }} Executions</span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="premium-table">
+          <thead>
+            <tr>
+              <th class="pl-6 w-32">Hash</th>
+              <th>Protocol Type</th>
+              <th>Proposer</th>
+              <th>Counterparty</th>
+              <th class="text-right">Value</th>
+              <th class="text-right pr-6">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="tx in block.transactions" :key="tx.tx_id" @click="emit('txClick', tx.tx_id)" class="table-row">
+              <td class="pl-6">
+                <code class="mono text-indigo-400">{{ truncateHash(tx.tx_id, 6) }}</code>
+              </td>
+              <td><span class="type-pill">{{ tx.tx_type }}</span></td>
+              <td>
+                <span v-if="tx.from_address" class="mono text-gray-500 link" @click="handleAddressClick($event, tx.from_address)">
+                  {{ truncateHash(tx.from_address, 6) }}
+                </span>
+                <span v-else>-</span>
+              </td>
+              <td>
+                <span v-if="tx.to_address" class="mono text-gray-400 link" @click="handleAddressClick($event, tx.to_address)">
+                  {{ truncateHash(tx.to_address, 6) }}
+                </span>
+                <span v-else>-</span>
+              </td>
+              <td class="text-right">
+                <span class="mono font-bold">{{ tx.value || '0' }}</span>
+              </td>
+              <td class="text-right pr-6">
+                <div :class="['status-chip', statusInfo(tx.status).class]">
+                  {{ statusInfo(tx.status).label }}
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="!block.transactions || block.transactions.length === 0" class="empty-state-mini py-20">
+           No interaction data detected in this payload.
+        </div>
+      </div>
+    </section>
+  </div>
 </template>
 
 <style scoped>
-.panel-header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+.block-view { display: flex; flex-direction: column; gap: 32px; font-family: 'Outfit', sans-serif; }
+
+.action-header { display: flex; flex-direction: column; gap: 20px; }
+
+.back-btn {
+  width: fit-content; display: flex; align-items: center; gap: 8px;
+  background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 8px 16px; border-radius: 10px; color: #64748b; font-size: 0.75rem;
+  font-weight: 700; cursor: pointer; transition: all 0.3s;
+}
+.back-btn:hover { background: rgba(255, 255, 255, 0.05); color: #fff; transform: translateX(-4px); }
+
+.header-main { display: flex; align-items: center; gap: 24px; }
+.block-orb {
+  width: 64px; height: 64px; background: linear-gradient(135deg, #10b981, #34d399);
+  border-radius: 20px; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3); color: #fff;
+}
+.text-group h1 { margin: 0; font-size: 1.8rem; font-weight: 800; letter-spacing: -0.03em; }
+.text-group p { margin: 4px 0 0; font-size: 1.2rem; font-weight: 700; }
+
+.block-details-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+
+.section-title {
+  display: flex; align-items: center; gap: 10px; font-size: 0.65rem;
+  font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.05em;
+  margin-bottom: 24px; border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 12px;
 }
 
-.btn-back {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.875rem;
-  cursor: pointer;
-  background: var(--bg-secondary, #2a2a3e);
-  border: 1px solid var(--border-color, #444);
-  color: var(--text-primary, #fff);
-  border-radius: 4px;
-}
+.specs-list { display: flex; flex-direction: column; gap: 20px; }
+.spec-row { display: flex; flex-direction: column; gap: 8px; }
+.s-label { font-size: 0.65rem; font-weight: 700; color: #475569; text-transform: uppercase; }
+.s-val-group { background: rgba(0, 0, 0, 0.2); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.02); }
 
-.btn-back:hover {
-  background: var(--bg-hover, #3a3a4e);
+.metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.m-box {
+  background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 4px;
 }
+.m-box.highlight { background: rgba(245, 158, 11, 0.03); border-color: rgba(245, 158, 11, 0.1); }
+.m-label { font-size: 0.65rem; font-weight: 700; color: #475569; text-transform: uppercase; }
+.m-val { font-size: 1.2rem; font-weight: 800; color: #fff; }
 
-.address-link {
-  cursor: pointer;
-  color: var(--accent, #60a5fa);
-  text-decoration: underline;
-  text-decoration-style: dotted;
-}
+.panel-header-sub { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+.title-meta { display: flex; align-items: center; gap: 12px; }
+.title-meta h3 { margin: 0; font-size: 1.1rem; color: #fff; }
+.count-tag { font-size: 0.65rem; font-weight: 800; background: rgba(99, 102, 241, 0.1); color: #818cf8; padding: 2px 8px; border-radius: 6px; }
 
-.address-link:hover {
-  color: var(--accent-hover, #93c5fd);
-  text-decoration-style: solid;
+.table-wrap { overflow: hidden; border-radius: 16px; }
+.premium-table { width: 100%; border-collapse: collapse; }
+.premium-table th {
+  padding: 16px; text-align: left; font-size: 0.6rem; font-weight: 800;
+  text-transform: uppercase; color: #475569; background: rgba(0, 0, 0, 0.1);
 }
+.table-row { border-bottom: 1px solid rgba(255,255,255,0.02); cursor: pointer; transition: all 0.2s; }
+.table-row:hover { background: rgba(99, 102, 241, 0.03); }
+
+.type-pill { font-size: 0.6rem; font-weight: 800; background: rgba(255,255,255,0.03); padding: 2px 8px; border-radius: 4px; color: #94a3b8; }
+
+.status-chip { font-size: 0.65rem; font-weight: 800; display: inline-block; padding: 2px 10px; border-radius: 99px; }
+.status-chip.st-good { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+.status-chip.st-bad { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+.status-chip.st-warn { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+
+.link { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; }
+.link:hover { color: #6366f1; text-decoration-style: solid; }
+
+.empty-state-mini { text-align: center; padding: 40px 0; color: #334155; }
+.mono { font-family: 'JetBrains Mono', monospace; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.animate-fade-in { animation: fadeIn 0.4s ease-out; }
+
+@media (max-width: 1024px) { .block-details-grid { grid-template-columns: 1fr; } }
 </style>

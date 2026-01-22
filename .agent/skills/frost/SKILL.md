@@ -8,7 +8,7 @@ description: Guide for understanding and modifying the FROST threshold signature
 该模块负责系统的核心安全：门限签名 (FROST/ROAST) 和分布式密钥生成 (DKG)。
 
 ## 目录结构
-
+-   `frost/design.md`: 模块设计文档
 -   `core/`: 纯数学/算法实现 (Curves, DKG, Schnorr)。
 -   `runtime/`: 异步背景服务 (Scanner, Workers)。
     -   `transition_worker.go`: 驱动 DKG 状态机 (Commit -> Share -> Validation)。
