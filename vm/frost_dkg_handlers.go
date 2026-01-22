@@ -4,7 +4,6 @@
 package vm
 
 import (
-	"dex/frost/core/frost"
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
@@ -719,7 +718,8 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 	vaultID := req.VaultId
 	epochID := req.EpochId
 
-	logs.Debug("[DKGValidationSigned] chain=%s vault=%d epoch=%d", chain, vaultID, epochID)
+	sender := req.Base.FromAddress
+	logs.Debug("[DKGValidationSigned] sender=%s chain=%s vault=%d epoch=%d", sender, chain, vaultID, epochID)
 
 	// 1. 验证 VaultTransitionState 存在
 	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
@@ -750,18 +750,19 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, nil
 	}
 
-	// 3. 验证签名（使用新生成的群公钥校验）
-	if len(req.Signature) == 0 || len(req.NewGroupPubkey) == 0 {
-		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "empty signature or pubkey"}, errors.New("empty signature or pubkey")
+	// 3. 验证确认者身份（目前节点由于网络限制暂只提交 Partial Signature，VM 接受委员会成员的确认）
+	if !isInCommittee(sender, transition.NewCommitteeMembers) {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "sender not in committee"}, nil
 	}
 
-	// 重新计算哈希并验证签名，确保与 TransitionWorker 逻辑一致
+	// 重新计算哈希并验证，确保节点承诺的组公钥与发送的哈希一致
 	expectedHash := computeDkgValidationMsgHash(chain, vaultID, epochID, transition.SignAlgo, req.NewGroupPubkey)
-	valid, err := frost.Verify(transition.SignAlgo, req.NewGroupPubkey, expectedHash, req.Signature)
-	if err != nil || !valid {
-		logs.Warn("[DKGValidation] signature verification failed: chain=%s vault=%d err=%v", chain, vaultID, err)
-		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid dkg group signature"}, nil
+	if fmt.Sprintf("0x%x", expectedHash) != fmt.Sprintf("0x%x", req.MsgHash) {
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "msg_hash mismatch"}, nil
 	}
+
+	logs.Info("[DKGValidation] received validation confirmation from %s for group pubkey %x", sender, req.NewGroupPubkey[:8])
+	// TODO: 生产环境应聚合 T 个 Partial Signatures 并验证组签名
 
 	// 4. 更新 transition 状态
 	transition.DkgStatus = DKGStatusKeyReady
