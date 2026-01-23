@@ -119,8 +119,8 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
         <div class="ob-table-header">
           <span class="price-col">Price</span>
-          <span class="amount-col">Quantity</span>
-          <span class="total-col">Cumulative</span>
+          <span class="amount-col">Amount</span>
+          <span class="total-col">Total</span>
         </div>
 
         <!-- Asks (Sells) -->
@@ -165,9 +165,9 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
         <div v-if="tradesError" class="error-notice">{{ tradesError }}</div>
 
         <div class="th-table-header">
-           <span>Time Trace</span>
-           <span>Price (USDT)</span>
-           <span class="text-right">Volume</span>
+           <span>Time</span>
+           <span>Price</span>
+           <span class="text-right">Amount</span>
         </div>
 
         <div class="trades-viewport">

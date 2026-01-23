@@ -43,14 +43,14 @@ function handleAddressClick(e: Event, address?: string) {
     <div class="action-header">
       <button class="back-btn" @click="emit('back')">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        Return to Stream
+        Back
       </button>
       <div class="header-main">
         <div class="block-orb">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" x2="12" y1="22" y2="12"/></svg>
         </div>
         <div class="text-group">
-          <h1>Block Analysis</h1>
+          <h1>Block Details</h1>
           <p class="mono text-indigo-400"># {{ formatNumber(block.height) }}</p>
         </div>
       </div>
@@ -61,21 +61,21 @@ function handleAddressClick(e: Event, address?: string) {
       <section class="panel specs-panel">
         <div class="section-title">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-          Block Specifications
+          Overview
         </div>
         <div class="specs-list">
           <div class="spec-row">
-            <span class="s-label">Canonical Hash</span>
+            <span class="s-label">Block Hash</span>
             <div class="s-val-group">
                <code class="mono text-gray-300">{{ block.block_hash || '-' }}</code>
             </div>
           </div>
           <div class="spec-row">
-            <span class="s-label">Preceding Link</span>
+            <span class="s-label">Parent Hash</span>
             <code class="mono text-gray-500">{{ truncateHash(block.prev_block_hash, 16) }}</code>
           </div>
           <div class="spec-row">
-            <span class="s-label">Proposer / Miner</span>
+            <span class="s-label">Miner</span>
             <code class="mono text-indigo-400">{{ block.miner || '-' }}</code>
           </div>
         </div>
@@ -85,7 +85,7 @@ function handleAddressClick(e: Event, address?: string) {
       <section class="panel metrics-panel">
         <div class="section-title">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6h4v6h-4ZM6 20v-10h4v10H6ZM18 20V4h4v16h-4Z"/></svg>
-          Network Metrics
+          Metrics
         </div>
         <div class="metrics-grid">
            <div class="m-box">
@@ -101,20 +101,20 @@ function handleAddressClick(e: Event, address?: string) {
               <span class="m-val text-amber-500">{{ block.accumulated_reward || '0' }}</span>
            </div>
            <div class="m-box">
-              <span class="m-label">Consensus Window</span>
+              <span class="m-label">Window</span>
               <span class="m-val">{{ block.window ?? 'N/A' }}</span>
            </div>
         </div>
       </section>
     </div>
 
-    <!-- Execution Trace -->
+    <!-- Transactions -->
     <section class="panel transactions-panel">
       <div class="panel-header-sub">
         <div class="title-meta">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.06-1.7.21-2.43.44C19.8 15.14 20 14 20 12c0-4.42-3.58-8-8-8s-8 3.58-8 8c0 2 1.2 3.14 2.43 4.44C3.7 16.21 2.87 16.06 2 16l3 8 3-8c-.87-.06-1.7-.21-2.43-.44C19.8 15.14 20 14 20 12Z"/></svg>
-          <h3>Payload Trace</h3>
-          <span class="count-tag">{{ block.transactions?.length || 0 }} Executions</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V7a5 5 0 0 1 10 0v4"/><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/></svg>
+          <h3>Transactions</h3>
+          <span class="count-tag">{{ block.transactions?.length || 0 }} Txs</span>
         </div>
       </div>
 
@@ -122,10 +122,10 @@ function handleAddressClick(e: Event, address?: string) {
         <table class="premium-table">
           <thead>
             <tr>
-              <th class="pl-6 w-32">Hash</th>
-              <th>Protocol Type</th>
-              <th>Proposer</th>
-              <th>Counterparty</th>
+              <th class="pl-6 w-32">Tx Hash</th>
+              <th>Type</th>
+              <th>From</th>
+              <th>To</th>
               <th class="text-right">Value</th>
               <th class="text-right pr-6">Status</th>
             </tr>
@@ -160,7 +160,7 @@ function handleAddressClick(e: Event, address?: string) {
           </tbody>
         </table>
         <div v-if="!block.transactions || block.transactions.length === 0" class="empty-state-mini py-20">
-           No interaction data detected in this payload.
+           No transactions in this block.
         </div>
       </div>
     </section>

@@ -61,14 +61,14 @@ function statusInfo(status?: string) {
     <div class="action-header">
       <button class="back-btn" @click="emit('back')">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        Return to Explorer
+        Back
       </button>
       <div class="header-main">
         <div class="account-orb">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         </div>
         <div class="text-group">
-          <h1>Identity Insight</h1>
+          <h1>Address Details</h1>
           <p class="mono text-indigo-400">{{ account.address }}</p>
         </div>
       </div>
@@ -79,25 +79,25 @@ function statusInfo(status?: string) {
       <section class="panel summary-panel">
         <div class="section-title">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-          Account Profile
+          Overview
         </div>
         <div class="profile-rows">
           <div class="p-row">
-             <span class="p-label">Nonce Counter</span>
+             <span class="p-label">Nonce</span>
              <span class="p-val">{{ account.nonce ?? 0 }}</span>
           </div>
           <div class="p-row">
-             <span class="p-label">Node Authority</span>
+             <span class="p-label">Is Miner</span>
              <span :class="['p-val', account.is_miner ? 'text-emerald-400' : 'text-gray-500']">
-               {{ account.is_miner ? 'Validator Node' : 'Standard User' }}
+               {{ account.is_miner ? 'Yes' : 'No' }}
              </span>
           </div>
           <div v-if="account.index" class="p-row">
-             <span class="p-label">Validator Index</span>
+             <span class="p-label">Miner Index</span>
              <span class="p-val mono"># {{ account.index }}</span>
           </div>
           <div v-if="account.unclaimed_reward" class="p-row">
-             <span class="p-label">Unclaimed Rewards</span>
+             <span class="p-label">Unclaimed Reward</span>
              <span class="p-val text-amber-500 font-bold">{{ formatBalance(account.unclaimed_reward) }}</span>
           </div>
         </div>
@@ -107,7 +107,7 @@ function statusInfo(status?: string) {
       <section class="panel balance-panel">
         <div class="section-title">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-          Portfolio Assets
+          Token Balances
         </div>
         <div class="balance-grid">
           <div v-for="(bal, token) in account.balances" :key="token" class="balance-card">
@@ -117,25 +117,25 @@ function statusInfo(status?: string) {
             </div>
             <div class="b-amount">{{ formatBalance(bal.balance) }}</div>
             <div class="b-locked-grid">
-               <div class="l-item"><span>Validator</span><b>{{ formatBalance(bal.miner_locked_balance) }}</b></div>
-               <div class="l-item"><span>Witness</span><b>{{ formatBalance(bal.witness_locked_balance) }}</b></div>
-               <div class="l-item"><span>Liquid</span><b>{{ formatBalance(bal.liquid_locked_balance) }}</b></div>
+               <div class="l-item"><span>Miner Locked</span><b>{{ formatBalance(bal.miner_locked_balance) }}</b></div>
+               <div class="l-item"><span>Witness Locked</span><b>{{ formatBalance(bal.witness_locked_balance) }}</b></div>
+               <div class="l-item"><span>Liquid Locked</span><b>{{ formatBalance(bal.liquid_locked_balance) }}</b></div>
             </div>
           </div>
           <div v-if="!account.balances || Object.keys(account.balances).length === 0" class="empty-state-mini">
-             No registered balances for this identity.
+             No token balances found.
           </div>
         </div>
       </section>
     </div>
 
-    <!-- Transaction Stream -->
+    <!-- Transaction History -->
     <section class="panel history-panel">
       <div class="panel-header-sub">
         <div class="title-meta">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
-          <h3>Interaction History</h3>
-          <span class="count-tag">{{ txTotalCount }} Events</span>
+          <h3>Transaction History</h3>
+          <span class="count-tag">{{ txTotalCount }} Txs</span>
         </div>
         <button class="sync-btn" @click="loadTxHistory" :disabled="txLoading">
           <svg :class="{ 'spin': txLoading }" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
@@ -147,9 +147,9 @@ function statusInfo(status?: string) {
           <thead>
             <tr>
               <th class="pl-6 w-32">Tx Hash</th>
-              <th>Protocol Type</th>
-              <th>Counterparty</th>
-              <th class="text-right">Transfer Value</th>
+              <th>Type</th>
+              <th>From / To</th>
+              <th class="text-right">Amount</th>
               <th class="text-right pr-6">Status</th>
             </tr>
           </thead>
@@ -182,7 +182,7 @@ function statusInfo(status?: string) {
           </tbody>
         </table>
         <div v-if="txHistory.length === 0 && !txLoading" class="empty-state-mini py-20">
-           No interaction data detected for this identity.
+           No transactions found for this address.
         </div>
       </div>
     </section>

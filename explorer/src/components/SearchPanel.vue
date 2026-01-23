@@ -236,11 +236,11 @@ function getPlaceholder(): string {
           <div class="icon-circle">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" x2="12" y1="22" y2="12"/></svg>
           </div>
-          <h2>Blockchain Stream</h2>
+          <h2>Recent Blocks</h2>
         </div>
         <button class="glass-refresh" @click="loadRecentBlocks" :disabled="loadingRecentBlocks">
           <svg :class="{ 'spin': loadingRecentBlocks }" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
-          {{ loadingRecentBlocks ? 'Updating...' : 'Sync History' }}
+          {{ loadingRecentBlocks ? 'Loading...' : 'Refresh' }}
         </button>
       </div>
 
@@ -249,10 +249,10 @@ function getPlaceholder(): string {
           <thead>
             <tr>
               <th class="pl-6 w-32">Height</th>
-              <th>Hash Topology</th>
-              <th>Miner/Proposer</th>
-              <th class="text-right">Activity</th>
-              <th class="text-right pr-6">Incentive</th>
+              <th>Block Hash</th>
+              <th>Miner</th>
+              <th class="text-right">Tx Count</th>
+              <th class="text-right pr-6">Reward</th>
             </tr>
           </thead>
           <tbody>

@@ -768,6 +768,7 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 	transition.DkgStatus = DKGStatusKeyReady
 	transition.ValidationStatus = "PASSED"
 	transition.ValidationMsgHash = req.MsgHash
+	transition.NewGroupPubkey = req.NewGroupPubkey
 
 	updatedTransitionData, err := proto.Marshal(transition)
 	if err != nil {

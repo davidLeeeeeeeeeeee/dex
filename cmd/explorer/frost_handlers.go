@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
-	"dex/pb"
+	"encoding/hex"
 	"net/http"
+
+	"dex/pb"
 )
 
 // FrostWithdrawQueueItem 提现队列项
@@ -128,6 +130,7 @@ type DKGSessionItem struct {
 	DkgDisputeDeadline  uint64   `json:"dkg_dispute_deadline"`
 	ValidationStatus    string   `json:"validation_status"`
 	Lifecycle           string   `json:"lifecycle"`
+	NewGroupPubkey      string   `json:"new_group_pubkey,omitempty"`
 }
 
 func (s *server) handleFrostDKGSessions(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +152,7 @@ func (s *server) handleFrostDKGSessions(w http.ResponseWriter, r *http.Request) 
 	// 转换为前端格式（snake_case）
 	items := make([]DKGSessionItem, 0, len(resp.States))
 	for _, st := range resp.States {
-		items = append(items, DKGSessionItem{
+		item := DKGSessionItem{
 			Chain:               st.Chain,
 			VaultID:             st.VaultId,
 			EpochID:             st.EpochId,
@@ -165,7 +168,12 @@ func (s *server) handleFrostDKGSessions(w http.ResponseWriter, r *http.Request) 
 			DkgDisputeDeadline:  st.DkgDisputeDeadline,
 			ValidationStatus:    st.ValidationStatus,
 			Lifecycle:           st.Lifecycle,
-		})
+		}
+		// 如果有公钥，转换为 hex 字符串
+		if len(st.NewGroupPubkey) > 0 {
+			item.NewGroupPubkey = hex.EncodeToString(st.NewGroupPubkey)
+		}
+		items = append(items, item)
 	}
 
 	writeJSON(w, items)

@@ -58,17 +58,28 @@ const mermaidDefinition = ref('')
 const openFlow = (session: any) => {
   modalTitle.value = `DKG Flow: ${session.chain} Vault #${session.vault_id}`
   const status = session.dkg_status
+  const isActive = session.lifecycle === 'ACTIVE'
   let flow = 'graph TD\n'
   flow += '  A[COMMITTING] -->|All Committed| B[SHARING]\n'
   flow += '  B -->|Shares Distributed| C[RESOLVING]\n'
   flow += '  C -->|No Disputes| D[KEY_READY]\n'
   flow += '  D -->|Verification| E((VAULT ACTIVE))\n'
+
+  // 如果 vault 激活且有公钥，显示公钥节点
+  if (isActive && session.new_group_pubkey) {
+    const shortPubkey = session.new_group_pubkey.length > 20
+      ? session.new_group_pubkey.substring(0, 10) + '...' + session.new_group_pubkey.substring(session.new_group_pubkey.length - 8)
+      : session.new_group_pubkey
+    flow += `  E --> F["🔑 Public Key<br/>${shortPubkey}"]\n`
+    flow += '  style F fill:#0ea5e9,stroke:#fff,stroke-width:2px,color:#fff\n'
+  }
+
   if (status === 'COMMITTING') flow += '  style A fill:#6366f1,stroke:#fff,stroke-width:2px\n'
   if (status === 'SHARING') flow += '  style B fill:#8b5cf6,stroke:#fff,stroke-width:2px\n'
   if (status === 'RESOLVING') flow += '  style C fill:#f59e0b,stroke:#fff,stroke-width:2px\n'
   if (status === 'KEY_READY') {
     flow += '  style D fill:#10b981,stroke:#fff,stroke-width:2px\n'
-    if (session.validation_status === 'PASSED' || session.lifecycle === 'ACTIVE') {
+    if (session.validation_status === 'PASSED' || isActive) {
       flow += '  style E fill:#059669,stroke:#fff,stroke-width:2px\n'
     }
   }

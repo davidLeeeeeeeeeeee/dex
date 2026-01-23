@@ -32,14 +32,14 @@ function statusInfo(status?: string) {
     <div class="action-header">
       <button class="back-btn" @click="emit('back')">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        Return to Source
+        Back
       </button>
       <div class="header-main">
         <div class="tx-orb">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V7a5 5 0 0 1 10 0v4"/><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/></svg>
         </div>
         <div class="text-group">
-          <h1>Transaction Blueprint</h1>
+          <h1>Transaction Details</h1>
           <p class="mono text-indigo-400">{{ tx.tx_id }}</p>
         </div>
         <div :class="['status-master-badge', statusInfo(tx.status).class]">
@@ -56,24 +56,24 @@ function statusInfo(status?: string) {
       <section class="panel ledger-panel">
         <div class="section-title">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><line x1="3" x2="21" y1="9" y2="9"/><line x1="15" x2="15" y1="9" y2="21"/></svg>
-          Ledger Entry
+          Overview
         </div>
         <div class="ledger-rows">
           <div class="l-row">
-             <span class="l-label">Sequence Nonce</span>
+             <span class="l-label">Nonce</span>
              <span class="l-val mono"># {{ tx.nonce }}</span>
           </div>
           <div class="l-row">
-             <span class="l-label">Protocol Type</span>
+             <span class="l-label">Type</span>
              <span class="type-badge">{{ tx.tx_type || 'Unknown' }}</span>
           </div>
           <div class="l-row">
-             <span class="l-label">Block Origin</span>
+             <span class="l-label">Block Height</span>
              <span class="l-val text-indigo-400 font-bold"># {{ formatNumber(tx.executed_height) }}</span>
           </div>
           <div class="l-row">
-             <span class="l-label">Service Fee</span>
-             <span class="l-val text-gray-400 font-bold">{{ tx.fee || '0.00' }} Gas</span>
+             <span class="l-label">Fee</span>
+             <span class="l-val text-gray-400 font-bold">{{ tx.fee || '0.00' }}</span>
           </div>
         </div>
       </section>
@@ -82,48 +82,48 @@ function statusInfo(status?: string) {
       <section class="panel flow-panel">
         <div class="section-title">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20"/><path d="m15 5 7 7-7 7"/></svg>
-          Resource Transfer
+          Transfer
         </div>
         <div class="flow-visualization">
           <div class="node-point from" @click="emit('addressClick', tx.from_address!)">
-             <span class="n-tag">SENDER / PROPOSER</span>
+             <span class="n-tag">FROM</span>
              <code class="n-addr mono">{{ tx.from_address || '-' }}</code>
           </div>
           <div class="flow-arrow">
              <div class="arrow-line"></div>
-             <div class="value-bubble">{{ tx.value || 'NO VAL' }}</div>
+             <div class="value-bubble">{{ tx.value || '-' }}</div>
           </div>
           <div class="node-point to" v-if="tx.to_address" @click="emit('addressClick', tx.to_address)">
-             <span class="n-tag">RECIPIENT / CONTRACT</span>
+             <span class="n-tag">TO</span>
              <code class="n-addr mono">{{ tx.to_address }}</code>
           </div>
           <div v-else class="node-point contract">
-             <span class="n-tag">SYSTEM TARGET</span>
-             <code class="n-addr">Contract Deployment / System Op</code>
+             <span class="n-tag">TO</span>
+             <code class="n-addr">Contract / System</code>
           </div>
         </div>
       </section>
     </div>
 
-    <!-- Payload Details -->
+    <!-- Input Data -->
     <section v-if="tx.details && Object.keys(tx.details).length > 0" class="panel payload-panel">
       <div class="section-title">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Structured Decoded Payload
+        Input Data
       </div>
       <div class="decoded-content">
         <TxTypeRenderer :type="tx.tx_type || ''" :details="tx.details" />
       </div>
     </section>
 
-    <!-- Error Trace -->
+    <!-- Error -->
     <div v-if="tx.error" class="panel error-panel">
       <div class="section-title text-red-500">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
-        Execution Fault Detected
+        Error
       </div>
       <div class="error-slate-box">
-         <div class="error-code">REVERT_DURING_VM_INVOCATION</div>
+         <div class="error-code">EXECUTION_FAILED</div>
          <p class="error-desc">{{ tx.error }}</p>
       </div>
     </div>
