@@ -5,6 +5,7 @@ package workers
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"dex/frost/chain"
@@ -76,6 +77,7 @@ type WithdrawWorker struct {
 	maxInFlight    int // 最多并发 job 数
 	localAddress   string
 	Logger         logs.Logger
+	logCounter     atomic.Uint64
 }
 
 // NewWithdrawWorker 创建新的 WithdrawWorker
@@ -126,17 +128,32 @@ func (w *WithdrawWorker) ProcessOnce(ctx context.Context, chain, asset string) (
 // 4. 等待完成并提交
 func (w *WithdrawWorker) ProcessWindow(ctx context.Context, chain, asset string) ([]*planning.Job, error) {
 	// 1. 规划 Job 窗口
-	jobs, err := w.windowPlanner.PlanJobWindow(chain, asset)
+	jobs, transientLogs, err := w.windowPlanner.PlanJobWindow(chain, asset)
 	if err != nil {
 		return nil, err
 	}
+
+	// 汇报产生的临时日志（针对未成功规划 job 的 withdraw）
+	for withdrawID, logs := range transientLogs {
+		w.reportPlanningLogs(ctx, &planning.Job{
+			JobID:       "planning_failed",
+			WithdrawIDs: []string{withdrawID},
+			Logs:        logs,
+		})
+	}
+
 	if len(jobs) == 0 {
 		return nil, nil
 	}
 
 	w.Logger.Info("[WithdrawWorker] planned %d jobs for %s/%s", len(jobs), chain, asset)
 
-	// 2. 为每个 job 启动签名会话（并发）
+	// 2. 汇报规划日志（汇报给每一项对应的 withdraw）
+	for _, job := range jobs {
+		w.reportPlanningLogs(ctx, job)
+	}
+
+	// 3. 为每个 job 启动签名会话（并发）
 	// 如果是 CompositeJob，需要为每个 SubJob 启动独立的 ROAST 会话
 	for _, job := range jobs {
 		job := job // 修复变量捕获
@@ -156,6 +173,29 @@ func (w *WithdrawWorker) ProcessWindow(ctx context.Context, chain, asset string)
 	}
 
 	return jobs, nil
+}
+
+// reportPlanningLogs 将规划日志提交到链上
+func (w *WithdrawWorker) reportPlanningLogs(ctx context.Context, job *planning.Job) {
+	if len(job.Logs) == 0 {
+		return
+	}
+
+	for _, withdrawID := range job.WithdrawIDs {
+		planningTx := &pb.FrostWithdrawPlanningLogTx{
+			Base: &pb.BaseMessage{
+				FromAddress: w.localAddress,
+				TxId:        fmt.Sprintf("0x%016x%016x", time.Now().UnixNano(), w.logCounter.Add(1)),
+			},
+			WithdrawId: withdrawID,
+			Logs:       job.Logs,
+		}
+
+		err := w.txSubmitter.SubmitWithdrawPlanningLogTx(ctx, planningTx)
+		if err != nil {
+			w.Logger.Warn("[WithdrawWorker] failed to report planning logs for %s: %v", withdrawID, err)
+		}
+	}
 }
 
 // processJobAsync 异步处理单个 job
@@ -200,6 +240,15 @@ func (w *WithdrawWorker) processJobAsync(ctx context.Context, job *planning.Job)
 
 	w.Logger.Info("[WithdrawWorker] started signing session %s for job %s", sessionID, job.JobID)
 
+	// 汇报会话已启动
+	w.reportPlanningLogs(ctx, &planning.Job{
+		JobID:       job.JobID,
+		WithdrawIDs: job.WithdrawIDs,
+		Logs: []*pb.FrostPlanningLog{
+			{Step: "StartSigning", Status: "OK", Message: fmt.Sprintf("Signing session %s started", sessionID), Timestamp: uint64(time.Now().UnixMilli())},
+		},
+	})
+
 	// 等待完成并提交
 	w.waitAndSubmit(ctx, job, sessionID)
 }
@@ -211,8 +260,25 @@ func (w *WithdrawWorker) waitAndSubmit(ctx context.Context, job *planning.Job, s
 	signedPkg, err := w.signingService.WaitForCompletion(ctx, sessionID, timeout)
 	if err != nil {
 		w.Logger.Error("[WithdrawWorker] signing session %s failed: %v", sessionID, err)
+		// 汇报失败
+		w.reportPlanningLogs(ctx, &planning.Job{
+			JobID:       job.JobID,
+			WithdrawIDs: job.WithdrawIDs,
+			Logs: []*pb.FrostPlanningLog{
+				{Step: "Signing", Status: "FAILED", Message: fmt.Sprintf("Signing session failed: %v", err), Timestamp: uint64(time.Now().UnixMilli())},
+			},
+		})
 		return
 	}
+
+	// 汇报签名成功
+	w.reportPlanningLogs(ctx, &planning.Job{
+		JobID:       job.JobID,
+		WithdrawIDs: job.WithdrawIDs,
+		Logs: []*pb.FrostPlanningLog{
+			{Step: "Signing", Status: "OK", Message: "Aggregation signature completed", Timestamp: uint64(time.Now().UnixMilli())},
+		},
+	})
 
 	// 构建 SignedPackage bytes（需要包含签名和模板数据）
 	signedPackageBytes, err := w.buildSignedPackageBytes(signedPkg, job)
@@ -222,16 +288,24 @@ func (w *WithdrawWorker) waitAndSubmit(ctx context.Context, job *planning.Job, s
 	}
 
 	// 提交 FrostWithdrawSignedTx
-	tx := &pb.FrostWithdrawSignedTx{
+	withdrawSignedTx := &pb.FrostWithdrawSignedTx{
 		Base: &pb.BaseMessage{
-			// BaseMessage 字段可以后续填充
+			FromAddress:    w.localAddress,
+			ExecutedHeight: 0, // 由 VM 填充
 		},
 		JobId:              job.JobID,
 		SignedPackageBytes: signedPackageBytes,
 		WithdrawIds:        job.WithdrawIDs,
+		VaultId:            job.VaultID,
+		KeyEpoch:           job.KeyEpoch,
+		Chain:              job.Chain,
+		Asset:              job.Asset,
 	}
 
-	_, err = w.txSubmitter.Submit(tx)
+	// 生成提现交易 ID（基于内容的哈希）
+	withdrawSignedTx.Base.TxId = fmt.Sprintf("tx_withdraw_%s", job.JobID)
+
+	err = w.txSubmitter.SubmitWithdrawSignedTx(ctx, withdrawSignedTx)
 	if err != nil {
 		w.Logger.Error("[WithdrawWorker] failed to submit signed tx: %v", err)
 		return

@@ -468,6 +468,16 @@ func (s *fakeTxSubmitter) SubmitDkgValidationSignedTx(ctx context.Context, tx *p
 	return nil
 }
 
+func (s *fakeTxSubmitter) SubmitWithdrawSignedTx(ctx context.Context, tx *pb.FrostWithdrawSignedTx) error {
+	s.submitted = append(s.submitted, tx)
+	return nil
+}
+
+func (s *fakeTxSubmitter) SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error {
+	s.submitted = append(s.submitted, tx)
+	return nil
+}
+
 func (s *fakeTxSubmitter) GetSubmitted() []any {
 	return s.submitted
 }

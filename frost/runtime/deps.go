@@ -25,6 +25,8 @@ type TxSubmitter interface {
 	SubmitDkgCommitTx(ctx context.Context, tx *pb.FrostVaultDkgCommitTx) error
 	SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error
 	SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error
+	SubmitWithdrawSignedTx(ctx context.Context, tx *pb.FrostWithdrawSignedTx) error
+	SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error
 }
 
 // StateReader 状态读取接口（ChainStateReader 的别名）

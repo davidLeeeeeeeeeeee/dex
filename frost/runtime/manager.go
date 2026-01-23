@@ -109,6 +109,14 @@ func (a *workersTxSubmitterAdapter) SubmitDkgValidationSignedTx(ctx context.Cont
 	return a.submitter.SubmitDkgValidationSignedTx(ctx, tx)
 }
 
+func (a *workersTxSubmitterAdapter) SubmitWithdrawSignedTx(ctx context.Context, tx *pb.FrostWithdrawSignedTx) error {
+	return a.submitter.SubmitWithdrawSignedTx(ctx, tx)
+}
+
+func (a *workersTxSubmitterAdapter) SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error {
+	return a.submitter.SubmitWithdrawPlanningLogTx(ctx, tx)
+}
+
 type workersPubKeyProviderAdapter struct {
 	provider MinerPubKeyProvider
 }
@@ -160,6 +168,14 @@ func (a *workersTxSubmitterAdapter2) SubmitDkgShareTx(ctx context.Context, tx *p
 
 func (a *workersTxSubmitterAdapter2) SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error {
 	return a.submitter.SubmitDkgValidationSignedTx(ctx, tx)
+}
+
+func (a *workersTxSubmitterAdapter2) SubmitWithdrawSignedTx(ctx context.Context, tx *pb.FrostWithdrawSignedTx) error {
+	return a.submitter.SubmitWithdrawSignedTx(ctx, tx)
+}
+
+func (a *workersTxSubmitterAdapter2) SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error {
+	return a.submitter.SubmitWithdrawPlanningLogTx(ctx, tx)
 }
 
 type workersVaultProviderAdapter struct {
@@ -389,11 +405,30 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 	// 创建 WithdrawWorker（使用 SigningService）
 	// TODO: 从配置读取 maxInFlightPerChainAsset
 	maxInFlight := 1 // 默认值，应该从配置读取
-	m.withdrawWorker = workers.NewWithdrawWorker(deps.StateReader, deps.AdapterFactory, deps.TxSubmitter, signingServiceAdapter, deps.VaultProvider, maxInFlight, string(config.NodeID), deps.Logger)
+	m.withdrawWorker = workers.NewWithdrawWorker(
+		&workersStateReaderAdapter2{reader: deps.StateReader},
+		deps.AdapterFactory,
+		&workersTxSubmitterAdapter2{submitter: deps.TxSubmitter},
+		signingServiceAdapter,
+		deps.VaultProvider,
+		maxInFlight,
+		string(config.NodeID),
+		deps.Logger,
+	)
 
 	// 创建适配器，将 chain.ChainAdapterFactory 适配为 workers.ChainAdapterFactory
 	adapterFactoryAdapter := &chainAdapterFactoryAdapter{factory: deps.AdapterFactory}
-	m.transitionWorker = workers.NewTransitionWorker(deps.StateReader, deps.TxSubmitter, deps.PubKeyProvider, deps.CryptoFactory, deps.VaultProvider, deps.SignerProvider, adapterFactoryAdapter, string(config.NodeID), deps.Logger)
+	m.transitionWorker = workers.NewTransitionWorker(
+		&workersStateReaderAdapter2{reader: deps.StateReader},
+		&workersTxSubmitterAdapter2{submitter: deps.TxSubmitter},
+		deps.PubKeyProvider,
+		deps.CryptoFactory,
+		deps.VaultProvider,
+		deps.SignerProvider,
+		adapterFactoryAdapter,
+		string(config.NodeID),
+		deps.Logger,
+	)
 	m.roastDispatcher = roast.NewDispatcher(m.coordinator, m.participant)
 	m.frostRouter = frostRouter
 

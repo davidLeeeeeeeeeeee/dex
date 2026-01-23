@@ -2,7 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { fetchFrostWithdrawQueue } from '../../api'
 import type { FrostWithdrawQueueItem } from '../../types'
-import ProtocolModal from './ProtocolModal.vue'
+import WithdrawDetailModal from './WithdrawDetailModal.vue'
 
 const props = defineProps<{
   node: string
@@ -41,22 +41,11 @@ function getChainColor(chain: string): string {
   return '#9ca3af'
 }
 
-// Modal state
 const modalVisible = ref(false)
-const modalTitle = ref('')
-const mermaidDefinition = ref('')
+const selectedItem = ref<FrostWithdrawQueueItem | null>(null)
 
 const openFlow = (item: FrostWithdrawQueueItem) => {
-  modalTitle.value = `Withdraw Flow: ${item.withdraw_id.substring(0, 12)}...`
-  const status = item.status.toUpperCase()
-  let flow = 'graph LR\n'
-  flow += '  A[QUEUED] -->|Coordinator Pick| B[SIGNING]\n'
-  flow += '  B -->|FROST Success| C[SIGNED]\n'
-  flow += '  C -->|Chain Broadcast| D((ON-CHAIN))\n'
-  if (status === 'QUEUED') flow += '  style A fill:#3b82f6,stroke:#fff,stroke-width:2px\n'
-  if (status === 'SIGNING') flow += '  style B fill:#8b5cf6,stroke:#fff,stroke-width:2px\n'
-  if (status === 'SIGNED') flow += '  style C fill:#10b981,stroke:#fff,stroke-width:2px\n'
-  mermaidDefinition.value = flow
+  selectedItem.value = item
   modalVisible.value = true
 }
 </script>
@@ -166,11 +155,10 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
       <p class="text-gray-500 font-medium">All clear! No pending withdrawals.</p>
     </div>
 
-    <!-- Protocol Modal -->
-    <ProtocolModal 
-      :show="modalVisible" 
-      :title="modalTitle" 
-      :definition="mermaidDefinition"
+    <!-- Withdraw Detail Modal -->
+    <WithdrawDetailModal
+      :show="modalVisible"
+      :item="selectedItem"
       @close="modalVisible = false"
     />
   </div>

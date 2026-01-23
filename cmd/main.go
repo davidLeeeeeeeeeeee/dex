@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -1609,7 +1609,7 @@ func (s *TxSimulator) runDkgScenario() {
 	for range ticker.C {
 		logs.Info("Simulator: Starting DKG Scenario...")
 
-		chain := "BTC"
+		chain := "btc"
 		vaultID := uint32(1)
 		epochID := uint64(time.Now().Unix())
 		algo := pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340
@@ -1713,9 +1713,9 @@ func (s *TxSimulator) runWitnessScenario() {
 
 		reqTx := generateWitnessRequestTx(
 			userNode.Address,
-			"BTC",
+			"btc",
 			"tx_hash_"+time.Now().Format("150405"),
-			"FB",
+			"BTC",
 			"500",
 			userNode.Address,
 			"5",
@@ -1766,7 +1766,7 @@ func (s *TxSimulator) runWithdrawScenario() {
 
 		withdrawTx := generateWithdrawRequestTx(
 			userNode.Address,
-			"BTC",
+			"btc",
 			"BTC",
 			"bc1qtestaddress",
 			"50",
@@ -1822,8 +1822,8 @@ func (s *TxSimulator) injectProtocolStates() {
 }
 
 func (s *TxSimulator) injectWithdrawStates(node *NodeInstance, timestamp int64) {
-	chains := []string{"BTC", "ETH", "TRON"}
-	assets := []string{"BTC", "USDT", "ETH"}
+	chains := []string{"btc", "eth", "sol"}
+	assets := []string{"BTC", "USDT", "SOL"}
 	statuses := []string{"QUEUED", "SIGNED", "QUEUED", "QUEUED"}
 
 	for i := 0; i < 8; i++ {
@@ -1856,7 +1856,7 @@ func (s *TxSimulator) injectWithdrawStates(node *NodeInstance, timestamp int64) 
 }
 
 func (s *TxSimulator) injectRechargeRequests(node *NodeInstance, timestamp int64) {
-	chains := []string{"BTC", "ETH", "TRON", "SOL"}
+	chains := []string{"btc", "eth", "sol"}
 	statuses := []pb.RechargeRequestStatus{
 		pb.RechargeRequestStatus_RECHARGE_PENDING,
 		pb.RechargeRequestStatus_RECHARGE_VOTING,
@@ -1918,7 +1918,7 @@ func (s *TxSimulator) injectRechargeRequests(node *NodeInstance, timestamp int64
 }
 
 func (s *TxSimulator) injectDkgTransitions(node *NodeInstance, timestamp int64) {
-	chains := []string{"BTC", "ETH", "TRON"}
+	chains := []string{"btc", "eth", "sol"}
 	dkgStatuses := []string{"COMMITTING", "SHARING", "KEY_READY", "COMMITTING"}
 
 	for i := 0; i < 4; i++ {

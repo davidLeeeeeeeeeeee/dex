@@ -255,6 +255,7 @@ message AnyTx {
     FrostVaultDkgRevealTx frost_vault_dkg_reveal_tx = 18; // DKG reveal
     FrostVaultDkgValidationSignedTx frost_vault_dkg_validation_signed_tx = 19; // DKG 验证签名
     FrostVaultTransitionSignedTx frost_vault_transition_signed_tx = 20; // Vault 迁移签名
+    FrostWithdrawPlanningLogTx frost_withdraw_planning_log_tx = 21; // Frost 规划日志
   }
 }
 // --------------------- 订单 & 状态相关 ---------------------
@@ -629,6 +630,24 @@ message UtxoInput {
   bytes script_pubkey = 4; // scriptPubKey（用于 sighash 计算）
 }
 
+// Frost UTXO 详情（用于 FundsLedger 存储）
+message FrostUtxo {
+  string txid = 1; // 交易 ID
+  uint32 vout = 2; // 输出索引
+  string amount = 3; // 金额（satoshi 字符串）
+  uint32 vault_id = 4; // 所属 Vault ID
+  uint64 finalize_height = 5; // 入账区块高度
+  string request_id = 6; // 对应的充值请求 ID
+}
+
+// Frost 规划日志（用于排查提现流程卡顿）
+message FrostPlanningLog {
+  string step = 1;      // 步骤：SelectVault, BuildTemplate, StartSigning, etc.
+  string status = 2;    // 状态：OK, FAILED, WAITING
+  string message = 3;   // 详细说明或错误信息
+  uint64 timestamp = 4; // 时间戳（毫秒）
+}
+
 // Frost 提现请求状态（链上存储）
 message FrostWithdrawState {
   string withdraw_id = 1; // 全网唯一（H(chain || asset || seq || request_height)）
@@ -642,6 +661,14 @@ message FrostWithdrawState {
   string status = 9; // QUEUED | SIGNED
   string job_id = 10; // 归属的 SigningJob（当 status=SIGNED 时存在）
   uint32 vault_id = 11; // 由哪个 Vault 支付
+  repeated FrostPlanningLog planning_logs = 12; // 规划日志
+}
+
+// Frost 规划日志交易（Runtime 异步汇报，供前端排查）
+message FrostWithdrawPlanningLogTx {
+  BaseMessage base = 1;
+  string withdraw_id = 2;
+  repeated FrostPlanningLog logs = 3;
 }
 
 // Frost 签名产物（链上存储，receipt/history）
@@ -867,6 +894,7 @@ message GetWithdrawStatusResponse {
   string receiver = 5; // 接收地址
   uint64 height = 6; // 高度
   string tx_hash = 7; // 交易哈希（可选）
+  repeated FrostPlanningLog planning_logs = 8; // 规划日志
 }
 
 // ListWithdrawsResponse 提现列表响应

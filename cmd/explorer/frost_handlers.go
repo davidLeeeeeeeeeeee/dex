@@ -10,12 +10,13 @@ import (
 
 // FrostWithdrawQueueItem 提现队列项
 type FrostWithdrawQueueItem struct {
-	WithdrawID string `json:"withdraw_id"`
-	Chain      string `json:"chain"`
-	Asset      string `json:"asset"`
-	To         string `json:"to"`
-	Amount     string `json:"amount"`
-	Status     string `json:"status"`
+	WithdrawID   string                 `json:"withdraw_id"`
+	Chain        string                 `json:"chain"`
+	Asset        string                 `json:"asset"`
+	To           string                 `json:"to"`
+	Amount       string                 `json:"amount"`
+	Status       string                 `json:"status"`
+	PlanningLogs []*pb.FrostPlanningLog `json:"planning_logs"`
 }
 
 func (s *server) handleFrostWithdrawQueue(w http.ResponseWriter, r *http.Request) {
@@ -45,12 +46,13 @@ func (s *server) handleFrostWithdrawQueue(w http.ResponseWriter, r *http.Request
 	items := make([]FrostWithdrawQueueItem, 0, len(resp.States))
 	for _, st := range resp.States {
 		items = append(items, FrostWithdrawQueueItem{
-			WithdrawID: st.WithdrawId,
-			Chain:      st.Chain,
-			Asset:      st.Asset,
-			To:         st.To,
-			Amount:     st.Amount,
-			Status:     st.Status,
+			WithdrawID:   st.WithdrawId,
+			Chain:        st.Chain,
+			Asset:        st.Asset,
+			To:           st.To,
+			Amount:       st.Amount,
+			Status:       st.Status,
+			PlanningLogs: st.PlanningLogs,
 		})
 	}
 

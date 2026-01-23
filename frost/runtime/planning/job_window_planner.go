@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	chainpkg "dex/frost/chain"
 	"dex/keys"
@@ -24,6 +25,7 @@ type JobWindowPlanner struct {
 	stateReader    ChainStateReader
 	adapterFactory chainpkg.ChainAdapterFactory
 	maxInFlight    int // 最多并发 job 数（maxInFlightPerChainAsset）
+	transientLogs  map[string][]*pb.FrostPlanningLog
 }
 
 // NewJobWindowPlanner 创建新的 Job 窗口规划器
@@ -35,29 +37,39 @@ func NewJobWindowPlanner(stateReader ChainStateReader, adapterFactory chainpkg.C
 		stateReader:    stateReader,
 		adapterFactory: adapterFactory,
 		maxInFlight:    maxInFlight,
+		transientLogs:  make(map[string][]*pb.FrostPlanningLog),
 	}
 }
 
 // PlanJobWindow 规划 Job 窗口（最多 maxInFlight 个 job）
-// 返回：Job 列表（按 FIFO 顺序）
-func (p *JobWindowPlanner) PlanJobWindow(chain, asset string) ([]*Job, error) {
+// 返回：Job 列表和产生的临时日志（针对未生成 Job 的 withdraw）
+func (p *JobWindowPlanner) PlanJobWindow(chain, asset string) ([]*Job, map[string][]*pb.FrostPlanningLog, error) {
+	// 清空旧日志
+	p.transientLogs = make(map[string][]*pb.FrostPlanningLog)
+
 	// 1. 扫描连续的 QUEUED withdraw（最多 maxInFlight 个）
 	withdraws, err := p.scanQueuedWithdraws(chain, asset, p.maxInFlight)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(withdraws) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// 2. 根据链类型选择规划策略
+	var jobs []*Job
 	if chain == "btc" {
 		// BTC：批量规划（1 个 input 支付 N 个 withdraw outputs）
-		return p.planBTCJobWindow(chain, asset, withdraws)
+		jobs, err = p.planBTCJobWindow(chain, asset, withdraws)
 	} else {
 		// 账户链/合约链：为每个 withdraw 规划 job（或批量规划）
-		return p.planAccountChainJobWindow(chain, asset, withdraws)
+		jobs, err = p.planAccountChainJobWindow(chain, asset, withdraws)
 	}
+
+	if err != nil {
+		return nil, nil, err
+	}
+	return jobs, p.transientLogs, nil
 }
 
 // planBTCJobWindow BTC 批量规划（贪心装箱：1 个 input 支付 N 个 withdraw）
@@ -115,6 +127,10 @@ func (p *JobWindowPlanner) planBTCJobWindow(chain, asset string, withdraws []*Sc
 		job, err := p.planBTCJob(chain, asset, vaultID, keyEpoch, batchWithdraws, totalAmount)
 		if err != nil {
 			logs.Warn("[JobWindowPlanner] failed to plan BTC job: %v", err)
+			// 记录失败日志给每一个 withdraw
+			for _, wd := range batchWithdraws {
+				p.reportTransientLog(wd.WithdrawID, "PlanBTCJob", "FAILED", fmt.Sprintf("Failed to plan BTC job: %v", err))
+			}
 			// 如果批量规划失败，尝试单个规划
 			for _, wd := range batchWithdraws {
 				singleJob, err := p.planJobForWithdraw(wd)
@@ -166,6 +182,9 @@ func (p *JobWindowPlanner) planAccountChainJobWindow(chain, asset string, withdr
 		vaultID, _, err := p.selectVault(chain, asset, amount)
 		if err != nil {
 			logs.Warn("[JobWindowPlanner] failed to select vault: %v", err)
+			// 特殊情况：记录到该 withdraw 的日志中（此处没有 job 对象，需要通过其他方式返回或直接记录）
+			// 我们给每一个 withdraw 记录一个 SelectVault FAILED 的日志
+			p.reportTransientLog(withdraws[i].WithdrawID, "SelectVault", "FAILED", fmt.Sprintf("Failed to select vault: %v", err))
 			continue
 		}
 
@@ -184,6 +203,12 @@ func (p *JobWindowPlanner) planAccountChainJobWindow(chain, asset string, withdr
 				continue
 			}
 			if job != nil {
+				job.Logs = append(job.Logs, &pb.FrostPlanningLog{
+					Step:      "SelectVault",
+					Status:    "OK",
+					Message:   fmt.Sprintf("Vault %d has sufficient balance", vaultID),
+					Timestamp: uint64(time.Now().UnixMilli()),
+				})
 				jobs = append(jobs, job)
 				consumedWithdraws[withdraws[i].WithdrawID] = true
 			}
@@ -303,11 +328,31 @@ func (p *JobWindowPlanner) planBTCJob(chain, asset string, vaultID uint32, keyEp
 
 // selectBTCUTXOs 选择 BTC UTXO（按 confirm_height 升序，FIFO）
 func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmount uint64) ([]chainpkg.UTXO, error) {
-	// 扫描该 Vault 的所有 UTXO
+	// 1. 获取 VaultState 以获取 groupPubKey (用于 scriptPubKey)
+	vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
+	vaultStateData, exists, err := p.stateReader.Get(vaultStateKey)
+	if err != nil || !exists {
+		return nil, fmt.Errorf("vault state not found for vault %d (chain %s)", vaultID, chain)
+	}
+	var vaultState pb.FrostVaultState
+	if err := proto.Unmarshal(vaultStateData, &vaultState); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal vault state: %v", err)
+	}
+
+	// Taproot scriptPubKey = OP_1 <32-byte-X-only-pubkey>
+	var scriptPubKey []byte
+	if len(vaultState.GroupPubkey) == 32 {
+		scriptPubKey = make([]byte, 34)
+		scriptPubKey[0] = 0x51
+		scriptPubKey[1] = 0x20
+		copy(scriptPubKey[2:], vaultState.GroupPubkey)
+	}
+
+	// 2. 扫描该 Vault 的所有 UTXO
 	utxoPrefix := fmt.Sprintf("v1_frost_btc_utxo_%d_", vaultID)
 	utxos := make([]chainpkg.UTXO, 0)
 
-	err := p.stateReader.Scan(utxoPrefix, func(k string, v []byte) bool {
+	err = p.stateReader.Scan(utxoPrefix, func(k string, v []byte) bool {
 		// 解析 UTXO key: v1_frost_btc_utxo_<vault_id>_<txid>_<vout>
 		parts := strings.Split(k, "_")
 		if len(parts) < 6 {
@@ -328,15 +373,18 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 			return true // 已锁定，跳过
 		}
 
-		// 解析 UTXO 数据（简化：假设 v 中存储了完整的 UTXO 信息）
-		// TODO: 实际应该从 v 中解析完整的 UTXO 信息（amount, scriptPubKey, confirmHeight）
-		// 这里简化处理，假设可以从其他地方获取
+		// 解析 UTXO 数据
+		var protoUtxo pb.FrostUtxo
+		if err := proto.Unmarshal(v, &protoUtxo); err != nil {
+			return true
+		}
+
 		utxo := chainpkg.UTXO{
 			TxID:          txid,
 			Vout:          uint32(vout),
-			Amount:        0, // TODO: 从 v 或 RechargeRequest 中解析
-			ScriptPubKey:  nil,
-			ConfirmHeight: 0, // TODO: 从 v 中解析
+			Amount:        parseAmount(protoUtxo.Amount),
+			ScriptPubKey:  scriptPubKey,
+			ConfirmHeight: protoUtxo.FinalizeHeight,
 		}
 
 		utxos = append(utxos, utxo)
@@ -363,7 +411,7 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 	var total uint64
 	for _, utxo := range utxos {
 		if utxo.Amount == 0 {
-			continue // 跳过金额为 0 的 UTXO（未解析）
+			continue // 跳过金额为 0 的 UTXO
 		}
 		selected = append(selected, utxo)
 		total += utxo.Amount
@@ -771,7 +819,9 @@ func (p *JobWindowPlanner) planCompositeJob(chain, asset string, firstWithdraw *
 
 	// 检查是否覆盖了全部金额
 	if remainingAmount > 0 {
-		return nil, fmt.Errorf("insufficient vault balance for composite job: remaining=%d", remainingAmount)
+		msg := fmt.Sprintf("insufficient vault balance for composite job: remaining=%d", remainingAmount)
+		p.reportTransientLog(firstWithdraw.WithdrawID, "CompositePlan", "WAITING", msg)
+		return nil, fmt.Errorf("%s", msg)
 	}
 
 	// 4. 生成 CompositeJob ID
@@ -867,4 +917,17 @@ func generateCompositeJobID(chain, asset string, firstSeq uint64, vaultIDs []uin
 	data += "|composite"
 	hash := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(hash[:])
+}
+
+// reportTransientLog 记录临时日志（针对未生成 Job 的 withdraw）
+func (p *JobWindowPlanner) reportTransientLog(withdrawID, step, status, message string) {
+	if p.transientLogs == nil {
+		p.transientLogs = make(map[string][]*pb.FrostPlanningLog)
+	}
+	p.transientLogs[withdrawID] = append(p.transientLogs[withdrawID], &pb.FrostPlanningLog{
+		Step:      step,
+		Status:    status,
+		Message:   message,
+		Timestamp: uint64(time.Now().UnixMilli()),
+	})
 }

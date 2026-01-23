@@ -102,13 +102,14 @@ func (hm *HandlerManager) HandleGetWithdrawStatus(w http.ResponseWriter, r *http
 	}
 
 	resp := &pb.GetWithdrawStatusResponse{
-		LotId:    state.WithdrawId,
-		Chain:    state.Chain,
-		Status:   state.Status,
-		Amount:   state.Amount,
-		Receiver: state.To,
-		Height:   state.RequestHeight,
-		TxHash:   state.JobId, // 使用 job_id 作为标识
+		LotId:        state.WithdrawId,
+		Chain:        state.Chain,
+		Status:       state.Status,
+		Amount:       state.Amount,
+		Receiver:     state.To,
+		Height:       state.RequestHeight,
+		TxHash:       state.JobId, // 使用 job_id 作为标识
+		PlanningLogs: state.PlanningLogs,
 	}
 
 	// 序列化为 protobuf
@@ -165,12 +166,13 @@ func (hm *HandlerManager) HandleListWithdraws(w http.ResponseWriter, r *http.Req
 		}
 
 		withdraws = append(withdraws, &pb.GetWithdrawStatusResponse{
-			LotId:    state.WithdrawId,
-			Chain:    state.Chain,
-			Status:   state.Status,
-			Amount:   state.Amount,
-			Receiver: state.To,
-			Height:   state.RequestHeight,
+			LotId:        state.WithdrawId,
+			Chain:        state.Chain,
+			Status:       state.Status,
+			Amount:       state.Amount,
+			Receiver:     state.To,
+			Height:       state.RequestHeight,
+			PlanningLogs: state.PlanningLogs,
 		})
 
 		if len(withdraws) >= limit {

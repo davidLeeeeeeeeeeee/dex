@@ -30,7 +30,7 @@
 
 ### ⚠️ 部分完成的任务
 
-- **FundsLedger BTC UTXO 存储**：已区分 BTC 和账户链处理，但 BTC UTXO 写入逻辑需要从 RechargeRequest 解析 txid/vout（需要扩展数据结构或从外部获取）
+- **FundsLedger BTC UTXO 存储**：✅ **已完成**（已从 RechargeRequest 解析 txid/vout 并按 Vault 分片存储）
 
 ---
 
@@ -69,10 +69,10 @@
 - ✅ **已完成**：账户链 lot 的按 Vault 分片 FIFO 实现（`vm/witness_events.go` 中的 `applyRechargeFinalized` 已按 vault_id 写入）
 - ✅ **已完成**：资金消耗标记逻辑（`vm/frost_withdraw_signed.go` 中已实现账户链 lot 消耗和 BTC UTXO 锁定）
 - ✅ **已完成**：FundsLedger 的 FIFO 头指针维护（`vm/frost_funds_ledger.go` 中已实现）
-- ⚠️ **部分完成**：BTC UTXO 的按 Vault 分片存储（`vm/witness_events.go` 中已区分 BTC 和账户链处理，但 BTC UTXO 写入逻辑需要从 RechargeRequest 解析 txid/vout）
+- ✅ **已完成**：BTC UTXO 的按 Vault 分片存储（`vm/witness_events.go` 中已实现从 RechargeRequest 解析 txid/vout 并写入 UTXO 详情）
 
 **需要实现**：
-- [x] 在 `vm/witness_handler.go` 中：入账时按 vault_id 写入 UTXO 或 lot（使用 `KeyFrostBtcUtxo` 或 `KeyFrostFundsLotIndex`）✅（账户链已完成，BTC 需要完善）
+- [x] 在 `vm/witness_handler.go` 中：入账时按 vault_id 写入 UTXO 或 lot（使用 `KeyFrostBtcUtxo` 或 `KeyFrostFundsLotIndex`）✅
 - [x] 在 `vm/frost_withdraw_signed.go` 中：签名完成后标记资金为 consumed/spent（UTXO 锁定、lot 标记）✅
 - [x] 实现 FundsLedger FIFO 头指针更新逻辑 ✅
 

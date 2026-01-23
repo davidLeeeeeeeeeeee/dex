@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strconv"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -55,8 +56,8 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 	}
 
 	txID := req.Base.TxId
-	chain := req.Chain
-	asset := req.Asset
+	chain := strings.ToLower(req.Chain)
+	asset := strings.ToUpper(req.Asset)
 	to := req.To
 	amount := req.Amount
 	requestHeight := req.Base.ExecutedHeight

@@ -5,7 +5,9 @@ package planning
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strconv"
+	"time"
 
 	"dex/frost/chain"
 	"dex/keys"
@@ -16,17 +18,18 @@ import (
 
 // Job 签名任务结构
 type Job struct {
-	JobID        string   // 全网唯一（H(chain || asset || vault_id || first_seq || template_hash || key_epoch)）
-	Chain        string   // 链标识
-	Asset        string   // 资产类型
-	VaultID      uint32   // 使用的 Vault ID
-	KeyEpoch     uint64   // 密钥版本
-	WithdrawIDs  []string // 被该 job 覆盖的 withdraw_id 列表
-	TemplateHash []byte   // 模板哈希
-	TemplateData []byte   // 模板数据
-	FirstSeq     uint64   // 队首 withdraw 的 seq
-	IsComposite  bool     // 是否为 CompositeJob
-	SubJobs      []*Job   // CompositeJob 的子 job 列表（仅当 IsComposite=true 时有效）
+	JobID        string                 // 全网唯一（H(chain || asset || vault_id || first_seq || template_hash || key_epoch)）
+	Chain        string                 // 链标识
+	Asset        string                 // 资产类型
+	VaultID      uint32                 // 使用的 Vault ID
+	KeyEpoch     uint64                 // 密钥版本
+	WithdrawIDs  []string               // 被该 job 覆盖的 withdraw_id 列表
+	TemplateHash []byte                 // 模板哈希
+	TemplateData []byte                 // 模板数据
+	FirstSeq     uint64                 // 队首 withdraw 的 seq
+	IsComposite  bool                   // 是否为 CompositeJob
+	SubJobs      []*Job                 // CompositeJob 的子 job 列表（仅当 IsComposite=true 时有效）
+	Logs         []*pb.FrostPlanningLog // 规划日志
 }
 
 // JobPlanner 确定性 Job 规划器
@@ -115,6 +118,11 @@ func (p *JobPlanner) PlanJob(scanResult *ScanResult) (*Job, error) {
 		TemplateHash: result.TemplateHash,
 		TemplateData: result.TemplateData,
 		FirstSeq:     scanResult.Seq,
+		Logs: []*pb.FrostPlanningLog{
+			{Step: "SelectVault", Status: "OK", Message: fmt.Sprintf("Selected Vault %d", vaultID), Timestamp: uint64(time.Now().UnixMilli())},
+			{Step: "BuildTemplate", Status: "OK", Message: "Template hash generated", Timestamp: uint64(time.Now().UnixMilli())},
+			{Step: "FinishPlanning", Status: "OK", Message: fmt.Sprintf("Job %s created", jobID), Timestamp: uint64(time.Now().UnixMilli())},
+		},
 	}, nil
 }
 

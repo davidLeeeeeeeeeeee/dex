@@ -99,6 +99,9 @@ func (e *Executor) HandleFrostVaultDkgValidationSignedTx(sender string, tx *pb.F
 	vaultState.KeyEpoch = epochID
 	vaultState.GroupPubkey = tx.NewGroupPubkey
 	vaultState.Status = "KEY_READY"
+	if len(transition.OldGroupPubkey) == 0 {
+		vaultState.Status = "ACTIVE"
+	}
 	vaultState.ActiveSinceHeight = height
 	vaultState.CommitteeMembers = transition.NewCommitteeMembers
 

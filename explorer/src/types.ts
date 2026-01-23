@@ -191,6 +191,14 @@ export interface AddressResponse {
   error?: string
 }
 
+// FROST 规划日志
+export interface FrostPlanningLog {
+  step: string
+  status: string
+  message: string
+  timestamp: number
+}
+
 // FROST 提现队列项
 export interface FrostWithdrawQueueItem {
   withdraw_id: string
@@ -202,6 +210,7 @@ export interface FrostWithdrawQueueItem {
   vault_id?: number
   request_height?: number
   job_id?: string
+  planning_logs?: FrostPlanningLog[]
 }
 
 // 见证人上账请求

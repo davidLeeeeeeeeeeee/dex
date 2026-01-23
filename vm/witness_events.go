@@ -7,6 +7,7 @@ import (
 	"dex/witness"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -110,13 +111,34 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 	// 区分 BTC 和账户链/合约链的处理
 	if chain == "btc" {
 		// BTC：写入 UTXO（需要从 RechargeRequest 或 WitnessRequestTx 中获取 txid 和 vout）
-		// 注意：WitnessRequestTx 应该包含 BTC 交易的 txid 和 vout 信息
-		// 这里简化处理，实际应该从 request 中解析 BTC 交易信息
-		// TODO: 从 RechargeRequest 或 WitnessRequestTx 中获取 BTC txid 和 vout
-		// 示例：如果 request 中有 NativeTxHash，可以解析为 BTC txid
-		// 对于 BTC，通常需要额外的字段来标识 UTXO（txid:vout）
-		// 这里假设 WitnessRequestTx 或 RechargeRequest 中有这些信息
-		// 实际实现需要根据具体的数据结构来解析
+		// 约定：NativeTxHash 为 "txid:vout" 或仅 "txid" (默认 vout=0)
+		txid := stored.NativeTxHash
+		vout := uint32(0)
+		if idx := strings.Index(txid, ":"); idx != -1 {
+			if v, err := strconv.ParseUint(txid[idx+1:], 10, 32); err == nil {
+				vout = uint32(v)
+				txid = txid[:idx]
+			}
+		}
+
+		// 写入 UTXO 详情
+		utxoKey := keys.KeyFrostBtcUtxo(vaultID, txid, vout)
+		utxo := &pb.FrostUtxo{
+			Txid:           txid,
+			Vout:           vout,
+			Amount:         stored.Amount, // 使用 RechargeRequest 中的金额
+			VaultId:        vaultID,
+			FinalizeHeight: finalizeHeight,
+			RequestId:      stored.RequestId,
+		}
+		utxoData, err := proto.Marshal(utxo)
+		if err != nil {
+			return err
+		}
+		setWithMeta(sv, utxoKey, utxoData, true, "frost_funds_utxo")
+
+		// 更新 Vault 的资金账本聚合状态（可选，用于查询总额）
+		// TODO: 更新总余额
 	} else {
 		// 账户链/合约链：写入 lot FIFO
 		seqKey := keys.KeyFrostFundsLotSeq(chain, asset, vaultID, finalizeHeight)

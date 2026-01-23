@@ -794,6 +794,12 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 	vault.GroupPubkey = req.NewGroupPubkey
 	vault.SignAlgo = transition.SignAlgo
 	vault.Status = VaultStatusKeyReady
+	// 如果没有旧公钥（第一次 DKG），则直接进入 ACTIVE 状态，否则需要通过迁移交易激活
+	if len(transition.OldGroupPubkey) == 0 {
+		vault.Status = VaultStatusActive
+		logs.Info("[DKGValidation] Vault %d activated automatically (first epoch)", vaultID)
+	}
+
 	// 更新委员会成员（从 transition 获取）
 	if len(transition.NewCommitteeMembers) > 0 {
 		vault.CommitteeMembers = transition.NewCommitteeMembers

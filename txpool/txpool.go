@@ -350,29 +350,7 @@ func (p *TxPool) ConcatFirst8Bytes(txs []*pb.AnyTx) []byte {
 //
 // ---------------------------------------------------------------------------
 func ExtractAnyTxId(a *pb.AnyTx) string {
-	switch content := a.GetContent().(type) {
-	case *pb.AnyTx_IssueTokenTx:
-		if content.IssueTokenTx.Base != nil {
-			return content.IssueTokenTx.Base.TxId
-		}
-	case *pb.AnyTx_FreezeTx:
-		if content.FreezeTx.Base != nil {
-			return content.FreezeTx.Base.TxId
-		}
-	case *pb.AnyTx_Transaction:
-		if content.Transaction.Base != nil {
-			return content.Transaction.Base.TxId
-		}
-	case *pb.AnyTx_OrderTx:
-		if content.OrderTx.Base != nil {
-			return content.OrderTx.Base.TxId
-		}
-	case *pb.AnyTx_MinerTx:
-		if content.MinerTx.Base != nil {
-			return content.MinerTx.Base.TxId
-		}
-	}
-	return ""
+	return a.GetTxId()
 }
 
 // 根据每笔Tx的发起方(FB余额)由大到小排序，

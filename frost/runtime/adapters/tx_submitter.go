@@ -134,6 +134,20 @@ func (s *TxPoolSubmitter) SubmitDkgValidationSignedTx(ctx context.Context, tx *p
 	return err
 }
 
+// SubmitWithdrawSignedTx 提交提现签名交易
+func (s *TxPoolSubmitter) SubmitWithdrawSignedTx(ctx context.Context, tx *pb.FrostWithdrawSignedTx) error {
+	anyTx := &pb.AnyTx{Content: &pb.AnyTx_FrostWithdrawSignedTx{FrostWithdrawSignedTx: tx}}
+	_, err := s.Submit(anyTx)
+	return err
+}
+
+// SubmitWithdrawPlanningLogTx 提交提现规划日志交易
+func (s *TxPoolSubmitter) SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error {
+	anyTx := &pb.AnyTx{Content: &pb.AnyTx_FrostWithdrawPlanningLogTx{FrostWithdrawPlanningLogTx: tx}}
+	_, err := s.Submit(anyTx)
+	return err
+}
+
 // Ensure TxPoolSubmitter implements runtime.TxSubmitter
 var _ runtime.TxSubmitter = (*TxPoolSubmitter)(nil)
 
@@ -218,6 +232,18 @@ func (s *FakeTxSubmitter) SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaul
 
 // SubmitDkgValidationSignedTx 提交 DKG 验证签名交易（测试用）
 func (s *FakeTxSubmitter) SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error {
+	_, err := s.Submit(tx)
+	return err
+}
+
+// SubmitWithdrawSignedTx 提交提现签名交易（测试用）
+func (s *FakeTxSubmitter) SubmitWithdrawSignedTx(ctx context.Context, tx *pb.FrostWithdrawSignedTx) error {
+	_, err := s.Submit(tx)
+	return err
+}
+
+// SubmitWithdrawPlanningLogTx 提交提现规划日志交易
+func (s *FakeTxSubmitter) SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error {
 	_, err := s.Submit(tx)
 	return err
 }
