@@ -42,8 +42,6 @@ func (m *AnyTx) GetBase() *BaseMessage {
 		return tx.FrostVaultDkgValidationSignedTx.GetBase()
 	case *AnyTx_FrostVaultTransitionSignedTx:
 		return tx.FrostVaultTransitionSignedTx.GetBase()
-	case *AnyTx_FrostWithdrawPlanningLogTx:
-		return tx.FrostWithdrawPlanningLogTx.GetBase()
 	default:
 		return nil
 	}

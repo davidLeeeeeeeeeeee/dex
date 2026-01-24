@@ -130,7 +130,16 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	// 遍历执行每个交易
 	for idx, tx := range b.Body {
 		// 提取交易类型
-		kind, _ := x.KFn(tx)
+		kind, err := x.KFn(tx)
+		if err != nil {
+			return &SpecResult{
+				BlockID:  b.BlockHash,
+				ParentID: b.PrevBlockHash,
+				Height:   b.Height,
+				Valid:    false,
+				Reason:   fmt.Sprintf("tx %d has invalid structure: %v", idx, err),
+			}, nil
+		}
 
 		// 统一注入当前执行高度到交易 BaseMessage 中，供 Handler 使用
 		if base := getBaseMessage(tx); base != nil {

@@ -192,7 +192,11 @@ type TxSubmitter interface {
 	SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error
 	SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error
 	SubmitWithdrawSignedTx(ctx context.Context, tx *pb.FrostWithdrawSignedTx) error
-	SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error
+}
+
+// LogReporter 异步汇报接口（直写本地 DB，用于排查，不参与共识）
+type LogReporter interface {
+	ReportWithdrawPlanningLog(ctx context.Context, log *pb.FrostWithdrawPlanningLogTx) error
 }
 
 // MinerPubKeyProvider 矿工公钥提供者

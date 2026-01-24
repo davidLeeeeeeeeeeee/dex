@@ -18,7 +18,7 @@ triggers:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    cmd/main.go (入口)                        │
+│                    cmd/main/ (项目入口)                      │
 ├─────────────────────────────────────────────────────────────┤
 │  handlers/          │  explorer/         │  network/         │
 │  HTTP API 层        │  前端 Vue + TS     │  P2P 通信         │
@@ -76,7 +76,7 @@ triggers:
 
 ```bash
 # 启动节点
-go run cmd/main.go
+go run ./cmd/main
 
 # 启动前端
 cd explorer && npm run dev

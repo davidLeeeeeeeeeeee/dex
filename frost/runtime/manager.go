@@ -113,8 +113,12 @@ func (a *workersTxSubmitterAdapter) SubmitWithdrawSignedTx(ctx context.Context, 
 	return a.submitter.SubmitWithdrawSignedTx(ctx, tx)
 }
 
-func (a *workersTxSubmitterAdapter) SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error {
-	return a.submitter.SubmitWithdrawPlanningLogTx(ctx, tx)
+type workersLogReporterAdapter struct {
+	reporter LogReporter
+}
+
+func (a *workersLogReporterAdapter) ReportWithdrawPlanningLog(ctx context.Context, log *pb.FrostWithdrawPlanningLogTx) error {
+	return a.reporter.ReportWithdrawPlanningLog(ctx, log)
 }
 
 type workersPubKeyProviderAdapter struct {
@@ -172,10 +176,6 @@ func (a *workersTxSubmitterAdapter2) SubmitDkgValidationSignedTx(ctx context.Con
 
 func (a *workersTxSubmitterAdapter2) SubmitWithdrawSignedTx(ctx context.Context, tx *pb.FrostWithdrawSignedTx) error {
 	return a.submitter.SubmitWithdrawSignedTx(ctx, tx)
-}
-
-func (a *workersTxSubmitterAdapter2) SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error {
-	return a.submitter.SubmitWithdrawPlanningLogTx(ctx, tx)
 }
 
 type workersVaultProviderAdapter struct {
@@ -350,6 +350,7 @@ type ManagerDeps struct {
 	AdapterFactory chain.ChainAdapterFactory
 	PubKeyProvider MinerPubKeyProvider
 	CryptoFactory  CryptoExecutorFactory // 密码学执行器工厂
+	LogReporter    LogReporter           // 规划日志汇报器
 	Logger         logs.Logger
 }
 
@@ -409,6 +410,7 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 		&workersStateReaderAdapter2{reader: deps.StateReader},
 		deps.AdapterFactory,
 		&workersTxSubmitterAdapter2{submitter: deps.TxSubmitter},
+		&workersLogReporterAdapter{reporter: deps.LogReporter},
 		signingServiceAdapter,
 		deps.VaultProvider,
 		maxInFlight,

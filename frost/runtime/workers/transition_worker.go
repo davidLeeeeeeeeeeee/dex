@@ -219,7 +219,7 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 		return nil
 	}
 
-	w.Logger.Info("[TransitionWorker] node %s (index %d) starting DKG session %s", w.localAddress, myIndex, sessionID)
+	w.Logger.Debug("[TransitionWorker] node %s (index %d) starting DKG session %s", w.localAddress, myIndex, sessionID)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()

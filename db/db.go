@@ -574,6 +574,16 @@ func RebuildOrderPriceIndexes(m *Manager) (int, error) {
 				continue
 			}
 
+			// 尝试从 OrderState 获取最新的 is_filled 状态
+			isFilled := false
+			orderStateKey := keys.KeyOrderState(order.Base.TxId)
+			if stateData, err := m.Get(orderStateKey); err == nil && len(stateData) > 0 {
+				var state pb.OrderState
+				if err := proto.Unmarshal(stateData, &state); err == nil {
+					isFilled = state.IsFilled
+				}
+			}
+
 			// 重建价格索引
 			pair := utils.GeneratePairKey(order.BaseToken, order.QuoteToken)
 			priceKey67, err := PriceToKey128(order.Price)
@@ -581,9 +591,7 @@ func RebuildOrderPriceIndexes(m *Manager) (int, error) {
 				continue
 			}
 
-			// 新版本 OrderTx 不再有 IsFilled 字段，默认使用 false（未成交）
-			// 实际状态应该从 OrderState 读取，但这里是重建索引，假设订单未成交
-			indexKey := keys.KeyOrderPriceIndex(pair, false, priceKey67, order.Base.TxId)
+			indexKey := keys.KeyOrderPriceIndex(pair, isFilled, priceKey67, order.Base.TxId)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 
 			indexes = append(indexes, indexEntry{

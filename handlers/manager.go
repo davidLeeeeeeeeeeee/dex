@@ -107,6 +107,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/frost/withdraw/list", hm.HandleFrostWithdrawList)
 	mux.HandleFunc("/frost/dkg/list", hm.HandleFrostDkgList)
 	mux.HandleFunc("/witness/requests", hm.HandleWitnessRequests)
+	mux.HandleFunc("/witness/list", hm.HandleWitnessList)
 	// 订单簿和成交记录
 	mux.HandleFunc("/orderbook", hm.HandleOrderBook)
 	mux.HandleFunc("/orderbook/debug", hm.HandleOrderBookDebug)

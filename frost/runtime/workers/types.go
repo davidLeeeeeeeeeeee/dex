@@ -8,6 +8,7 @@ import "dex/frost/runtime/types"
 // 使用types包中定义的接口和类型
 type StateReader = types.StateReader
 type TxSubmitter = types.TxSubmitter
+type LogReporter = types.LogReporter
 type VaultCommitteeProvider = types.VaultCommitteeProvider
 type SignerInfo = types.SignerInfo
 type MinerPubKeyProvider = types.MinerPubKeyProvider

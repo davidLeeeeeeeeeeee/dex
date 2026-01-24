@@ -262,6 +262,7 @@ func main() {
 	mux.HandleFunc("/api/recentblocks", srv.handleRecentBlocks) // 获取最近区块列表
 	mux.HandleFunc("/api/frost/withdraw/queue", srv.handleFrostWithdrawQueue)
 	mux.HandleFunc("/api/witness/requests", srv.handleWitnessRequests)
+	mux.HandleFunc("/api/witness/list", srv.handleWitnessList)
 	mux.HandleFunc("/api/frost/dkg/list", srv.handleFrostDKGSessions)
 	mux.HandleFunc("/api/orderbook", srv.handleOrderBook)
 	mux.HandleFunc("/api/orderbook/debug", srv.handleOrderBookDebug)

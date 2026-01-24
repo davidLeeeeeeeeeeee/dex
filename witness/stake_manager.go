@@ -342,6 +342,18 @@ func (sm *StakeManager) GetWitnessCandidates() []*WitnessCandidate {
 	return result
 }
 
+// GetAllWitnesses 获取所有见证者列表（包括所有状态）
+func (sm *StakeManager) GetAllWitnesses() []*pb.WitnessInfo {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	result := make([]*pb.WitnessInfo, 0, len(sm.witnesses))
+	for _, info := range sm.witnesses {
+		result = append(result, info)
+	}
+	return result
+}
+
 // UpdateWitnessStats 更新见证者统计
 func (sm *StakeManager) UpdateWitnessStats(address string, voteType pb.WitnessVoteType) error {
 	sm.mu.Lock()

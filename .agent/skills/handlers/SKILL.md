@@ -68,8 +68,8 @@ func (hm *HandlerManager) HandleNewAPI(w http.ResponseWriter, r *http.Request) {
     // ... 处理逻辑
 }
 
-// 2. 在 cmd/main.go 中注册路由
-mux.HandleFunc("/newapi", handlerManager.HandleNewAPI)
+// 2. 在 cmd/main/node.go 中注册路由 (startHTTPServerWithSignal)
+mux.HandleFunc("/newapi", node.HandlerManager.HandleNewAPI)
 ```
 
 ## 常见调试

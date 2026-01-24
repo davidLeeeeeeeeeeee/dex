@@ -44,7 +44,6 @@ func RegisterDefaultHandlers(reg *HandlerRegistry, args ...interface{}) error {
 		&FrostVaultDkgRevealTxHandler{},           // DKG reveal
 		&FrostVaultDkgValidationSignedTxHandler{}, // DKG 验证签名
 		&FrostVaultTransitionSignedTxHandler{},    // Vault 迁移签名
-		&FrostWithdrawPlanningLogTxHandler{},      // Frost 规划日志（汇报用）
 	}
 
 	for _, h := range handlers {

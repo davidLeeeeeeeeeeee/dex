@@ -230,6 +230,22 @@ export interface WitnessRequest {
   vault_id?: number
 }
 
+// 见证者信息
+export interface WitnessInfo {
+  address: string
+  stake_amount: string
+  pending_reward: string
+  status: string
+  unstake_height: number
+  total_witness_count: number
+  pass_count: number
+  fail_count: number
+  abstain_count: number
+  slashed_count: number
+  pending_tasks: string[]
+  total_reward: string
+}
+
 // DKG 会话
 export interface DKGSession {
   chain: string

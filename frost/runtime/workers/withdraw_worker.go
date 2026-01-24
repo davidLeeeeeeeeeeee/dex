@@ -72,6 +72,7 @@ type WithdrawWorker struct {
 	planner        *planning.JobPlanner
 	windowPlanner  *planning.JobWindowPlanner // Job 窗口规划器
 	txSubmitter    TxSubmitter
+	logReporter    LogReporter
 	signingService SigningService
 	vaultProvider  VaultCommitteeProvider
 	maxInFlight    int // 最多并发 job 数
@@ -85,6 +86,7 @@ func NewWithdrawWorker(
 	stateReader StateReader,
 	adapterFactory chain.ChainAdapterFactory,
 	txSubmitter TxSubmitter,
+	logReporter LogReporter,
 	signingService SigningService,
 	vaultProvider VaultCommitteeProvider,
 	maxInFlight int,
@@ -101,6 +103,7 @@ func NewWithdrawWorker(
 		planner:        planning.NewJobPlanner(planningReader, adapterFactory),
 		windowPlanner:  planning.NewJobWindowPlanner(planningReader, adapterFactory, maxInFlight),
 		txSubmitter:    txSubmitter,
+		logReporter:    logReporter,
 		signingService: signingService,
 		vaultProvider:  vaultProvider,
 		maxInFlight:    maxInFlight,
@@ -175,23 +178,20 @@ func (w *WithdrawWorker) ProcessWindow(ctx context.Context, chain, asset string)
 	return jobs, nil
 }
 
-// reportPlanningLogs 将规划日志提交到链上
+// reportPlanningLogs 将规划日志异步汇报（直写本地 DB，不参与共识）
 func (w *WithdrawWorker) reportPlanningLogs(ctx context.Context, job *planning.Job) {
 	if len(job.Logs) == 0 {
 		return
 	}
 
 	for _, withdrawID := range job.WithdrawIDs {
-		planningTx := &pb.FrostWithdrawPlanningLogTx{
-			Base: &pb.BaseMessage{
-				FromAddress: w.localAddress,
-				TxId:        fmt.Sprintf("0x%016x%016x", time.Now().UnixNano(), w.logCounter.Add(1)),
-			},
+		planningLog := &pb.FrostWithdrawPlanningLogTx{
+			Reporter:   w.localAddress,
 			WithdrawId: withdrawID,
 			Logs:       job.Logs,
 		}
 
-		err := w.txSubmitter.SubmitWithdrawPlanningLogTx(ctx, planningTx)
+		err := w.logReporter.ReportWithdrawPlanningLog(ctx, planningLog)
 		if err != nil {
 			w.Logger.Warn("[WithdrawWorker] failed to report planning logs for %s: %v", withdrawID, err)
 		}

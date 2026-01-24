@@ -11,6 +11,10 @@ import type {
   AddressResponse,
   TxHistoryResponse,
   SyncStatusResponse,
+  FrostWithdrawQueueItem,
+  WitnessRequest,
+  WitnessInfo,
+  DKGSession,
 } from './types'
 
 // 获取默认节点列表
@@ -95,18 +99,24 @@ export async function fetchRecentBlocks(request: RecentBlocksRequest): Promise<R
 }
 
 // 获取 Frost 提现队列
-export async function fetchFrostWithdrawQueue(node: string, chain: string = '', asset: string = ''): Promise<any[]> {
+export async function fetchFrostWithdrawQueue(node: string, chain: string = '', asset: string = ''): Promise<FrostWithdrawQueueItem[]> {
   const resp = await fetch(`/api/frost/withdraw/queue?node=${encodeURIComponent(node)}&chain=${chain}&asset=${asset}`)
   return resp.json()
 }
 
 // 获取见证者上账请求
-export async function fetchWitnessRequests(node: string): Promise<any[]> {
+export async function fetchWitnessRequests(node: string): Promise<WitnessRequest[]> {
   const resp = await fetch(`/api/witness/requests?node=${encodeURIComponent(node)}`)
   return resp.json()
 }
+
+// 获取见证者列表
+export async function fetchWitnessList(node: string): Promise<WitnessInfo[]> {
+  const resp = await fetch(`/api/witness/list?node=${encodeURIComponent(node)}`)
+  return resp.json()
+}
 // 获取 Frost DKG 会话
-export async function fetchFrostDKGSessions(node: string): Promise<any[]> {
+export async function fetchFrostDKGSessions(node: string): Promise<DKGSession[]> {
   const resp = await fetch(`/api/frost/dkg/list?node=${encodeURIComponent(node)}`)
   return resp.json()
 }

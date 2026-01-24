@@ -875,6 +875,11 @@ func (s *Service) GetActiveWitnesses() []*pb.WitnessInfo {
 	return s.stakeManager.GetActiveWitnesses()
 }
 
+// GetAllWitnesses 获取所有见证者列表（包括所有状态）
+func (s *Service) GetAllWitnesses() []*pb.WitnessInfo {
+	return s.stakeManager.GetAllWitnesses()
+}
+
 // ==================== 挑战管理代理方法 ====================
 
 // CreateChallenge 创建挑战（代理到 ChallengeManager）

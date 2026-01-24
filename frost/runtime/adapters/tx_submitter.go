@@ -5,6 +5,7 @@ package adapters
 import (
 	"context"
 	"crypto/sha256"
+	"dex/db"
 	"dex/frost/runtime"
 	"dex/pb"
 	"dex/sender"
@@ -141,12 +142,31 @@ func (s *TxPoolSubmitter) SubmitWithdrawSignedTx(ctx context.Context, tx *pb.Fro
 	return err
 }
 
-// SubmitWithdrawPlanningLogTx 提交提现规划日志交易
-func (s *TxPoolSubmitter) SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error {
-	anyTx := &pb.AnyTx{Content: &pb.AnyTx_FrostWithdrawPlanningLogTx{FrostWithdrawPlanningLogTx: tx}}
-	_, err := s.Submit(anyTx)
-	return err
+// LocalLogReporter 只有本地记录功能的汇报器
+type LocalLogReporter struct {
+	dbManager *db.Manager
 }
+
+func NewLocalLogReporter(dbManager *db.Manager) *LocalLogReporter {
+	return &LocalLogReporter{dbManager: dbManager}
+}
+
+func (r *LocalLogReporter) ReportWithdrawPlanningLog(ctx context.Context, log *pb.FrostWithdrawPlanningLogTx) error {
+	if r.dbManager == nil || log == nil {
+		return nil
+	}
+	// 将日志存入本地数据库，Key：v1_frost_planning_log_<withdraw_id>_<reporter>
+	key := fmt.Sprintf("v1_frost_planning_log_%s_%s", log.WithdrawId, log.Reporter)
+	data, err := proto.Marshal(log)
+	if err != nil {
+		return err
+	}
+	r.dbManager.EnqueueSet(key, string(data))
+	return nil
+}
+
+// Ensure LocalLogReporter implements runtime.LogReporter
+var _ runtime.LogReporter = (*LocalLogReporter)(nil)
 
 // Ensure TxPoolSubmitter implements runtime.TxSubmitter
 var _ runtime.TxSubmitter = (*TxPoolSubmitter)(nil)
@@ -242,11 +262,16 @@ func (s *FakeTxSubmitter) SubmitWithdrawSignedTx(ctx context.Context, tx *pb.Fro
 	return err
 }
 
-// SubmitWithdrawPlanningLogTx 提交提现规划日志交易
-func (s *FakeTxSubmitter) SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error {
-	_, err := s.Submit(tx)
-	return err
+// FakeLogReporter 用于测试的 fake LogReporter
+type FakeLogReporter struct {
+	Logs []*pb.FrostWithdrawPlanningLogTx
+}
+
+func (s *FakeLogReporter) ReportWithdrawPlanningLog(ctx context.Context, log *pb.FrostWithdrawPlanningLogTx) error {
+	s.Logs = append(s.Logs, log)
+	return nil
 }
 
 // Ensure FakeTxSubmitter implements runtime.TxSubmitter
 var _ runtime.TxSubmitter = (*FakeTxSubmitter)(nil)
+var _ runtime.LogReporter = (*FakeLogReporter)(nil)

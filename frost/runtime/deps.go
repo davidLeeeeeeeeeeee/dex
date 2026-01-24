@@ -26,8 +26,10 @@ type TxSubmitter interface {
 	SubmitDkgShareTx(ctx context.Context, tx *pb.FrostVaultDkgShareTx) error
 	SubmitDkgValidationSignedTx(ctx context.Context, tx *pb.FrostVaultDkgValidationSignedTx) error
 	SubmitWithdrawSignedTx(ctx context.Context, tx *pb.FrostWithdrawSignedTx) error
-	SubmitWithdrawPlanningLogTx(ctx context.Context, tx *pb.FrostWithdrawPlanningLogTx) error
 }
+
+// LogReporter 异步汇报接口（从 types 包导入）
+type LogReporter = types.LogReporter
 
 // StateReader 状态读取接口（ChainStateReader 的别名）
 type StateReader = ChainStateReader

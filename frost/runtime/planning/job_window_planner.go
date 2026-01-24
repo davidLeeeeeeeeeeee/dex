@@ -126,7 +126,7 @@ func (p *JobWindowPlanner) planBTCJobWindow(chain, asset string, withdraws []*Sc
 		// 规划 BTC job（选择 UTXO，构建模板）
 		job, err := p.planBTCJob(chain, asset, vaultID, keyEpoch, batchWithdraws, totalAmount)
 		if err != nil {
-			logs.Warn("[JobWindowPlanner] failed to plan BTC job: %v", err)
+			logs.Debug("[JobWindowPlanner] failed to plan BTC job: %v", err)
 			// 记录失败日志给每一个 withdraw
 			for _, wd := range batchWithdraws {
 				p.reportTransientLog(wd.WithdrawID, "PlanBTCJob", "FAILED", fmt.Sprintf("Failed to plan BTC job: %v", err))

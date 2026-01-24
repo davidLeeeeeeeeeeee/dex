@@ -78,10 +78,6 @@ e.g. btc直接聚合公钥地址管理，而智能合约用合约来管理资产
 答：share和承诺一起上链，解决1和2.1. share用receiver公钥加密，当2.2情况出现的时候，dealer公开share明文r,，节点重复加密过程，链上验证裁决.
 
 
-[WARN]    [bc1qu5r] 2026/01/23 14:46:15.648427 log.go:153: [JobWindowPlanner] failed to plan BTC job: insufficient UTXOs: need 50, got 0
-[ERROR]   [bc1q54u] 2026/01/23 14:46:15.648427 log.go:161: [RealBlockStore] Block block-25-5-w3-919a0834 failed VM validation: no handler for tx 0 (kind: )
-[WARN]    [bc1qcun] 2026/01/23 14:46:15.648427 log.go:153: [JobWindowPlanner] failed to plan BTC job: insufficient UTXOs: need 50, got 0
-[ERROR]   [bc1q3zr] 2026/01/23 14:46:15.648427 log.go:161: [RealBlockStore] Block block-25-4-w3-af38f801 failed VM validation: no handler for tx 0 (kind: )
 
 1、需要制造一些错误的share或者commit来验证举报流程是否正常工作。
 2、错峰启动main.go来验证整个程序的鲁棒性。

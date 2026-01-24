@@ -255,7 +255,6 @@ message AnyTx {
     FrostVaultDkgRevealTx frost_vault_dkg_reveal_tx = 18; // DKG reveal
     FrostVaultDkgValidationSignedTx frost_vault_dkg_validation_signed_tx = 19; // DKG 验证签名
     FrostVaultTransitionSignedTx frost_vault_transition_signed_tx = 20; // Vault 迁移签名
-    FrostWithdrawPlanningLogTx frost_withdraw_planning_log_tx = 21; // Frost 规划日志
   }
 }
 // --------------------- 订单 & 状态相关 ---------------------
@@ -566,6 +565,11 @@ message VaultTransitionStateList {
   repeated VaultTransitionState states = 1;
 }
 
+// 见证者列表（用于 API）
+message WitnessInfoList {
+  repeated WitnessInfo witnesses = 1;
+}
+
 // 仲裁投票交易
 message ArbitrationVoteTx {
   BaseMessage base = 1;
@@ -642,9 +646,9 @@ message FrostUtxo {
 
 // Frost 规划日志（用于排查提现流程卡顿）
 message FrostPlanningLog {
-  string step = 1;      // 步骤：SelectVault, BuildTemplate, StartSigning, etc.
-  string status = 2;    // 状态：OK, FAILED, WAITING
-  string message = 3;   // 详细说明或错误信息
+  string step = 1; // 步骤：SelectVault, BuildTemplate, StartSigning, etc.
+  string status = 2; // 状态：OK, FAILED, WAITING
+  string message = 3; // 详细说明或错误信息
   uint64 timestamp = 4; // 时间戳（毫秒）
 }
 
@@ -664,9 +668,9 @@ message FrostWithdrawState {
   repeated FrostPlanningLog planning_logs = 12; // 规划日志
 }
 
-// Frost 规划日志交易（Runtime 异步汇报，供前端排查）
+// Frost 规划日志消息（Runtime 异步汇报，供前端排查，不参与共识）
 message FrostWithdrawPlanningLogTx {
-  BaseMessage base = 1;
+  string reporter = 1; // 汇报者（节点地址）
   string withdraw_id = 2;
   repeated FrostPlanningLog logs = 3;
 }

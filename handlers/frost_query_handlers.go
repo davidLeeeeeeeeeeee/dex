@@ -632,3 +632,43 @@ func (hm *HandlerManager) HandleDownloadSignedPackage(w http.ResponseWriter, r *
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.Write(respData)
 }
+
+// HandleWitnessList 获取所有见证者列表（供 Explorer 使用）
+// 路由: /witness/list
+func (hm *HandlerManager) HandleWitnessList(w http.ResponseWriter, r *http.Request) {
+	hm.Stats.RecordAPICall("WitnessList")
+
+	// 扫描所有见证者信息
+	// key 前缀：v1_witness_
+	prefix := keys.KeyWitnessInfoPrefix()
+
+	results, err := hm.dbManager.Scan(prefix)
+	if err != nil {
+		http.Error(w, "scan failed", http.StatusInternalServerError)
+		return
+	}
+
+	var witnesses []*pb.WitnessInfo
+	for _, data := range results {
+		var info pb.WitnessInfo
+		if err := proto.Unmarshal(data, &info); err != nil {
+			continue
+		}
+
+		witnesses = append(witnesses, &info)
+	}
+
+	resp := &pb.WitnessInfoList{
+		Witnesses: witnesses,
+	}
+
+	// 序列化为 protobuf
+	respData, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Write(respData)
+}

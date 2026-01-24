@@ -52,15 +52,25 @@ func TestRebuildOrderPriceIndexes(t *testing.T) {
 				TxId:        tc.orderID,
 				FromAddress: "test_user",
 			},
-			BaseToken:   tc.baseToken,
-			QuoteToken:  tc.quoteToken,
-			Op:          pb.OrderOp_ADD,
-			Price:       tc.price,
-			Amount:      tc.amount,
-			FilledBase:  "0",
-			FilledQuote: "0",
-			IsFilled:    tc.isFilled,
+			BaseToken:  tc.baseToken,
+			QuoteToken: tc.quoteToken,
+			Op:         pb.OrderOp_ADD,
+			Price:      tc.price,
+			Amount:     tc.amount,
 		}
+
+		// 写入 OrderState（存储成交信息）
+		orderState := &pb.OrderState{
+			OrderId:    tc.orderID,
+			BaseToken:  tc.baseToken,
+			QuoteToken: tc.quoteToken,
+			Amount:     tc.amount,
+			Price:      tc.price,
+			IsFilled:   tc.isFilled,
+		}
+		stateData, _ := proto.Marshal(orderState)
+		stateKey := keys.KeyOrderState(tc.orderID)
+		dbMgr.EnqueueSet(stateKey, string(stateData))
 
 		// 序列化订单
 		orderData, err := proto.Marshal(order)
@@ -201,14 +211,11 @@ func TestRebuildOrderPriceIndexes_Performance(t *testing.T) {
 				TxId:        fmt.Sprintf("order_%d", i),
 				FromAddress: "test_user",
 			},
-			BaseToken:   "BTC",
-			QuoteToken:  "USDT",
-			Op:          pb.OrderOp_ADD,
-			Price:       fmt.Sprintf("%d", 50000+i),
-			Amount:      "1.0",
-			FilledBase:  "0",
-			FilledQuote: "0",
-			IsFilled:    false,
+			BaseToken:  "BTC",
+			QuoteToken: "USDT",
+			Op:         pb.OrderOp_ADD,
+			Price:      fmt.Sprintf("%d", 50000+i),
+			Amount:     "1.0",
 		}
 
 		orderData, _ := proto.Marshal(order)
@@ -218,7 +225,11 @@ func TestRebuildOrderPriceIndexes_Performance(t *testing.T) {
 
 	err = dbMgr.ForceFlush()
 	require.NoError(t, err)
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond) // 增加等待时间确保写入完成
+
+	// 验证订单是否全部写入
+	actualOrderCount := countKeysWithPrefix(t, dbMgr, "v1_order_")
+	require.Equal(t, orderCount, actualOrderCount, "all orders should be written before rebuild")
 
 	// 测试重建性能
 	start := time.Now()

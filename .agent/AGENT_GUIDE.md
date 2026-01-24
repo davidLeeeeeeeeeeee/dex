@@ -30,7 +30,7 @@
 ## 核心文件索引
 
 ### 入口点
-- `cmd/main.go` - 节点主入口
+- `cmd/main/` - 节点主入口 (Go 模块)
 - `cmd/explorer/main.go` - Explorer 后端
 - `explorer/src/App.vue` - 前端主入口
 
@@ -66,7 +66,7 @@
 
 ### 1. 添加新 API 接口
 1. 在 `handlers/` 添加处理函数
-2. 在 `cmd/main.go` 注册路由
+2. 在 `cmd/main/node.go` 注册路由
 3. 在 `explorer/src/api.ts` 添加前端调用
 4. 在 `explorer/src/types.ts` 添加类型定义
 

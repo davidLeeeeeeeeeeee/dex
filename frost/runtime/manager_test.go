@@ -482,6 +482,12 @@ func (s *fakeTxSubmitter) GetSubmitted() []any {
 	return s.submitted
 }
 
+type fakeLogReporter struct{}
+
+func (f *fakeLogReporter) ReportWithdrawPlanningLog(ctx context.Context, log *pb.FrostWithdrawPlanningLogTx) error {
+	return nil
+}
+
 // fakeSigningService 用于测试
 type fakeSigningService struct{}
 
@@ -520,7 +526,7 @@ func TestWithdrawWorker(t *testing.T) {
 	var vaultProvider VaultCommitteeProvider = newFakeVaultProvider()
 
 	// 注入 SignerProvider，避免空指针 panic
-	worker := workers.NewWithdrawWorker(reader, factory, submitter, signingService, vaultProvider, 1, "test-node-address", logs.NewNodeLogger("test", 0))
+	worker := workers.NewWithdrawWorker(reader, factory, submitter, &fakeLogReporter{}, signingService, vaultProvider, 1, "test-node-address", logs.NewNodeLogger("test", 0))
 
 	// 1. 设置 VaultConfig
 	vaultCfg := &pb.FrostVaultConfig{
@@ -612,7 +618,7 @@ func TestWithdrawWorker_EmptyQueue(t *testing.T) {
 	// 创建fake signingService和vaultProvider
 	var signingService workers.SigningService = nil // TODO: 创建fake实现
 	var vaultProvider VaultCommitteeProvider = nil  // TODO: 创建fake实现
-	worker := workers.NewWithdrawWorker(reader, factory, submitter, signingService, vaultProvider, 1, "test-node-address", logs.NewNodeLogger("test", 0))
+	worker := workers.NewWithdrawWorker(reader, factory, submitter, &fakeLogReporter{}, signingService, vaultProvider, 1, "test-node-address", logs.NewNodeLogger("test", 0))
 
 	// 处理空队列
 	ctx := context.Background()

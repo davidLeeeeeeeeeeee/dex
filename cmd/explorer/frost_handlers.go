@@ -180,3 +180,57 @@ func (s *server) handleFrostDKGSessions(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, items)
 }
+
+// WitnessInfoItem 供前端使用的见证者信息结构（snake_case）
+type WitnessInfoItem struct {
+	Address           string   `json:"address"`
+	StakeAmount       string   `json:"stake_amount"`
+	PendingReward     string   `json:"pending_reward"`
+	Status            string   `json:"status"`
+	UnstakeHeight     uint64   `json:"unstake_height"`
+	TotalWitnessCount uint64   `json:"total_witness_count"`
+	PassCount         uint64   `json:"pass_count"`
+	FailCount         uint64   `json:"fail_count"`
+	AbstainCount      uint64   `json:"abstain_count"`
+	SlashedCount      uint64   `json:"slashed_count"`
+	PendingTasks      []string `json:"pending_tasks"`
+	TotalReward       string   `json:"total_reward"`
+}
+
+func (s *server) handleWitnessList(w http.ResponseWriter, r *http.Request) {
+	node := r.URL.Query().Get("node")
+	if node == "" {
+		node = s.defaultNodes[0]
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+	defer cancel()
+
+	// 从节点获取见证者列表
+	var resp pb.WitnessInfoList
+	if err := s.fetchProto(ctx, node, "/witness/list", nil, &resp); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 转换为前端格式（snake_case）
+	items := make([]WitnessInfoItem, 0, len(resp.Witnesses))
+	for _, info := range resp.Witnesses {
+		items = append(items, WitnessInfoItem{
+			Address:           info.Address,
+			StakeAmount:       info.StakeAmount,
+			PendingReward:     info.PendingReward,
+			Status:            info.Status.String(),
+			UnstakeHeight:     info.UnstakeHeight,
+			TotalWitnessCount: info.TotalWitnessCount,
+			PassCount:         info.PassCount,
+			FailCount:         info.FailCount,
+			AbstainCount:      info.AbstainCount,
+			SlashedCount:      info.SlashedCount,
+			PendingTasks:      info.PendingTasks,
+			TotalReward:       info.TotalReward,
+		})
+	}
+
+	writeJSON(w, items)
+}

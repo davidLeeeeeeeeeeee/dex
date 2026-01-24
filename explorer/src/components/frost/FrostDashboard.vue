@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import WithdrawQueue from './WithdrawQueue.vue'
 import WitnessFlow from './WitnessFlow.vue'
+import WitnessList from './WitnessList.vue'
 import DkgTimeline from './DkgTimeline.vue'
 
 const props = defineProps<{
@@ -10,7 +11,7 @@ const props = defineProps<{
 }>()
 
 const selectedNode = ref(props.defaultNode || (props.nodes.length > 0 ? props.nodes[0] : ''))
-const subTab = ref<'withdraw' | 'witness' | 'dkg'>('withdraw')
+const subTab = ref<'withdraw' | 'witness' | 'witness-list' | 'dkg'>('withdraw')
 
 watch(() => props.defaultNode, (val) => {
   if (val && !selectedNode.value) selectedNode.value = val
@@ -19,6 +20,7 @@ watch(() => props.defaultNode, (val) => {
 const tabs = [
   { key: 'withdraw', label: 'Withdrawals', icon: '🏦', color: 'indigo' },
   { key: 'witness', label: 'Recharges', icon: '👁️', color: 'emerald' },
+  { key: 'witness-list', label: 'Witness Registry', icon: '👥', color: 'purple' },
   { key: 'dkg', label: 'DKG Sessions', icon: '🔐', color: 'purple' },
 ] as const
 </script>
@@ -65,6 +67,7 @@ const tabs = [
     <div v-if="selectedNode" class="content-area">
       <WithdrawQueue v-if="subTab === 'withdraw'" :node="selectedNode" />
       <WitnessFlow v-if="subTab === 'witness'" :node="selectedNode" />
+      <WitnessList v-if="subTab === 'witness-list'" :node="selectedNode" />
       <DkgTimeline v-if="subTab === 'dkg'" :node="selectedNode" />
     </div>
 

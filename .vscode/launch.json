@@ -1,49 +1,49 @@
 {
-    "version":  "0.2.0",
-    "configurations":  [
-                           {
-                               "name":  "Run print_files",
-                               "type":  "go",
-                               "request":  "launch",
-                               "mode":  "auto",
-                               "program":  "${workspaceFolder}/print/print_files.go",
-                               "cwd":  "${workspaceFolder}"
-                           },
-                           {
-                               "name":  "Run cmd/main",
-                               "type":  "go",
-                               "request":  "launch",
-                               "mode":  "auto",
-                               "program":  "${workspaceFolder}/cmd/main.go",
-                               "cwd":  "${workspaceFolder}",
-                               "console":  "integratedTerminal",
-                               "preLaunchTask":  "Clean data directory"
-                           },
-                           {
-                               "name":  "Run cmd/explorer",
-                               "type":  "go",
-                               "request":  "launch",
-                               "mode":  "auto",
-                               "program":  "${workspaceFolder}/cmd/explorer",
-                               "cwd":  "${workspaceFolder}",
-                               "console":  "integratedTerminal",
-                               "preLaunchTask":  "Clean explorer_data directory"
-                           },
-                           {
-                               "name":  "Run npm dev",
-                               "type":  "node-terminal",
-                               "request":  "launch",
-                               "command":  "npm run dev",
-                               "cwd":  "${workspaceFolder}/explorer"
-                           },
-                           {
-                               "cwd":  "${workspaceFolder}",
-                               "name":  "Run simulateMain/tes.go",
-                               "request":  "launch",
-                               "program":  "${workspaceFolder}/simulateMain/tes.go",
-                               "type":  "go",
-                               "console":  "integratedTerminal",
-                               "mode":  "auto"
-                           }
-                       ]
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run print_files",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/print/print_files.go",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run cmd/main",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/main",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "Clean data directory"
+        },
+        {
+            "name": "Run cmd/explorer",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd/explorer",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "preLaunchTask": "Clean explorer_data directory"
+        },
+        {
+            "name": "Run npm dev",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "npm run dev",
+            "cwd": "${workspaceFolder}/explorer"
+        },
+        {
+            "cwd": "${workspaceFolder}",
+            "name": "Run simulateMain/tes.go",
+            "request": "launch",
+            "program": "${workspaceFolder}/simulateMain/tes.go",
+            "type": "go",
+            "console": "integratedTerminal",
+            "mode": "auto"
+        }
+    ]
 }

@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.10
 // 	protoc        v6.33.0
-// source: data.proto
+// source: pb/data.proto
 
 // protoc --go_out=. --go_opt=paths=source_relative data.proto
 
@@ -87,11 +87,11 @@ func (x SignAlgo) String() string {
 }
 
 func (SignAlgo) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[0].Descriptor()
+	return file_pb_data_proto_enumTypes[0].Descriptor()
 }
 
 func (SignAlgo) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[0]
+	return &file_pb_data_proto_enumTypes[0]
 }
 
 func (x SignAlgo) Number() protoreflect.EnumNumber {
@@ -100,7 +100,7 @@ func (x SignAlgo) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SignAlgo.Descriptor instead.
 func (SignAlgo) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{0}
+	return file_pb_data_proto_rawDescGZIP(), []int{0}
 }
 
 // 买卖方向枚举
@@ -134,11 +134,11 @@ func (x OrderSide) String() string {
 }
 
 func (OrderSide) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[1].Descriptor()
+	return file_pb_data_proto_enumTypes[1].Descriptor()
 }
 
 func (OrderSide) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[1]
+	return &file_pb_data_proto_enumTypes[1]
 }
 
 func (x OrderSide) Number() protoreflect.EnumNumber {
@@ -147,7 +147,7 @@ func (x OrderSide) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use OrderSide.Descriptor instead.
 func (OrderSide) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{1}
+	return file_pb_data_proto_rawDescGZIP(), []int{1}
 }
 
 // 订单状态枚举
@@ -184,11 +184,11 @@ func (x OrderStateStatus) String() string {
 }
 
 func (OrderStateStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[2].Descriptor()
+	return file_pb_data_proto_enumTypes[2].Descriptor()
 }
 
 func (OrderStateStatus) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[2]
+	return &file_pb_data_proto_enumTypes[2]
 }
 
 func (x OrderStateStatus) Number() protoreflect.EnumNumber {
@@ -197,7 +197,7 @@ func (x OrderStateStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use OrderStateStatus.Descriptor instead.
 func (OrderStateStatus) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{2}
+	return file_pb_data_proto_rawDescGZIP(), []int{2}
 }
 
 // --------------------- 订单 & 状态相关 ---------------------
@@ -231,11 +231,11 @@ func (x OrderOp) String() string {
 }
 
 func (OrderOp) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[3].Descriptor()
+	return file_pb_data_proto_enumTypes[3].Descriptor()
 }
 
 func (OrderOp) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[3]
+	return &file_pb_data_proto_enumTypes[3]
 }
 
 func (x OrderOp) Number() protoreflect.EnumNumber {
@@ -244,7 +244,7 @@ func (x OrderOp) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use OrderOp.Descriptor instead.
 func (OrderOp) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{3}
+	return file_pb_data_proto_rawDescGZIP(), []int{3}
 }
 
 type Status int32
@@ -280,11 +280,11 @@ func (x Status) String() string {
 }
 
 func (Status) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[4].Descriptor()
+	return file_pb_data_proto_enumTypes[4].Descriptor()
 }
 
 func (Status) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[4]
+	return &file_pb_data_proto_enumTypes[4]
 }
 
 func (x Status) Number() protoreflect.EnumNumber {
@@ -293,7 +293,7 @@ func (x Status) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Status.Descriptor instead.
 func (Status) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{4}
+	return file_pb_data_proto_rawDescGZIP(), []int{4}
 }
 
 // 见证者状态枚举
@@ -336,11 +336,11 @@ func (x WitnessStatus) String() string {
 }
 
 func (WitnessStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[5].Descriptor()
+	return file_pb_data_proto_enumTypes[5].Descriptor()
 }
 
 func (WitnessStatus) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[5]
+	return &file_pb_data_proto_enumTypes[5]
 }
 
 func (x WitnessStatus) Number() protoreflect.EnumNumber {
@@ -349,7 +349,7 @@ func (x WitnessStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use WitnessStatus.Descriptor instead.
 func (WitnessStatus) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{5}
+	return file_pb_data_proto_rawDescGZIP(), []int{5}
 }
 
 // 见证投票类型
@@ -386,11 +386,11 @@ func (x WitnessVoteType) String() string {
 }
 
 func (WitnessVoteType) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[6].Descriptor()
+	return file_pb_data_proto_enumTypes[6].Descriptor()
 }
 
 func (WitnessVoteType) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[6]
+	return &file_pb_data_proto_enumTypes[6]
 }
 
 func (x WitnessVoteType) Number() protoreflect.EnumNumber {
@@ -399,7 +399,7 @@ func (x WitnessVoteType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use WitnessVoteType.Descriptor instead.
 func (WitnessVoteType) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{6}
+	return file_pb_data_proto_rawDescGZIP(), []int{6}
 }
 
 // 入账请求状态
@@ -457,11 +457,11 @@ func (x RechargeRequestStatus) String() string {
 }
 
 func (RechargeRequestStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[7].Descriptor()
+	return file_pb_data_proto_enumTypes[7].Descriptor()
 }
 
 func (RechargeRequestStatus) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[7]
+	return &file_pb_data_proto_enumTypes[7]
 }
 
 func (x RechargeRequestStatus) Number() protoreflect.EnumNumber {
@@ -470,7 +470,7 @@ func (x RechargeRequestStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RechargeRequestStatus.Descriptor instead.
 func (RechargeRequestStatus) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{7}
+	return file_pb_data_proto_rawDescGZIP(), []int{7}
 }
 
 // 挑战/仲裁状态
@@ -507,11 +507,11 @@ func (x ChallengeStatus) String() string {
 }
 
 func (ChallengeStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[8].Descriptor()
+	return file_pb_data_proto_enumTypes[8].Descriptor()
 }
 
 func (ChallengeStatus) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[8]
+	return &file_pb_data_proto_enumTypes[8]
 }
 
 func (x ChallengeStatus) Number() protoreflect.EnumNumber {
@@ -520,7 +520,7 @@ func (x ChallengeStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ChallengeStatus.Descriptor instead.
 func (ChallengeStatus) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{8}
+	return file_pb_data_proto_rawDescGZIP(), []int{8}
 }
 
 // FrostEnvelopeKind 消息类型
@@ -569,11 +569,11 @@ func (x FrostEnvelopeKind) String() string {
 }
 
 func (FrostEnvelopeKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_data_proto_enumTypes[9].Descriptor()
+	return file_pb_data_proto_enumTypes[9].Descriptor()
 }
 
 func (FrostEnvelopeKind) Type() protoreflect.EnumType {
-	return &file_data_proto_enumTypes[9]
+	return &file_pb_data_proto_enumTypes[9]
 }
 
 func (x FrostEnvelopeKind) Number() protoreflect.EnumNumber {
@@ -582,7 +582,7 @@ func (x FrostEnvelopeKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use FrostEnvelopeKind.Descriptor instead.
 func (FrostEnvelopeKind) EnumDescriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{9}
+	return file_pb_data_proto_rawDescGZIP(), []int{9}
 }
 
 // --------------------- Token & Registry ---------------------
@@ -600,7 +600,7 @@ type Token struct {
 
 func (x *Token) Reset() {
 	*x = Token{}
-	mi := &file_data_proto_msgTypes[0]
+	mi := &file_pb_data_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -612,7 +612,7 @@ func (x *Token) String() string {
 func (*Token) ProtoMessage() {}
 
 func (x *Token) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[0]
+	mi := &file_pb_data_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -625,7 +625,7 @@ func (x *Token) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Token.ProtoReflect.Descriptor instead.
 func (*Token) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{0}
+	return file_pb_data_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Token) GetAddress() string {
@@ -679,7 +679,7 @@ type TokenRegistry struct {
 
 func (x *TokenRegistry) Reset() {
 	*x = TokenRegistry{}
-	mi := &file_data_proto_msgTypes[1]
+	mi := &file_pb_data_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -691,7 +691,7 @@ func (x *TokenRegistry) String() string {
 func (*TokenRegistry) ProtoMessage() {}
 
 func (x *TokenRegistry) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[1]
+	mi := &file_pb_data_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -704,7 +704,7 @@ func (x *TokenRegistry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenRegistry.ProtoReflect.Descriptor instead.
 func (*TokenRegistry) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{1}
+	return file_pb_data_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *TokenRegistry) GetTokens() map[string]*Token {
@@ -725,7 +725,7 @@ type PublicKeys struct {
 
 func (x *PublicKeys) Reset() {
 	*x = PublicKeys{}
-	mi := &file_data_proto_msgTypes[2]
+	mi := &file_pb_data_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -737,7 +737,7 @@ func (x *PublicKeys) String() string {
 func (*PublicKeys) ProtoMessage() {}
 
 func (x *PublicKeys) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[2]
+	mi := &file_pb_data_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -750,7 +750,7 @@ func (x *PublicKeys) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublicKeys.ProtoReflect.Descriptor instead.
 func (*PublicKeys) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{2}
+	return file_pb_data_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *PublicKeys) GetKeys() map[int32][]byte {
@@ -778,7 +778,7 @@ type BaseMessage struct {
 
 func (x *BaseMessage) Reset() {
 	*x = BaseMessage{}
-	mi := &file_data_proto_msgTypes[3]
+	mi := &file_pb_data_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -790,7 +790,7 @@ func (x *BaseMessage) String() string {
 func (*BaseMessage) ProtoMessage() {}
 
 func (x *BaseMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[3]
+	mi := &file_pb_data_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -803,7 +803,7 @@ func (x *BaseMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BaseMessage.ProtoReflect.Descriptor instead.
 func (*BaseMessage) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{3}
+	return file_pb_data_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *BaseMessage) GetTxId() string {
@@ -885,7 +885,7 @@ type Receipt struct {
 
 func (x *Receipt) Reset() {
 	*x = Receipt{}
-	mi := &file_data_proto_msgTypes[4]
+	mi := &file_pb_data_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -897,7 +897,7 @@ func (x *Receipt) String() string {
 func (*Receipt) ProtoMessage() {}
 
 func (x *Receipt) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[4]
+	mi := &file_pb_data_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -910,7 +910,7 @@ func (x *Receipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Receipt.ProtoReflect.Descriptor instead.
 func (*Receipt) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{4}
+	return file_pb_data_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Receipt) GetTxId() string {
@@ -979,7 +979,7 @@ type GetReceiptResponse struct {
 
 func (x *GetReceiptResponse) Reset() {
 	*x = GetReceiptResponse{}
-	mi := &file_data_proto_msgTypes[5]
+	mi := &file_pb_data_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -991,7 +991,7 @@ func (x *GetReceiptResponse) String() string {
 func (*GetReceiptResponse) ProtoMessage() {}
 
 func (x *GetReceiptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[5]
+	mi := &file_pb_data_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1004,7 +1004,7 @@ func (x *GetReceiptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetReceiptResponse.ProtoReflect.Descriptor instead.
 func (*GetReceiptResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{5}
+	return file_pb_data_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetReceiptResponse) GetReceipt() *Receipt {
@@ -1041,7 +1041,7 @@ type Account struct {
 
 func (x *Account) Reset() {
 	*x = Account{}
-	mi := &file_data_proto_msgTypes[6]
+	mi := &file_pb_data_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1053,7 +1053,7 @@ func (x *Account) String() string {
 func (*Account) ProtoMessage() {}
 
 func (x *Account) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[6]
+	mi := &file_pb_data_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1066,7 +1066,7 @@ func (x *Account) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Account.ProtoReflect.Descriptor instead.
 func (*Account) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{6}
+	return file_pb_data_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Account) GetAddress() string {
@@ -1159,7 +1159,7 @@ type TokenBalance struct {
 
 func (x *TokenBalance) Reset() {
 	*x = TokenBalance{}
-	mi := &file_data_proto_msgTypes[7]
+	mi := &file_pb_data_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1171,7 +1171,7 @@ func (x *TokenBalance) String() string {
 func (*TokenBalance) ProtoMessage() {}
 
 func (x *TokenBalance) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[7]
+	mi := &file_pb_data_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1184,7 +1184,7 @@ func (x *TokenBalance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenBalance.ProtoReflect.Descriptor instead.
 func (*TokenBalance) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{7}
+	return file_pb_data_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *TokenBalance) GetBalance() string {
@@ -1244,7 +1244,7 @@ type Block struct {
 
 func (x *Block) Reset() {
 	*x = Block{}
-	mi := &file_data_proto_msgTypes[8]
+	mi := &file_pb_data_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1256,7 +1256,7 @@ func (x *Block) String() string {
 func (*Block) ProtoMessage() {}
 
 func (x *Block) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[8]
+	mi := &file_pb_data_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1269,7 +1269,7 @@ func (x *Block) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Block.ProtoReflect.Descriptor instead.
 func (*Block) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{8}
+	return file_pb_data_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Block) GetHeight() uint64 {
@@ -1386,7 +1386,7 @@ type BlockReward struct {
 
 func (x *BlockReward) Reset() {
 	*x = BlockReward{}
-	mi := &file_data_proto_msgTypes[9]
+	mi := &file_pb_data_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1398,7 +1398,7 @@ func (x *BlockReward) String() string {
 func (*BlockReward) ProtoMessage() {}
 
 func (x *BlockReward) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[9]
+	mi := &file_pb_data_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1411,7 +1411,7 @@ func (x *BlockReward) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockReward.ProtoReflect.Descriptor instead.
 func (*BlockReward) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{9}
+	return file_pb_data_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *BlockReward) GetHeight() uint64 {
@@ -1472,7 +1472,7 @@ type OrderPriceIndex struct {
 
 func (x *OrderPriceIndex) Reset() {
 	*x = OrderPriceIndex{}
-	mi := &file_data_proto_msgTypes[10]
+	mi := &file_pb_data_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1484,7 +1484,7 @@ func (x *OrderPriceIndex) String() string {
 func (*OrderPriceIndex) ProtoMessage() {}
 
 func (x *OrderPriceIndex) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[10]
+	mi := &file_pb_data_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1497,7 +1497,7 @@ func (x *OrderPriceIndex) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrderPriceIndex.ProtoReflect.Descriptor instead.
 func (*OrderPriceIndex) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{10}
+	return file_pb_data_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *OrderPriceIndex) GetOk() bool {
@@ -1525,7 +1525,7 @@ type TradeRecord struct {
 
 func (x *TradeRecord) Reset() {
 	*x = TradeRecord{}
-	mi := &file_data_proto_msgTypes[11]
+	mi := &file_pb_data_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1537,7 +1537,7 @@ func (x *TradeRecord) String() string {
 func (*TradeRecord) ProtoMessage() {}
 
 func (x *TradeRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[11]
+	mi := &file_pb_data_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1550,7 +1550,7 @@ func (x *TradeRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TradeRecord.ProtoReflect.Descriptor instead.
 func (*TradeRecord) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{11}
+	return file_pb_data_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TradeRecord) GetTradeId() string {
@@ -1630,7 +1630,7 @@ type IssueTokenTx struct {
 
 func (x *IssueTokenTx) Reset() {
 	*x = IssueTokenTx{}
-	mi := &file_data_proto_msgTypes[12]
+	mi := &file_pb_data_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1642,7 +1642,7 @@ func (x *IssueTokenTx) String() string {
 func (*IssueTokenTx) ProtoMessage() {}
 
 func (x *IssueTokenTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[12]
+	mi := &file_pb_data_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1655,7 +1655,7 @@ func (x *IssueTokenTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueTokenTx.ProtoReflect.Descriptor instead.
 func (*IssueTokenTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{12}
+	return file_pb_data_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *IssueTokenTx) GetBase() *BaseMessage {
@@ -1705,7 +1705,7 @@ type FreezeTx struct {
 
 func (x *FreezeTx) Reset() {
 	*x = FreezeTx{}
-	mi := &file_data_proto_msgTypes[13]
+	mi := &file_pb_data_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1717,7 +1717,7 @@ func (x *FreezeTx) String() string {
 func (*FreezeTx) ProtoMessage() {}
 
 func (x *FreezeTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[13]
+	mi := &file_pb_data_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1730,7 +1730,7 @@ func (x *FreezeTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FreezeTx.ProtoReflect.Descriptor instead.
 func (*FreezeTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{13}
+	return file_pb_data_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *FreezeTx) GetBase() *BaseMessage {
@@ -1773,7 +1773,7 @@ type Transaction struct {
 
 func (x *Transaction) Reset() {
 	*x = Transaction{}
-	mi := &file_data_proto_msgTypes[14]
+	mi := &file_pb_data_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1785,7 +1785,7 @@ func (x *Transaction) String() string {
 func (*Transaction) ProtoMessage() {}
 
 func (x *Transaction) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[14]
+	mi := &file_pb_data_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1798,7 +1798,7 @@ func (x *Transaction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Transaction.ProtoReflect.Descriptor instead.
 func (*Transaction) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{14}
+	return file_pb_data_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Transaction) GetBase() *BaseMessage {
@@ -1847,7 +1847,7 @@ type OrderTx struct {
 
 func (x *OrderTx) Reset() {
 	*x = OrderTx{}
-	mi := &file_data_proto_msgTypes[15]
+	mi := &file_pb_data_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1859,7 +1859,7 @@ func (x *OrderTx) String() string {
 func (*OrderTx) ProtoMessage() {}
 
 func (x *OrderTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[15]
+	mi := &file_pb_data_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1872,7 +1872,7 @@ func (x *OrderTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrderTx.ProtoReflect.Descriptor instead.
 func (*OrderTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{15}
+	return file_pb_data_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *OrderTx) GetBase() *BaseMessage {
@@ -1956,7 +1956,7 @@ type OrderState struct {
 
 func (x *OrderState) Reset() {
 	*x = OrderState{}
-	mi := &file_data_proto_msgTypes[16]
+	mi := &file_pb_data_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1968,7 +1968,7 @@ func (x *OrderState) String() string {
 func (*OrderState) ProtoMessage() {}
 
 func (x *OrderState) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[16]
+	mi := &file_pb_data_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1981,7 +1981,7 @@ func (x *OrderState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrderState.ProtoReflect.Descriptor instead.
 func (*OrderState) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{16}
+	return file_pb_data_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *OrderState) GetOrderId() string {
@@ -2086,7 +2086,7 @@ type MinerTx struct {
 
 func (x *MinerTx) Reset() {
 	*x = MinerTx{}
-	mi := &file_data_proto_msgTypes[17]
+	mi := &file_pb_data_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2098,7 +2098,7 @@ func (x *MinerTx) String() string {
 func (*MinerTx) ProtoMessage() {}
 
 func (x *MinerTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[17]
+	mi := &file_pb_data_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2111,7 +2111,7 @@ func (x *MinerTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MinerTx.ProtoReflect.Descriptor instead.
 func (*MinerTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{17}
+	return file_pb_data_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *MinerTx) GetBase() *BaseMessage {
@@ -2159,7 +2159,6 @@ type AnyTx struct {
 	//	*AnyTx_FrostVaultDkgRevealTx
 	//	*AnyTx_FrostVaultDkgValidationSignedTx
 	//	*AnyTx_FrostVaultTransitionSignedTx
-	//	*AnyTx_FrostWithdrawPlanningLogTx
 	Content       isAnyTx_Content `protobuf_oneof:"content"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2167,7 +2166,7 @@ type AnyTx struct {
 
 func (x *AnyTx) Reset() {
 	*x = AnyTx{}
-	mi := &file_data_proto_msgTypes[18]
+	mi := &file_pb_data_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2179,7 +2178,7 @@ func (x *AnyTx) String() string {
 func (*AnyTx) ProtoMessage() {}
 
 func (x *AnyTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[18]
+	mi := &file_pb_data_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2192,7 +2191,7 @@ func (x *AnyTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnyTx.ProtoReflect.Descriptor instead.
 func (*AnyTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{18}
+	return file_pb_data_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *AnyTx) GetContent() isAnyTx_Content {
@@ -2373,15 +2372,6 @@ func (x *AnyTx) GetFrostVaultTransitionSignedTx() *FrostVaultTransitionSignedTx 
 	return nil
 }
 
-func (x *AnyTx) GetFrostWithdrawPlanningLogTx() *FrostWithdrawPlanningLogTx {
-	if x != nil {
-		if x, ok := x.Content.(*AnyTx_FrostWithdrawPlanningLogTx); ok {
-			return x.FrostWithdrawPlanningLogTx
-		}
-	}
-	return nil
-}
-
 type isAnyTx_Content interface {
 	isAnyTx_Content()
 }
@@ -2465,10 +2455,6 @@ type AnyTx_FrostVaultTransitionSignedTx struct {
 	FrostVaultTransitionSignedTx *FrostVaultTransitionSignedTx `protobuf:"bytes,20,opt,name=frost_vault_transition_signed_tx,json=frostVaultTransitionSignedTx,proto3,oneof"` // Vault 迁移签名
 }
 
-type AnyTx_FrostWithdrawPlanningLogTx struct {
-	FrostWithdrawPlanningLogTx *FrostWithdrawPlanningLogTx `protobuf:"bytes,21,opt,name=frost_withdraw_planning_log_tx,json=frostWithdrawPlanningLogTx,proto3,oneof"` // Frost 规划日志
-}
-
 func (*AnyTx_IssueTokenTx) isAnyTx_Content() {}
 
 func (*AnyTx_FreezeTx) isAnyTx_Content() {}
@@ -2507,8 +2493,6 @@ func (*AnyTx_FrostVaultDkgValidationSignedTx) isAnyTx_Content() {}
 
 func (*AnyTx_FrostVaultTransitionSignedTx) isAnyTx_Content() {}
 
-func (*AnyTx_FrostWithdrawPlanningLogTx) isAnyTx_Content() {}
-
 // --------------------- 节点==客户端信息 ---------------------
 type NodeInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2521,7 +2505,7 @@ type NodeInfo struct {
 
 func (x *NodeInfo) Reset() {
 	*x = NodeInfo{}
-	mi := &file_data_proto_msgTypes[19]
+	mi := &file_pb_data_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2533,7 +2517,7 @@ func (x *NodeInfo) String() string {
 func (*NodeInfo) ProtoMessage() {}
 
 func (x *NodeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[19]
+	mi := &file_pb_data_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2546,7 +2530,7 @@ func (x *NodeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeInfo.ProtoReflect.Descriptor instead.
 func (*NodeInfo) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{19}
+	return file_pb_data_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *NodeInfo) GetPublicKeys() *PublicKeys {
@@ -2579,7 +2563,7 @@ type NodeList struct {
 
 func (x *NodeList) Reset() {
 	*x = NodeList{}
-	mi := &file_data_proto_msgTypes[20]
+	mi := &file_pb_data_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2591,7 +2575,7 @@ func (x *NodeList) String() string {
 func (*NodeList) ProtoMessage() {}
 
 func (x *NodeList) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[20]
+	mi := &file_pb_data_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2604,7 +2588,7 @@ func (x *NodeList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeList.ProtoReflect.Descriptor instead.
 func (*NodeList) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{20}
+	return file_pb_data_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *NodeList) GetNodes() []*NodeInfo {
@@ -2625,7 +2609,7 @@ type ClientInfo struct {
 
 func (x *ClientInfo) Reset() {
 	*x = ClientInfo{}
-	mi := &file_data_proto_msgTypes[21]
+	mi := &file_pb_data_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2637,7 +2621,7 @@ func (x *ClientInfo) String() string {
 func (*ClientInfo) ProtoMessage() {}
 
 func (x *ClientInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[21]
+	mi := &file_pb_data_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2650,7 +2634,7 @@ func (x *ClientInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientInfo.ProtoReflect.Descriptor instead.
 func (*ClientInfo) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{21}
+	return file_pb_data_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ClientInfo) GetIp() string {
@@ -2686,7 +2670,7 @@ type HandshakeRequest struct {
 
 func (x *HandshakeRequest) Reset() {
 	*x = HandshakeRequest{}
-	mi := &file_data_proto_msgTypes[22]
+	mi := &file_pb_data_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2698,7 +2682,7 @@ func (x *HandshakeRequest) String() string {
 func (*HandshakeRequest) ProtoMessage() {}
 
 func (x *HandshakeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[22]
+	mi := &file_pb_data_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2711,7 +2695,7 @@ func (x *HandshakeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HandshakeRequest.ProtoReflect.Descriptor instead.
 func (*HandshakeRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{22}
+	return file_pb_data_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *HandshakeRequest) GetClientId() string {
@@ -2744,7 +2728,7 @@ type HandshakeResponse struct {
 
 func (x *HandshakeResponse) Reset() {
 	*x = HandshakeResponse{}
-	mi := &file_data_proto_msgTypes[23]
+	mi := &file_pb_data_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2756,7 +2740,7 @@ func (x *HandshakeResponse) String() string {
 func (*HandshakeResponse) ProtoMessage() {}
 
 func (x *HandshakeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[23]
+	mi := &file_pb_data_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2769,7 +2753,7 @@ func (x *HandshakeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HandshakeResponse.ProtoReflect.Descriptor instead.
 func (*HandshakeResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{23}
+	return file_pb_data_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *HandshakeResponse) GetStatus() string {
@@ -2788,7 +2772,7 @@ type StatusRequest struct {
 
 func (x *StatusRequest) Reset() {
 	*x = StatusRequest{}
-	mi := &file_data_proto_msgTypes[24]
+	mi := &file_pb_data_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2800,7 +2784,7 @@ func (x *StatusRequest) String() string {
 func (*StatusRequest) ProtoMessage() {}
 
 func (x *StatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[24]
+	mi := &file_pb_data_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2813,7 +2797,7 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{24}
+	return file_pb_data_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *StatusRequest) GetAddress() string {
@@ -2833,7 +2817,7 @@ type StatusResponse struct {
 
 func (x *StatusResponse) Reset() {
 	*x = StatusResponse{}
-	mi := &file_data_proto_msgTypes[25]
+	mi := &file_pb_data_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2845,7 +2829,7 @@ func (x *StatusResponse) String() string {
 func (*StatusResponse) ProtoMessage() {}
 
 func (x *StatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[25]
+	mi := &file_pb_data_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2858,7 +2842,7 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{25}
+	return file_pb_data_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *StatusResponse) GetStatus() string {
@@ -2886,7 +2870,7 @@ type GetData struct {
 
 func (x *GetData) Reset() {
 	*x = GetData{}
-	mi := &file_data_proto_msgTypes[26]
+	mi := &file_pb_data_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2898,7 +2882,7 @@ func (x *GetData) String() string {
 func (*GetData) ProtoMessage() {}
 
 func (x *GetData) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[26]
+	mi := &file_pb_data_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2911,7 +2895,7 @@ func (x *GetData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetData.ProtoReflect.Descriptor instead.
 func (*GetData) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{26}
+	return file_pb_data_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetData) GetTxId() string {
@@ -2937,7 +2921,7 @@ type GetBlockRequest struct {
 
 func (x *GetBlockRequest) Reset() {
 	*x = GetBlockRequest{}
-	mi := &file_data_proto_msgTypes[27]
+	mi := &file_pb_data_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2949,7 +2933,7 @@ func (x *GetBlockRequest) String() string {
 func (*GetBlockRequest) ProtoMessage() {}
 
 func (x *GetBlockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[27]
+	mi := &file_pb_data_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2962,7 +2946,7 @@ func (x *GetBlockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlockRequest.ProtoReflect.Descriptor instead.
 func (*GetBlockRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{27}
+	return file_pb_data_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *GetBlockRequest) GetHeight() uint64 {
@@ -2982,7 +2966,7 @@ type GetBlockResponse struct {
 
 func (x *GetBlockResponse) Reset() {
 	*x = GetBlockResponse{}
-	mi := &file_data_proto_msgTypes[28]
+	mi := &file_pb_data_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2994,7 +2978,7 @@ func (x *GetBlockResponse) String() string {
 func (*GetBlockResponse) ProtoMessage() {}
 
 func (x *GetBlockResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[28]
+	mi := &file_pb_data_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3007,7 +2991,7 @@ func (x *GetBlockResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlockResponse.ProtoReflect.Descriptor instead.
 func (*GetBlockResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{28}
+	return file_pb_data_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *GetBlockResponse) GetBlock() *Block {
@@ -3034,7 +3018,7 @@ type BatchGetShortTxRequest struct {
 
 func (x *BatchGetShortTxRequest) Reset() {
 	*x = BatchGetShortTxRequest{}
-	mi := &file_data_proto_msgTypes[29]
+	mi := &file_pb_data_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3046,7 +3030,7 @@ func (x *BatchGetShortTxRequest) String() string {
 func (*BatchGetShortTxRequest) ProtoMessage() {}
 
 func (x *BatchGetShortTxRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[29]
+	mi := &file_pb_data_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3059,7 +3043,7 @@ func (x *BatchGetShortTxRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchGetShortTxRequest.ProtoReflect.Descriptor instead.
 func (*BatchGetShortTxRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{29}
+	return file_pb_data_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *BatchGetShortTxRequest) GetShortHashes() [][]byte {
@@ -3085,7 +3069,7 @@ type BatchGetShortTxResponse struct {
 
 func (x *BatchGetShortTxResponse) Reset() {
 	*x = BatchGetShortTxResponse{}
-	mi := &file_data_proto_msgTypes[30]
+	mi := &file_pb_data_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3097,7 +3081,7 @@ func (x *BatchGetShortTxResponse) String() string {
 func (*BatchGetShortTxResponse) ProtoMessage() {}
 
 func (x *BatchGetShortTxResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[30]
+	mi := &file_pb_data_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3110,7 +3094,7 @@ func (x *BatchGetShortTxResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchGetShortTxResponse.ProtoReflect.Descriptor instead.
 func (*BatchGetShortTxResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{30}
+	return file_pb_data_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *BatchGetShortTxResponse) GetTransactions() []*AnyTx {
@@ -3133,7 +3117,7 @@ type CheckPointInfo struct {
 
 func (x *CheckPointInfo) Reset() {
 	*x = CheckPointInfo{}
-	mi := &file_data_proto_msgTypes[31]
+	mi := &file_pb_data_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3145,7 +3129,7 @@ func (x *CheckPointInfo) String() string {
 func (*CheckPointInfo) ProtoMessage() {}
 
 func (x *CheckPointInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[31]
+	mi := &file_pb_data_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3158,7 +3142,7 @@ func (x *CheckPointInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckPointInfo.ProtoReflect.Descriptor instead.
 func (*CheckPointInfo) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{31}
+	return file_pb_data_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CheckPointInfo) GetHeight() uint64 {
@@ -3205,7 +3189,7 @@ type GetConsensusStateRequest struct {
 
 func (x *GetConsensusStateRequest) Reset() {
 	*x = GetConsensusStateRequest{}
-	mi := &file_data_proto_msgTypes[32]
+	mi := &file_pb_data_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3217,7 +3201,7 @@ func (x *GetConsensusStateRequest) String() string {
 func (*GetConsensusStateRequest) ProtoMessage() {}
 
 func (x *GetConsensusStateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[32]
+	mi := &file_pb_data_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3230,7 +3214,7 @@ func (x *GetConsensusStateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConsensusStateRequest.ProtoReflect.Descriptor instead.
 func (*GetConsensusStateRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{32}
+	return file_pb_data_proto_rawDescGZIP(), []int{32}
 }
 
 // ---------------- Snowman networking ----------------
@@ -3257,7 +3241,7 @@ type PushQuery struct {
 
 func (x *PushQuery) Reset() {
 	*x = PushQuery{}
-	mi := &file_data_proto_msgTypes[33]
+	mi := &file_pb_data_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3269,7 +3253,7 @@ func (x *PushQuery) String() string {
 func (*PushQuery) ProtoMessage() {}
 
 func (x *PushQuery) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[33]
+	mi := &file_pb_data_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3282,7 +3266,7 @@ func (x *PushQuery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushQuery.ProtoReflect.Descriptor instead.
 func (*PushQuery) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{33}
+	return file_pb_data_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *PushQuery) GetRequestId() uint32 {
@@ -3367,7 +3351,7 @@ type PullQuery struct {
 
 func (x *PullQuery) Reset() {
 	*x = PullQuery{}
-	mi := &file_data_proto_msgTypes[34]
+	mi := &file_pb_data_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3379,7 +3363,7 @@ func (x *PullQuery) String() string {
 func (*PullQuery) ProtoMessage() {}
 
 func (x *PullQuery) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[34]
+	mi := &file_pb_data_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3392,7 +3376,7 @@ func (x *PullQuery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullQuery.ProtoReflect.Descriptor instead.
 func (*PullQuery) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{34}
+	return file_pb_data_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *PullQuery) GetRequestId() uint32 {
@@ -3451,7 +3435,7 @@ type Chits struct {
 
 func (x *Chits) Reset() {
 	*x = Chits{}
-	mi := &file_data_proto_msgTypes[35]
+	mi := &file_pb_data_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3463,7 +3447,7 @@ func (x *Chits) String() string {
 func (*Chits) ProtoMessage() {}
 
 func (x *Chits) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[35]
+	mi := &file_pb_data_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3476,7 +3460,7 @@ func (x *Chits) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Chits.ProtoReflect.Descriptor instead.
 func (*Chits) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{35}
+	return file_pb_data_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *Chits) GetRequestId() uint32 {
@@ -3539,7 +3523,7 @@ type HeightResponse struct {
 
 func (x *HeightResponse) Reset() {
 	*x = HeightResponse{}
-	mi := &file_data_proto_msgTypes[36]
+	mi := &file_pb_data_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3551,7 +3535,7 @@ func (x *HeightResponse) String() string {
 func (*HeightResponse) ProtoMessage() {}
 
 func (x *HeightResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[36]
+	mi := &file_pb_data_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3564,7 +3548,7 @@ func (x *HeightResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeightResponse.ProtoReflect.Descriptor instead.
 func (*HeightResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{36}
+	return file_pb_data_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *HeightResponse) GetLastAcceptedHeight() uint64 {
@@ -3597,7 +3581,7 @@ type GetBlockByIDRequest struct {
 
 func (x *GetBlockByIDRequest) Reset() {
 	*x = GetBlockByIDRequest{}
-	mi := &file_data_proto_msgTypes[37]
+	mi := &file_pb_data_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3609,7 +3593,7 @@ func (x *GetBlockByIDRequest) String() string {
 func (*GetBlockByIDRequest) ProtoMessage() {}
 
 func (x *GetBlockByIDRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[37]
+	mi := &file_pb_data_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3622,7 +3606,7 @@ func (x *GetBlockByIDRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlockByIDRequest.ProtoReflect.Descriptor instead.
 func (*GetBlockByIDRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{37}
+	return file_pb_data_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *GetBlockByIDRequest) GetBlockId() string {
@@ -3654,7 +3638,7 @@ type WitnessInfo struct {
 
 func (x *WitnessInfo) Reset() {
 	*x = WitnessInfo{}
-	mi := &file_data_proto_msgTypes[38]
+	mi := &file_pb_data_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3666,7 +3650,7 @@ func (x *WitnessInfo) String() string {
 func (*WitnessInfo) ProtoMessage() {}
 
 func (x *WitnessInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[38]
+	mi := &file_pb_data_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3679,7 +3663,7 @@ func (x *WitnessInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WitnessInfo.ProtoReflect.Descriptor instead.
 func (*WitnessInfo) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{38}
+	return file_pb_data_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *WitnessInfo) GetAddress() string {
@@ -3785,7 +3769,7 @@ type WitnessStakeTx struct {
 
 func (x *WitnessStakeTx) Reset() {
 	*x = WitnessStakeTx{}
-	mi := &file_data_proto_msgTypes[39]
+	mi := &file_pb_data_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3797,7 +3781,7 @@ func (x *WitnessStakeTx) String() string {
 func (*WitnessStakeTx) ProtoMessage() {}
 
 func (x *WitnessStakeTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[39]
+	mi := &file_pb_data_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3810,7 +3794,7 @@ func (x *WitnessStakeTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WitnessStakeTx.ProtoReflect.Descriptor instead.
 func (*WitnessStakeTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{39}
+	return file_pb_data_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *WitnessStakeTx) GetBase() *BaseMessage {
@@ -3851,7 +3835,7 @@ type WitnessRequestTx struct {
 
 func (x *WitnessRequestTx) Reset() {
 	*x = WitnessRequestTx{}
-	mi := &file_data_proto_msgTypes[40]
+	mi := &file_pb_data_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3863,7 +3847,7 @@ func (x *WitnessRequestTx) String() string {
 func (*WitnessRequestTx) ProtoMessage() {}
 
 func (x *WitnessRequestTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[40]
+	mi := &file_pb_data_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3876,7 +3860,7 @@ func (x *WitnessRequestTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WitnessRequestTx.ProtoReflect.Descriptor instead.
 func (*WitnessRequestTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{40}
+	return file_pb_data_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *WitnessRequestTx) GetBase() *BaseMessage {
@@ -3949,7 +3933,7 @@ type WitnessVote struct {
 
 func (x *WitnessVote) Reset() {
 	*x = WitnessVote{}
-	mi := &file_data_proto_msgTypes[41]
+	mi := &file_pb_data_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3961,7 +3945,7 @@ func (x *WitnessVote) String() string {
 func (*WitnessVote) ProtoMessage() {}
 
 func (x *WitnessVote) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[41]
+	mi := &file_pb_data_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3974,7 +3958,7 @@ func (x *WitnessVote) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WitnessVote.ProtoReflect.Descriptor instead.
 func (*WitnessVote) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{41}
+	return file_pb_data_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *WitnessVote) GetRequestId() string {
@@ -4023,7 +4007,7 @@ type WitnessVoteTx struct {
 
 func (x *WitnessVoteTx) Reset() {
 	*x = WitnessVoteTx{}
-	mi := &file_data_proto_msgTypes[42]
+	mi := &file_pb_data_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4035,7 +4019,7 @@ func (x *WitnessVoteTx) String() string {
 func (*WitnessVoteTx) ProtoMessage() {}
 
 func (x *WitnessVoteTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[42]
+	mi := &file_pb_data_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4048,7 +4032,7 @@ func (x *WitnessVoteTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WitnessVoteTx.ProtoReflect.Descriptor instead.
 func (*WitnessVoteTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{42}
+	return file_pb_data_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *WitnessVoteTx) GetBase() *BaseMessage {
@@ -4094,7 +4078,7 @@ type RechargeRequest struct {
 
 func (x *RechargeRequest) Reset() {
 	*x = RechargeRequest{}
-	mi := &file_data_proto_msgTypes[43]
+	mi := &file_pb_data_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4106,7 +4090,7 @@ func (x *RechargeRequest) String() string {
 func (*RechargeRequest) ProtoMessage() {}
 
 func (x *RechargeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[43]
+	mi := &file_pb_data_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4119,7 +4103,7 @@ func (x *RechargeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RechargeRequest.ProtoReflect.Descriptor instead.
 func (*RechargeRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{43}
+	return file_pb_data_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *RechargeRequest) GetRequestId() string {
@@ -4276,7 +4260,7 @@ type WitnessChallengeTx struct {
 
 func (x *WitnessChallengeTx) Reset() {
 	*x = WitnessChallengeTx{}
-	mi := &file_data_proto_msgTypes[44]
+	mi := &file_pb_data_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4288,7 +4272,7 @@ func (x *WitnessChallengeTx) String() string {
 func (*WitnessChallengeTx) ProtoMessage() {}
 
 func (x *WitnessChallengeTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[44]
+	mi := &file_pb_data_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4301,7 +4285,7 @@ func (x *WitnessChallengeTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WitnessChallengeTx.ProtoReflect.Descriptor instead.
 func (*WitnessChallengeTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{44}
+	return file_pb_data_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *WitnessChallengeTx) GetBase() *BaseMessage {
@@ -4367,7 +4351,7 @@ type ChallengeRecord struct {
 
 func (x *ChallengeRecord) Reset() {
 	*x = ChallengeRecord{}
-	mi := &file_data_proto_msgTypes[45]
+	mi := &file_pb_data_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4379,7 +4363,7 @@ func (x *ChallengeRecord) String() string {
 func (*ChallengeRecord) ProtoMessage() {}
 
 func (x *ChallengeRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[45]
+	mi := &file_pb_data_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4392,7 +4376,7 @@ func (x *ChallengeRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChallengeRecord.ProtoReflect.Descriptor instead.
 func (*ChallengeRecord) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{45}
+	return file_pb_data_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ChallengeRecord) GetChallengeId() string {
@@ -4524,7 +4508,7 @@ type RechargeRequestListRequest struct {
 
 func (x *RechargeRequestListRequest) Reset() {
 	*x = RechargeRequestListRequest{}
-	mi := &file_data_proto_msgTypes[46]
+	mi := &file_pb_data_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4536,7 +4520,7 @@ func (x *RechargeRequestListRequest) String() string {
 func (*RechargeRequestListRequest) ProtoMessage() {}
 
 func (x *RechargeRequestListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[46]
+	mi := &file_pb_data_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4549,7 +4533,7 @@ func (x *RechargeRequestListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RechargeRequestListRequest.ProtoReflect.Descriptor instead.
 func (*RechargeRequestListRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{46}
+	return file_pb_data_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *RechargeRequestListRequest) GetLimit() int32 {
@@ -4568,7 +4552,7 @@ type RechargeRequestList struct {
 
 func (x *RechargeRequestList) Reset() {
 	*x = RechargeRequestList{}
-	mi := &file_data_proto_msgTypes[47]
+	mi := &file_pb_data_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4580,7 +4564,7 @@ func (x *RechargeRequestList) String() string {
 func (*RechargeRequestList) ProtoMessage() {}
 
 func (x *RechargeRequestList) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[47]
+	mi := &file_pb_data_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4593,7 +4577,7 @@ func (x *RechargeRequestList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RechargeRequestList.ProtoReflect.Descriptor instead.
 func (*RechargeRequestList) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{47}
+	return file_pb_data_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *RechargeRequestList) GetRequests() []*RechargeRequest {
@@ -4613,7 +4597,7 @@ type FrostWithdrawListRequest struct {
 
 func (x *FrostWithdrawListRequest) Reset() {
 	*x = FrostWithdrawListRequest{}
-	mi := &file_data_proto_msgTypes[48]
+	mi := &file_pb_data_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4625,7 +4609,7 @@ func (x *FrostWithdrawListRequest) String() string {
 func (*FrostWithdrawListRequest) ProtoMessage() {}
 
 func (x *FrostWithdrawListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[48]
+	mi := &file_pb_data_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4638,7 +4622,7 @@ func (x *FrostWithdrawListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostWithdrawListRequest.ProtoReflect.Descriptor instead.
 func (*FrostWithdrawListRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{48}
+	return file_pb_data_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *FrostWithdrawListRequest) GetChain() string {
@@ -4664,7 +4648,7 @@ type FrostWithdrawStateList struct {
 
 func (x *FrostWithdrawStateList) Reset() {
 	*x = FrostWithdrawStateList{}
-	mi := &file_data_proto_msgTypes[49]
+	mi := &file_pb_data_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4676,7 +4660,7 @@ func (x *FrostWithdrawStateList) String() string {
 func (*FrostWithdrawStateList) ProtoMessage() {}
 
 func (x *FrostWithdrawStateList) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[49]
+	mi := &file_pb_data_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4689,7 +4673,7 @@ func (x *FrostWithdrawStateList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostWithdrawStateList.ProtoReflect.Descriptor instead.
 func (*FrostWithdrawStateList) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{49}
+	return file_pb_data_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *FrostWithdrawStateList) GetStates() []*FrostWithdrawState {
@@ -4708,7 +4692,7 @@ type VaultTransitionStateList struct {
 
 func (x *VaultTransitionStateList) Reset() {
 	*x = VaultTransitionStateList{}
-	mi := &file_data_proto_msgTypes[50]
+	mi := &file_pb_data_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4720,7 +4704,7 @@ func (x *VaultTransitionStateList) String() string {
 func (*VaultTransitionStateList) ProtoMessage() {}
 
 func (x *VaultTransitionStateList) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[50]
+	mi := &file_pb_data_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4733,12 +4717,57 @@ func (x *VaultTransitionStateList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VaultTransitionStateList.ProtoReflect.Descriptor instead.
 func (*VaultTransitionStateList) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{50}
+	return file_pb_data_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *VaultTransitionStateList) GetStates() []*VaultTransitionState {
 	if x != nil {
 		return x.States
+	}
+	return nil
+}
+
+// 见证者列表（用于 API）
+type WitnessInfoList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Witnesses     []*WitnessInfo         `protobuf:"bytes,1,rep,name=witnesses,proto3" json:"witnesses,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WitnessInfoList) Reset() {
+	*x = WitnessInfoList{}
+	mi := &file_pb_data_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WitnessInfoList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WitnessInfoList) ProtoMessage() {}
+
+func (x *WitnessInfoList) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_data_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WitnessInfoList.ProtoReflect.Descriptor instead.
+func (*WitnessInfoList) Descriptor() ([]byte, []int) {
+	return file_pb_data_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *WitnessInfoList) GetWitnesses() []*WitnessInfo {
+	if x != nil {
+		return x.Witnesses
 	}
 	return nil
 }
@@ -4755,7 +4784,7 @@ type ArbitrationVoteTx struct {
 
 func (x *ArbitrationVoteTx) Reset() {
 	*x = ArbitrationVoteTx{}
-	mi := &file_data_proto_msgTypes[51]
+	mi := &file_pb_data_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4767,7 +4796,7 @@ func (x *ArbitrationVoteTx) String() string {
 func (*ArbitrationVoteTx) ProtoMessage() {}
 
 func (x *ArbitrationVoteTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[51]
+	mi := &file_pb_data_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4780,7 +4809,7 @@ func (x *ArbitrationVoteTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArbitrationVoteTx.ProtoReflect.Descriptor instead.
 func (*ArbitrationVoteTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{51}
+	return file_pb_data_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *ArbitrationVoteTx) GetBase() *BaseMessage {
@@ -4814,7 +4843,7 @@ type WitnessClaimRewardTx struct {
 
 func (x *WitnessClaimRewardTx) Reset() {
 	*x = WitnessClaimRewardTx{}
-	mi := &file_data_proto_msgTypes[52]
+	mi := &file_pb_data_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4826,7 +4855,7 @@ func (x *WitnessClaimRewardTx) String() string {
 func (*WitnessClaimRewardTx) ProtoMessage() {}
 
 func (x *WitnessClaimRewardTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[52]
+	mi := &file_pb_data_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4839,7 +4868,7 @@ func (x *WitnessClaimRewardTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WitnessClaimRewardTx.ProtoReflect.Descriptor instead.
 func (*WitnessClaimRewardTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{52}
+	return file_pb_data_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *WitnessClaimRewardTx) GetBase() *BaseMessage {
@@ -4869,7 +4898,7 @@ type WitnessConfig struct {
 
 func (x *WitnessConfig) Reset() {
 	*x = WitnessConfig{}
-	mi := &file_data_proto_msgTypes[53]
+	mi := &file_pb_data_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4881,7 +4910,7 @@ func (x *WitnessConfig) String() string {
 func (*WitnessConfig) ProtoMessage() {}
 
 func (x *WitnessConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[53]
+	mi := &file_pb_data_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4894,7 +4923,7 @@ func (x *WitnessConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WitnessConfig.ProtoReflect.Descriptor instead.
 func (*WitnessConfig) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{53}
+	return file_pb_data_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *WitnessConfig) GetConsensusThreshold() uint32 {
@@ -4988,7 +5017,7 @@ type FrostWithdrawRequestTx struct {
 
 func (x *FrostWithdrawRequestTx) Reset() {
 	*x = FrostWithdrawRequestTx{}
-	mi := &file_data_proto_msgTypes[54]
+	mi := &file_pb_data_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5000,7 +5029,7 @@ func (x *FrostWithdrawRequestTx) String() string {
 func (*FrostWithdrawRequestTx) ProtoMessage() {}
 
 func (x *FrostWithdrawRequestTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[54]
+	mi := &file_pb_data_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5013,7 +5042,7 @@ func (x *FrostWithdrawRequestTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostWithdrawRequestTx.ProtoReflect.Descriptor instead.
 func (*FrostWithdrawRequestTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{54}
+	return file_pb_data_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *FrostWithdrawRequestTx) GetBase() *BaseMessage {
@@ -5074,7 +5103,7 @@ type FrostWithdrawSignedTx struct {
 
 func (x *FrostWithdrawSignedTx) Reset() {
 	*x = FrostWithdrawSignedTx{}
-	mi := &file_data_proto_msgTypes[55]
+	mi := &file_pb_data_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5086,7 +5115,7 @@ func (x *FrostWithdrawSignedTx) String() string {
 func (*FrostWithdrawSignedTx) ProtoMessage() {}
 
 func (x *FrostWithdrawSignedTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[55]
+	mi := &file_pb_data_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5099,7 +5128,7 @@ func (x *FrostWithdrawSignedTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostWithdrawSignedTx.ProtoReflect.Descriptor instead.
 func (*FrostWithdrawSignedTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{55}
+	return file_pb_data_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *FrostWithdrawSignedTx) GetBase() *BaseMessage {
@@ -5206,7 +5235,7 @@ type UtxoInput struct {
 
 func (x *UtxoInput) Reset() {
 	*x = UtxoInput{}
-	mi := &file_data_proto_msgTypes[56]
+	mi := &file_pb_data_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5218,7 +5247,7 @@ func (x *UtxoInput) String() string {
 func (*UtxoInput) ProtoMessage() {}
 
 func (x *UtxoInput) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[56]
+	mi := &file_pb_data_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5231,7 +5260,7 @@ func (x *UtxoInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UtxoInput.ProtoReflect.Descriptor instead.
 func (*UtxoInput) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{56}
+	return file_pb_data_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *UtxoInput) GetTxid() string {
@@ -5277,7 +5306,7 @@ type FrostUtxo struct {
 
 func (x *FrostUtxo) Reset() {
 	*x = FrostUtxo{}
-	mi := &file_data_proto_msgTypes[57]
+	mi := &file_pb_data_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5289,7 +5318,7 @@ func (x *FrostUtxo) String() string {
 func (*FrostUtxo) ProtoMessage() {}
 
 func (x *FrostUtxo) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[57]
+	mi := &file_pb_data_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5302,7 +5331,7 @@ func (x *FrostUtxo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostUtxo.ProtoReflect.Descriptor instead.
 func (*FrostUtxo) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{57}
+	return file_pb_data_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *FrostUtxo) GetTxid() string {
@@ -5360,7 +5389,7 @@ type FrostPlanningLog struct {
 
 func (x *FrostPlanningLog) Reset() {
 	*x = FrostPlanningLog{}
-	mi := &file_data_proto_msgTypes[58]
+	mi := &file_pb_data_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5372,7 +5401,7 @@ func (x *FrostPlanningLog) String() string {
 func (*FrostPlanningLog) ProtoMessage() {}
 
 func (x *FrostPlanningLog) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[58]
+	mi := &file_pb_data_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5385,7 +5414,7 @@ func (x *FrostPlanningLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostPlanningLog.ProtoReflect.Descriptor instead.
 func (*FrostPlanningLog) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{58}
+	return file_pb_data_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *FrostPlanningLog) GetStep() string {
@@ -5437,7 +5466,7 @@ type FrostWithdrawState struct {
 
 func (x *FrostWithdrawState) Reset() {
 	*x = FrostWithdrawState{}
-	mi := &file_data_proto_msgTypes[59]
+	mi := &file_pb_data_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5449,7 +5478,7 @@ func (x *FrostWithdrawState) String() string {
 func (*FrostWithdrawState) ProtoMessage() {}
 
 func (x *FrostWithdrawState) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[59]
+	mi := &file_pb_data_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5462,7 +5491,7 @@ func (x *FrostWithdrawState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostWithdrawState.ProtoReflect.Descriptor instead.
 func (*FrostWithdrawState) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{59}
+	return file_pb_data_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *FrostWithdrawState) GetWithdrawId() string {
@@ -5549,10 +5578,10 @@ func (x *FrostWithdrawState) GetPlanningLogs() []*FrostPlanningLog {
 	return nil
 }
 
-// Frost 规划日志交易（Runtime 异步汇报，供前端排查）
+// Frost 规划日志消息（Runtime 异步汇报，供前端排查，不参与共识）
 type FrostWithdrawPlanningLogTx struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Base          *BaseMessage           `protobuf:"bytes,1,opt,name=base,proto3" json:"base,omitempty"`
+	Reporter      string                 `protobuf:"bytes,1,opt,name=reporter,proto3" json:"reporter,omitempty"` // 汇报者（节点地址）
 	WithdrawId    string                 `protobuf:"bytes,2,opt,name=withdraw_id,json=withdrawId,proto3" json:"withdraw_id,omitempty"`
 	Logs          []*FrostPlanningLog    `protobuf:"bytes,3,rep,name=logs,proto3" json:"logs,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -5561,7 +5590,7 @@ type FrostWithdrawPlanningLogTx struct {
 
 func (x *FrostWithdrawPlanningLogTx) Reset() {
 	*x = FrostWithdrawPlanningLogTx{}
-	mi := &file_data_proto_msgTypes[60]
+	mi := &file_pb_data_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5573,7 +5602,7 @@ func (x *FrostWithdrawPlanningLogTx) String() string {
 func (*FrostWithdrawPlanningLogTx) ProtoMessage() {}
 
 func (x *FrostWithdrawPlanningLogTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[60]
+	mi := &file_pb_data_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5586,14 +5615,14 @@ func (x *FrostWithdrawPlanningLogTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostWithdrawPlanningLogTx.ProtoReflect.Descriptor instead.
 func (*FrostWithdrawPlanningLogTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{60}
+	return file_pb_data_proto_rawDescGZIP(), []int{61}
 }
 
-func (x *FrostWithdrawPlanningLogTx) GetBase() *BaseMessage {
+func (x *FrostWithdrawPlanningLogTx) GetReporter() string {
 	if x != nil {
-		return x.Base
+		return x.Reporter
 	}
-	return nil
+	return ""
 }
 
 func (x *FrostWithdrawPlanningLogTx) GetWithdrawId() string {
@@ -5624,7 +5653,7 @@ type FrostSignedPackage struct {
 
 func (x *FrostSignedPackage) Reset() {
 	*x = FrostSignedPackage{}
-	mi := &file_data_proto_msgTypes[61]
+	mi := &file_pb_data_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5636,7 +5665,7 @@ func (x *FrostSignedPackage) String() string {
 func (*FrostSignedPackage) ProtoMessage() {}
 
 func (x *FrostSignedPackage) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[61]
+	mi := &file_pb_data_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5649,7 +5678,7 @@ func (x *FrostSignedPackage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostSignedPackage.ProtoReflect.Descriptor instead.
 func (*FrostSignedPackage) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{61}
+	return file_pb_data_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *FrostSignedPackage) GetJobId() string {
@@ -5704,7 +5733,7 @@ type FrostVaultState struct {
 
 func (x *FrostVaultState) Reset() {
 	*x = FrostVaultState{}
-	mi := &file_data_proto_msgTypes[62]
+	mi := &file_pb_data_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5716,7 +5745,7 @@ func (x *FrostVaultState) String() string {
 func (*FrostVaultState) ProtoMessage() {}
 
 func (x *FrostVaultState) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[62]
+	mi := &file_pb_data_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5729,7 +5758,7 @@ func (x *FrostVaultState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultState.ProtoReflect.Descriptor instead.
 func (*FrostVaultState) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{62}
+	return file_pb_data_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *FrostVaultState) GetVaultId() uint32 {
@@ -5816,7 +5845,7 @@ type VaultTransitionState struct {
 
 func (x *VaultTransitionState) Reset() {
 	*x = VaultTransitionState{}
-	mi := &file_data_proto_msgTypes[63]
+	mi := &file_pb_data_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5828,7 +5857,7 @@ func (x *VaultTransitionState) String() string {
 func (*VaultTransitionState) ProtoMessage() {}
 
 func (x *VaultTransitionState) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[63]
+	mi := &file_pb_data_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5841,7 +5870,7 @@ func (x *VaultTransitionState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VaultTransitionState.ProtoReflect.Descriptor instead.
 func (*VaultTransitionState) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{63}
+	return file_pb_data_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *VaultTransitionState) GetChain() string {
@@ -5993,7 +6022,7 @@ type FrostEnvelope struct {
 
 func (x *FrostEnvelope) Reset() {
 	*x = FrostEnvelope{}
-	mi := &file_data_proto_msgTypes[64]
+	mi := &file_pb_data_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6005,7 +6034,7 @@ func (x *FrostEnvelope) String() string {
 func (*FrostEnvelope) ProtoMessage() {}
 
 func (x *FrostEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[64]
+	mi := &file_pb_data_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6018,7 +6047,7 @@ func (x *FrostEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostEnvelope.ProtoReflect.Descriptor instead.
 func (*FrostEnvelope) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{64}
+	return file_pb_data_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *FrostEnvelope) GetFrom() string {
@@ -6086,7 +6115,7 @@ type FrostVaultDkgCommitTx struct {
 
 func (x *FrostVaultDkgCommitTx) Reset() {
 	*x = FrostVaultDkgCommitTx{}
-	mi := &file_data_proto_msgTypes[65]
+	mi := &file_pb_data_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6098,7 +6127,7 @@ func (x *FrostVaultDkgCommitTx) String() string {
 func (*FrostVaultDkgCommitTx) ProtoMessage() {}
 
 func (x *FrostVaultDkgCommitTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[65]
+	mi := &file_pb_data_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6111,7 +6140,7 @@ func (x *FrostVaultDkgCommitTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultDkgCommitTx.ProtoReflect.Descriptor instead.
 func (*FrostVaultDkgCommitTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{65}
+	return file_pb_data_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *FrostVaultDkgCommitTx) GetBase() *BaseMessage {
@@ -6179,7 +6208,7 @@ type FrostVaultDkgShareTx struct {
 
 func (x *FrostVaultDkgShareTx) Reset() {
 	*x = FrostVaultDkgShareTx{}
-	mi := &file_data_proto_msgTypes[66]
+	mi := &file_pb_data_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6191,7 +6220,7 @@ func (x *FrostVaultDkgShareTx) String() string {
 func (*FrostVaultDkgShareTx) ProtoMessage() {}
 
 func (x *FrostVaultDkgShareTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[66]
+	mi := &file_pb_data_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6204,7 +6233,7 @@ func (x *FrostVaultDkgShareTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultDkgShareTx.ProtoReflect.Descriptor instead.
 func (*FrostVaultDkgShareTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{66}
+	return file_pb_data_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *FrostVaultDkgShareTx) GetBase() *BaseMessage {
@@ -6273,7 +6302,7 @@ type FrostVaultDkgCommitment struct {
 
 func (x *FrostVaultDkgCommitment) Reset() {
 	*x = FrostVaultDkgCommitment{}
-	mi := &file_data_proto_msgTypes[67]
+	mi := &file_pb_data_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6285,7 +6314,7 @@ func (x *FrostVaultDkgCommitment) String() string {
 func (*FrostVaultDkgCommitment) ProtoMessage() {}
 
 func (x *FrostVaultDkgCommitment) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[67]
+	mi := &file_pb_data_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6298,7 +6327,7 @@ func (x *FrostVaultDkgCommitment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultDkgCommitment.ProtoReflect.Descriptor instead.
 func (*FrostVaultDkgCommitment) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{67}
+	return file_pb_data_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *FrostVaultDkgCommitment) GetChain() string {
@@ -6373,7 +6402,7 @@ type FrostVaultDkgShare struct {
 
 func (x *FrostVaultDkgShare) Reset() {
 	*x = FrostVaultDkgShare{}
-	mi := &file_data_proto_msgTypes[68]
+	mi := &file_pb_data_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6385,7 +6414,7 @@ func (x *FrostVaultDkgShare) String() string {
 func (*FrostVaultDkgShare) ProtoMessage() {}
 
 func (x *FrostVaultDkgShare) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[68]
+	mi := &file_pb_data_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6398,7 +6427,7 @@ func (x *FrostVaultDkgShare) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultDkgShare.ProtoReflect.Descriptor instead.
 func (*FrostVaultDkgShare) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{68}
+	return file_pb_data_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *FrostVaultDkgShare) GetChain() string {
@@ -6466,7 +6495,7 @@ type FrostVaultDkgComplaintTx struct {
 
 func (x *FrostVaultDkgComplaintTx) Reset() {
 	*x = FrostVaultDkgComplaintTx{}
-	mi := &file_data_proto_msgTypes[69]
+	mi := &file_pb_data_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6478,7 +6507,7 @@ func (x *FrostVaultDkgComplaintTx) String() string {
 func (*FrostVaultDkgComplaintTx) ProtoMessage() {}
 
 func (x *FrostVaultDkgComplaintTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[69]
+	mi := &file_pb_data_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6491,7 +6520,7 @@ func (x *FrostVaultDkgComplaintTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultDkgComplaintTx.ProtoReflect.Descriptor instead.
 func (*FrostVaultDkgComplaintTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{69}
+	return file_pb_data_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *FrostVaultDkgComplaintTx) GetBase() *BaseMessage {
@@ -6560,7 +6589,7 @@ type FrostVaultDkgRevealTx struct {
 
 func (x *FrostVaultDkgRevealTx) Reset() {
 	*x = FrostVaultDkgRevealTx{}
-	mi := &file_data_proto_msgTypes[70]
+	mi := &file_pb_data_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6572,7 +6601,7 @@ func (x *FrostVaultDkgRevealTx) String() string {
 func (*FrostVaultDkgRevealTx) ProtoMessage() {}
 
 func (x *FrostVaultDkgRevealTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[70]
+	mi := &file_pb_data_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6585,7 +6614,7 @@ func (x *FrostVaultDkgRevealTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultDkgRevealTx.ProtoReflect.Descriptor instead.
 func (*FrostVaultDkgRevealTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{70}
+	return file_pb_data_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *FrostVaultDkgRevealTx) GetBase() *BaseMessage {
@@ -6662,7 +6691,7 @@ type FrostVaultDkgComplaint struct {
 
 func (x *FrostVaultDkgComplaint) Reset() {
 	*x = FrostVaultDkgComplaint{}
-	mi := &file_data_proto_msgTypes[71]
+	mi := &file_pb_data_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6674,7 +6703,7 @@ func (x *FrostVaultDkgComplaint) String() string {
 func (*FrostVaultDkgComplaint) ProtoMessage() {}
 
 func (x *FrostVaultDkgComplaint) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[71]
+	mi := &file_pb_data_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6687,7 +6716,7 @@ func (x *FrostVaultDkgComplaint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultDkgComplaint.ProtoReflect.Descriptor instead.
 func (*FrostVaultDkgComplaint) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{71}
+	return file_pb_data_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *FrostVaultDkgComplaint) GetChain() string {
@@ -6769,7 +6798,7 @@ type FrostVaultDkgValidationSignedTx struct {
 
 func (x *FrostVaultDkgValidationSignedTx) Reset() {
 	*x = FrostVaultDkgValidationSignedTx{}
-	mi := &file_data_proto_msgTypes[72]
+	mi := &file_pb_data_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6781,7 +6810,7 @@ func (x *FrostVaultDkgValidationSignedTx) String() string {
 func (*FrostVaultDkgValidationSignedTx) ProtoMessage() {}
 
 func (x *FrostVaultDkgValidationSignedTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[72]
+	mi := &file_pb_data_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6794,7 +6823,7 @@ func (x *FrostVaultDkgValidationSignedTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultDkgValidationSignedTx.ProtoReflect.Descriptor instead.
 func (*FrostVaultDkgValidationSignedTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{72}
+	return file_pb_data_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *FrostVaultDkgValidationSignedTx) GetBase() *BaseMessage {
@@ -6862,7 +6891,7 @@ type FrostVaultTransitionSignedTx struct {
 
 func (x *FrostVaultTransitionSignedTx) Reset() {
 	*x = FrostVaultTransitionSignedTx{}
-	mi := &file_data_proto_msgTypes[73]
+	mi := &file_pb_data_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6874,7 +6903,7 @@ func (x *FrostVaultTransitionSignedTx) String() string {
 func (*FrostVaultTransitionSignedTx) ProtoMessage() {}
 
 func (x *FrostVaultTransitionSignedTx) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[73]
+	mi := &file_pb_data_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6887,7 +6916,7 @@ func (x *FrostVaultTransitionSignedTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultTransitionSignedTx.ProtoReflect.Descriptor instead.
 func (*FrostVaultTransitionSignedTx) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{73}
+	return file_pb_data_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *FrostVaultTransitionSignedTx) GetBase() *BaseMessage {
@@ -6953,7 +6982,7 @@ type FrostTop10000 struct {
 
 func (x *FrostTop10000) Reset() {
 	*x = FrostTop10000{}
-	mi := &file_data_proto_msgTypes[74]
+	mi := &file_pb_data_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6965,7 +6994,7 @@ func (x *FrostTop10000) String() string {
 func (*FrostTop10000) ProtoMessage() {}
 
 func (x *FrostTop10000) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[74]
+	mi := &file_pb_data_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6978,7 +7007,7 @@ func (x *FrostTop10000) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostTop10000.ProtoReflect.Descriptor instead.
 func (*FrostTop10000) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{74}
+	return file_pb_data_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *FrostTop10000) GetHeight() uint64 {
@@ -7033,7 +7062,7 @@ type FrostVaultConfig struct {
 
 func (x *FrostVaultConfig) Reset() {
 	*x = FrostVaultConfig{}
-	mi := &file_data_proto_msgTypes[75]
+	mi := &file_pb_data_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7045,7 +7074,7 @@ func (x *FrostVaultConfig) String() string {
 func (*FrostVaultConfig) ProtoMessage() {}
 
 func (x *FrostVaultConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[75]
+	mi := &file_pb_data_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7058,7 +7087,7 @@ func (x *FrostVaultConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVaultConfig.ProtoReflect.Descriptor instead.
 func (*FrostVaultConfig) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{75}
+	return file_pb_data_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *FrostVaultConfig) GetChain() string {
@@ -7129,7 +7158,7 @@ type ChainCfg struct {
 
 func (x *ChainCfg) Reset() {
 	*x = ChainCfg{}
-	mi := &file_data_proto_msgTypes[76]
+	mi := &file_pb_data_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7141,7 +7170,7 @@ func (x *ChainCfg) String() string {
 func (*ChainCfg) ProtoMessage() {}
 
 func (x *ChainCfg) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[76]
+	mi := &file_pb_data_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7154,7 +7183,7 @@ func (x *ChainCfg) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChainCfg.ProtoReflect.Descriptor instead.
 func (*ChainCfg) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{76}
+	return file_pb_data_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *ChainCfg) GetSignAlgo() string {
@@ -7194,7 +7223,7 @@ type GetFrostConfigResponse struct {
 
 func (x *GetFrostConfigResponse) Reset() {
 	*x = GetFrostConfigResponse{}
-	mi := &file_data_proto_msgTypes[77]
+	mi := &file_pb_data_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7206,7 +7235,7 @@ func (x *GetFrostConfigResponse) String() string {
 func (*GetFrostConfigResponse) ProtoMessage() {}
 
 func (x *GetFrostConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[77]
+	mi := &file_pb_data_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7219,7 +7248,7 @@ func (x *GetFrostConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFrostConfigResponse.ProtoReflect.Descriptor instead.
 func (*GetFrostConfigResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{77}
+	return file_pb_data_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *GetFrostConfigResponse) GetEnabled() bool {
@@ -7288,7 +7317,7 @@ type GetWithdrawStatusResponse struct {
 
 func (x *GetWithdrawStatusResponse) Reset() {
 	*x = GetWithdrawStatusResponse{}
-	mi := &file_data_proto_msgTypes[78]
+	mi := &file_pb_data_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7300,7 +7329,7 @@ func (x *GetWithdrawStatusResponse) String() string {
 func (*GetWithdrawStatusResponse) ProtoMessage() {}
 
 func (x *GetWithdrawStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[78]
+	mi := &file_pb_data_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7313,7 +7342,7 @@ func (x *GetWithdrawStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWithdrawStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetWithdrawStatusResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{78}
+	return file_pb_data_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *GetWithdrawStatusResponse) GetLotId() string {
@@ -7383,7 +7412,7 @@ type ListWithdrawsResponse struct {
 
 func (x *ListWithdrawsResponse) Reset() {
 	*x = ListWithdrawsResponse{}
-	mi := &file_data_proto_msgTypes[79]
+	mi := &file_pb_data_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7395,7 +7424,7 @@ func (x *ListWithdrawsResponse) String() string {
 func (*ListWithdrawsResponse) ProtoMessage() {}
 
 func (x *ListWithdrawsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[79]
+	mi := &file_pb_data_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7408,7 +7437,7 @@ func (x *ListWithdrawsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWithdrawsResponse.ProtoReflect.Descriptor instead.
 func (*ListWithdrawsResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{79}
+	return file_pb_data_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *ListWithdrawsResponse) GetWithdraws() []*GetWithdrawStatusResponse {
@@ -7440,7 +7469,7 @@ type GetVaultGroupPubKeyResponse struct {
 
 func (x *GetVaultGroupPubKeyResponse) Reset() {
 	*x = GetVaultGroupPubKeyResponse{}
-	mi := &file_data_proto_msgTypes[80]
+	mi := &file_pb_data_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7452,7 +7481,7 @@ func (x *GetVaultGroupPubKeyResponse) String() string {
 func (*GetVaultGroupPubKeyResponse) ProtoMessage() {}
 
 func (x *GetVaultGroupPubKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[80]
+	mi := &file_pb_data_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7465,7 +7494,7 @@ func (x *GetVaultGroupPubKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetVaultGroupPubKeyResponse.ProtoReflect.Descriptor instead.
 func (*GetVaultGroupPubKeyResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{80}
+	return file_pb_data_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *GetVaultGroupPubKeyResponse) GetChain() string {
@@ -7536,7 +7565,7 @@ type GetVaultTransitionStatusResponse struct {
 
 func (x *GetVaultTransitionStatusResponse) Reset() {
 	*x = GetVaultTransitionStatusResponse{}
-	mi := &file_data_proto_msgTypes[81]
+	mi := &file_pb_data_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7548,7 +7577,7 @@ func (x *GetVaultTransitionStatusResponse) String() string {
 func (*GetVaultTransitionStatusResponse) ProtoMessage() {}
 
 func (x *GetVaultTransitionStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[81]
+	mi := &file_pb_data_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7561,7 +7590,7 @@ func (x *GetVaultTransitionStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetVaultTransitionStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetVaultTransitionStatusResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{81}
+	return file_pb_data_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *GetVaultTransitionStatusResponse) GetChain() string {
@@ -7695,7 +7724,7 @@ type DkgCommitmentInfo struct {
 
 func (x *DkgCommitmentInfo) Reset() {
 	*x = DkgCommitmentInfo{}
-	mi := &file_data_proto_msgTypes[82]
+	mi := &file_pb_data_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7707,7 +7736,7 @@ func (x *DkgCommitmentInfo) String() string {
 func (*DkgCommitmentInfo) ProtoMessage() {}
 
 func (x *DkgCommitmentInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[82]
+	mi := &file_pb_data_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7720,7 +7749,7 @@ func (x *DkgCommitmentInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DkgCommitmentInfo.ProtoReflect.Descriptor instead.
 func (*DkgCommitmentInfo) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{82}
+	return file_pb_data_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *DkgCommitmentInfo) GetParticipant() string {
@@ -7758,7 +7787,7 @@ type GetVaultDkgCommitmentsResponse struct {
 
 func (x *GetVaultDkgCommitmentsResponse) Reset() {
 	*x = GetVaultDkgCommitmentsResponse{}
-	mi := &file_data_proto_msgTypes[83]
+	mi := &file_pb_data_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7770,7 +7799,7 @@ func (x *GetVaultDkgCommitmentsResponse) String() string {
 func (*GetVaultDkgCommitmentsResponse) ProtoMessage() {}
 
 func (x *GetVaultDkgCommitmentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[83]
+	mi := &file_pb_data_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7783,7 +7812,7 @@ func (x *GetVaultDkgCommitmentsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetVaultDkgCommitmentsResponse.ProtoReflect.Descriptor instead.
 func (*GetVaultDkgCommitmentsResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{83}
+	return file_pb_data_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *GetVaultDkgCommitmentsResponse) GetChain() string {
@@ -7835,7 +7864,7 @@ type DownloadSignedPackageResponse struct {
 
 func (x *DownloadSignedPackageResponse) Reset() {
 	*x = DownloadSignedPackageResponse{}
-	mi := &file_data_proto_msgTypes[84]
+	mi := &file_pb_data_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7847,7 +7876,7 @@ func (x *DownloadSignedPackageResponse) String() string {
 func (*DownloadSignedPackageResponse) ProtoMessage() {}
 
 func (x *DownloadSignedPackageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[84]
+	mi := &file_pb_data_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7860,7 +7889,7 @@ func (x *DownloadSignedPackageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadSignedPackageResponse.ProtoReflect.Descriptor instead.
 func (*DownloadSignedPackageResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{84}
+	return file_pb_data_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *DownloadSignedPackageResponse) GetJobId() string {
@@ -7912,7 +7941,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_data_proto_msgTypes[85]
+	mi := &file_pb_data_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7924,7 +7953,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[85]
+	mi := &file_pb_data_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7937,7 +7966,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{85}
+	return file_pb_data_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *HealthResponse) GetStatus() string {
@@ -7990,7 +8019,7 @@ type MetricsResponse struct {
 
 func (x *MetricsResponse) Reset() {
 	*x = MetricsResponse{}
-	mi := &file_data_proto_msgTypes[86]
+	mi := &file_pb_data_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8002,7 +8031,7 @@ func (x *MetricsResponse) String() string {
 func (*MetricsResponse) ProtoMessage() {}
 
 func (x *MetricsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[86]
+	mi := &file_pb_data_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8015,7 +8044,7 @@ func (x *MetricsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsResponse.ProtoReflect.Descriptor instead.
 func (*MetricsResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{86}
+	return file_pb_data_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *MetricsResponse) GetHeapAlloc() uint64 {
@@ -8071,7 +8100,7 @@ type ForceRescanRequest struct {
 
 func (x *ForceRescanRequest) Reset() {
 	*x = ForceRescanRequest{}
-	mi := &file_data_proto_msgTypes[87]
+	mi := &file_pb_data_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8083,7 +8112,7 @@ func (x *ForceRescanRequest) String() string {
 func (*ForceRescanRequest) ProtoMessage() {}
 
 func (x *ForceRescanRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[87]
+	mi := &file_pb_data_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8096,7 +8125,7 @@ func (x *ForceRescanRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForceRescanRequest.ProtoReflect.Descriptor instead.
 func (*ForceRescanRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{87}
+	return file_pb_data_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *ForceRescanRequest) GetChain() string {
@@ -8124,7 +8153,7 @@ type ForceRescanResponse struct {
 
 func (x *ForceRescanResponse) Reset() {
 	*x = ForceRescanResponse{}
-	mi := &file_data_proto_msgTypes[88]
+	mi := &file_pb_data_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8136,7 +8165,7 @@ func (x *ForceRescanResponse) String() string {
 func (*ForceRescanResponse) ProtoMessage() {}
 
 func (x *ForceRescanResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[88]
+	mi := &file_pb_data_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8149,7 +8178,7 @@ func (x *ForceRescanResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForceRescanResponse.ProtoReflect.Descriptor instead.
 func (*ForceRescanResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{88}
+	return file_pb_data_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *ForceRescanResponse) GetSuccess() bool {
@@ -8176,7 +8205,7 @@ type LogsRequest struct {
 
 func (x *LogsRequest) Reset() {
 	*x = LogsRequest{}
-	mi := &file_data_proto_msgTypes[89]
+	mi := &file_pb_data_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8188,7 +8217,7 @@ func (x *LogsRequest) String() string {
 func (*LogsRequest) ProtoMessage() {}
 
 func (x *LogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[89]
+	mi := &file_pb_data_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8201,7 +8230,7 @@ func (x *LogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogsRequest.ProtoReflect.Descriptor instead.
 func (*LogsRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{89}
+	return file_pb_data_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *LogsRequest) GetMaxLines() int32 {
@@ -8223,7 +8252,7 @@ type LogLine struct {
 
 func (x *LogLine) Reset() {
 	*x = LogLine{}
-	mi := &file_data_proto_msgTypes[90]
+	mi := &file_pb_data_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8235,7 +8264,7 @@ func (x *LogLine) String() string {
 func (*LogLine) ProtoMessage() {}
 
 func (x *LogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[90]
+	mi := &file_pb_data_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8248,7 +8277,7 @@ func (x *LogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
 func (*LogLine) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{90}
+	return file_pb_data_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *LogLine) GetTimestamp() string {
@@ -8282,7 +8311,7 @@ type LogsResponse struct {
 
 func (x *LogsResponse) Reset() {
 	*x = LogsResponse{}
-	mi := &file_data_proto_msgTypes[91]
+	mi := &file_pb_data_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8294,7 +8323,7 @@ func (x *LogsResponse) String() string {
 func (*LogsResponse) ProtoMessage() {}
 
 func (x *LogsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[91]
+	mi := &file_pb_data_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8307,7 +8336,7 @@ func (x *LogsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogsResponse.ProtoReflect.Descriptor instead.
 func (*LogsResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{91}
+	return file_pb_data_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *LogsResponse) GetLogs() []*LogLine {
@@ -8333,7 +8362,7 @@ type BlockHeader struct {
 
 func (x *BlockHeader) Reset() {
 	*x = BlockHeader{}
-	mi := &file_data_proto_msgTypes[92]
+	mi := &file_pb_data_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8345,7 +8374,7 @@ func (x *BlockHeader) String() string {
 func (*BlockHeader) ProtoMessage() {}
 
 func (x *BlockHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[92]
+	mi := &file_pb_data_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8358,7 +8387,7 @@ func (x *BlockHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockHeader.ProtoReflect.Descriptor instead.
 func (*BlockHeader) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{92}
+	return file_pb_data_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *BlockHeader) GetHeight() uint64 {
@@ -8419,7 +8448,7 @@ type GetRecentBlocksRequest struct {
 
 func (x *GetRecentBlocksRequest) Reset() {
 	*x = GetRecentBlocksRequest{}
-	mi := &file_data_proto_msgTypes[93]
+	mi := &file_pb_data_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8431,7 +8460,7 @@ func (x *GetRecentBlocksRequest) String() string {
 func (*GetRecentBlocksRequest) ProtoMessage() {}
 
 func (x *GetRecentBlocksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[93]
+	mi := &file_pb_data_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8444,7 +8473,7 @@ func (x *GetRecentBlocksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRecentBlocksRequest.ProtoReflect.Descriptor instead.
 func (*GetRecentBlocksRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{93}
+	return file_pb_data_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *GetRecentBlocksRequest) GetCount() int32 {
@@ -8463,7 +8492,7 @@ type GetRecentBlocksResponse struct {
 
 func (x *GetRecentBlocksResponse) Reset() {
 	*x = GetRecentBlocksResponse{}
-	mi := &file_data_proto_msgTypes[94]
+	mi := &file_pb_data_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8475,7 +8504,7 @@ func (x *GetRecentBlocksResponse) String() string {
 func (*GetRecentBlocksResponse) ProtoMessage() {}
 
 func (x *GetRecentBlocksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[94]
+	mi := &file_pb_data_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8488,7 +8517,7 @@ func (x *GetRecentBlocksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRecentBlocksResponse.ProtoReflect.Descriptor instead.
 func (*GetRecentBlocksResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{94}
+	return file_pb_data_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *GetRecentBlocksResponse) GetBlocks() []*BlockHeader {
@@ -8508,7 +8537,7 @@ type GetAccountRequest struct {
 
 func (x *GetAccountRequest) Reset() {
 	*x = GetAccountRequest{}
-	mi := &file_data_proto_msgTypes[95]
+	mi := &file_pb_data_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8520,7 +8549,7 @@ func (x *GetAccountRequest) String() string {
 func (*GetAccountRequest) ProtoMessage() {}
 
 func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[95]
+	mi := &file_pb_data_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8533,7 +8562,7 @@ func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountRequest.ProtoReflect.Descriptor instead.
 func (*GetAccountRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{95}
+	return file_pb_data_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *GetAccountRequest) GetAddress() string {
@@ -8554,7 +8583,7 @@ type GetAccountResponse struct {
 
 func (x *GetAccountResponse) Reset() {
 	*x = GetAccountResponse{}
-	mi := &file_data_proto_msgTypes[96]
+	mi := &file_pb_data_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8566,7 +8595,7 @@ func (x *GetAccountResponse) String() string {
 func (*GetAccountResponse) ProtoMessage() {}
 
 func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[96]
+	mi := &file_pb_data_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8579,7 +8608,7 @@ func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountResponse.ProtoReflect.Descriptor instead.
 func (*GetAccountResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{96}
+	return file_pb_data_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *GetAccountResponse) GetAccount() *Account {
@@ -8606,7 +8635,7 @@ type GetTokenRequest struct {
 
 func (x *GetTokenRequest) Reset() {
 	*x = GetTokenRequest{}
-	mi := &file_data_proto_msgTypes[97]
+	mi := &file_pb_data_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8618,7 +8647,7 @@ func (x *GetTokenRequest) String() string {
 func (*GetTokenRequest) ProtoMessage() {}
 
 func (x *GetTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[97]
+	mi := &file_pb_data_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8631,7 +8660,7 @@ func (x *GetTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTokenRequest.ProtoReflect.Descriptor instead.
 func (*GetTokenRequest) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{97}
+	return file_pb_data_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *GetTokenRequest) GetTokenAddress() string {
@@ -8651,7 +8680,7 @@ type GetTokenResponse struct {
 
 func (x *GetTokenResponse) Reset() {
 	*x = GetTokenResponse{}
-	mi := &file_data_proto_msgTypes[98]
+	mi := &file_pb_data_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8663,7 +8692,7 @@ func (x *GetTokenResponse) String() string {
 func (*GetTokenResponse) ProtoMessage() {}
 
 func (x *GetTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[98]
+	mi := &file_pb_data_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8676,7 +8705,7 @@ func (x *GetTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTokenResponse.ProtoReflect.Descriptor instead.
 func (*GetTokenResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{98}
+	return file_pb_data_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *GetTokenResponse) GetToken() *Token {
@@ -8696,7 +8725,7 @@ type GetTokenRegistryResponse struct {
 
 func (x *GetTokenRegistryResponse) Reset() {
 	*x = GetTokenRegistryResponse{}
-	mi := &file_data_proto_msgTypes[99]
+	mi := &file_pb_data_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8708,7 +8737,7 @@ func (x *GetTokenRegistryResponse) String() string {
 func (*GetTokenRegistryResponse) ProtoMessage() {}
 
 func (x *GetTokenRegistryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_data_proto_msgTypes[99]
+	mi := &file_pb_data_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8721,7 +8750,7 @@ func (x *GetTokenRegistryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTokenRegistryResponse.ProtoReflect.Descriptor instead.
 func (*GetTokenRegistryResponse) Descriptor() ([]byte, []int) {
-	return file_data_proto_rawDescGZIP(), []int{99}
+	return file_pb_data_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *GetTokenRegistryResponse) GetRegistry() *TokenRegistry {
@@ -8731,12 +8760,11 @@ func (x *GetTokenRegistryResponse) GetRegistry() *TokenRegistry {
 	return nil
 }
 
-var File_data_proto protoreflect.FileDescriptor
+var File_pb_data_proto protoreflect.FileDescriptor
 
-const file_data_proto_rawDesc = "" +
+const file_pb_data_proto_rawDesc = "" +
 	"\n" +
-	"\n" +
-	"data.proto\x12\x02pb\"\x9f\x01\n" +
+	"\rpb/data.proto\x12\x02pb\"\x9f\x01\n" +
 	"\x05Token\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x16\n" +
 	"\x06symbol\x18\x02 \x01(\tR\x06symbol\x12\x12\n" +
@@ -8898,7 +8926,7 @@ const file_data_proto_rawDesc = "" +
 	"\aMinerTx\x12#\n" +
 	"\x04base\x18\x01 \x01(\v2\x0f.pb.BaseMessageR\x04base\x12\x1b\n" +
 	"\x02op\x18\x02 \x01(\x0e2\v.pb.OrderOpR\x02op\x12\x16\n" +
-	"\x06amount\x18\x03 \x01(\tR\x06amount\"\x86\f\n" +
+	"\x06amount\x18\x03 \x01(\tR\x06amount\"\xa0\v\n" +
 	"\x05AnyTx\x128\n" +
 	"\x0eissue_token_tx\x18\x01 \x01(\v2\x10.pb.IssueTokenTxH\x00R\fissueTokenTx\x12+\n" +
 	"\tfreeze_tx\x18\x02 \x01(\v2\f.pb.FreezeTxH\x00R\bfreezeTx\x123\n" +
@@ -8919,8 +8947,7 @@ const file_data_proto_rawDesc = "" +
 	"\x1cfrost_vault_dkg_complaint_tx\x18\x11 \x01(\v2\x1c.pb.FrostVaultDkgComplaintTxH\x00R\x18frostVaultDkgComplaintTx\x12U\n" +
 	"\x19frost_vault_dkg_reveal_tx\x18\x12 \x01(\v2\x19.pb.FrostVaultDkgRevealTxH\x00R\x15frostVaultDkgRevealTx\x12t\n" +
 	"$frost_vault_dkg_validation_signed_tx\x18\x13 \x01(\v2#.pb.FrostVaultDkgValidationSignedTxH\x00R\x1ffrostVaultDkgValidationSignedTx\x12j\n" +
-	" frost_vault_transition_signed_tx\x18\x14 \x01(\v2 .pb.FrostVaultTransitionSignedTxH\x00R\x1cfrostVaultTransitionSignedTx\x12d\n" +
-	"\x1efrost_withdraw_planning_log_tx\x18\x15 \x01(\v2\x1e.pb.FrostWithdrawPlanningLogTxH\x00R\x1afrostWithdrawPlanningLogTxB\t\n" +
+	" frost_vault_transition_signed_tx\x18\x14 \x01(\v2 .pb.FrostVaultTransitionSignedTxH\x00R\x1cfrostVaultTransitionSignedTxB\t\n" +
 	"\acontent\"h\n" +
 	"\bNodeInfo\x12/\n" +
 	"\vpublic_keys\x18\x01 \x01(\v2\x0e.pb.PublicKeysR\n" +
@@ -9104,7 +9131,9 @@ const file_data_proto_rawDesc = "" +
 	"\x16FrostWithdrawStateList\x12.\n" +
 	"\x06states\x18\x01 \x03(\v2\x16.pb.FrostWithdrawStateR\x06states\"L\n" +
 	"\x18VaultTransitionStateList\x120\n" +
-	"\x06states\x18\x01 \x03(\v2\x18.pb.VaultTransitionStateR\x06states\"\x80\x01\n" +
+	"\x06states\x18\x01 \x03(\v2\x18.pb.VaultTransitionStateR\x06states\"@\n" +
+	"\x0fWitnessInfoList\x12-\n" +
+	"\twitnesses\x18\x01 \x03(\v2\x0f.pb.WitnessInfoR\twitnesses\"\x80\x01\n" +
 	"\x11ArbitrationVoteTx\x12#\n" +
 	"\x04base\x18\x01 \x01(\v2\x0f.pb.BaseMessageR\x04base\x12!\n" +
 	"\fchallenge_id\x18\x02 \x01(\tR\vchallengeId\x12#\n" +
@@ -9180,9 +9209,9 @@ const file_data_proto_rawDesc = "" +
 	"\x06job_id\x18\n" +
 	" \x01(\tR\x05jobId\x12\x19\n" +
 	"\bvault_id\x18\v \x01(\rR\avaultId\x129\n" +
-	"\rplanning_logs\x18\f \x03(\v2\x14.pb.FrostPlanningLogR\fplanningLogs\"\x8c\x01\n" +
-	"\x1aFrostWithdrawPlanningLogTx\x12#\n" +
-	"\x04base\x18\x01 \x01(\v2\x0f.pb.BaseMessageR\x04base\x12\x1f\n" +
+	"\rplanning_logs\x18\f \x03(\v2\x14.pb.FrostPlanningLogR\fplanningLogs\"\x83\x01\n" +
+	"\x1aFrostWithdrawPlanningLogTx\x12\x1a\n" +
+	"\breporter\x18\x01 \x01(\tR\breporter\x12\x1f\n" +
 	"\vwithdraw_id\x18\x02 \x01(\tR\n" +
 	"withdrawId\x12(\n" +
 	"\x04logs\x18\x03 \x03(\v2\x14.pb.FrostPlanningLogR\x04logs\"\xb2\x01\n" +
@@ -9525,20 +9554,20 @@ const file_data_proto_rawDesc = "" +
 	"\"FROST_ENVELOPE_KIND_ROAST_RESPONSE\x10\x06B\vZ\tdex/pb;pbb\x06proto3"
 
 var (
-	file_data_proto_rawDescOnce sync.Once
-	file_data_proto_rawDescData []byte
+	file_pb_data_proto_rawDescOnce sync.Once
+	file_pb_data_proto_rawDescData []byte
 )
 
-func file_data_proto_rawDescGZIP() []byte {
-	file_data_proto_rawDescOnce.Do(func() {
-		file_data_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_data_proto_rawDesc), len(file_data_proto_rawDesc)))
+func file_pb_data_proto_rawDescGZIP() []byte {
+	file_pb_data_proto_rawDescOnce.Do(func() {
+		file_pb_data_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pb_data_proto_rawDesc), len(file_pb_data_proto_rawDesc)))
 	})
-	return file_data_proto_rawDescData
+	return file_pb_data_proto_rawDescData
 }
 
-var file_data_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
-var file_data_proto_msgTypes = make([]protoimpl.MessageInfo, 105)
-var file_data_proto_goTypes = []any{
+var file_pb_data_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
+var file_pb_data_proto_msgTypes = make([]protoimpl.MessageInfo, 106)
+var file_pb_data_proto_goTypes = []any{
 	(SignAlgo)(0),                            // 0: pb.SignAlgo
 	(OrderSide)(0),                           // 1: pb.OrderSide
 	(OrderStateStatus)(0),                    // 2: pb.OrderStateStatus
@@ -9600,69 +9629,70 @@ var file_data_proto_goTypes = []any{
 	(*FrostWithdrawListRequest)(nil),         // 58: pb.FrostWithdrawListRequest
 	(*FrostWithdrawStateList)(nil),           // 59: pb.FrostWithdrawStateList
 	(*VaultTransitionStateList)(nil),         // 60: pb.VaultTransitionStateList
-	(*ArbitrationVoteTx)(nil),                // 61: pb.ArbitrationVoteTx
-	(*WitnessClaimRewardTx)(nil),             // 62: pb.WitnessClaimRewardTx
-	(*WitnessConfig)(nil),                    // 63: pb.WitnessConfig
-	(*FrostWithdrawRequestTx)(nil),           // 64: pb.FrostWithdrawRequestTx
-	(*FrostWithdrawSignedTx)(nil),            // 65: pb.FrostWithdrawSignedTx
-	(*UtxoInput)(nil),                        // 66: pb.UtxoInput
-	(*FrostUtxo)(nil),                        // 67: pb.FrostUtxo
-	(*FrostPlanningLog)(nil),                 // 68: pb.FrostPlanningLog
-	(*FrostWithdrawState)(nil),               // 69: pb.FrostWithdrawState
-	(*FrostWithdrawPlanningLogTx)(nil),       // 70: pb.FrostWithdrawPlanningLogTx
-	(*FrostSignedPackage)(nil),               // 71: pb.FrostSignedPackage
-	(*FrostVaultState)(nil),                  // 72: pb.FrostVaultState
-	(*VaultTransitionState)(nil),             // 73: pb.VaultTransitionState
-	(*FrostEnvelope)(nil),                    // 74: pb.FrostEnvelope
-	(*FrostVaultDkgCommitTx)(nil),            // 75: pb.FrostVaultDkgCommitTx
-	(*FrostVaultDkgShareTx)(nil),             // 76: pb.FrostVaultDkgShareTx
-	(*FrostVaultDkgCommitment)(nil),          // 77: pb.FrostVaultDkgCommitment
-	(*FrostVaultDkgShare)(nil),               // 78: pb.FrostVaultDkgShare
-	(*FrostVaultDkgComplaintTx)(nil),         // 79: pb.FrostVaultDkgComplaintTx
-	(*FrostVaultDkgRevealTx)(nil),            // 80: pb.FrostVaultDkgRevealTx
-	(*FrostVaultDkgComplaint)(nil),           // 81: pb.FrostVaultDkgComplaint
-	(*FrostVaultDkgValidationSignedTx)(nil),  // 82: pb.FrostVaultDkgValidationSignedTx
-	(*FrostVaultTransitionSignedTx)(nil),     // 83: pb.FrostVaultTransitionSignedTx
-	(*FrostTop10000)(nil),                    // 84: pb.FrostTop10000
-	(*FrostVaultConfig)(nil),                 // 85: pb.FrostVaultConfig
-	(*ChainCfg)(nil),                         // 86: pb.ChainCfg
-	(*GetFrostConfigResponse)(nil),           // 87: pb.GetFrostConfigResponse
-	(*GetWithdrawStatusResponse)(nil),        // 88: pb.GetWithdrawStatusResponse
-	(*ListWithdrawsResponse)(nil),            // 89: pb.ListWithdrawsResponse
-	(*GetVaultGroupPubKeyResponse)(nil),      // 90: pb.GetVaultGroupPubKeyResponse
-	(*GetVaultTransitionStatusResponse)(nil), // 91: pb.GetVaultTransitionStatusResponse
-	(*DkgCommitmentInfo)(nil),                // 92: pb.DkgCommitmentInfo
-	(*GetVaultDkgCommitmentsResponse)(nil),   // 93: pb.GetVaultDkgCommitmentsResponse
-	(*DownloadSignedPackageResponse)(nil),    // 94: pb.DownloadSignedPackageResponse
-	(*HealthResponse)(nil),                   // 95: pb.HealthResponse
-	(*MetricsResponse)(nil),                  // 96: pb.MetricsResponse
-	(*ForceRescanRequest)(nil),               // 97: pb.ForceRescanRequest
-	(*ForceRescanResponse)(nil),              // 98: pb.ForceRescanResponse
-	(*LogsRequest)(nil),                      // 99: pb.LogsRequest
-	(*LogLine)(nil),                          // 100: pb.LogLine
-	(*LogsResponse)(nil),                     // 101: pb.LogsResponse
-	(*BlockHeader)(nil),                      // 102: pb.BlockHeader
-	(*GetRecentBlocksRequest)(nil),           // 103: pb.GetRecentBlocksRequest
-	(*GetRecentBlocksResponse)(nil),          // 104: pb.GetRecentBlocksResponse
-	(*GetAccountRequest)(nil),                // 105: pb.GetAccountRequest
-	(*GetAccountResponse)(nil),               // 106: pb.GetAccountResponse
-	(*GetTokenRequest)(nil),                  // 107: pb.GetTokenRequest
-	(*GetTokenResponse)(nil),                 // 108: pb.GetTokenResponse
-	(*GetTokenRegistryResponse)(nil),         // 109: pb.GetTokenRegistryResponse
-	nil,                                      // 110: pb.TokenRegistry.TokensEntry
-	nil,                                      // 111: pb.PublicKeys.KeysEntry
-	nil,                                      // 112: pb.Account.BalancesEntry
-	nil,                                      // 113: pb.GetFrostConfigResponse.ChainsEntry
-	nil,                                      // 114: pb.MetricsResponse.ApiCallStatsEntry
+	(*WitnessInfoList)(nil),                  // 61: pb.WitnessInfoList
+	(*ArbitrationVoteTx)(nil),                // 62: pb.ArbitrationVoteTx
+	(*WitnessClaimRewardTx)(nil),             // 63: pb.WitnessClaimRewardTx
+	(*WitnessConfig)(nil),                    // 64: pb.WitnessConfig
+	(*FrostWithdrawRequestTx)(nil),           // 65: pb.FrostWithdrawRequestTx
+	(*FrostWithdrawSignedTx)(nil),            // 66: pb.FrostWithdrawSignedTx
+	(*UtxoInput)(nil),                        // 67: pb.UtxoInput
+	(*FrostUtxo)(nil),                        // 68: pb.FrostUtxo
+	(*FrostPlanningLog)(nil),                 // 69: pb.FrostPlanningLog
+	(*FrostWithdrawState)(nil),               // 70: pb.FrostWithdrawState
+	(*FrostWithdrawPlanningLogTx)(nil),       // 71: pb.FrostWithdrawPlanningLogTx
+	(*FrostSignedPackage)(nil),               // 72: pb.FrostSignedPackage
+	(*FrostVaultState)(nil),                  // 73: pb.FrostVaultState
+	(*VaultTransitionState)(nil),             // 74: pb.VaultTransitionState
+	(*FrostEnvelope)(nil),                    // 75: pb.FrostEnvelope
+	(*FrostVaultDkgCommitTx)(nil),            // 76: pb.FrostVaultDkgCommitTx
+	(*FrostVaultDkgShareTx)(nil),             // 77: pb.FrostVaultDkgShareTx
+	(*FrostVaultDkgCommitment)(nil),          // 78: pb.FrostVaultDkgCommitment
+	(*FrostVaultDkgShare)(nil),               // 79: pb.FrostVaultDkgShare
+	(*FrostVaultDkgComplaintTx)(nil),         // 80: pb.FrostVaultDkgComplaintTx
+	(*FrostVaultDkgRevealTx)(nil),            // 81: pb.FrostVaultDkgRevealTx
+	(*FrostVaultDkgComplaint)(nil),           // 82: pb.FrostVaultDkgComplaint
+	(*FrostVaultDkgValidationSignedTx)(nil),  // 83: pb.FrostVaultDkgValidationSignedTx
+	(*FrostVaultTransitionSignedTx)(nil),     // 84: pb.FrostVaultTransitionSignedTx
+	(*FrostTop10000)(nil),                    // 85: pb.FrostTop10000
+	(*FrostVaultConfig)(nil),                 // 86: pb.FrostVaultConfig
+	(*ChainCfg)(nil),                         // 87: pb.ChainCfg
+	(*GetFrostConfigResponse)(nil),           // 88: pb.GetFrostConfigResponse
+	(*GetWithdrawStatusResponse)(nil),        // 89: pb.GetWithdrawStatusResponse
+	(*ListWithdrawsResponse)(nil),            // 90: pb.ListWithdrawsResponse
+	(*GetVaultGroupPubKeyResponse)(nil),      // 91: pb.GetVaultGroupPubKeyResponse
+	(*GetVaultTransitionStatusResponse)(nil), // 92: pb.GetVaultTransitionStatusResponse
+	(*DkgCommitmentInfo)(nil),                // 93: pb.DkgCommitmentInfo
+	(*GetVaultDkgCommitmentsResponse)(nil),   // 94: pb.GetVaultDkgCommitmentsResponse
+	(*DownloadSignedPackageResponse)(nil),    // 95: pb.DownloadSignedPackageResponse
+	(*HealthResponse)(nil),                   // 96: pb.HealthResponse
+	(*MetricsResponse)(nil),                  // 97: pb.MetricsResponse
+	(*ForceRescanRequest)(nil),               // 98: pb.ForceRescanRequest
+	(*ForceRescanResponse)(nil),              // 99: pb.ForceRescanResponse
+	(*LogsRequest)(nil),                      // 100: pb.LogsRequest
+	(*LogLine)(nil),                          // 101: pb.LogLine
+	(*LogsResponse)(nil),                     // 102: pb.LogsResponse
+	(*BlockHeader)(nil),                      // 103: pb.BlockHeader
+	(*GetRecentBlocksRequest)(nil),           // 104: pb.GetRecentBlocksRequest
+	(*GetRecentBlocksResponse)(nil),          // 105: pb.GetRecentBlocksResponse
+	(*GetAccountRequest)(nil),                // 106: pb.GetAccountRequest
+	(*GetAccountResponse)(nil),               // 107: pb.GetAccountResponse
+	(*GetTokenRequest)(nil),                  // 108: pb.GetTokenRequest
+	(*GetTokenResponse)(nil),                 // 109: pb.GetTokenResponse
+	(*GetTokenRegistryResponse)(nil),         // 110: pb.GetTokenRegistryResponse
+	nil,                                      // 111: pb.TokenRegistry.TokensEntry
+	nil,                                      // 112: pb.PublicKeys.KeysEntry
+	nil,                                      // 113: pb.Account.BalancesEntry
+	nil,                                      // 114: pb.GetFrostConfigResponse.ChainsEntry
+	nil,                                      // 115: pb.MetricsResponse.ApiCallStatsEntry
 }
-var file_data_proto_depIdxs = []int32{
-	110, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
-	111, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
+var file_pb_data_proto_depIdxs = []int32{
+	111, // 0: pb.TokenRegistry.tokens:type_name -> pb.TokenRegistry.TokensEntry
+	112, // 1: pb.PublicKeys.keys:type_name -> pb.PublicKeys.KeysEntry
 	12,  // 2: pb.BaseMessage.public_keys:type_name -> pb.PublicKeys
 	4,   // 3: pb.BaseMessage.status:type_name -> pb.Status
 	14,  // 4: pb.GetReceiptResponse.receipt:type_name -> pb.Receipt
 	12,  // 5: pb.Account.public_keys:type_name -> pb.PublicKeys
-	112, // 6: pb.Account.balances:type_name -> pb.Account.BalancesEntry
+	113, // 6: pb.Account.balances:type_name -> pb.Account.BalancesEntry
 	28,  // 7: pb.Block.body:type_name -> pb.AnyTx
 	1,   // 8: pb.TradeRecord.taker_side:type_name -> pb.OrderSide
 	13,  // 9: pb.IssueTokenTx.base:type_name -> pb.BaseMessage
@@ -9684,85 +9714,84 @@ var file_data_proto_depIdxs = []int32{
 	50,  // 25: pb.AnyTx.witness_request_tx:type_name -> pb.WitnessRequestTx
 	52,  // 26: pb.AnyTx.witness_vote_tx:type_name -> pb.WitnessVoteTx
 	54,  // 27: pb.AnyTx.witness_challenge_tx:type_name -> pb.WitnessChallengeTx
-	61,  // 28: pb.AnyTx.arbitration_vote_tx:type_name -> pb.ArbitrationVoteTx
-	62,  // 29: pb.AnyTx.witness_claim_reward_tx:type_name -> pb.WitnessClaimRewardTx
-	64,  // 30: pb.AnyTx.frost_withdraw_request_tx:type_name -> pb.FrostWithdrawRequestTx
-	65,  // 31: pb.AnyTx.frost_withdraw_signed_tx:type_name -> pb.FrostWithdrawSignedTx
-	75,  // 32: pb.AnyTx.frost_vault_dkg_commit_tx:type_name -> pb.FrostVaultDkgCommitTx
-	76,  // 33: pb.AnyTx.frost_vault_dkg_share_tx:type_name -> pb.FrostVaultDkgShareTx
-	79,  // 34: pb.AnyTx.frost_vault_dkg_complaint_tx:type_name -> pb.FrostVaultDkgComplaintTx
-	80,  // 35: pb.AnyTx.frost_vault_dkg_reveal_tx:type_name -> pb.FrostVaultDkgRevealTx
-	82,  // 36: pb.AnyTx.frost_vault_dkg_validation_signed_tx:type_name -> pb.FrostVaultDkgValidationSignedTx
-	83,  // 37: pb.AnyTx.frost_vault_transition_signed_tx:type_name -> pb.FrostVaultTransitionSignedTx
-	70,  // 38: pb.AnyTx.frost_withdraw_planning_log_tx:type_name -> pb.FrostWithdrawPlanningLogTx
-	12,  // 39: pb.NodeInfo.public_keys:type_name -> pb.PublicKeys
-	29,  // 40: pb.NodeList.nodes:type_name -> pb.NodeInfo
-	12,  // 41: pb.ClientInfo.public_keys:type_name -> pb.PublicKeys
-	12,  // 42: pb.HandshakeRequest.public_keys:type_name -> pb.PublicKeys
-	18,  // 43: pb.GetBlockResponse.block:type_name -> pb.Block
-	28,  // 44: pb.BatchGetShortTxResponse.transactions:type_name -> pb.AnyTx
-	5,   // 45: pb.WitnessInfo.status:type_name -> pb.WitnessStatus
-	13,  // 46: pb.WitnessStakeTx.base:type_name -> pb.BaseMessage
-	3,   // 47: pb.WitnessStakeTx.op:type_name -> pb.OrderOp
-	13,  // 48: pb.WitnessRequestTx.base:type_name -> pb.BaseMessage
-	6,   // 49: pb.WitnessVote.vote_type:type_name -> pb.WitnessVoteType
-	13,  // 50: pb.WitnessVoteTx.base:type_name -> pb.BaseMessage
-	51,  // 51: pb.WitnessVoteTx.vote:type_name -> pb.WitnessVote
-	7,   // 52: pb.RechargeRequest.status:type_name -> pb.RechargeRequestStatus
-	51,  // 53: pb.RechargeRequest.votes:type_name -> pb.WitnessVote
-	13,  // 54: pb.WitnessChallengeTx.base:type_name -> pb.BaseMessage
-	51,  // 55: pb.ChallengeRecord.arbitration_votes:type_name -> pb.WitnessVote
-	8,   // 56: pb.ChallengeRecord.status:type_name -> pb.ChallengeStatus
-	53,  // 57: pb.RechargeRequestList.requests:type_name -> pb.RechargeRequest
-	69,  // 58: pb.FrostWithdrawStateList.states:type_name -> pb.FrostWithdrawState
-	73,  // 59: pb.VaultTransitionStateList.states:type_name -> pb.VaultTransitionState
+	62,  // 28: pb.AnyTx.arbitration_vote_tx:type_name -> pb.ArbitrationVoteTx
+	63,  // 29: pb.AnyTx.witness_claim_reward_tx:type_name -> pb.WitnessClaimRewardTx
+	65,  // 30: pb.AnyTx.frost_withdraw_request_tx:type_name -> pb.FrostWithdrawRequestTx
+	66,  // 31: pb.AnyTx.frost_withdraw_signed_tx:type_name -> pb.FrostWithdrawSignedTx
+	76,  // 32: pb.AnyTx.frost_vault_dkg_commit_tx:type_name -> pb.FrostVaultDkgCommitTx
+	77,  // 33: pb.AnyTx.frost_vault_dkg_share_tx:type_name -> pb.FrostVaultDkgShareTx
+	80,  // 34: pb.AnyTx.frost_vault_dkg_complaint_tx:type_name -> pb.FrostVaultDkgComplaintTx
+	81,  // 35: pb.AnyTx.frost_vault_dkg_reveal_tx:type_name -> pb.FrostVaultDkgRevealTx
+	83,  // 36: pb.AnyTx.frost_vault_dkg_validation_signed_tx:type_name -> pb.FrostVaultDkgValidationSignedTx
+	84,  // 37: pb.AnyTx.frost_vault_transition_signed_tx:type_name -> pb.FrostVaultTransitionSignedTx
+	12,  // 38: pb.NodeInfo.public_keys:type_name -> pb.PublicKeys
+	29,  // 39: pb.NodeList.nodes:type_name -> pb.NodeInfo
+	12,  // 40: pb.ClientInfo.public_keys:type_name -> pb.PublicKeys
+	12,  // 41: pb.HandshakeRequest.public_keys:type_name -> pb.PublicKeys
+	18,  // 42: pb.GetBlockResponse.block:type_name -> pb.Block
+	28,  // 43: pb.BatchGetShortTxResponse.transactions:type_name -> pb.AnyTx
+	5,   // 44: pb.WitnessInfo.status:type_name -> pb.WitnessStatus
+	13,  // 45: pb.WitnessStakeTx.base:type_name -> pb.BaseMessage
+	3,   // 46: pb.WitnessStakeTx.op:type_name -> pb.OrderOp
+	13,  // 47: pb.WitnessRequestTx.base:type_name -> pb.BaseMessage
+	6,   // 48: pb.WitnessVote.vote_type:type_name -> pb.WitnessVoteType
+	13,  // 49: pb.WitnessVoteTx.base:type_name -> pb.BaseMessage
+	51,  // 50: pb.WitnessVoteTx.vote:type_name -> pb.WitnessVote
+	7,   // 51: pb.RechargeRequest.status:type_name -> pb.RechargeRequestStatus
+	51,  // 52: pb.RechargeRequest.votes:type_name -> pb.WitnessVote
+	13,  // 53: pb.WitnessChallengeTx.base:type_name -> pb.BaseMessage
+	51,  // 54: pb.ChallengeRecord.arbitration_votes:type_name -> pb.WitnessVote
+	8,   // 55: pb.ChallengeRecord.status:type_name -> pb.ChallengeStatus
+	53,  // 56: pb.RechargeRequestList.requests:type_name -> pb.RechargeRequest
+	70,  // 57: pb.FrostWithdrawStateList.states:type_name -> pb.FrostWithdrawState
+	74,  // 58: pb.VaultTransitionStateList.states:type_name -> pb.VaultTransitionState
+	48,  // 59: pb.WitnessInfoList.witnesses:type_name -> pb.WitnessInfo
 	13,  // 60: pb.ArbitrationVoteTx.base:type_name -> pb.BaseMessage
 	51,  // 61: pb.ArbitrationVoteTx.vote:type_name -> pb.WitnessVote
 	13,  // 62: pb.WitnessClaimRewardTx.base:type_name -> pb.BaseMessage
 	13,  // 63: pb.FrostWithdrawRequestTx.base:type_name -> pb.BaseMessage
 	13,  // 64: pb.FrostWithdrawSignedTx.base:type_name -> pb.BaseMessage
-	66,  // 65: pb.FrostWithdrawSignedTx.utxo_inputs:type_name -> pb.UtxoInput
-	68,  // 66: pb.FrostWithdrawState.planning_logs:type_name -> pb.FrostPlanningLog
-	13,  // 67: pb.FrostWithdrawPlanningLogTx.base:type_name -> pb.BaseMessage
-	68,  // 68: pb.FrostWithdrawPlanningLogTx.logs:type_name -> pb.FrostPlanningLog
-	0,   // 69: pb.FrostVaultState.sign_algo:type_name -> pb.SignAlgo
-	0,   // 70: pb.VaultTransitionState.sign_algo:type_name -> pb.SignAlgo
-	9,   // 71: pb.FrostEnvelope.kind:type_name -> pb.FrostEnvelopeKind
-	13,  // 72: pb.FrostVaultDkgCommitTx.base:type_name -> pb.BaseMessage
-	0,   // 73: pb.FrostVaultDkgCommitTx.sign_algo:type_name -> pb.SignAlgo
-	13,  // 74: pb.FrostVaultDkgShareTx.base:type_name -> pb.BaseMessage
-	0,   // 75: pb.FrostVaultDkgCommitment.sign_algo:type_name -> pb.SignAlgo
-	13,  // 76: pb.FrostVaultDkgComplaintTx.base:type_name -> pb.BaseMessage
-	13,  // 77: pb.FrostVaultDkgRevealTx.base:type_name -> pb.BaseMessage
-	13,  // 78: pb.FrostVaultDkgValidationSignedTx.base:type_name -> pb.BaseMessage
-	13,  // 79: pb.FrostVaultTransitionSignedTx.base:type_name -> pb.BaseMessage
-	0,   // 80: pb.FrostVaultConfig.sign_algo:type_name -> pb.SignAlgo
-	113, // 81: pb.GetFrostConfigResponse.chains:type_name -> pb.GetFrostConfigResponse.ChainsEntry
-	68,  // 82: pb.GetWithdrawStatusResponse.planning_logs:type_name -> pb.FrostPlanningLog
-	88,  // 83: pb.ListWithdrawsResponse.withdraws:type_name -> pb.GetWithdrawStatusResponse
-	92,  // 84: pb.GetVaultDkgCommitmentsResponse.commitments:type_name -> pb.DkgCommitmentInfo
-	114, // 85: pb.MetricsResponse.api_call_stats:type_name -> pb.MetricsResponse.ApiCallStatsEntry
-	100, // 86: pb.LogsResponse.logs:type_name -> pb.LogLine
-	102, // 87: pb.GetRecentBlocksResponse.blocks:type_name -> pb.BlockHeader
-	16,  // 88: pb.GetAccountResponse.account:type_name -> pb.Account
-	10,  // 89: pb.GetTokenResponse.token:type_name -> pb.Token
-	11,  // 90: pb.GetTokenRegistryResponse.registry:type_name -> pb.TokenRegistry
-	10,  // 91: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
-	17,  // 92: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
-	86,  // 93: pb.GetFrostConfigResponse.ChainsEntry.value:type_name -> pb.ChainCfg
-	94,  // [94:94] is the sub-list for method output_type
-	94,  // [94:94] is the sub-list for method input_type
-	94,  // [94:94] is the sub-list for extension type_name
-	94,  // [94:94] is the sub-list for extension extendee
-	0,   // [0:94] is the sub-list for field type_name
+	67,  // 65: pb.FrostWithdrawSignedTx.utxo_inputs:type_name -> pb.UtxoInput
+	69,  // 66: pb.FrostWithdrawState.planning_logs:type_name -> pb.FrostPlanningLog
+	69,  // 67: pb.FrostWithdrawPlanningLogTx.logs:type_name -> pb.FrostPlanningLog
+	0,   // 68: pb.FrostVaultState.sign_algo:type_name -> pb.SignAlgo
+	0,   // 69: pb.VaultTransitionState.sign_algo:type_name -> pb.SignAlgo
+	9,   // 70: pb.FrostEnvelope.kind:type_name -> pb.FrostEnvelopeKind
+	13,  // 71: pb.FrostVaultDkgCommitTx.base:type_name -> pb.BaseMessage
+	0,   // 72: pb.FrostVaultDkgCommitTx.sign_algo:type_name -> pb.SignAlgo
+	13,  // 73: pb.FrostVaultDkgShareTx.base:type_name -> pb.BaseMessage
+	0,   // 74: pb.FrostVaultDkgCommitment.sign_algo:type_name -> pb.SignAlgo
+	13,  // 75: pb.FrostVaultDkgComplaintTx.base:type_name -> pb.BaseMessage
+	13,  // 76: pb.FrostVaultDkgRevealTx.base:type_name -> pb.BaseMessage
+	13,  // 77: pb.FrostVaultDkgValidationSignedTx.base:type_name -> pb.BaseMessage
+	13,  // 78: pb.FrostVaultTransitionSignedTx.base:type_name -> pb.BaseMessage
+	0,   // 79: pb.FrostVaultConfig.sign_algo:type_name -> pb.SignAlgo
+	114, // 80: pb.GetFrostConfigResponse.chains:type_name -> pb.GetFrostConfigResponse.ChainsEntry
+	69,  // 81: pb.GetWithdrawStatusResponse.planning_logs:type_name -> pb.FrostPlanningLog
+	89,  // 82: pb.ListWithdrawsResponse.withdraws:type_name -> pb.GetWithdrawStatusResponse
+	93,  // 83: pb.GetVaultDkgCommitmentsResponse.commitments:type_name -> pb.DkgCommitmentInfo
+	115, // 84: pb.MetricsResponse.api_call_stats:type_name -> pb.MetricsResponse.ApiCallStatsEntry
+	101, // 85: pb.LogsResponse.logs:type_name -> pb.LogLine
+	103, // 86: pb.GetRecentBlocksResponse.blocks:type_name -> pb.BlockHeader
+	16,  // 87: pb.GetAccountResponse.account:type_name -> pb.Account
+	10,  // 88: pb.GetTokenResponse.token:type_name -> pb.Token
+	11,  // 89: pb.GetTokenRegistryResponse.registry:type_name -> pb.TokenRegistry
+	10,  // 90: pb.TokenRegistry.TokensEntry.value:type_name -> pb.Token
+	17,  // 91: pb.Account.BalancesEntry.value:type_name -> pb.TokenBalance
+	87,  // 92: pb.GetFrostConfigResponse.ChainsEntry.value:type_name -> pb.ChainCfg
+	93,  // [93:93] is the sub-list for method output_type
+	93,  // [93:93] is the sub-list for method input_type
+	93,  // [93:93] is the sub-list for extension type_name
+	93,  // [93:93] is the sub-list for extension extendee
+	0,   // [0:93] is the sub-list for field type_name
 }
 
-func init() { file_data_proto_init() }
-func file_data_proto_init() {
-	if File_data_proto != nil {
+func init() { file_pb_data_proto_init() }
+func file_pb_data_proto_init() {
+	if File_pb_data_proto != nil {
 		return
 	}
-	file_data_proto_msgTypes[18].OneofWrappers = []any{
+	file_pb_data_proto_msgTypes[18].OneofWrappers = []any{
 		(*AnyTx_IssueTokenTx)(nil),
 		(*AnyTx_FreezeTx)(nil),
 		(*AnyTx_Transaction)(nil),
@@ -9782,24 +9811,23 @@ func file_data_proto_init() {
 		(*AnyTx_FrostVaultDkgRevealTx)(nil),
 		(*AnyTx_FrostVaultDkgValidationSignedTx)(nil),
 		(*AnyTx_FrostVaultTransitionSignedTx)(nil),
-		(*AnyTx_FrostWithdrawPlanningLogTx)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_data_proto_rawDesc), len(file_data_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_data_proto_rawDesc), len(file_pb_data_proto_rawDesc)),
 			NumEnums:      10,
-			NumMessages:   105,
+			NumMessages:   106,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_data_proto_goTypes,
-		DependencyIndexes: file_data_proto_depIdxs,
-		EnumInfos:         file_data_proto_enumTypes,
-		MessageInfos:      file_data_proto_msgTypes,
+		GoTypes:           file_pb_data_proto_goTypes,
+		DependencyIndexes: file_pb_data_proto_depIdxs,
+		EnumInfos:         file_pb_data_proto_enumTypes,
+		MessageInfos:      file_pb_data_proto_msgTypes,
 	}.Build()
-	File_data_proto = out.File
-	file_data_proto_goTypes = nil
-	file_data_proto_depIdxs = nil
+	File_pb_data_proto = out.File
+	file_pb_data_proto_goTypes = nil
+	file_pb_data_proto_depIdxs = nil
 }
