@@ -124,18 +124,18 @@ func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferr
 
 	if hasWinner || ctx.responded >= e.config.K {
 		// 处理本次查询收集到的所有选票，并更新 Snowball 状态
-		e.processVotes(ctx)
+		reason := e.processVotes(ctx)
 		// 查询任务完成，从活跃查询映射中移除
 		delete(e.activeQueries, queryKey)
 		// 异步发布查询完成事件，通知系统其他部分
 		e.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventQueryComplete,
-			EventData: QueryCompleteData{Reason: "success", QueryKeys: []string{queryKey}},
+			EventData: QueryCompleteData{Reason: reason, QueryKeys: []string{queryKey}},
 		})
 	}
 }
 
-func (e *SnowmanEngine) processVotes(ctx *QueryContext) {
+func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 	sb, exists := e.snowballs[ctx.height]
 	if !exists {
 		sb = NewSnowball(e.events)
@@ -151,7 +151,7 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) {
 			// 父区块尚未最终化，无法对当前高度进行共识
 			logs.Debug("[Engine] Parent block at height %d not finalized, skipping vote processing for height %d",
 				ctx.height-1, ctx.height)
-			return
+			return "parent_missing"
 		}
 		parentBlock = parent
 	}
@@ -174,7 +174,7 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) {
 	// 如果没有有效候选，直接返回
 	if len(candidates) == 0 {
 		logs.Debug("[Engine] No valid candidates for height %d (all blocks have wrong parent)", ctx.height)
-		return
+		return "candidates_missing"
 	}
 
 	//核心：统计投票
@@ -205,6 +205,7 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) {
 	if sb.CanFinalize(e.config.Beta) && newPreference != "" {
 		e.finalizeBlock(ctx.height, newPreference)
 	}
+	return "success"
 }
 
 func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string) {
@@ -236,20 +237,27 @@ type QueryCompleteData struct {
 func (e *SnowmanEngine) checkTimeouts() {
 	e.mu.Lock()
 	now := time.Now()
-	var expired []string
+	var expiredCount int
+	var expiredKeys []string
+
+	// 找出所有超时的查询
 	for k, ctx := range e.activeQueries {
 		if now.Sub(ctx.startTime) > e.config.QueryTimeout {
-			expired = append(expired, k)
+			// 重要：即使超时，也要把当前收到的这些票处理掉（可能已经够 Alpha 了）
+			e.processVotes(ctx)
+
+			expiredKeys = append(expiredKeys, k)
 			delete(e.activeQueries, k)
+			expiredCount++
 		}
 	}
 	e.mu.Unlock()
 
-	if len(expired) > 0 {
-		logs.Debug("[Engine] Query timeout: %d expired (%v)", len(expired), expired)
+	if expiredCount > 0 {
+		logs.Debug("[Engine] Query timeout: %d expired. Still processed available votes before deletion.", expiredCount)
 		e.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventQueryComplete,
-			EventData: QueryCompleteData{Reason: "timeout", QueryKeys: expired},
+			EventData: QueryCompleteData{Reason: "timeout", QueryKeys: expiredKeys},
 		})
 	}
 }

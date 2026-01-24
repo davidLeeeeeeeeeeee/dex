@@ -63,11 +63,11 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 		}
 
 		qm.cleanupPollsByQueryKeys(data.QueryKeys, data.Reason)
-		if data.Reason == "timeout" && len(data.QueryKeys) > 0 {
-			// 添加退避延迟，避免超时后立即重发导致自激荡
+		if (data.Reason == "timeout" || data.Reason == "parent_missing" || data.Reason == "candidates_missing") && len(data.QueryKeys) > 0 {
+			// 添加退避延迟，避免超时或因缺数据失败后立即重发导致自激荡
 			// 使用 200-500ms 随机退避 + jitter
 			backoff := 200*time.Millisecond + time.Duration(rand.Int63n(300))*time.Millisecond
-			logs.Debug("[QueryManager] Query timeout, will retry after %v (count=%d)", backoff, len(data.QueryKeys))
+			logs.Debug("[QueryManager] Query %s, will retry after %v (count=%d)", data.Reason, backoff, len(data.QueryKeys))
 			time.AfterFunc(backoff, func() {
 				qm.tryIssueQuery()
 			})

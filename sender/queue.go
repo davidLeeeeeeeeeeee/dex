@@ -18,8 +18,9 @@ import (
 type TaskPriority int
 
 const (
-	PriorityControl TaskPriority = iota // 控制面：consensus相关
-	PriorityData                        // 数据面：普通数据传输
+	PriorityData      TaskPriority = iota // 数据面：普通数据传输
+	PriorityControl                       // 控制面：consensus相关
+	PriorityImmediate                     // 紧急：区块丢失请求等需立即处理的任务
 )
 
 // SendTask 封装一次发送所需的信息
@@ -41,6 +42,7 @@ type SendQueue struct {
 	controlWorkerCount int
 	dataWorkerCount    int
 	controlChan        chan *SendTask // 控制面队列（共识消息）
+	immediateChan      chan *SendTask // 紧急面队列（区块补全消息）
 	dataChan           chan *SendTask // 数据面队列（交易/同步）
 	stopChan           chan struct{}
 	wg                 sync.WaitGroup
@@ -80,6 +82,7 @@ func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client, nodeI
 		controlWorkerCount: controlWorkers,
 		dataWorkerCount:    dataWorkers,
 		controlChan:        make(chan *SendTask, controlCapacity),
+		immediateChan:      make(chan *SendTask, 32), // 紧急队列较小
 		dataChan:           make(chan *SendTask, dataCapacity),
 		stopChan:           make(chan struct{}),
 		httpClient:         httpClient,
@@ -96,6 +99,10 @@ func (sq *SendQueue) Start() {
 	for i := 0; i < sq.controlWorkerCount; i++ {
 		go sq.workerLoop(i, sq.controlChan, "control")
 	}
+
+	// 启动紧急面 worker (共享控制面 worker 逻辑，但监听不同 chan)
+	sq.wg.Add(1)
+	go sq.workerLoop(999, sq.immediateChan, "immediate")
 
 	// 启动数据面 worker
 	sq.wg.Add(sq.dataWorkerCount)
@@ -147,7 +154,17 @@ func (sq *SendQueue) Enqueue(task *SendTask) {
 func (sq *SendQueue) enqueueNow(task *SendTask) {
 	cfg := config.DefaultConfig()
 
-	if task.Priority == PriorityControl {
+	if task.Priority == PriorityImmediate {
+		// 紧急任务：非阻塞尝试，失败则同步等待一个非常短的时间。
+		select {
+		case sq.immediateChan <- task:
+			return
+		default:
+			// 如果紧急队列满了，强制丢弃老的，塞入新的（此处不实现复杂逻辑，仅快速失败记录）
+			sq.Logger.Warn("[SendQueue] Immediate task DROPPED: queue full target=%s", task.Target)
+			return
+		}
+	} else if task.Priority == PriorityControl {
 		// 控制面任务：使用 controlChan，给一个短暂的阻塞窗口
 		select {
 		case sq.controlChan <- task:

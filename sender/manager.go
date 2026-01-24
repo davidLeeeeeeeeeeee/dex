@@ -169,7 +169,7 @@ func (sm *SenderManager) PullGet(targetIP string, blockID string, onSuccess func
 		RetryCount: 0,
 		MaxRetries: 2,
 		SendFunc:   doSendGetBlockByID,
-		Priority:   PriorityControl,
+		Priority:   PriorityImmediate,
 	}
 	sm.SendQueue.Enqueue(task)
 }
@@ -469,6 +469,7 @@ func (sm *SenderManager) SendBlock(targetAddress string, block *pb.Block) error 
 		RetryCount: 0,
 		MaxRetries: 2,
 		SendFunc:   doSendBlock,
+		Priority:   PriorityControl,
 	}
 	sm.SendQueue.Enqueue(task)
 	return nil

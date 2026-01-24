@@ -12,6 +12,7 @@ type SimulatedTransport struct {
 	nodeID         types.NodeID
 	ctrlInbox      chan types.Message
 	dataInbox      chan types.Message
+	immInbox       chan types.Message
 	network        *NetworkManager
 	ctx            context.Context
 	networkLatency time.Duration
@@ -23,6 +24,7 @@ func NewSimulatedTransport(nodeID types.NodeID, network *NetworkManager, ctx con
 		nodeID:         nodeID,
 		ctrlInbox:      make(chan types.Message, 20000),
 		dataInbox:      make(chan types.Message, 5000),
+		immInbox:       make(chan types.Message, 1000), // 紧急通道
 		network:        network,
 		ctx:            ctx,
 		networkLatency: latency,
@@ -53,8 +55,10 @@ func (t *SimulatedTransport) Send(to types.NodeID, msg types.Message) error {
 		}
 
 		targetInbox := receiver.ctrlInbox
-		if msg.Type == types.MsgGet || msg.Type == types.MsgPut {
-			targetInbox = receiver.dataInbox
+		if msg.Type == types.MsgGet {
+			targetInbox = receiver.immInbox // MsgGet 走紧急通道
+		} else if msg.Type == types.MsgPut {
+			targetInbox = receiver.dataInbox // MsgPut 走数据通道
 		}
 
 		select {
@@ -72,6 +76,10 @@ func (t *SimulatedTransport) Receive() <-chan types.Message {
 
 func (t *SimulatedTransport) ReceiveData() <-chan types.Message {
 	return t.dataInbox
+}
+
+func (t *SimulatedTransport) ReceiveImmediate() <-chan types.Message {
+	return t.immInbox
 }
 
 func (t *SimulatedTransport) Broadcast(msg types.Message, peers []types.NodeID) {

@@ -91,8 +91,23 @@ func (n *Node) Start() {
 		if tr, ok := n.transport.(interface{ ReceiveData() <-chan types.Message }); ok {
 			dataCh = tr.ReceiveData()
 		}
+		immCh := (<-chan types.Message)(nil)
+		if tr, ok := n.transport.(interface{ ReceiveImmediate() <-chan types.Message }); ok {
+			immCh = tr.ReceiveImmediate()
+		}
 
 		for {
+			// 1. 最高优先级：紧急消息（区块补全）
+			if immCh != nil {
+				select {
+				case msg := <-immCh:
+					n.messageHandler.HandleMsg(msg)
+					continue
+				default:
+				}
+			}
+
+			// 2. 次高优先级：数据消息（区块数据推送）
 			if dataCh != nil {
 				select {
 				case msg := <-dataCh:
@@ -102,7 +117,10 @@ func (n *Node) Start() {
 				}
 			}
 
+			// 3. 普通消息（共识查询等）
 			select {
+			case msg := <-immCh:
+				n.messageHandler.HandleMsg(msg)
 			case msg := <-dataCh:
 				n.messageHandler.HandleMsg(msg)
 			case msg := <-controlCh:

@@ -66,15 +66,15 @@ func DefaultConfig() *Config {
 		},
 		Consensus: ConsensusConfig{
 			K:                    20,
-			Alpha:                15,
+			Alpha:                14,
 			Beta:                 15,
-			QueryTimeout:         3 * time.Second,
+			QueryTimeout:         4 * time.Second,
 			MaxConcurrentQueries: 20,
 			NumHeights:           10,
 			BlocksPerHeight:      5,
 		},
 		Node: NodeConfig{
-			ProposalInterval: 1200 * time.Millisecond,
+			ProposalInterval: 3000 * time.Millisecond,
 		},
 		Sync: SyncConfig{
 			CheckInterval:     2 * time.Second,
