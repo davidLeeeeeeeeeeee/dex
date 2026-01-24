@@ -10,7 +10,8 @@ import (
 
 type SimulatedTransport struct {
 	nodeID         types.NodeID
-	inbox          chan types.Message
+	ctrlInbox      chan types.Message
+	dataInbox      chan types.Message
 	network        *NetworkManager
 	ctx            context.Context
 	networkLatency time.Duration
@@ -20,7 +21,8 @@ type SimulatedTransport struct {
 func NewSimulatedTransport(nodeID types.NodeID, network *NetworkManager, ctx context.Context, latency time.Duration) interfaces.Transport {
 	return &SimulatedTransport{
 		nodeID:         nodeID,
-		inbox:          make(chan types.Message, 10000),
+		ctrlInbox:      make(chan types.Message, 20000),
+		dataInbox:      make(chan types.Message, 5000),
 		network:        network,
 		ctx:            ctx,
 		networkLatency: latency,
@@ -45,8 +47,18 @@ func (t *SimulatedTransport) Send(to types.NodeID, msg types.Message) error {
 		delay += time.Duration(rand.Intn(int(delay / 2)))
 		time.Sleep(delay)
 
+		receiver, ok := t.network.GetTransport(to).(*SimulatedTransport)
+		if !ok || receiver == nil {
+			return
+		}
+
+		targetInbox := receiver.ctrlInbox
+		if msg.Type == types.MsgGet || msg.Type == types.MsgPut {
+			targetInbox = receiver.dataInbox
+		}
+
 		select {
-		case t.network.GetTransport(to).(*SimulatedTransport).inbox <- msg:
+		case targetInbox <- msg:
 		case <-time.After(100 * time.Millisecond):
 		case <-t.ctx.Done():
 		}
@@ -55,7 +67,11 @@ func (t *SimulatedTransport) Send(to types.NodeID, msg types.Message) error {
 }
 
 func (t *SimulatedTransport) Receive() <-chan types.Message {
-	return t.inbox
+	return t.ctrlInbox
+}
+
+func (t *SimulatedTransport) ReceiveData() <-chan types.Message {
+	return t.dataInbox
 }
 
 func (t *SimulatedTransport) Broadcast(msg types.Message, peers []types.NodeID) {

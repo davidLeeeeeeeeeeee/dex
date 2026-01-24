@@ -85,9 +85,27 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 func (n *Node) Start() {
 	go func() {
 		logs.SetThreadLogger(n.Logger)
+
+		controlCh := n.transport.Receive()
+		dataCh := (<-chan types.Message)(nil)
+		if tr, ok := n.transport.(interface{ ReceiveData() <-chan types.Message }); ok {
+			dataCh = tr.ReceiveData()
+		}
+
 		for {
+			if dataCh != nil {
+				select {
+				case msg := <-dataCh:
+					n.messageHandler.HandleMsg(msg)
+					continue
+				default:
+				}
+			}
+
 			select {
-			case msg := <-n.transport.Receive():
+			case msg := <-dataCh:
+				n.messageHandler.HandleMsg(msg)
+			case msg := <-controlCh:
 				n.messageHandler.HandleMsg(msg)
 			case <-n.ctx.Done():
 				return

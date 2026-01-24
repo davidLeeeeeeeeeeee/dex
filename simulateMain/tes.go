@@ -23,6 +23,9 @@ import (
 	"syscall"
 	"time"
 
+	"sort"
+	"strings"
+
 	"github.com/quic-go/quic-go/http3"
 	"google.golang.org/protobuf/proto"
 )
@@ -32,6 +35,18 @@ var (
 	nodeStatsMap   = make(map[types.NodeID]*stats.Stats)
 	nodeStatsMapMu sync.RWMutex
 )
+
+// APICallStats 接口调用统计结构体
+type APICallStats struct {
+	sync.RWMutex
+	// 记录每个接口的累计调用次数
+	CallCounts map[string]uint64
+}
+
+// 全局接口调用统计
+var globalAPIStats = &APICallStats{
+	CallCounts: make(map[string]uint64),
+}
 
 // getOrCreateNodeStats 获取或创建节点的统计实例
 func getOrCreateNodeStats(nodeID types.NodeID) *stats.Stats {
@@ -78,6 +93,9 @@ func main() {
 
 	programStart := time.Now()
 	network.Start()
+
+	// 启动 API 统计监控
+	go monitorMetrics(network)
 
 	// 监控模拟进度
 	go func() {
@@ -247,6 +265,113 @@ func startNodeWeb(node *consensus.Node, port int) {
 	if err := server.ListenAndServe(); err != nil {
 		fmt.Printf("❌ Node %s: Web server failed: %v\n", node.ID, err)
 	}
+}
+
+// monitorMetrics 定期监控各个节点的 API 和共识消息调用情况
+func monitorMetrics(network *consensus.NetworkManager) {
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+
+	// 用于记录每个节点上次的调用次数，计算整个周期的增量
+	lastCallCounts := make(map[types.NodeID]map[string]uint64)
+
+	for range ticker.C {
+		// 临时存储当前周期的统计数据
+		currentStats := make(map[string]uint64)
+		nodes := network.GetNodes()
+
+		for nodeID, node := range nodes {
+			if node == nil {
+				continue
+			}
+
+			// 1. 获取 HTTP API 调用统计
+			nodeStats := getOrCreateNodeStats(nodeID)
+			apiStats := nodeStats.GetAPICallStats()
+
+			// 2. 合并共识消息处理统计
+			msgStats := node.GetMessageStats()
+			for k, v := range msgStats {
+				apiStats[k] = v
+			}
+
+			// 3. 计算增量
+			if lastCallCounts[nodeID] == nil {
+				lastCallCounts[nodeID] = make(map[string]uint64)
+			}
+
+			for apiName, currentCount := range apiStats {
+				delta := currentCount
+				if lastCount, exists := lastCallCounts[nodeID][apiName]; exists {
+					delta = currentCount - lastCount
+				}
+
+				// 更新全局当前周期的增量统计
+				currentStats[apiName] += delta
+
+				// 更新这个节点的上次记录
+				lastCallCounts[nodeID][apiName] = currentCount
+			}
+		}
+
+		// 更新全局累计 API 调用统计
+		globalAPIStats.Lock()
+		for apiName, delta := range currentStats {
+			globalAPIStats.CallCounts[apiName] += delta
+		}
+		globalAPIStats.Unlock()
+
+		printAPICallStatistics()
+	}
+}
+
+// printAPICallStatistics 打印 API 调用统计
+func printAPICallStatistics() {
+	globalAPIStats.RLock()
+	defer globalAPIStats.RUnlock()
+
+	if len(globalAPIStats.CallCounts) == 0 {
+		return
+	}
+
+	fmt.Println("\n========== Consensus / API Call Statistics ==========")
+	fmt.Println("Global Call Counts (Total):")
+
+	// 按接口名称排序
+	var apiNames []string
+	for apiName := range globalAPIStats.CallCounts {
+		apiNames = append(apiNames, apiName)
+	}
+	sort.Strings(apiNames)
+
+	// 打印全局统计
+	totalCalls := uint64(0)
+	for _, apiName := range apiNames {
+		count := globalAPIStats.CallCounts[apiName]
+		totalCalls += count
+		fmt.Printf("  %-30s: %10d calls\n", apiName, count)
+	}
+	fmt.Printf("  %-30s: %d calls\n", "TOTAL", totalCalls)
+
+	// 打印分析
+	fmt.Println("\nCall Frequency Analysis:")
+	if totalCalls > 0 {
+		for _, apiName := range apiNames {
+			count := globalAPIStats.CallCounts[apiName]
+			percentage := float64(count) * 100.0 / float64(totalCalls)
+
+			// 条形图展示
+			barLength := int(percentage / 2)
+			if barLength > 40 {
+				barLength = 40
+			}
+			bar := strings.Repeat("█", barLength)
+
+			fmt.Printf("  %-25s: %6.2f%% %s\n", apiName, percentage, bar)
+		}
+	}
+
+	fmt.Println("=====================================================")
 }
 
 func sendProto(w http.ResponseWriter, msg proto.Message) {

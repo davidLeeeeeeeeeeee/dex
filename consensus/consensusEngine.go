@@ -96,22 +96,38 @@ func (e *SnowmanEngine) RegisterQuery(nodeID types.NodeID, requestID uint32, blo
 	return queryKey
 }
 
+// SubmitChit 提交来自特定节点的投票响应（Chit）
 func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferredID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// 检查查询是否存在，以及该节点是否已经对该查询投过票（防止重复计票）
 	ctx, exists := e.activeQueries[queryKey]
 	if !exists || ctx.voters[nodeID] {
 		return
 	}
 
+	// 记录该节点的选票及其偏好的区块 ID
 	ctx.voters[nodeID] = true
 	ctx.votes[preferredID]++
-	ctx.responded++
+	ctx.responded++ // 增加已收到的响应计数
 
-	if ctx.responded >= e.config.Alpha {
+	// --- 优化结算逻辑 ---
+	// 判定是否结算的两个维度：
+	// 1. 提前胜出：某个候选块已经获得了 Alpha 张票。此时无论后续 K-responded 结果如何，该块在这一轮都已经胜出。
+	// 2. 采样完成：已经收到了全部 K 个预期的响应。此时无论各块票数如何，都必须根据当前统计结果由于 Snowball 进行状态更新。
+
+	hasWinner := false
+	if preferredID != "" && ctx.votes[preferredID] >= e.config.Alpha {
+		hasWinner = true
+	}
+
+	if hasWinner || ctx.responded >= e.config.K {
+		// 处理本次查询收集到的所有选票，并更新 Snowball 状态
 		e.processVotes(ctx)
+		// 查询任务完成，从活跃查询映射中移除
 		delete(e.activeQueries, queryKey)
+		// 异步发布查询完成事件，通知系统其他部分
 		e.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventQueryComplete,
 			EventData: QueryCompleteData{Reason: "success", QueryKeys: []string{queryKey}},
