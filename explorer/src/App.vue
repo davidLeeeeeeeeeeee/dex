@@ -10,6 +10,7 @@ import { fetchNodes, fetchSummary } from './api'
 import WithdrawQueue from './components/frost/WithdrawQueue.vue'
 import WitnessFlow from './components/frost/WitnessFlow.vue'
 import DkgTimeline from './components/frost/DkgTimeline.vue'
+import WitnessList from './components/frost/WitnessList.vue'
 import TradingPanel from './components/TradingPanel.vue'
 
 type TabType = 'overview' | 'search' | 'trading' | 'withdrawals' | 'recharges' | 'dkg'
@@ -273,6 +274,8 @@ onMounted(() => {
               <option v-for="node in nodes" :key="node" :value="node">{{ node }}</option>
             </select>
           </div>
+          <WitnessList v-if="selectedProtocolNode" :node="selectedProtocolNode" />
+          <div style="margin-top: 32px"></div>
           <WitnessFlow v-if="selectedProtocolNode" :node="selectedProtocolNode" />
         </div>
       </main>

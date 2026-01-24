@@ -510,7 +510,8 @@ func (hm *HandlerManager) HandleWitnessRequests(w http.ResponseWriter, r *http.R
 			continue
 		}
 
-		requests = append(requests, &req)
+		reqCopy := req
+		requests = append(requests, &reqCopy)
 
 		if len(requests) >= limit {
 			break
@@ -655,7 +656,9 @@ func (hm *HandlerManager) HandleWitnessList(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		witnesses = append(witnesses, &info)
+		// 必须创建副本，避免所有指针都指向同一个循环变量
+		infoCopy := info
+		witnesses = append(witnesses, &infoCopy)
 	}
 
 	resp := &pb.WitnessInfoList{
