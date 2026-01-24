@@ -830,6 +830,18 @@ func (s *Service) GetRequest(requestID string) (*pb.RechargeRequest, error) {
 	return request, nil
 }
 
+// GetActiveRequests 获取所有活跃的入账请求
+func (s *Service) GetActiveRequests() []*pb.RechargeRequest {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]*pb.RechargeRequest, 0, len(s.requests))
+	for _, req := range s.requests {
+		result = append(result, req)
+	}
+	return result
+}
+
 // GetWitnessInfo 获取见证者信息
 func (s *Service) GetWitnessInfo(address string) (*pb.WitnessInfo, error) {
 	return s.stakeManager.GetWitness(address)

@@ -14,6 +14,7 @@ import (
 	"dex/txpool"
 	"dex/types"
 	"dex/utils"
+	"dex/witness"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -38,6 +39,7 @@ type NodeInstance struct {
 	SenderManager    *sender.SenderManager
 	HandlerManager   *handlers.HandlerManager
 	FrostRuntime     *frostrt.Manager // FROST 门限签名 Runtime（可选）
+	WitnessService   *witness.Service // 见证者服务
 	Logger           logs.Logger
 }
 
@@ -108,6 +110,14 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 		cfg,
 	)
 	node.ConsensusManager = consensusManager
+
+	// 获取见证者服务引用（从 BlockStore -> VM Executor 中提取）
+	if consensusManager != nil && consensusManager.Node != nil {
+		// 注意：需要类型断言或通过接口获取
+		if rs, ok := consensusManager.Node.GetBlockStore().(*consensus.RealBlockStore); ok {
+			node.WitnessService = rs.GetWitnessService()
+		}
+	}
 
 	// 8. 创建Handler管理器
 	handlerManager := handlers.NewHandlerManager(

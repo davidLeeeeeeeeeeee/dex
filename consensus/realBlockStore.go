@@ -816,3 +816,10 @@ func (s *RealBlockStore) cleanupOldData(belowHeight uint64) {
 			belowHeight, cleanedBlocks, cleanedHeights, cleanedFinalized)
 	}
 }
+
+func (s *RealBlockStore) GetWitnessService() *witness.Service {
+	if s.vmExecutor == nil {
+		return nil
+	}
+	return s.vmExecutor.GetWitnessService()
+}

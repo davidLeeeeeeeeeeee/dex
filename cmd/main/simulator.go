@@ -6,30 +6,58 @@ import (
 	"dex/pb"
 	"fmt"
 	mrand "math/rand"
+	"sync"
 	"time"
 )
 
 // TxSimulator 交易模拟器
 type TxSimulator struct {
-	nodes []*NodeInstance
+	nodes  []*NodeInstance
+	nonces map[string]uint64
+	mu     sync.Mutex
 }
 
 func NewTxSimulator(nodes []*NodeInstance) *TxSimulator {
-	return &TxSimulator{nodes: nodes}
+	return &TxSimulator{
+		nodes:  nodes,
+		nonces: make(map[string]uint64),
+	}
+}
+
+func (s *TxSimulator) getNextNonce(addr string) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nonces[addr]++
+	return s.nonces[addr]
 }
 
 func (s *TxSimulator) Start() {
 	go s.runRandomTransfers()
-	go s.runWitnessScenario()
+	go s.runWitnessRegistration() // 见证者质押注册
+	go s.runRechargeScenario()    // 见证者上账请求
+	go s.runWitnessVoteWorker()   // 自动化见证者投票
 	go s.runWithdrawScenario()
 	go s.runOrderScenario() // 订单交易模拟
+}
+
+func (s *TxSimulator) submitTx(node *NodeInstance, tx *pb.AnyTx) {
+	if node == nil || tx == nil {
+		return
+	}
+	// 使用 SubmitTx 发送到交易池，并触发广播回调
+	err := node.TxPool.SubmitTx(tx, "127.0.0.1", func(txID string) {
+		if node.SenderManager != nil {
+			node.SenderManager.BroadcastTx(tx)
+		}
+	})
+	if err != nil {
+		logs.Error("Simulator: Failed to submit tx %s: %v", tx.GetBase().TxId, err)
+	}
 }
 
 func (s *TxSimulator) runRandomTransfers() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-
-	nonceMap := make(map[string]uint64)
 
 	for range ticker.C {
 		// 随机选择一个发送方和接收方
@@ -42,115 +70,132 @@ func (s *TxSimulator) runRandomTransfers() {
 			continue
 		}
 
-		nonceMap[fromNode.Address]++
-		nonce := nonceMap[fromNode.Address]
+		nonce := s.getNextNonce(fromNode.Address)
 
 		tx := generateTransferTx(fromNode.Address, toNode.Address, "FB", "10", "1", nonce)
 
-		if err := fromNode.TxPool.StoreAnyTx(tx); err == nil {
-			logs.Trace("Simulator: Added random transfer %s from %s to %s", tx.GetBase().TxId, fromNode.Address, toNode.Address)
-		}
+		s.submitTx(fromNode, tx)
+		logs.Trace("Simulator: Added random transfer %s from %s to %s (nonce=%d)", tx.GetBase().TxId, fromNode.Address, toNode.Address, nonce)
 	}
 }
 
-func (s *TxSimulator) runWitnessScenario() {
-	// 周期性检测 Vault 状态，有 ACTIVE 的 Vault 才发送上账请求
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+func (s *TxSimulator) runWitnessRegistration() {
+	// 注册见证者不需要等待 Vault 激活，可以尽早执行
+	time.Sleep(3 * time.Second) // 等待节点完全启动
+	if len(s.nodes) < 2 {
+		return
+	}
 
-	nonceMap := make(map[string]uint64)
-	witnessesRegistered := false
-	vaultReady := false
-	requestSent := false
-	var pendingReqID string
+	logs.Info("Simulator: Registering witnesses...")
+	for i := 1; i < 5 && i < len(s.nodes); i++ {
+		witnessNode := s.nodes[i]
+		nonce := s.getNextNonce(witnessNode.Address)
+
+		stakeTx := generateWitnessStakeTx(
+			witnessNode.Address,
+			pb.OrderOp_ADD,
+			"1000000000000000000000", // 质押 1000 Token (1000 * 10^18)
+			nonce,
+		)
+		s.submitTx(witnessNode, stakeTx)
+		logs.Info("Simulator: Witness %s staked (nonce=%d)", witnessNode.Address, nonce)
+	}
+}
+
+func (s *TxSimulator) runRechargeScenario() {
+	// 周期性发送上账请求，演示全流程。见证人会自动投票并完成上账。
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 
 	for range ticker.C {
 		if len(s.nodes) == 0 || s.nodes[0] == nil {
 			continue
 		}
 
-		// 首先确保有见证者注册（只做一次）
-		if !witnessesRegistered {
-			logs.Info("Simulator: Registering witnesses...")
-			for i := 1; i < 5 && i < len(s.nodes); i++ {
-				witnessNode := s.nodes[i]
-				nonceMap[witnessNode.Address]++
-
-				stakeTx := generateWitnessStakeTx(
-					witnessNode.Address,
-					pb.OrderOp_ADD,
-					"1000000000000000000000", // 质押 1000 Token (18位小数)
-					nonceMap[witnessNode.Address],
-				)
-				if err := witnessNode.TxPool.StoreAnyTx(stakeTx); err != nil {
-					logs.Error("Simulator: Failed to submit witness stake tx: %v", err)
-				} else {
-					logs.Info("Simulator: Witness %s staked", witnessNode.Address)
-				}
-			}
-			witnessesRegistered = true
+		// 检测是否有 ACTIVE 的 Vault (上账需要 Vault 存在)
+		if !s.checkVaultActive() {
+			logs.Trace("Simulator: No ACTIVE vault yet, waiting to send recharge request...")
 			continue
 		}
 
-		// 检测是否有 ACTIVE 的 Vault
-		if !vaultReady {
-			vaultReady = s.checkVaultActive()
-			if !vaultReady {
-				logs.Trace("Simulator: No ACTIVE vault yet, waiting...")
-				continue
-			}
-			logs.Info("Simulator: Detected ACTIVE vault, ready to send witness requests")
+		userNode := s.nodes[0]
+		nonce := s.getNextNonce(userNode.Address)
+
+		reqTx := generateWitnessRequestTx(
+			userNode.Address,
+			"btc",
+			"tx_hash_"+time.Now().Format("150405"),
+			"BTC",
+			"500",
+			userNode.Address,
+			"5",
+			nonce,
+		)
+
+		s.submitTx(userNode, reqTx)
+		logs.Info("Simulator: Submitted WitnessRequestTx %s (nonce=%d)", reqTx.GetBase().TxId, nonce)
+	}
+}
+
+// runWitnessVoteWorker 见证者自发投票工人
+func (s *TxSimulator) runWitnessVoteWorker() {
+	// 周期性扫描并为待处理请求投票
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	// 记录已经投过票的请求，避免重复投票
+	votedRequests := make(map[string]bool)
+
+	for range ticker.C {
+		if len(s.nodes) < 2 {
+			continue
 		}
 
-		// 发送上账请求（只发一次用于测试）
-		if !requestSent {
-			userNode := s.nodes[0]
-			nonceMap[userNode.Address]++
-
-			reqTx := generateWitnessRequestTx(
-				userNode.Address,
-				"btc",
-				"tx_hash_"+time.Now().Format("150405"),
-				"BTC",
-				"500",
-				userNode.Address,
-				"5",
-				nonceMap[userNode.Address],
-			)
-
-			pendingReqID = reqTx.GetBase().TxId
-			if err := userNode.TxPool.StoreAnyTx(reqTx); err != nil {
-				logs.Error("Simulator: Failed to submit witness request tx: %v", err)
+		// 简单的模拟逻辑：检测是否有正在进行的投票请求，并让所有见证者都投赞成票
+		// 在实际系统中，这通常由节点的本地事件触发
+		for _, node := range s.nodes {
+			if node.WitnessService == nil {
 				continue
 			}
-			logs.Info("Simulator: Submitted WitnessRequestTx %s", pendingReqID)
-			requestSent = true
-			continue // 下一轮再投票
-		}
 
-		// 发送见证者投票
-		if pendingReqID != "" {
-			logs.Info("Simulator: Submitting witness votes for request %s", pendingReqID)
-			for i := 1; i < 5 && i < len(s.nodes); i++ {
-				witnessNode := s.nodes[i]
-				nonceMap[witnessNode.Address]++
-
-				voteTx := generateWitnessVoteTx(
-					witnessNode.Address,
-					pendingReqID,
-					pb.WitnessVoteType_VOTE_PASS,
-					nonceMap[witnessNode.Address],
-				)
-				if err := witnessNode.TxPool.StoreAnyTx(voteTx); err != nil {
-					logs.Error("Simulator: Failed to submit vote tx: %v", err)
-				} else {
-					logs.Info("Simulator: Witness %s voted PASS for %s", witnessNode.Address, pendingReqID)
+			// 获取所有活跃请求
+			activeRequests := node.WitnessService.GetActiveRequests()
+			for _, req := range activeRequests {
+				if req.Status != pb.RechargeRequestStatus_RECHARGE_VOTING {
+					continue
 				}
+
+				// 检查当前节点（见证者）是否在选定列表中
+				isTarget := false
+				for _, addr := range req.SelectedWitnesses {
+					if addr == node.Address {
+						isTarget = true
+						break
+					}
+				}
+
+				if !isTarget {
+					continue
+				}
+
+				// 检查本节点是否已经投过票
+				voteKey := req.RequestId + ":" + node.Address
+				if votedRequests[voteKey] {
+					continue
+				}
+
+				// 提交投票
+				nonce := s.getNextNonce(node.Address)
+				voteTx := generateWitnessVoteTx(
+					node.Address,
+					req.RequestId,
+					pb.WitnessVoteType_VOTE_PASS,
+					nonce,
+				)
+				s.submitTx(node, voteTx)
+				logs.Info("Simulator: Witness %s auto-voted PASS for request %s (nonce=%d)", node.Address, req.RequestId, nonce)
+				votedRequests[voteKey] = true
 			}
-			logs.Info("Simulator: Witness Scenario completed for Request %s", pendingReqID)
-			pendingReqID = ""
-			// 测试完成后停止
-			return
 		}
 	}
 }
@@ -183,8 +228,6 @@ func (s *TxSimulator) runWithdrawScenario() {
 	ticker := time.NewTicker(45 * time.Second)
 	defer ticker.Stop()
 
-	nonceMap := make(map[string]uint64)
-
 	for range ticker.C {
 		logs.Info("Simulator: Starting Withdraw Scenario...")
 
@@ -193,7 +236,7 @@ func (s *TxSimulator) runWithdrawScenario() {
 			continue
 		}
 
-		nonceMap[userNode.Address]++
+		nonce := s.getNextNonce(userNode.Address)
 
 		withdrawTx := generateWithdrawRequestTx(
 			userNode.Address,
@@ -201,12 +244,11 @@ func (s *TxSimulator) runWithdrawScenario() {
 			"BTC",
 			"bc1qtestaddress",
 			"50",
-			nonceMap[userNode.Address],
+			nonce,
 		)
 
-		if err := userNode.TxPool.StoreAnyTx(withdrawTx); err == nil {
-			logs.Info("Simulator: Withdraw Request %s sent", withdrawTx.GetBase().TxId)
-		}
+		s.submitTx(userNode, withdrawTx)
+		logs.Info("Simulator: Withdraw Request %s sent (nonce=%d)", withdrawTx.GetBase().TxId, nonce)
 	}
 }
 
@@ -218,8 +260,6 @@ func (s *TxSimulator) runOrderScenario() {
 	// 周期性生成新订单（每 2 秒生成一笔订单）
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-
-	nonceMap := make(map[string]uint64)
 
 	for range ticker.C {
 		if len(s.nodes) == 0 {
@@ -236,7 +276,7 @@ func (s *TxSimulator) runOrderScenario() {
 				continue
 			}
 
-			nonceMap[node.Address]++
+			nonce := s.getNextNonce(node.Address)
 
 			// 随机价格和数量（使用较小的数量，避免余额不足）
 			basePrice := 1.0 + float64(mrand.Intn(10))*0.1
@@ -254,11 +294,12 @@ func (s *TxSimulator) runOrderScenario() {
 					"USDT",                         // quote_token - 用于支付的代币
 					fmt.Sprintf("%.2f", amount),    // 想买入的 FB 数量
 					fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
-					nonceMap[node.Address],
+					nonce,
 					pb.OrderSide_BUY,
 				)
-				logs.Trace("Simulator: Added BUY order %s from %s, buy %.2f FB @ %.2f USDT",
-					tx.GetBase().TxId, node.Address, amount, basePrice)
+				s.submitTx(node, tx)
+				logs.Trace("Simulator: Added BUY order %s (nonce=%d) from %s, buy %.2f FB @ %.2f USDT",
+					tx.GetBase().TxId, nonce, node.Address, amount, basePrice)
 			} else {
 				// 卖单：卖 FB 换 USDT
 				tx = generateOrderTx(
@@ -267,15 +308,12 @@ func (s *TxSimulator) runOrderScenario() {
 					"USDT",                         // quote_token - 想要获得的代币
 					fmt.Sprintf("%.2f", amount),    // 要卖出的 FB 数量
 					fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
-					nonceMap[node.Address],
+					nonce,
 					pb.OrderSide_SELL,
 				)
-				logs.Trace("Simulator: Added SELL order %s from %s, sell %.2f FB @ %.2f USDT",
-					tx.GetBase().TxId, node.Address, amount, basePrice)
-			}
-
-			if err := node.TxPool.StoreAnyTx(tx); err != nil {
-				logs.Error("Simulator: Failed to add order: %v", err)
+				s.submitTx(node, tx)
+				logs.Trace("Simulator: Added SELL order %s (nonce=%d) from %s, sell %.2f FB @ %.2f USDT",
+					tx.GetBase().TxId, nonce, node.Address, amount, basePrice)
 			}
 		}
 	}

@@ -46,17 +46,17 @@ func (wc WitnessConfig) ToWitnessConfig() interface{} {
 func DefaultWitnessConfig() WitnessConfig {
 	return WitnessConfig{
 		Enabled:                 true,
-		ConsensusThreshold:      80,
+		ConsensusThreshold:      60,
 		AbstainThreshold:        20,
 		VotingPeriodBlocks:      100,
 		ChallengePeriodBlocks:   600,
 		ArbitrationPeriodBlocks: 28800,
 		UnstakeLockBlocks:       201600,
 		RetryIntervalBlocks:     20,
-		// 1000 Token (18位小数) - 注意：这里为了方便测试，可以设置小一些
-		MinStakeAmount:       "1000000000000000000000",
-		ChallengeStakeAmount: "100000000000000000000",
-		InitialWitnessCount:  10,
+		// 1 Token (18位小数) - 注意：这里为了方便测试，可以设置小一些
+		MinStakeAmount:       "1000000000000000000",
+		ChallengeStakeAmount: "100000000000000000",
+		InitialWitnessCount:  5,
 		ExpandMultiplier:     2,
 		WitnessRewardRatio:   0.5,
 		SlashRatio:           1.0,

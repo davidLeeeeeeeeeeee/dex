@@ -66,16 +66,16 @@ type Config struct {
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
-		ConsensusThreshold:      80,
+		ConsensusThreshold:      60,
 		AbstainThreshold:        20,
-		VotingPeriodBlocks:      100,                      // 约5分钟（假设3秒一个区块）
-		ChallengePeriodBlocks:   600,                      // 约30分钟
-		ArbitrationPeriodBlocks: 28800,                    // 约24小时
-		UnstakeLockBlocks:       201600,                   // 约7天
-		RetryIntervalBlocks:     20,                       // 约1分钟
-		MinStakeAmount:          "1000000000000000000000", // 1000 Token (18位小数)
-		ChallengeStakeAmount:    "100000000000000000000",  // 100 Token
-		InitialWitnessCount:     10,
+		VotingPeriodBlocks:      100,                   // 约5分钟（假设3秒一个区块）
+		ChallengePeriodBlocks:   600,                   // 约30分钟
+		ArbitrationPeriodBlocks: 28800,                 // 约24小时
+		UnstakeLockBlocks:       201600,                // 约7天
+		RetryIntervalBlocks:     20,                    // 约1分钟
+		MinStakeAmount:          "1000000000000000000", // 1 Token (18位小数)
+		ChallengeStakeAmount:    "100000000000000000",  // 0.1 Token
+		InitialWitnessCount:     5,
 		ExpandMultiplier:        2,
 		WitnessRewardRatio:      0.5,
 		SlashRatio:              1.0,

@@ -150,3 +150,7 @@ func (n *Node) GetMessageStats() map[string]uint64 {
 	}
 	return nil
 }
+
+func (n *Node) GetBlockStore() interfaces.BlockStore {
+	return n.store
+}
