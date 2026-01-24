@@ -68,13 +68,13 @@ func DefaultConfig() *Config {
 	return &Config{
 		ConsensusThreshold:      60,
 		AbstainThreshold:        20,
-		VotingPeriodBlocks:      100,                   // 约5分钟（假设3秒一个区块）
-		ChallengePeriodBlocks:   600,                   // 约30分钟
-		ArbitrationPeriodBlocks: 28800,                 // 约24小时
-		UnstakeLockBlocks:       201600,                // 约7天
-		RetryIntervalBlocks:     20,                    // 约1分钟
-		MinStakeAmount:          "1000000000000000000", // 1 Token (18位小数)
-		ChallengeStakeAmount:    "100000000000000000",  // 0.1 Token
+		VotingPeriodBlocks:      100,       // 约5分钟（假设3秒一个区块）
+		ChallengePeriodBlocks:   600,       // 约30分钟
+		ArbitrationPeriodBlocks: 28800,     // 约24小时
+		UnstakeLockBlocks:       201600,    // 约7天
+		RetryIntervalBlocks:     20,        // 约1分钟
+		MinStakeAmount:          "1000000", // 1M units
+		ChallengeStakeAmount:    "100000",  // 0.1M units
 		InitialWitnessCount:     5,
 		ExpandMultiplier:        2,
 		WitnessRewardRatio:      0.5,

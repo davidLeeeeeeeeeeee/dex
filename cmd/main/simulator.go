@@ -80,29 +80,49 @@ func (s *TxSimulator) runRandomTransfers() {
 }
 
 func (s *TxSimulator) runWitnessRegistration() {
+	// 设置日志上下文为第一个节点，使得模拟器核心日志能显示在第一个节点的 Explorer 日志中
+	if len(s.nodes) > 0 {
+		logs.SetThreadNodeContext(s.nodes[0].Address)
+	}
+
 	// 注册见证者不需要等待 Vault 激活，可以尽早执行
-	time.Sleep(3 * time.Second) // 等待节点完全启动
+	time.Sleep(15 * time.Second) // 等待节点完全启动并清空旧数据
 	if len(s.nodes) < 2 {
+		logs.Info("SIMULATOR: Not enough nodes for witness registration (%d)", len(s.nodes))
 		return
 	}
 
-	logs.Info("Simulator: Registering witnesses...")
-	for i := 1; i < 5 && i < len(s.nodes); i++ {
+	logs.Info("SIMULATOR: Starting witness registration for 5 nodes...")
+	for i := 1; i < 6 && i < len(s.nodes); i++ {
 		witnessNode := s.nodes[i]
+		if witnessNode == nil {
+			continue
+		}
+
 		nonce := s.getNextNonce(witnessNode.Address)
 
+		// 质押 10,000,000 units (Genesis balance is 1,000,000,000)
+		stakeAmount := "10000000"
 		stakeTx := generateWitnessStakeTx(
 			witnessNode.Address,
 			pb.OrderOp_ADD,
-			"1000000000000000000000", // 质押 1000 Token (1000 * 10^18)
+			stakeAmount,
 			nonce,
 		)
+
+		logs.Info("SIMULATOR: Submitting WitnessStakeTx for Node %d (%s), Amount: %s, Nonce: %d", i, witnessNode.Address, stakeAmount, nonce)
 		s.submitTx(witnessNode, stakeTx)
-		logs.Info("Simulator: Witness %s staked (nonce=%d)", witnessNode.Address, nonce)
+		time.Sleep(100 * time.Millisecond) // 稍微错开
 	}
+	logs.Info("SIMULATOR: Witness registration transactions submitted.")
 }
 
 func (s *TxSimulator) runRechargeScenario() {
+	// 设置日志上下文
+	if len(s.nodes) > 0 {
+		logs.SetThreadNodeContext(s.nodes[0].Address)
+	}
+
 	// 周期性发送上账请求，演示全流程。见证人会自动投票并完成上账。
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -133,7 +153,7 @@ func (s *TxSimulator) runRechargeScenario() {
 		)
 
 		s.submitTx(userNode, reqTx)
-		logs.Info("Simulator: Submitted WitnessRequestTx %s (nonce=%d)", reqTx.GetBase().TxId, nonce)
+		logs.Info("SIMULATOR: Submitted WitnessRequestTx %s (nonce=%d) for User %s", reqTx.GetBase().TxId, nonce, userNode.Address)
 	}
 }
 
@@ -192,8 +212,11 @@ func (s *TxSimulator) runWitnessVoteWorker() {
 					pb.WitnessVoteType_VOTE_PASS,
 					nonce,
 				)
+
+				// 切换日志上下文到投票节点，让投票记录显示在见证者节点的控制面板里
+				logs.SetThreadNodeContext(node.Address)
 				s.submitTx(node, voteTx)
-				logs.Info("Simulator: Witness %s auto-voted PASS for request %s (nonce=%d)", node.Address, req.RequestId, nonce)
+				logs.Info("SIMULATOR: Witness %s auto-voted PASS for request %s (nonce=%d)", node.Address, req.RequestId, nonce)
 				votedRequests[voteKey] = true
 			}
 		}
