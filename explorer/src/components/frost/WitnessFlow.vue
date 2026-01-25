@@ -245,11 +245,15 @@ const handleSelectTx = (txId: string) => {
                 <span class="progress-status">{{ getStatusStr(req.status).replace(/_/g, ' ') }}</span>
                 <span class="progress-percent">{{ getProgress(req.status).percent }}%</span>
               </div>
-                <div class="status-pill-wrap">
-                  <div :class="['status-pill', getStatusStr(req.status).toLowerCase()]">
-                    {{ getStatusStr(req.status) }}
-                  </div>
+              <div class="progress-track">
+                <div class="progress-fill" 
+                     :style="{ 
+                        width: getProgress(req.status).percent + '%',
+                        background: getProgress(req.status).color 
+                     }">
+                  <div class="progress-glow" :style="{ background: getProgress(req.status).color }"></div>
                 </div>
+              </div>
             </div>
           </div>
 
