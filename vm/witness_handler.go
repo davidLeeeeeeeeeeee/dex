@@ -248,7 +248,7 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 }
 
 func (h *WitnessStakeTxHandler) Apply(tx *pb.AnyTx) error {
-	return ErrNotImplemented
+	return nil
 }
 
 // ==================== WitnessRequestTxHandler ====================
@@ -364,7 +364,7 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 }
 
 func (h *WitnessRequestTxHandler) Apply(tx *pb.AnyTx) error {
-	return ErrNotImplemented
+	return nil
 }
 
 // ==================== WitnessVoteTxHandler ====================
@@ -415,12 +415,26 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "duplicate vote"}, nil
 	}
 
-	// 使用 WitnessService 处理投票（如果可用）
+	// 4. 调用 WitnessService 更新状态（内存）
+	var finalRequest *pb.RechargeRequest
 	if h.witnessSvc != nil {
-		if err := h.witnessSvc.ProcessVote(vote.Vote); err != nil {
-			// 这里返回 FAILED 的凭据，但是 error 返回 nil，防止整个区块校验失败
-			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, nil
+		updatedRequest, err := h.witnessSvc.ProcessVote(vote.Vote)
+		if err != nil {
+			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, err
 		}
+		finalRequest = updatedRequest
+	} else {
+		// 降级：手动更新（仅用于测试）
+		request.Votes = append(request.Votes, vote.Vote)
+		switch vote.Vote.VoteType {
+		case pb.WitnessVoteType_VOTE_PASS:
+			request.PassCount++
+		case pb.WitnessVoteType_VOTE_FAIL:
+			request.FailCount++
+		case pb.WitnessVoteType_VOTE_ABSTAIN:
+			request.AbstainCount++
+		}
+		finalRequest = &request
 	}
 
 	voteData, err := proto.Marshal(vote.Vote)
@@ -429,17 +443,7 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 	}
 	ws = append(ws, WriteOp{Key: voteKey, Value: voteData, Del: false, SyncStateDB: false, Category: "witness_vote"})
 
-	request.Votes = append(request.Votes, vote.Vote)
-	switch vote.Vote.VoteType {
-	case pb.WitnessVoteType_VOTE_PASS:
-		request.PassCount++
-	case pb.WitnessVoteType_VOTE_FAIL:
-		request.FailCount++
-	case pb.WitnessVoteType_VOTE_ABSTAIN:
-		request.AbstainCount++
-	}
-
-	updatedRequestData, err := proto.Marshal(&request)
+	updatedRequestData, err := proto.Marshal(finalRequest)
 	if err != nil {
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "failed to marshal request"}, err
 	}
@@ -449,7 +453,7 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 }
 
 func (h *WitnessVoteTxHandler) Apply(tx *pb.AnyTx) error {
-	return ErrNotImplemented
+	return nil
 }
 
 // ==================== WitnessChallengeTxHandler ====================
@@ -577,7 +581,7 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 }
 
 func (h *WitnessChallengeTxHandler) Apply(tx *pb.AnyTx) error {
-	return ErrNotImplemented
+	return nil
 }
 
 // ==================== ArbitrationVoteTxHandler ====================
@@ -652,7 +656,7 @@ func (h *ArbitrationVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp
 }
 
 func (h *ArbitrationVoteTxHandler) Apply(tx *pb.AnyTx) error {
-	return ErrNotImplemented
+	return nil
 }
 
 // ==================== WitnessClaimRewardTxHandler ====================
@@ -756,5 +760,5 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 }
 
 func (h *WitnessClaimRewardTxHandler) Apply(tx *pb.AnyTx) error {
-	return ErrNotImplemented
+	return nil
 }

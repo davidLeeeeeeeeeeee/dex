@@ -61,6 +61,14 @@ func (vm *VoteManager) SetSelectedWitnesses(requestID string, witnesses []string
 	}
 }
 
+// IsSelectedWitness 检查是否是选中的见证者
+func (vm *VoteManager) IsSelectedWitness(requestID, witnessAddr string) bool {
+	vm.mu.RLock()
+	defer vm.mu.RUnlock()
+
+	return vm.selectedWitnesses[requestID][witnessAddr]
+}
+
 // AddVote 添加投票
 func (vm *VoteManager) AddVote(vote *pb.WitnessVote) error {
 	vm.mu.Lock()

@@ -442,15 +442,15 @@ func KeyClientInfo(ip string) string {
 // ===================== Witness 见证者相关 =====================
 
 // KeyWitnessInfo 见证者信息
-// 例：v1_witness_<address>
+// 例：v1_winfo_<address>
 func KeyWitnessInfo(address string) string {
-	return withVer("witness_" + address)
+	return withVer("winfo_" + address)
 }
 
 // KeyWitnessInfoPrefix 见证者信息前缀
-// 例：v1_witness_
+// 例：v1_winfo_
 func KeyWitnessInfoPrefix() string {
-	return withVer("witness_")
+	return withVer("winfo_")
 }
 
 // KeyRechargeRequest 入账请求
@@ -484,15 +484,15 @@ func KeyChallengeRecordPrefix() string {
 }
 
 // KeyWitnessVote 见证投票
-// 例：v1_witness_vote_<requestID>_<witnessAddress>
+// 例：v1_wvote_<requestID>_<witnessAddress>
 func KeyWitnessVote(requestID, witnessAddress string) string {
-	return withVer(fmt.Sprintf("witness_vote_%s_%s", requestID, witnessAddress))
+	return withVer(fmt.Sprintf("wvote_%s_%s", requestID, witnessAddress))
 }
 
 // KeyWitnessVotePrefix 见证投票前缀（按请求ID）
-// 例：v1_witness_vote_<requestID>_
+// 例：v1_wvote_<requestID>_
 func KeyWitnessVotePrefix(requestID string) string {
-	return withVer(fmt.Sprintf("witness_vote_%s_", requestID))
+	return withVer(fmt.Sprintf("wvote_%s_", requestID))
 }
 
 // KeyArbitrationVote 仲裁投票
@@ -508,15 +508,15 @@ func KeyArbitrationVotePrefix(challengeID string) string {
 }
 
 // KeyWitnessStakeIndex 见证者质押索引（按质押金额倒序）
-// 例：v1_witness_stake_<invertedPadded32>_<address>
+// 例：v1_wstake_<invertedPadded32>_<address>
 func KeyWitnessStakeIndex(invertedPadded32, address string) string {
-	return withVer(fmt.Sprintf("witness_stake_%s_%s", invertedPadded32, address))
+	return withVer(fmt.Sprintf("wstake_%s_%s", invertedPadded32, address))
 }
 
 // KeyWitnessStakeIndexPrefix 见证者质押索引前缀
-// 例：v1_witness_stake_
+// 例：v1_wstake_
 func KeyWitnessStakeIndexPrefix() string {
-	return withVer("witness_stake_")
+	return withVer("wstake_")
 }
 
 // KeyWitnessConfig 见证者配置
@@ -532,9 +532,9 @@ func KeyWitnessRewardPool() string {
 }
 
 // KeyWitnessHistory 见证历史记录
-// 例：v1_witness_history_<txID>
+// 例：v1_whist_<txID>
 func KeyWitnessHistory(txID string) string {
-	return withVer("witness_history_" + txID)
+	return withVer("whist_" + txID)
 }
 
 // KeyShelvedRequest 搁置的请求

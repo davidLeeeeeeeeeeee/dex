@@ -510,8 +510,8 @@ func (hm *HandlerManager) HandleWitnessRequests(w http.ResponseWriter, r *http.R
 			continue
 		}
 
-		reqCopy := req
-		requests = append(requests, &reqCopy)
+		// 使用 proto.Clone 避免复制锁
+		requests = append(requests, proto.Clone(&req).(*pb.RechargeRequest))
 
 		if len(requests) >= limit {
 			break
@@ -640,7 +640,7 @@ func (hm *HandlerManager) HandleWitnessList(w http.ResponseWriter, r *http.Reque
 	hm.Stats.RecordAPICall("WitnessList")
 
 	// 扫描所有见证者信息
-	// key 前缀：v1_witness_
+	// key 前缀：v1_winfo_
 	prefix := keys.KeyWitnessInfoPrefix()
 
 	results, err := hm.dbManager.Scan(prefix)
@@ -656,9 +656,8 @@ func (hm *HandlerManager) HandleWitnessList(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		// 必须创建副本，避免所有指针都指向同一个循环变量
-		infoCopy := info
-		witnesses = append(witnesses, &infoCopy)
+		// 使用 proto.Clone 避免复制锁
+		witnesses = append(witnesses, proto.Clone(&info).(*pb.WitnessInfo))
 	}
 
 	resp := &pb.WitnessInfoList{

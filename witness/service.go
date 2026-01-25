@@ -410,44 +410,35 @@ func (s *Service) CreateRechargeRequest(tx *pb.WitnessRequestTx) (*pb.RechargeRe
 	return request, nil
 }
 
-// ProcessVote 处理投票
-func (s *Service) ProcessVote(vote *pb.WitnessVote) error {
+// ProcessVote 处理见证者投票
+func (s *Service) ProcessVote(vote *pb.WitnessVote) (*pb.RechargeRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	requestID := vote.RequestId
+	witnessAddr := vote.WitnessAddress
 
-	// 获取请求
 	request, exists := s.requests[requestID]
 	if !exists {
-		return ErrRequestNotFound
+		return nil, ErrRequestNotFound
 	}
 
-	// 检查状态
-	if request.Status != pb.RechargeRequestStatus_RECHARGE_VOTING {
-		// 如果已经在公示期或已完成，允许继续添加投票（幂等/记录），但不触发共识逻辑
-		if request.Status == pb.RechargeRequestStatus_RECHARGE_CHALLENGE_PERIOD ||
-			request.Status == pb.RechargeRequestStatus_RECHARGE_FINALIZED {
-			err := s.voteManager.AddVote(vote)
-			if err != nil && err != ErrDuplicateVote {
-				return err
-			}
-			return nil
-		}
-		return fmt.Errorf("request %s is not in voting status, current: %s", requestID, request.Status)
+	// 检查见证者是否在选定列表中
+	if !s.voteManager.IsSelectedWitness(requestID, witnessAddr) {
+		return nil, ErrNotSelectedWitness
 	}
 
-	// 检查是否过期
-	if s.currentHeight > request.DeadlineHeight {
-		return ErrVotingPeriodExpired
+	// 检查是否已投票
+	if s.voteManager.HasVoted(requestID, witnessAddr) {
+		return request, nil // 幂等处理
 	}
 
 	// 添加投票
 	if err := s.voteManager.AddVote(vote); err != nil {
 		if err == ErrDuplicateVote {
-			return nil // 幂等处理
+			return request, nil // 幂等处理
 		}
-		return err
+		return nil, err
 	}
 
 	// 更新统计
@@ -460,16 +451,15 @@ func (s *Service) ProcessVote(vote *pb.WitnessVote) error {
 		request.AbstainCount++
 	}
 
-	// 保存投票到请求（内存缓存）
 	request.Votes = append(request.Votes, vote)
 
-	// 更新见证者统计（内存）
-	_ = s.stakeManager.UpdateWitnessStats(vote.WitnessAddress, vote.VoteType)
+	// 更新见证者统计
+	s.stakeManager.UpdateWitnessStats(witnessAddr, vote.VoteType)
 
 	// 检查共识
 	s.checkAndProcessConsensus(request)
 
-	return nil
+	return request, nil
 }
 
 // checkAndProcessConsensus 检查并处理共识

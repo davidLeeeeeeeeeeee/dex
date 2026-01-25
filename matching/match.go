@@ -255,29 +255,37 @@ func (ob *OrderBook) match(side OrderSide) {
 // 这里是撮合核心 executeTrade
 func (ob *OrderBook) executeTrade(pl *PriceLevel, side OrderSide) bool {
 	changed := false
-	for i := 0; i < len(pl.Orders); {
-		o := pl.Orders[i]
+	// 始终处理当前 PriceLevel 的第一个订单 (FIFO)
+	for len(pl.Orders) > 0 {
+		o := pl.Orders[0]
 		if o.Amount.Cmp(decimal.Zero) <= 0 {
-			// 已耗尽则从切片移除
-			pl.Orders = append(pl.Orders[:i], pl.Orders[i+1:]...)
+			pl.Orders = pl.Orders[1:]
 			ob.removeOrderIndex(o.ID)
 			continue
 		}
 
-		// 找到对手单(若 side==BUY，就找最优卖；若 side==SELL，就找最优买)
+		// 找到对手方最优单
 		var opp *Order
 		if side == BUY {
 			opp = ob.getBestSellOrder()
 		} else {
 			opp = ob.getBestBuyOrder()
 		}
+
 		if opp == nil {
-			// 没有对手单，撮合结束
-			break
+			break // 无对手单
 		}
 
-		// 判断是否有交叉价格，若不交叉也break ...
-		// ...
+		// 判断价格是否交叉 (BUY: bid >= ask, SELL: ask <= bid)
+		if side == BUY {
+			if pl.Price.Cmp(opp.Price) < 0 {
+				break
+			}
+		} else {
+			if pl.Price.Cmp(opp.Price) > 0 {
+				break
+			}
+		}
 
 		tradeAmt := minDecimal(o.Amount, opp.Amount)
 		if tradeAmt.Cmp(decimal.Zero) <= 0 {
@@ -285,14 +293,14 @@ func (ob *OrderBook) executeTrade(pl *PriceLevel, side OrderSide) bool {
 		}
 		changed = true
 
-		// 假设撮合价取对手单价格
+		// 成交价原则：使用对手单（已挂在账上的 Maker）的价格
 		actualPrice := opp.Price
 
-		// 减少各自剩余量
+		// 减少订单剩余量
 		o.Amount = o.Amount.Sub(tradeAmt)
 		opp.Amount = opp.Amount.Sub(tradeAmt)
 
-		// ★ 在这里发送撮合事件 => 由上层决定如何处理（VM 写入状态、或链下服务更新 DB）
+		// 发送撮合事件
 		ob.emitTrade(TradeUpdate{
 			OrderID:    o.ID,
 			TradeAmt:   tradeAmt,
@@ -308,18 +316,17 @@ func (ob *OrderBook) executeTrade(pl *PriceLevel, side OrderSide) bool {
 			IsFilled:   opp.Amount.Cmp(decimal.Zero) == 0,
 		})
 
-		// 如果对手单耗尽 => remove
+		// 处理对手单耗尽
 		if opp.Amount.Cmp(decimal.Zero) <= 0 {
 			ob.removeFromPriceLevel(opp)
 		}
 
-		// 如果当前订单耗尽 => remove
+		// 处理当前单耗尽
 		if o.Amount.Cmp(decimal.Zero) <= 0 {
-			pl.Orders = append(pl.Orders[:i], pl.Orders[i+1:]...)
+			pl.Orders = pl.Orders[1:]
 			ob.removeOrderIndex(o.ID)
-			continue
 		}
-		i++ // 只有当 o 还剩余时才 i++ 前进
+		// 如果 o 还有剩余，本轮循环会继续用同一个 o 匹配下一个 opp
 	}
 	return changed
 }

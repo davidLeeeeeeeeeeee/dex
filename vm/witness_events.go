@@ -44,6 +44,15 @@ func (x *Executor) applyWitnessFinalizedEvents(sv StateView, fallbackHeight uint
 				if err := applyRechargeRejected(sv, req); err != nil {
 					return err
 				}
+			case witness.EventChallengePeriodStart, witness.EventScopeExpanded, witness.EventRechargeRequested, witness.EventRechargeShelved:
+				// 这些事件意味着 RechargeRequest 的状态或属性已经改变，需要持久化
+				req, ok := evt.Data.(*pb.RechargeRequest)
+				if !ok || req == nil {
+					continue
+				}
+				if err := persistRechargeRequest(sv, req); err != nil {
+					return err
+				}
 			default:
 				continue
 			}
@@ -213,4 +222,17 @@ func setWithMeta(sv StateView, key string, value []byte, syncStateDB bool, categ
 		return
 	}
 	sv.Set(key, value)
+}
+
+func persistRechargeRequest(sv StateView, req *pb.RechargeRequest) error {
+	if req == nil || req.RequestId == "" {
+		return nil
+	}
+	requestKey := keys.KeyRechargeRequest(req.RequestId)
+	data, err := proto.Marshal(req)
+	if err != nil {
+		return err
+	}
+	setWithMeta(sv, requestKey, data, true, "witness_request")
+	return nil
 }
