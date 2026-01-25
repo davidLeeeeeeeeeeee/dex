@@ -52,6 +52,15 @@ function truncate(str: string | undefined, start = 8, end = 8) {
   return `${str.substring(0, start)}...${str.slice(-end)}`
 }
 
+function getProgress(status: any) {
+  const s = getStatusStr(status)
+  if (s.includes('FINALIZED')) return { percent: 100, color: 'linear-gradient(90deg, #10b981, #34d399)' }
+  if (s.includes('FAILED') || s.includes('REJECTED')) return { percent: 100, color: 'linear-gradient(90deg, #ef4444, #f87171)' }
+  if (s.includes('VOTING')) return { percent: 60, color: 'linear-gradient(90deg, #6366f1, #818cf8)' }
+  if (s.includes('PENDING')) return { percent: 20, color: 'linear-gradient(90deg, #f59e0b, #fbbf24)' }
+  return { percent: 0, color: '#334155' }
+}
+
 const stats = computed(() => ({
   total: requests.value.length,
   pending: requests.value.filter(r => getStatusStr(r.status).includes('PENDING')).length,
@@ -231,9 +240,16 @@ const handleSelectTx = (txId: string) => {
               </div>
             </div>
             
-            <div :class="['status-pill', getStatusStr(req.status).toLowerCase()]">
-              <span class="pulse-dot"></span>
-              {{ getStatusStr(req.status).replace(/_/g, ' ') }}
+            <div class="progress-cell">
+              <div class="progress-info">
+                <span class="progress-status">{{ getStatusStr(req.status).replace(/_/g, ' ') }}</span>
+                <span class="progress-percent">{{ getProgress(req.status).percent }}%</span>
+              </div>
+                <div class="status-pill-wrap">
+                  <div :class="['status-pill', getStatusStr(req.status).toLowerCase()]">
+                    {{ getStatusStr(req.status) }}
+                  </div>
+                </div>
             </div>
           </div>
 
@@ -471,18 +487,68 @@ const handleSelectTx = (txId: string) => {
 }
 .meta-label.height { background: rgba(52, 211, 153, 0.1); color: #34d399; }
 
-.status-pill {
-  padding: 4px 12px; border-radius: 99px;
-  font-size: 0.7rem; font-weight: 700;
-  display: flex; align-items: center; gap: 6px;
-  text-transform: uppercase; letter-spacing: 0.02em;
+/* Progress Bar Styles */
+.progress-cell {
+  width: 180px;
 }
 
-.status-pill.finalized { background: rgba(16, 185, 129, 0.15); color: #10b981; }
-.status-pill.voting { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
-.status-pill.pending { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
 
-.pulse-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: pulse 2s infinite; }
+.progress-status {
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.progress-percent {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.progress-track {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 99px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%; width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
+.progress-glow {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 20px;
+  filter: blur(8px);
+  opacity: 0.6;
+}
 @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
 
 /* Asset Flow Row */

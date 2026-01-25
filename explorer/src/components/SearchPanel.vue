@@ -139,18 +139,8 @@ async function handleSearch() {
 }
 
 async function handleTxClick(txId: string) {
-  if (!selectedNode.value || !txId) return
-  loading.value = true
-  error.value = ''
-  try {
-    const result = await fetchTx({ node: selectedNode.value, tx_id: txId })
-    if (result.error) error.value = result.error
-    else if (result.transaction) viewingTx.value = result.transaction
-  } catch (err: any) {
-    error.value = err.message || 'Request failed'
-  } finally {
-    loading.value = false
-  }
+  if (!txId) return
+  emit('select-tx', txId)
 }
 
 function handleBack() {
@@ -239,7 +229,7 @@ function getPlaceholder(): string {
     <AddressDetail v-if="viewingAddress" :account="viewingAddress" @back="handleBack" @tx-click="handleTxClick" />
     <TxDetail v-else-if="viewingTx" :tx="viewingTx" @back="handleBack" @address-click="handleAddressClick" />
     <BlockDetail v-else-if="blockResult" :block="blockResult" @tx-click="handleTxClick" @address-click="handleAddressClick" @back="handleBack" />
-    <TxDetail v-else-if="txResult" :tx="txResult" @address-click="handleAddressClick" />
+    <TxDetail v-else-if="txResult" :tx="txResult" @address-click="handleAddressClick" @back="handleBack" />
     <AddressDetail v-else-if="addressResult" :account="addressResult" @tx-click="handleTxClick" />
 
     <!-- Default Dashboard -->

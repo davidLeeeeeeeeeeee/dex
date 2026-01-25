@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import type { TxInfo } from '../types'
 import { fetchTx } from '../api'
 import TxTypeRenderer from './TxTypeRenderer.vue'
@@ -21,14 +21,24 @@ const localTx = ref<TxInfo | null>(null)
 const loading = ref(false)
 const error = ref('')
 
-const isModal = typeof props.show !== 'undefined'
+// Mode detection: if 'show' prop is provided (even if false), we are in modal mode
+const isModal = computed(() => typeof props.show !== 'undefined')
+
+// Source of truth for transaction data: prefer local fetch, fallback to passed prop
+const currentTx = computed(() => localTx.value || props.tx || null)
 
 const loadTx = async () => {
-  if (!props.node || !props.txId) return
+  if (!props.node || !props.txId) {
+    console.log('[TxDetail] Skipping load: node or txId missing', { node: props.node, txId: props.txId })
+    return
+  }
+  
   loading.value = true
   error.value = ''
   localTx.value = null
+  
   try {
+    console.log('[TxDetail] Fetching tx:', props.txId, 'from node:', props.node)
     const resp = await fetchTx({ node: props.node, tx_id: props.txId })
     if (resp.error) {
       error.value = resp.error
@@ -39,32 +49,44 @@ const loadTx = async () => {
     }
   } catch (e: any) {
     error.value = e.message || 'Failed to fetch transaction'
+    console.error('[TxDetail] Fetch error:', e)
   } finally {
     loading.value = false
   }
 }
 
-watch(() => [props.show, props.txId, props.node], () => {
-  if (isModal) {
-    if (props.show && props.txId) {
+// Watch for prop changes to trigger reload in modal mode or ID-based mode
+watch(() => [props.show, props.txId, props.node], ([show, txId, node]) => {
+  console.log('[TxDetail] Props Change:', { show, txId, node, isModal: isModal.value })
+  if (isModal.value) {
+    if (show && txId) {
       loadTx()
     }
-  } else if (props.txId) {
+  } else if (txId && node) {
     loadTx()
   }
 }, { immediate: true })
 
-const currentTx = ref<TxInfo | null>(null)
-watch(() => [props.tx, localTx.value], () => {
-  // Prefer detailed localTx if available, fallback to props.tx
-  currentTx.value = localTx.value || (props.tx as TxInfo)
-}, { immediate: true })
-
 const numberFormat = new Intl.NumberFormat('en-US')
 
-function formatNumber(value?: number | null): string {
-  if (value === undefined || value === null) return '-'
-  return numberFormat.format(value)
+function formatNumber(value?: any): string {
+  if (value === undefined || value === null || value === '') return '-'
+  const num = parseFloat(String(value))
+  if (isNaN(num)) return String(value)
+  return numberFormat.format(num)
+}
+
+function formatBalance(val?: any): string {
+  if (val === undefined || val === null || val === '') return '0'
+  try {
+    const s = String(val)
+    if (s.includes('.')) {
+      return parseFloat(s).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 })
+    }
+    return BigInt(s).toLocaleString()
+  } catch (e) {
+    return String(val)
+  }
 }
 
 function statusInfo(status?: string) {
@@ -75,6 +97,7 @@ function statusInfo(status?: string) {
 }
 
 function copyToClipboard(text: string) {
+  if (!text) return
   navigator.clipboard.writeText(text)
 }
 
@@ -112,8 +135,7 @@ function handleClose() {
           </div>
 
           <!-- Content -->
-          <div v-else-if="currentTx" class="tx-view custom-scrollbar" :style="isModal ? 'padding: 32px; overflow-y: auto;' : ''">
-            <!-- Header -->
+          <div v-else-if="currentTx && currentTx.tx_id" class="tx-view custom-scrollbar" :class="{ 'inline-panel': !isModal }">
             <div class="tx-header-glass">
               <div class="header-left">
                 <div class="tx-type-orb">
@@ -182,7 +204,7 @@ function handleClose() {
                   <div class="flow-connector">
                     <div class="connector-line"></div>
                     <div class="value-tag">
-                      <span class="v-num">{{ currentTx.value || '-' }}</span>
+                      <span class="v-num">{{ formatBalance(currentTx.value) }}</span>
                       <span class="v-symbol">ASSET</span>
                     </div>
                     <div class="connector-arrow"></div>
@@ -262,7 +284,9 @@ function handleClose() {
           </div>
           
           <div v-else class="state-msg">
-            <span>Ready for query</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="mb-4 opacity-20"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>
+            <span>Transaction data unavailable</span>
+            <p class="text-xs text-gray-500 mt-2">No transaction was selected or data is currenty being fetched.</p>
           </div>
         </div>
       </div>
@@ -312,7 +336,24 @@ function handleClose() {
 }
 
 /* Base View Styles */
-.tx-view { display: flex; flex-direction: column; gap: 24px; font-family: 'Outfit', sans-serif; }
+.tx-view { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 24px; 
+  font-family: 'Outfit', sans-serif; 
+}
+
+.tx-view.inline-panel {
+  padding: 32px;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 24px;
+  margin-top: 10px;
+}
+
+.tx-view.custom-scrollbar {
+  overflow-y: auto;
+}
 
 /* Header Glass */
 .tx-header-glass {

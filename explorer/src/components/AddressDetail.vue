@@ -37,8 +37,15 @@ watch(() => props.account.address, () => { loadTxHistory() })
 
 function formatBalance(val?: string): string {
   if (!val) return '0'
-  const num = BigInt(val)
-  return num.toLocaleString()
+  try {
+    if (val.includes('.')) {
+      return parseFloat(val).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 })
+    }
+    return BigInt(val).toLocaleString()
+  } catch (e) {
+    console.warn('formatBalance failed for:', val, e)
+    return val
+  }
 }
 
 function truncateHash(hash?: string, len: number = 8): string {
