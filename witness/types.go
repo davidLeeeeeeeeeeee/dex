@@ -4,6 +4,7 @@ package witness
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -165,7 +166,7 @@ var SupportedChains = map[string]*NativeChain{
 
 // IsSupportedChain 检查是否支持该原生链
 func IsSupportedChain(chainID string) bool {
-	_, ok := SupportedChains[chainID]
+	_, ok := SupportedChains[strings.ToUpper(chainID)]
 	return ok
 }
 

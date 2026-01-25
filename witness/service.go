@@ -353,8 +353,8 @@ func (s *Service) CreateRechargeRequest(tx *pb.WitnessRequestTx) (*pb.RechargeRe
 	requestID := tx.Base.TxId
 
 	// 检查是否已存在
-	if _, exists := s.requests[requestID]; exists {
-		return nil, ErrRequestAlreadyExists
+	if old, exists := s.requests[requestID]; exists {
+		return old, nil // 幂等：如果内存中已存在，直接返回，防止 DryRun 状态污染
 	}
 
 	// 验证原生链
@@ -425,7 +425,16 @@ func (s *Service) ProcessVote(vote *pb.WitnessVote) error {
 
 	// 检查状态
 	if request.Status != pb.RechargeRequestStatus_RECHARGE_VOTING {
-		return fmt.Errorf("request is not in voting status")
+		// 如果已经在公示期或已完成，允许继续添加投票（幂等/记录），但不触发共识逻辑
+		if request.Status == pb.RechargeRequestStatus_RECHARGE_CHALLENGE_PERIOD ||
+			request.Status == pb.RechargeRequestStatus_RECHARGE_FINALIZED {
+			err := s.voteManager.AddVote(vote)
+			if err != nil && err != ErrDuplicateVote {
+				return err
+			}
+			return nil
+		}
+		return fmt.Errorf("request %s is not in voting status, current: %s", requestID, request.Status)
 	}
 
 	// 检查是否过期
@@ -435,6 +444,9 @@ func (s *Service) ProcessVote(vote *pb.WitnessVote) error {
 
 	// 添加投票
 	if err := s.voteManager.AddVote(vote); err != nil {
+		if err == ErrDuplicateVote {
+			return nil // 幂等处理
+		}
 		return err
 	}
 

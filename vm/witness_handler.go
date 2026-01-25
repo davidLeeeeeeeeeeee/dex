@@ -283,15 +283,17 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 	requestID := request.Base.TxId
 
 	existingKey := keys.KeyRechargeRequest(requestID)
-	_, exists, _ := sv.Get(existingKey)
+	requestData, exists, _ := sv.Get(existingKey)
 	if exists {
-		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "request already exists"}, fmt.Errorf("request already exists")
+		// 容错处理：如果请求已存在，且状态是活跃的或者是已完成的，允许这笔交易作为“空操作”成功，或者返回 FAILED 凭证但不报错
+		// 在区块链中，重复的交易 hash 本身不应该能进入池子，但如果由于分叉等原因进来了，我们返回 FAILED 凭据而不是 error
+		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "request already exists"}, nil
 	}
 
 	nativeTxKey := keys.KeyRechargeRequestByNativeTx(request.NativeChain, request.NativeTxHash)
 	_, nativeExists, _ := sv.Get(nativeTxKey)
 	if nativeExists {
-		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "native tx already used"}, fmt.Errorf("native tx already used")
+		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "native tx already used"}, nil
 	}
 
 	tokenKey := keys.KeyToken(request.TokenAddress)
@@ -410,13 +412,14 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 	voteKey := keys.KeyWitnessVote(requestID, witnessAddr)
 	_, voteExists, _ := sv.Get(voteKey)
 	if voteExists {
-		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "duplicate vote"}, fmt.Errorf("duplicate vote")
+		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "duplicate vote"}, nil
 	}
 
 	// 使用 WitnessService 处理投票（如果可用）
 	if h.witnessSvc != nil {
 		if err := h.witnessSvc.ProcessVote(vote.Vote); err != nil {
-			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, err
+			// 这里返回 FAILED 的凭据，但是 error 返回 nil，防止整个区块校验失败
+			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, nil
 		}
 	}
 
