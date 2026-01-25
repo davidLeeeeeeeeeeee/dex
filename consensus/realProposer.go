@@ -170,8 +170,13 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, curre
 		return false
 	}
 
-	// 使用上一个区块的ID作为父区块哈希（这里简化处理）
-	parentID := fmt.Sprintf("parent-%d", currentHeight)
+	// 使用上一个高度的实际 ID (对于高度 1，父块是 genesis)
+	parentID := "genesis"
+	if currentHeight > 0 {
+		parentID = fmt.Sprintf("block-%d", currentHeight) // 这是一个简化的假设，实际上建议从 store 获取，但目前 ShouldPropose 没法直接访问 store
+		// 由于 ShouldPropose 主要用于概率过滤，只要与 ProposeBlock 逻辑中的 parentID 选择一致即可。
+		// 在 ProposeBlock 中，height 1 的 parentID 被明确设置为传入的 parentID (即 genesis)
+	}
 
 	vrfOutput, _, err := p.vrfProvider.GenerateVRF(
 		keyMgr.PrivateKeyECDSA,

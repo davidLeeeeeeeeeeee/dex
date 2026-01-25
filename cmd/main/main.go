@@ -345,6 +345,9 @@ ContinueWithConsensus:
 	fmt.Println("🎯 Phase 4: Starting consensus engines...")
 	for _, node := range nodes {
 		if node != nil && node.ConsensusManager != nil {
+			// 在开启查询前，重置提案计时器，确保高度 1 从 Window 0 (5% 概率) 开始，避免初始冲突
+			node.ConsensusManager.ResetProposalTimer()
+
 			// 触发初始查询
 			go func(n *NodeInstance) {
 				logs.SetThreadNodeContext(n.Address)

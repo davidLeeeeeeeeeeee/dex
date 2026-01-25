@@ -190,3 +190,10 @@ func (n *Node) GetMessageStats() map[string]uint64 {
 func (n *Node) GetBlockStore() interfaces.BlockStore {
 	return n.store
 }
+
+// ResetProposalTimer 重置出块计时器
+func (n *Node) ResetProposalTimer() {
+	if n.proposalManager != nil {
+		n.proposalManager.ResetProposalTimer()
+	}
+}

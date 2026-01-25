@@ -251,3 +251,11 @@ func (pm *ProposalManager) UpdateLastBlockTime(t time.Time) {
 	pm.lastBlockTime = t
 	logs.Debug("[ProposalManager] Updated last block time to %v", t)
 }
+
+// ResetProposalTimer 重置出块计时器，用于网络启动时的零点对齐
+func (pm *ProposalManager) ResetProposalTimer() {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.lastBlockTime = time.Now()
+	logs.Info("[ProposalManager] Proposal timer reset to current time")
+}

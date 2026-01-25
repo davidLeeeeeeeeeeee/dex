@@ -255,6 +255,13 @@ func (m *ConsensusNodeManager) IsReady() bool {
 	return true
 }
 
+// ResetProposalTimer 重置出块计时器
+func (m *ConsensusNodeManager) ResetProposalTimer() {
+	if m.Node != nil {
+		m.Node.ResetProposalTimer()
+	}
+}
+
 // 停止共识管理器
 func (m *ConsensusNodeManager) Stop() {
 	if m.Node != nil {
