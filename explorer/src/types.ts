@@ -133,6 +133,10 @@ export interface TxInfo {
   nonce?: number
   error?: string
   details?: Record<string, unknown>
+  index?: number
+  timestamp?: string
+  signature?: string
+  input_data?: string
 }
 
 // 区块查询请求

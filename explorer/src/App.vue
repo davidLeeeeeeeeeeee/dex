@@ -12,7 +12,7 @@ import WitnessFlow from './components/frost/WitnessFlow.vue'
 import DkgTimeline from './components/frost/DkgTimeline.vue'
 import WitnessList from './components/frost/WitnessList.vue'
 import TradingPanel from './components/TradingPanel.vue'
-import TransactionModal from './components/TransactionModal.vue'
+import TxDetail from './components/TxDetail.vue'
 
 type TabType = 'overview' | 'search' | 'trading' | 'withdrawals' | 'recharges' | 'dkg'
 
@@ -328,7 +328,7 @@ onMounted(() => {
 
     <NodeModal :visible="modalVisible" :address="modalAddress" @close="modalVisible = false" />
     
-    <TransactionModal 
+    <TxDetail 
       :show="txModalVisible" 
       :node="txModalNode" 
       :tx-id="txModalId"

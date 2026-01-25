@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
+import mermaid from 'mermaid'
 import { fetchWitnessRequests } from '../../api'
 import type { WitnessRequest } from '../../types'
 import ProtocolModal from './ProtocolModal.vue'
@@ -7,6 +8,8 @@ import ProtocolModal from './ProtocolModal.vue'
 const props = defineProps<{
   node: string
 }>()
+
+const emit = defineEmits(['select-tx'])
 
 const requests = ref<WitnessRequest[]>([])
 const loading = ref(false)
@@ -29,9 +32,8 @@ watch(() => props.node, loadRequests)
 onMounted(loadRequests)
 
 function formatAmount(amount: string): string {
-  // 暂时移除 1e8 除法，因为测试环境使用较小数值
   const num = parseFloat(amount)
-  return num.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })
+  return num.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 })
 }
 
 function getStatusStr(status: any): string {
@@ -39,21 +41,16 @@ function getStatusStr(status: any): string {
   return String(status).toUpperCase()
 }
 
-function getStatusStep(status: any): number {
-  const s = getStatusStr(status)
-  if (s.includes('PENDING')) return 1
-  if (s.includes('VOTING')) return 2
-  if (s.includes('CHALLENGE')) return 3
-  if (s.includes('FINALIZED')) return 4
-  return 1
+function formatTime(ts: number | undefined) {
+  if (!ts) return 'N/A'
+  return new Date(ts * 1000).toLocaleString()
 }
 
-const flowSteps = [
-  { label: 'Pending', icon: '<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>' },
-  { label: 'Voting', icon: '<path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>' },
-  { label: 'Review', icon: '<path d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/>' },
-  { label: 'Done', icon: '<path d="M5 13l4 4L19 7"/>' }
-]
+function truncate(str: string | undefined, start = 8, end = 8) {
+  if (!str) return 'N/A'
+  if (str.length <= start + end) return str
+  return `${str.substring(0, start)}...${str.slice(-end)}`
+}
 
 const stats = computed(() => ({
   total: requests.value.length,
@@ -62,41 +59,119 @@ const stats = computed(() => ({
   finalized: requests.value.filter(r => getStatusStr(r.status).includes('FINALIZED')).length,
 }))
 
-// Modal state
+const expandedRequests = ref<Set<string>>(new Set())
+
+const toggleTrace = (requestId: string) => {
+  if (expandedRequests.value.has(requestId)) {
+    expandedRequests.value.delete(requestId)
+  } else {
+    expandedRequests.value.add(requestId)
+  }
+}
+
 const modalVisible = ref(false)
 const modalTitle = ref('')
 const mermaidDefinition = ref('')
 const selectedRequest = ref<WitnessRequest | null>(null)
 
-const emit = defineEmits(['select-tx'])
+const getMermaidDefinition = (req: WitnessRequest) => {
+  const status = getStatusStr(req.status)
+  const isFinalized = status.includes('FINALIZED')
+  const isFailed = status.includes('FAILED') || status.includes('REJECTED')
+  
+  const pass = req.pass_count || 0
+  const fail = req.fail_count || 0
+  
+  let flow = 'graph LR\n'
+  
+  flow += '  A[Deposit Detected] --> B[Witness Voting]\n'
+  flow += `  B --> C{${pass} Pass / ${fail} Fail}\n`
+  
+  // Progress Logic Colors
+  const doneColor = '#10b981'
+  const todoColor = '#000000'
+  const isFinished = isFinalized || isFailed
+
+  if (isFinalized) {
+    flow += '  C -->|Consensus| D[Finalized]\n'
+    flow += `  style D fill:${doneColor},color:#fff\n`
+  } else if (isFailed) {
+    flow += '  C -->|Rejected| E[Rejected]\n'
+    flow += `  style E fill:${doneColor},color:#fff\n`
+  } else {
+    flow += '  C -.->|In Progress| F[Verifying]\n'
+    flow += `  style F fill:${todoColor},color:#fff\n`
+  }
+
+  // Node A is always completed if we see the request
+  flow += `  style A fill:${doneColor},color:#fff\n`
+  
+  // B and C are completed only if the process is finalized or failed
+  flow += `  style B fill:${isFinished ? doneColor : todoColor},color:#fff\n`
+  flow += `  style C fill:${isFinished ? doneColor : todoColor},color:#fff\n`
+
+  // Base styles for font
+  flow += '  classDef default font-family:Outfit,font-size:12px\n'
+  
+  return flow
+}
 
 const openFlow = (req: WitnessRequest) => {
+  modalTitle.value = `Witness Flow: ${req.request_id.substring(0, 12)}`
+  mermaidDefinition.value = getMermaidDefinition(req)
   selectedRequest.value = req
-  modalTitle.value = `Witness Flow: ${(req.request_id || '').substring(0, 12)}...`
-  const s = getStatusStr(req.status)
-  const step = getStatusStep(req.status)
-  const isFinalized = s.includes('FINALIZED')
-  const isRejected = s.includes('REJECTED')
-  let flow = 'graph LR\n'
-  flow += '  A((Native Tx)) -->|Detect| B[Pending]\n'
-  flow += '  B -->|Witness| C{Voting}\n'
-  flow += '  C -->|Consensus| D[Challenge Period]\n'
-  flow += '  D -->|Timeout| E[Finalized]\n'
-  if (step === 1) flow += '  style B fill:#f59e0b,stroke:#fff,stroke-width:2px\n'
-  if (step === 2) flow += '  style C fill:#6366f1,stroke:#fff,stroke-width:2px\n'
-  if (step === 3) flow += '  style D fill:#f97316,stroke:#fff,stroke-width:2px\n'
-  if (isFinalized) flow += '  style E fill:#10b981,stroke:#fff,stroke-width:2px\n'
-  if (isRejected) flow += '  style C fill:#ef4444,stroke:#fff,stroke-width:2px\n'
-  mermaidDefinition.value = flow
   modalVisible.value = true
 }
 
-const handleSelectTx = (txId: string) => {
-  modalVisible.value = false
-  emit('select-tx', txId)
+// For embedded mermaid
+const renderedSvgs = ref<Record<string, string>>({})
+
+const renderEmbed = async (req: WitnessRequest) => {
+  const rid = req.request_id || ''
+  const id = `mermaid-embed-${rid.replace(/[^a-zA-Z0-9]/g, '')}`
+  const def = getMermaidDefinition(req)
+  try {
+    const { svg } = await mermaid.render(id, def)
+    renderedSvgs.value[rid] = svg
+  } catch (e) {
+    console.error('Mermaid render failed', e)
+    renderedSvgs.value[rid] = '<p class="render-error">Diagram render failed</p>'
+  }
 }
 
+// Re-render when expanded list changes or when request data updates
+watch([() => Array.from(expandedRequests.value), () => requests.value], async ([newExpanded, newReqs]) => {
+  // Update embedded diagrams
+  for (const rid of newExpanded) {
+    const req = newReqs.find(r => r.request_id === rid)
+    if (req) {
+      await renderEmbed(req)
+    }
+  }
 
+  // Update modal diagram if open
+  if (selectedRequest.value && modalVisible.value) {
+    const currentId = selectedRequest.value.request_id
+    const updated = newReqs.find(r => r.request_id === currentId)
+    if (updated) {
+      selectedRequest.value = updated
+      mermaidDefinition.value = getMermaidDefinition(updated)
+    }
+  }
+}, { deep: true })
+
+onMounted(() => {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'dark',
+    securityLevel: 'loose',
+    fontFamily: 'Outfit, sans-serif'
+  })
+})
+
+const handleSelectTx = (txId: string) => {
+  emit('select-tx', txId)
+}
 </script>
 
 <template>
@@ -114,14 +189,14 @@ const handleSelectTx = (txId: string) => {
       </div>
       <button @click="loadRequests" class="glass-btn primary" :disabled="loading">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ 'spin': loading }"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
-        <span>{{ loading ? 'Synchronizing...' : 'Refresh Status' }}</span>
+        <span>{{ loading ? 'Syncing...' : 'Refresh' }}</span>
       </button>
     </header>
 
     <!-- Stats Matrix -->
     <div v-if="requests.length > 0" class="stats-matrix">
       <div class="matrix-card">
-        <span class="matrix-label">Active Requests</span>
+        <span class="matrix-label">Total</span>
         <span class="matrix-value">{{ stats.total }}</span>
       </div>
       <div class="matrix-card amber">
@@ -138,90 +213,159 @@ const handleSelectTx = (txId: string) => {
       </div>
     </div>
 
-    <!-- Error Alert -->
-    <div v-if="error" class="error-alert">
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
-      <span>{{ error }}</span>
-    </div>
-
-    <!-- Main Views -->
-    <div v-if="requests.length > 0" class="requests-grid">
-      <div v-for="req in requests" :key="req.request_id || Math.random()" class="request-card group" @click="openFlow(req)">
-        <div class="card-glow"></div>
+    <!-- Main List -->
+    <div v-if="requests.length > 0" class="requests-list">
+      <div v-for="req in requests" :key="req.request_id || Math.random()" 
+           :class="['request-card', { expanded: expandedRequests.has(req.request_id || '') }]">
         
-        <!-- ID Stripe -->
-        <div class="request-header">
-          <div class="req-id">
-            <span class="hashtag">#</span>
-            <code class="mono">{{ (req.request_id || '').substring(0, 12) }}</code>
+        <div class="card-main-content" @click="toggleTrace(req.request_id || '')">
+          <!-- Row 1: ID & Status & Meta -->
+          <div class="card-top-row">
+            <div class="id-badge-group">
+              <span class="req-id-short">#{{ (req.request_id || '').substring(0, 10) }}</span>
+              <span v-if="req.vault_id !== undefined" class="meta-label">Vault {{ req.vault_id }}</span>
+              <span v-if="req.create_height" class="meta-label height">H:{{ req.create_height }}</span>
+              <div class="flow-entry-link" @click.stop="openFlow(req)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                <span>Flow</span>
+              </div>
+            </div>
+            
+            <div :class="['status-pill', getStatusStr(req.status).toLowerCase()]">
+              <span class="pulse-dot"></span>
+              {{ getStatusStr(req.status).replace(/_/g, ' ') }}
+            </div>
           </div>
-          <div :class="['status-pill-lite', getStatusStr(req.status).toLowerCase()]">
-            {{ getStatusStr(req.status).replace(/_/g, ' ') }}
+
+          <!-- Row 2: Asset Movement -->
+          <div class="asset-flow-row">
+            <div class="chain-display">
+              <div :class="['chain-icon', (req.native_chain || '').toLowerCase()]">
+                {{ (req.native_chain || '?').charAt(0).toUpperCase() }}
+              </div>
+              <div class="chain-detail">
+                <div class="chain-name">{{ req.native_chain || 'Protocol' }}</div>
+                <div class="asset-symbol">{{ req.token_address || 'Token' }}</div>
+              </div>
+            </div>
+
+            <div class="flow-arrow">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </div>
+
+            <div class="amount-display">
+              <div class="amount-val">{{ formatAmount(req.amount || '0') }}</div>
+              <div class="recipient-addr">{{ truncate(req.receiver_address) }}</div>
+            </div>
+          </div>
+
+          <!-- Interaction Footer -->
+          <div class="card-action-bar">
+            <div class="vote-summary">
+              <div class="v-dot pass"></div>
+              <span>{{ req.pass_count || 0 }} Pass</span>
+              <div class="v-sep"></div>
+              <div class="v-dot fail"></div>
+              <span>{{ req.fail_count || 0 }} Fail</span>
+              <div class="v-sep" v-if="req.abstain_count"></div>
+              <div class="v-dot abstain" v-if="req.abstain_count"></div>
+              <span v-if="req.abstain_count">{{ req.abstain_count }} Abstain</span>
+            </div>
+            <div class="details-toggle">
+              Trace Breakdown
+              <svg :class="{ 'rotated': expandedRequests.has(req.request_id || '') }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
+            </div>
           </div>
         </div>
 
-        <div class="card-divider"></div>
+        <!-- Expanded Section -->
+        <Transition name="expand">
+          <div v-if="expandedRequests.has(req.request_id || '')" class="details-pane">
+            <!-- Embedded Flow Visual -->
+            <div class="embedded-flow-section">
+              <div class="timeline-header">Visual Process Diagram</div>
+              <div class="flow-container-inner" v-if="renderedSvgs[req.request_id]" v-html="renderedSvgs[req.request_id]"></div>
+              <div class="flow-loading-box" v-else>
+                <div class="spinner-mini"></div>
+                <span>Generating diagram...</span>
+              </div>
+            </div>
 
-        <!-- Chain Info -->
-        <div class="chain-info-block">
-          <div :class="['chain-badge-logo', (req.native_chain || '').toLowerCase()]">
-            {{ (req.native_chain || '!!').charAt(0) }}
-          </div>
-          <div class="chain-meta">
-            <span class="chain-name">{{ req.native_chain || 'Protocol' }}</span>
-            <span class="recipient mono">{{ (req.receiver_address || '').substring(0, 8) }}...{{ (req.receiver_address || '').slice(-6) }}</span>
-          </div>
-          <div class="value-block">
-            <span class="val-num">{{ formatAmount(req.amount || '0') }}</span>
-            <span class="val-asset">{{ req.native_chain }}</span>
-          </div>
-        </div>
+            <!-- Full Metadata Grid -->
+            <div class="meta-explorer">
+              <div class="meta-item full">
+                <span class="m-label">Request ID</span>
+                <span class="m-value mono highlight">{{ req.request_id }}</span>
+              </div>
+              <div class="meta-item">
+                <span class="m-label">Native TX Hash</span>
+                <span class="m-value mono clickable" @click.stop>{{ req.native_tx_hash || 'None' }}</span>
+              </div>
+              <div class="meta-item">
+                <span class="m-label">Requester</span>
+                <span class="m-value mono">{{ req.requester_address || 'N/A' }}</span>
+              </div>
+              <div class="meta-item">
+                <span class="m-label">Token Contract</span>
+                <span class="m-value mono">{{ req.token_address || 'Native' }}</span>
+              </div>
+              <div class="meta-item">
+                <span class="m-label">Target Receiver</span>
+                <span class="m-value mono">{{ req.receiver_address }}</span>
+              </div>
+            </div>
 
-        <!-- Flow Visualizer -->
-        <div class="mini-flow">
-          <div class="flow-rail">
-            <div class="flow-rail-fill" :style="{ width: (getStatusStep(req.status) / 4 * 100) + '%' }"></div>
-          </div>
-          <div class="flow-steps">
-            <div v-for="(step, i) in flowSteps" :key="i" 
-                 :class="['flow-node-item', { active: getStatusStep(req.status) > i, current: getStatusStep(req.status) === i+1 }]">
-              <div class="flow-node-circle">
-                <svg width="6" height="6" viewBox="0 0 24 24" fill="currentColor" v-html="step.icon" />
+            <!-- Detailed Vote Timeline -->
+            <div class="vote-timeline">
+              <div class="timeline-header">Verification Audit Trail</div>
+              <div class="vote-entries">
+                <!-- Original Intent -->
+                <div class="vote-entry-item intent" @click="handleSelectTx(req.request_id)">
+                  <div class="v-marker intent"></div>
+                  <div class="v-body">
+                    <div class="v-header">
+                      <span class="v-type">DEPOSIT_INTENT</span>
+                      <span class="v-time">Block H:{{ req.create_height }}</span>
+                    </div>
+                    <div class="v-footer">Triggered by deposit on {{ req.native_chain }}</div>
+                  </div>
+                </div>
+
+                <!-- Individual Witness Votes -->
+                <div v-for="vote in req.votes" :key="vote.tx_id" 
+                     class="vote-entry-item" 
+                     @click="handleSelectTx(vote.tx_id || '')">
+                  <div :class="['v-marker', Number(vote.vote_type) === 1 ? 'pass' : 'fail']"></div>
+                  <div class="v-body">
+                    <div class="v-header">
+                      <span class="v-type">{{ Number(vote.vote_type) === 1 ? 'APPROVE' : 'REJECT' }}</span>
+                      <span class="v-time">{{ formatTime(vote.timestamp) }}</span>
+                    </div>
+                    <div class="v-footer">
+                      Witness: <span class="mono">{{ truncate(vote.witness_address, 6, 6) }}</span>
+                    </div>
+                    <div class="v-tx-line">
+                      TX: <span class="mono">{{ truncate(vote.tx_id, 10, 10) }}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
-        <!-- Interaction Area -->
-        <div class="card-footer">
-          <div class="vote-stats">
-            <div class="v-pill pass">
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-              <span>{{ req.pass_count || 0 }}</span>
-            </div>
-            <div class="v-pill fail">
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              <span>{{ req.fail_count || 0 }}</span>
-            </div>
-          </div>
-          <div class="inspect-btn">
-            Detailed Trace
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
-          </div>
-        </div>
+        </Transition>
       </div>
     </div>
 
     <!-- Empty State -->
     <div v-else-if="!loading" class="empty-state">
-      <div class="empty-orb teal">
-        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10c0 5.5 4.5 10 10 10s10-4.5 10-10V2h-10z"/><path d="m9 12 2 2 4-4"/></svg>
+      <div class="empty-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10c0 5.5 4.5 10 10 10s10-4.5 10-10V2h-10z"/><path d="m9 12 2 2 4-4"/></svg>
       </div>
-      <h3>Nothing to witness</h3>
-      <p>Gateway is clear. No active recharge requests found in the mempool.</p>
+      <h3>No Active Flows</h3>
+      <p>The witness gateway is currently idle. New recharge requests will appear here.</p>
     </div>
 
-    <!-- Modals -->
+    <!-- Protocol Detail Modal -->
     <ProtocolModal 
       :show="modalVisible" 
       :title="modalTitle" 
@@ -230,200 +374,286 @@ const handleSelectTx = (txId: string) => {
       @close="modalVisible = false"
       @select-tx="handleSelectTx"
     />
-
-
   </div>
 </template>
 
 <style scoped>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 .witness-dashboard {
   font-family: 'Outfit', sans-serif;
-  color: #fff;
-  background: rgba(13, 17, 23, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 24px;
-  padding: 32px;
-  backdrop-filter: blur(20px);
+  color: #e2e8f0;
 }
 
 .header-section {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 40px;
+  margin-bottom: 32px;
 }
 
-.header-left { display: flex; align-items: center; gap: 20px; }
+.header-left { display: flex; align-items: center; gap: 16px; }
 
 .icon-orb {
-  width: 56px;
-  height: 56px;
-  background: linear-gradient(135deg, rgba(20, 184, 166, 0.2), rgba(16, 185, 129, 0.2));
-  border: 1px solid rgba(20, 184, 166, 0.3);
-  border-radius: 18px;
+  width: 48px; height: 48px;
+  background: rgba(45, 212, 191, 0.1);
+  border: 1px solid rgba(45, 212, 191, 0.2);
+  border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
   color: #2dd4bf;
-  box-shadow: 0 10px 30px rgba(20, 184, 166, 0.1);
 }
 
-.premium-title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
-.premium-subtitle { font-size: 0.85rem; color: #64748b; margin: 4px 0 0; }
+.premium-title { font-size: 1.25rem; font-weight: 700; margin: 0; color: #fff; }
+.premium-subtitle { font-size: 0.8rem; color: #94a3b8; margin: 2px 0 0; }
 
 .glass-btn {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: #fff;
-  padding: 10px 20px;
-  border-radius: 12px;
-  display: flex; align-items: center; gap: 10px;
-  font-weight: 600;
-  font-size: 0.9rem;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  cursor: pointer;
+  padding: 8px 16px;
+  border-radius: 10px;
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 600; font-size: 0.85rem;
+  cursor: pointer; transition: all 0.2s;
 }
 
-.glass-btn:hover:not(:disabled) {
-  background: rgba(20, 184, 166, 0.1);
-  border-color: #14b8a6;
-  box-shadow: 0 0 20px rgba(20, 184, 166, 0.2);
-  transform: translateY(-2px);
-}
+.glass-btn:hover { background: rgba(255, 255, 255, 0.1); transform: translateY(-1px); }
 
+/* Stats Matrix */
 .stats-matrix {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 20px;
-  margin-bottom: 40px;
+  gap: 16px;
+  margin-bottom: 32px;
 }
 
 .matrix-card {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  padding: 20px;
-  border-radius: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 16px;
+  border-radius: 14px;
 }
 
-.matrix-label { font-size: 0.7rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
-.matrix-value { font-size: 1.8rem; font-weight: 800; }
+.matrix-label { font-size: 0.65rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+.matrix-value { font-size: 1.5rem; font-weight: 700; display: block; margin-top: 4px; color: #fff; }
 
-.matrix-card.amber .matrix-value { color: #f59e0b; }
-.matrix-card.indigo .matrix-value { color: #6366f1; }
-.matrix-card.emerald .matrix-value { color: #10b981; }
+.matrix-card.amber .matrix-value { color: #fbbf24; }
+.matrix-card.indigo .matrix-value { color: #818cf8; }
+.matrix-card.emerald .matrix-value { color: #34d399; }
 
-.requests-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
+/* Request List & Cards */
+.requests-list { display: flex; flex-direction: column; gap: 16px; }
 
 .request-card {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 20px;
-  padding: 24px;
-  position: relative;
+  background: rgba(30, 41, 59, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 16px;
   overflow: hidden;
-  cursor: pointer;
-  transition: all 0.3s;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.request-card:hover {
+.request-card:hover { 
+  background: rgba(30, 41, 59, 0.5); 
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.card-main-content { padding: 20px; cursor: pointer; }
+
+/* Top Row Styles */
+.card-top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+
+.id-badge-group { display: flex; align-items: center; gap: 8px; }
+.req-id-short { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 600; color: #818cf8; }
+.meta-label { 
+  font-size: 0.65rem; font-weight: 700; 
+  background: rgba(255, 255, 255, 0.05); 
+  padding: 2px 8px; border-radius: 4px; color: #94a3b8; 
+}
+.meta-label.height { background: rgba(52, 211, 153, 0.1); color: #34d399; }
+
+.status-pill {
+  padding: 4px 12px; border-radius: 99px;
+  font-size: 0.7rem; font-weight: 700;
+  display: flex; align-items: center; gap: 6px;
+  text-transform: uppercase; letter-spacing: 0.02em;
+}
+
+.status-pill.finalized { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+.status-pill.voting { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
+.status-pill.pending { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+
+.pulse-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: pulse 2s infinite; }
+@keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+
+/* Asset Flow Row */
+.asset-flow-row {
+  display: flex; align-items: center; justify-content: space-between;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 16px; border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.chain-display { display: flex; align-items: center; gap: 12px; }
+.chain-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 1rem;
+}
+.chain-icon.btc { background: #f7931a22; color: #f7931a; }
+.chain-icon.eth { background: #627eea22; color: #627eea; }
+
+.chain-name { font-size: 0.9rem; font-weight: 700; color: #fff; }
+.asset-symbol { font-size: 0.7rem; color: #64748b; font-weight: 600; }
+
+.flow-arrow { color: #334155; }
+
+.amount-display { text-align: right; }
+.amount-val { font-family: 'JetBrains Mono', monospace; font-size: 1.1rem; font-weight: 700; color: #fbbf24; }
+.recipient-addr { font-size: 0.7rem; color: #64748b; font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+
+/* Action Bar */
+.card-action-bar { display: flex; justify-content: space-between; align-items: center; }
+.vote-summary { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: #94a3b8; font-weight: 600; }
+.v-dot { width: 6px; height: 6px; border-radius: 50%; }
+.v-dot.pass { background: #10b981; box-shadow: 0 0 8px #10b98166; }
+.v-dot.fail { background: #ef4444; box-shadow: 0 0 8px #ef444466; }
+.v-dot.abstain { background: #64748b; }
+.v-sep { width: 1px; height: 10px; background: rgba(255,255,255,0.05); }
+
+.details-toggle {
+  font-size: 0.75rem; font-weight: 700; color: #818cf8;
+  display: flex; align-items: center; gap: 6px;
+}
+.details-toggle svg { transition: transform 0.25s; }
+.details-toggle svg.rotated { transform: rotate(90deg); }
+
+/* Expanded Details */
+.details-pane {
+  background: rgba(0, 0, 0, 0.25);
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
+  padding: 24px;
+}
+
+.meta-explorer {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  margin-bottom: 24px;
+}
+
+.meta-item { display: flex; flex-direction: column; gap: 4px; }
+.meta-item.full { grid-column: span 2; }
+.m-label { font-size: 0.6rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; }
+.m-value { font-size: 0.75rem; font-weight: 500; color: #94a3b8; }
+.m-value.mono { font-family: 'JetBrains Mono', monospace; }
+.m-value.highlight { color: #818cf8; }
+.m-value.clickable { cursor: pointer; color: #38bdf8; text-decoration: underline; text-underline-offset: 4px; }
+.m-value.clickable:hover { color: #7dd3fc; }
+
+/* Vote Timeline */
+.vote-timeline { margin-top: 24px; }
+.timeline-header { font-size: 0.7rem; font-weight: 800; color: #475569; text-transform: uppercase; margin-bottom: 16px; }
+
+.vote-entries { display: flex; flex-direction: column; gap: 12px; }
+
+.vote-entry-item {
+  display: flex; gap: 16px; padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 10px;
+  cursor: pointer; transition: all 0.2s;
+}
+.vote-entry-item:hover { 
   background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.1);
-  transform: translateY(-4px);
+  transform: translateX(4px);
+  border-color: rgba(255,255,255,0.08); 
 }
 
-.card-glow {
-  position: absolute;
-  top: 0; right: 0;
-  width: 100px; height: 100px;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.05) 0%, transparent 70%);
-  pointer-events: none;
+.v-marker { width: 4px; border-radius: 2px; flex-shrink: 0; }
+.v-marker.intent { background: #818cf8; }
+.v-marker.pass { background: #10b981; }
+.v-marker.fail { background: #ef4444; }
+
+.v-body { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.v-header { display: flex; justify-content: space-between; align-items: center; }
+.v-type { font-size: 0.7rem; font-weight: 800; color: #fff; }
+.v-time { font-size: 0.65rem; color: #475569; font-weight: 600; }
+.v-footer { font-size: 0.7rem; color: #94a3b8; }
+.v-tx-line { font-size: 0.65rem; color: #475569; font-style: italic; }
+
+.embedded-flow-section {
+  margin-top: 32px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.02);
 }
 
-.request-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.req-id { display: flex; align-items: center; gap: 6px; }
-.hashtag { color: #6366f1; font-weight: 900; }
-.mono { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: #94a3b8; }
+.flow-container-inner {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding-top: 10px;
+}
 
-.status-pill-lite {
-  padding: 4px 12px;
-  border-radius: 99px;
-  background: rgba(255, 255, 255, 0.05);
+:deep(.flow-container-inner svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.flow-loading-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 0;
+  color: #475569;
+  font-size: 0.8rem;
+}
+
+.spinner-mini {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.flow-entry-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 0.65rem;
   font-weight: 800;
+  color: #6366f1;
   text-transform: uppercase;
-  color: #64748b;
+  background: rgba(99, 102, 241, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
 }
 
-.status-pill-lite.finalized { background: #10b98122; color: #10b981; }
-.status-pill-lite.voting { background: #6366f122; color: #6366f1; }
-.status-pill-lite.pending { background: #f59e0b22; color: #f59e0b; }
-
-.card-divider { height: 1px; background: linear-gradient(90deg, rgba(255,255,255,0.05), transparent); margin-bottom: 20px; }
-
-.chain-info-block { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-.chain-badge-logo {
-  width: 40px; height: 40px;
-  background: #27272a;
-  border-radius: 12px;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 900; font-size: 1.1rem;
+.flow-entry-link:hover {
+  background: #6366f1;
+  color: #fff;
 }
-.chain-badge-logo.btc { background: #f7931a22; color: #f7931a; }
-.chain-badge-logo.eth { background: #627eea22; color: #627eea; }
 
-.chain-meta { flex: 1; display: flex; flex-direction: column; }
-.chain-name { font-weight: 700; color: #fff; }
-.recipient { font-size: 0.7rem; color: #475569; }
+.mono { font-family: 'JetBrains Mono', monospace; }
 
-.value-block { text-align: right; }
-.val-num { display: block; font-weight: 800; color: #f59e0b; font-size: 1.1rem; font-family: 'JetBrains Mono', monospace; }
-.val-asset { font-size: 0.65rem; font-weight: 700; color: #64748b; }
+/* Transitions */
+.expand-enter-active, .expand-leave-active { transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1); max-height: 1000px; overflow: hidden; }
+.expand-enter-from, .expand-leave-to { max-height: 0; opacity: 0; }
 
-.mini-flow { margin-bottom: 24px; position: relative; }
-.flow-rail { height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; }
-.flow-rail-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #10b981); border-radius: 2px; transition: width 1s; }
-.flow-nodes { position: absolute; top: -6px; left: 0; width: 100%; display: flex; justify-content: space-between; }
-.flow-node-circle {
-  width: 16px; height: 16px; border-radius: 50%;
-  background: #18181b; border: 2px solid #27272a;
-  display: flex; align-items: center; justify-content: center;
-  color: #3f3f46; transition: all 0.5s;
-}
-.flow-node-item.active .flow-node-circle { background: #10b981; border-color: #10b981; color: #fff; box-shadow: 0 0 10px #10b98144; }
-.flow-node-item.current .flow-node-circle { background: #6366f1; border-color: #6366f1; color: #fff; box-shadow: 0 0 15px #6366f1; }
-
-.card-footer { display: flex; justify-content: space-between; align-items: center; }
-.vote-stats { display: flex; gap: 8px; }
-.v-pill {
-  padding: 4px 10px; border-radius: 8px; display: flex; align-items: center; gap: 6px;
-  font-size: 0.7rem; font-weight: 800;
-}
-.v-pill.pass { background: rgba(16, 185, 129, 0.1); color: #10b981; }
-.v-pill.fail { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
-
-.inspect-btn {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 0.7rem; font-weight: 700; color: #6366f1;
-  opacity: 0.5; transition: all 0.3s;
-}
-.request-card:hover .inspect-btn { opacity: 1; transform: translateX(-4px); }
-
-.empty-state { text-align: center; padding: 100px 0; color: #64748b; }
-.empty-orb {
-  width: 80px; height: 80px; background: rgba(255, 255, 255, 0.02);
-  border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  margin: 0 auto 24px; color: #1e293b;
-}
-.empty-orb.teal { color: #14b8a6; background: rgba(20, 184, 166, 0.05); }
+.empty-state { text-align: center; padding: 80px 20px; color: #64748b; }
+.empty-icon { margin-bottom: 16px; opacity: 0.5; }
 
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-@media (max-width: 1024px) {
-  .requests-grid { grid-template-columns: 1fr; }
-  .stats-matrix { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 768px) {
+  .stats-matrix { grid-template-columns: 1fr 1fr; }
+  .meta-explorer { grid-template-columns: 1fr; }
+  .meta-item.full { grid-column: auto; }
 }
 </style>
