@@ -12,6 +12,7 @@ import WitnessFlow from './components/frost/WitnessFlow.vue'
 import DkgTimeline from './components/frost/DkgTimeline.vue'
 import WitnessList from './components/frost/WitnessList.vue'
 import TradingPanel from './components/TradingPanel.vue'
+import TransactionModal from './components/TransactionModal.vue'
 
 type TabType = 'overview' | 'search' | 'trading' | 'withdrawals' | 'recharges' | 'dkg'
 
@@ -55,8 +56,28 @@ const firstSelectedNode = computed(() => {
 })
 
 const selectedProtocolNode = ref('')
+const pendingSearchTx = ref('')
+
+const txModalVisible = ref(false)
+const txModalId = ref('')
+const txModalNode = ref('')
+
+function handleSelectTx(txId: string) {
+  // Instead of switching tabs, we show the modal for quick inspection
+  txModalId.value = txId
+  txModalNode.value = selectedProtocolNode.value || firstSelectedNode.value 
+  txModalVisible.value = true
+}
+
+function handleAddressClick(address: string) {
+  // For now, switch to search tab for address lookup 
+  // (In future we could also do an AddressModal)
+  activeTab.value = 'search'
+  // We'll need a mechanism in SearchPanel to auto-query address
+}
 
 watch(nodes, (newNodes) => {
+
   if (newNodes.length > 0 && !selectedProtocolNode.value) {
     selectedProtocolNode.value = newNodes[0]
   }
@@ -247,8 +268,9 @@ onMounted(() => {
       </main>
 
       <main v-else-if="activeTab === 'search'" class="p-layout search-mode animate-fade-in">
-        <SearchPanel :nodes="nodes" :default-node="firstSelectedNode" />
+        <SearchPanel :nodes="nodes" :default-node="firstSelectedNode" :predefined-tx="pendingSearchTx" @select-tx="handleSelectTx" />
       </main>
+
 
       <main v-else-if="activeTab === 'trading'" class="p-layout trade-mode animate-fade-in">
         <TradingPanel :nodes="nodes" :default-node="firstSelectedNode" />
@@ -262,7 +284,8 @@ onMounted(() => {
               <option v-for="node in nodes" :key="node" :value="node">{{ node }}</option>
             </select>
           </div>
-          <WithdrawQueue v-if="selectedProtocolNode" :node="selectedProtocolNode" />
+          <WithdrawQueue v-if="selectedProtocolNode" :node="selectedProtocolNode" @select-tx="handleSelectTx" />
+
         </div>
       </main>
 
@@ -276,7 +299,7 @@ onMounted(() => {
           </div>
           <WitnessList v-if="selectedProtocolNode" :node="selectedProtocolNode" />
           <div style="margin-top: 32px"></div>
-          <WitnessFlow v-if="selectedProtocolNode" :node="selectedProtocolNode" />
+          <WitnessFlow v-if="selectedProtocolNode" :node="selectedProtocolNode" @select-tx="handleSelectTx" />
         </div>
       </main>
 
@@ -304,6 +327,14 @@ onMounted(() => {
     </footer>
 
     <NodeModal :visible="modalVisible" :address="modalAddress" @close="modalVisible = false" />
+    
+    <TransactionModal 
+      :show="txModalVisible" 
+      :node="txModalNode" 
+      :tx-id="txModalId"
+      @close="txModalVisible = false"
+      @address-click="handleAddressClick"
+    />
   </div>
 </template>
 

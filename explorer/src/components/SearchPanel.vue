@@ -6,10 +6,14 @@ import AddressDetail from './AddressDetail.vue'
 import type { BlockInfo, TxInfo, AccountInfo } from '../types'
 import { fetchBlock, fetchTx, fetchAddress, fetchRecentBlocks, type BlockHeaderInfo } from '../api'
 
+const emit = defineEmits(['select-tx'])
+
 const props = defineProps<{
   nodes: string[]
   defaultNode: string
+  predefinedTx?: string
 }>()
+
 
 // 状态
 const searchQuery = ref('')
@@ -46,6 +50,15 @@ watch(() => props.nodes, (nodes) => {
     loadRecentBlocks()
   }
 }, { immediate: true })
+
+watch(() => props.predefinedTx, (txId) => {
+  if (txId) {
+    searchQuery.value = txId
+    searchType.value = 'tx'
+    handleSearch()
+  }
+}, { immediate: true })
+
 
 // 加载最近区块
 async function loadRecentBlocks() {
@@ -261,7 +274,12 @@ function getPlaceholder(): string {
                 <span class="height-badge">#{{ block.height }}</span>
               </td>
               <td class="hash-cell">
-                <code class="mono text-gray-400">{{ block.block_hash ? block.block_hash.substring(0, 16) + '...' : '-' }}</code>
+                <div class="hash-with-tool">
+                  <code class="mono text-gray-400">{{ block.block_hash ? block.block_hash.substring(0, 16) + '...' : '-' }}</code>
+                  <button class="mini-inspect" @click.stop="emit('select-tx', block.block_hash)" title="Quick Inspect">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                  </button>
+                </div>
               </td>
               <td class="miner-cell">
                 <div class="proposer">
@@ -454,6 +472,15 @@ function getPlaceholder(): string {
   padding: 4px 8px; border-radius: 6px;
   font-size: 0.7rem; font-weight: 700; color: #94a3b8;
 }
+
+.hash-with-tool { display: flex; align-items: center; gap: 8px; }
+.mini-inspect {
+  background: rgba(99, 102, 241, 0.1); border: none; color: #818cf8; width: 20px; height: 20px;
+  border-radius: 4px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  opacity: 0; transition: all 0.2s;
+}
+.table-row:hover .mini-inspect { opacity: 1; }
+.mini-inspect:hover { background: #6366f1; color: #fff; }
 
 .reward-val { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #f59e0b; }
 

@@ -66,8 +66,12 @@ const stats = computed(() => ({
 const modalVisible = ref(false)
 const modalTitle = ref('')
 const mermaidDefinition = ref('')
+const selectedRequest = ref<WitnessRequest | null>(null)
+
+const emit = defineEmits(['select-tx'])
 
 const openFlow = (req: WitnessRequest) => {
+  selectedRequest.value = req
   modalTitle.value = `Witness Flow: ${(req.request_id || '').substring(0, 12)}...`
   const s = getStatusStr(req.status)
   const step = getStatusStep(req.status)
@@ -86,6 +90,13 @@ const openFlow = (req: WitnessRequest) => {
   mermaidDefinition.value = flow
   modalVisible.value = true
 }
+
+const handleSelectTx = (txId: string) => {
+  modalVisible.value = false
+  emit('select-tx', txId)
+}
+
+
 </script>
 
 <template>
@@ -215,8 +226,12 @@ const openFlow = (req: WitnessRequest) => {
       :show="modalVisible" 
       :title="modalTitle" 
       :definition="mermaidDefinition"
+      :request="selectedRequest"
       @close="modalVisible = false"
+      @select-tx="handleSelectTx"
     />
+
+
   </div>
 </template>
 

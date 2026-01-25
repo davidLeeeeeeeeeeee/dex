@@ -4,9 +4,12 @@ import { fetchFrostWithdrawQueue } from '../../api'
 import type { FrostWithdrawQueueItem } from '../../types'
 import WithdrawDetailModal from './WithdrawDetailModal.vue'
 
+const emit = defineEmits(['select-tx'])
+
 const props = defineProps<{
   node: string
 }>()
+
 
 const queue = ref<FrostWithdrawQueueItem[]>([])
 const loading = ref(false)
@@ -91,8 +94,11 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
         <tbody>
           <tr v-for="item in queue" :key="item.withdraw_id" class="table-row group" @click="openFlow(item)">
             <td class="px-6 py-4">
-              <div class="id-badge">
+              <div class="id-badge-with-tool">
                 <code class="mono">{{ item.withdraw_id.substring(0, 8) }}</code>
+                <button class="mini-inspect" @click.stop="emit('select-tx', item.withdraw_id)" title="Quick Inspect">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                </button>
                 <div class="hover-full-id">{{ item.withdraw_id }}</div>
               </div>
             </td>
@@ -274,18 +280,28 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
   background: rgba(255, 255, 255, 0.03);
 }
 
-.id-badge {
+.id-badge-with-tool {
   position: relative;
-  display: inline-block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.id-badge code {
+.id-badge-with-tool code {
   background: rgba(99, 102, 241, 0.1);
   color: #818cf8;
   padding: 4px 8px;
   border-radius: 6px;
   font-size: 0.75rem;
 }
+
+.mini-inspect {
+  background: rgba(99, 102, 241, 0.1); border: none; color: #818cf8; width: 22px; height: 22px;
+  border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  opacity: 0; transition: all 0.2s;
+}
+.table-row:hover .mini-inspect { opacity: 1; }
+.mini-inspect:hover { background: #6366f1; color: #fff; transform: scale(1.1); }
 
 .hover-full-id {
   position: absolute;
@@ -306,10 +322,11 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.id-badge:hover .hover-full-id {
+.id-badge-with-tool:hover .hover-full-id {
   opacity: 1;
   transform: translateY(8px);
 }
+
 
 .asset-combo {
   display: flex;

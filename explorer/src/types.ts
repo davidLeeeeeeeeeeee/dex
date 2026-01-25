@@ -214,6 +214,15 @@ export interface FrostWithdrawQueueItem {
 }
 
 // 见证人上账请求
+export interface WitnessVote {
+  request_id: string
+  witness_address: string
+  vote_type: string
+  reason?: string
+  timestamp?: number
+  tx_id?: string
+}
+
 export interface WitnessRequest {
   request_id: string
   native_chain: string
@@ -228,7 +237,9 @@ export interface WitnessRequest {
   fail_count?: number
   abstain_count?: number
   vault_id?: number
+  votes?: WitnessVote[]
 }
+
 
 // 见证者信息
 export interface WitnessInfo {

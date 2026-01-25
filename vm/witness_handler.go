@@ -418,12 +418,15 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 	// 4. 调用 WitnessService 更新状态（内存）
 	var finalRequest *pb.RechargeRequest
 	if h.witnessSvc != nil {
+		// 设置投票交易 ID
+		vote.Vote.TxId = vote.Base.TxId
 		updatedRequest, err := h.witnessSvc.ProcessVote(vote.Vote)
 		if err != nil {
 			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, err
 		}
 		finalRequest = updatedRequest
 	} else {
+
 		// 降级：手动更新（仅用于测试）
 		request.Votes = append(request.Votes, vote.Vote)
 		switch vote.Vote.VoteType {

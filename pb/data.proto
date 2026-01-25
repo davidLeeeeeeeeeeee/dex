@@ -471,8 +471,10 @@ message WitnessVote {
   WitnessVoteType vote_type = 3; // 投票类型
   string reason = 4; // 拒绝/弃票原因（可选）
   uint64 timestamp = 5; // 投票时间戳
+  string tx_id = 6; // 投票交易 ID
   // 注意：见证者通过提交交易投票，交易本身已有签名验证，无需额外签名字段
 }
+
 
 // 见证投票交易（广播投票）
 message WitnessVoteTx {

@@ -61,19 +61,20 @@ func (s *server) handleFrostWithdrawQueue(w http.ResponseWriter, r *http.Request
 
 // WitnessRequestItem 供前端使用的见证请求结构（snake_case）
 type WitnessRequestItem struct {
-	RequestID        string `json:"request_id"`
-	NativeChain      string `json:"native_chain"`
-	NativeTxHash     string `json:"native_tx_hash"`
-	TokenAddress     string `json:"token_address"`
-	Amount           string `json:"amount"`
-	ReceiverAddress  string `json:"receiver_address"`
-	RequesterAddress string `json:"requester_address"`
-	Status           string `json:"status"`
-	CreateHeight     uint64 `json:"create_height"`
-	PassCount        uint32 `json:"pass_count"`
-	FailCount        uint32 `json:"fail_count"`
-	AbstainCount     uint32 `json:"abstain_count"`
-	VaultID          uint32 `json:"vault_id"`
+	RequestID        string            `json:"request_id"`
+	NativeChain      string            `json:"native_chain"`
+	NativeTxHash     string            `json:"native_tx_hash"`
+	TokenAddress     string            `json:"token_address"`
+	Amount           string            `json:"amount"`
+	ReceiverAddress  string            `json:"receiver_address"`
+	RequesterAddress string            `json:"requester_address"`
+	Status           string            `json:"status"`
+	CreateHeight     uint64            `json:"create_height"`
+	PassCount        uint32            `json:"pass_count"`
+	FailCount        uint32            `json:"fail_count"`
+	AbstainCount     uint32            `json:"abstain_count"`
+	VaultID          uint32            `json:"vault_id"`
+	Votes            []*pb.WitnessVote `json:"votes"`
 }
 
 func (s *server) handleWitnessRequests(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +110,7 @@ func (s *server) handleWitnessRequests(w http.ResponseWriter, r *http.Request) {
 			FailCount:        req.FailCount,
 			AbstainCount:     req.AbstainCount,
 			VaultID:          req.VaultId,
+			Votes:            req.Votes,
 		})
 	}
 
