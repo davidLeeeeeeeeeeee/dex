@@ -69,7 +69,77 @@ func NewExecutorWithWitness(db DBManager, reg *HandlerRegistry, cache SpecExecCa
 	witnessSvc := witness.NewService(witnessConfig)
 	_ = witnessSvc.Start()
 
-	return NewExecutorWithWitnessService(db, reg, cache, witnessSvc)
+	executor := NewExecutorWithWitnessService(db, reg, cache, witnessSvc)
+
+	// 初始化 Witness 状态
+	if err := executor.LoadWitnessState(); err != nil {
+		fmt.Printf("[VM] Warning: failed to load witness state: %v\n", err)
+	}
+
+	return executor
+}
+
+// LoadWitnessState 从数据库加载所有活跃的见证者、入账请求和挑战记录到 WitnessService 内存中
+func (x *Executor) LoadWitnessState() error {
+	if x.WitnessService == nil {
+		return nil
+	}
+
+	// 1. 加载见证者信息（所有活跃见证者都需要在内存中以便进行随机选择）
+	winfoMap, err := x.DB.Scan(keys.KeyWitnessInfoPrefix())
+	if err == nil {
+		count := 0
+		for _, data := range winfoMap {
+			var info pb.WitnessInfo
+			if err := proto.Unmarshal(data, &info); err == nil {
+				x.WitnessService.LoadWitness(&info)
+				count++
+			}
+		}
+		if count > 0 {
+			fmt.Printf("[VM] Loaded %d witnesses into memory\n", count)
+		}
+	}
+
+	// 2. 加载非终态的入账请求
+	requestMap, err := x.DB.Scan(keys.KeyRechargeRequestPrefix())
+	if err == nil {
+		count := 0
+		for _, data := range requestMap {
+			var req pb.RechargeRequest
+			if err := proto.Unmarshal(data, &req); err == nil {
+				// 只有非终态（PENDING, VOTING, CONSENSUS_PASS, CHALLENGE_PERIOD, CHALLENGED, ARBITRATION, SHELVED）需要加载
+				if req.Status != pb.RechargeRequestStatus_RECHARGE_FINALIZED &&
+					req.Status != pb.RechargeRequestStatus_RECHARGE_REJECTED {
+					x.WitnessService.LoadRequest(&req)
+					count++
+				}
+			}
+		}
+		if count > 0 {
+			fmt.Printf("[VM] Loaded %d active recharge requests into memory\n", count)
+		}
+	}
+
+	// 3. 加载非终态的挑战记录
+	challengeMap, err := x.DB.Scan(keys.KeyChallengeRecordPrefix())
+	if err == nil {
+		count := 0
+		for _, data := range challengeMap {
+			var record pb.ChallengeRecord
+			if err := proto.Unmarshal(data, &record); err == nil {
+				if !record.Finalized {
+					x.WitnessService.LoadChallenge(&record)
+					count++
+				}
+			}
+		}
+		if count > 0 {
+			fmt.Printf("[VM] Loaded %d active challenges into memory\n", count)
+		}
+	}
+
+	return nil
 }
 
 // SetWitnessService 设置见证者服务（用于测试或自定义配置）

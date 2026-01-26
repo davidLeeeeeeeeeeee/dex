@@ -69,10 +69,10 @@ func DefaultConfig() *Config {
 	return &Config{
 		ConsensusThreshold:      60,
 		AbstainThreshold:        20,
-		VotingPeriodBlocks:      100,       // 约5分钟（假设3秒一个区块）
-		ChallengePeriodBlocks:   600,       // 约30分钟
-		ArbitrationPeriodBlocks: 28800,     // 约24小时
-		UnstakeLockBlocks:       201600,    // 约7天
+		VotingPeriodBlocks:      20,        // 调小以便调试
+		ChallengePeriodBlocks:   20,        // 约1分钟（调试用）
+		ArbitrationPeriodBlocks: 20,        // 约1分钟
+		UnstakeLockBlocks:       20,        // 约1分钟
 		RetryIntervalBlocks:     20,        // 约1分钟
 		MinStakeAmount:          "1000000", // 1M units
 		ChallengeStakeAmount:    "100000",  // 0.1M units
@@ -97,16 +97,7 @@ const (
 
 // GetChallengePeriodBlocks 根据等级获取公示期区块数
 func GetChallengePeriodBlocks(level ChallengePeriodLevel) uint64 {
-	switch level {
-	case ChallengePeriodShort:
-		return 100 // 约5分钟
-	case ChallengePeriodMedium:
-		return 600 // 约30分钟
-	case ChallengePeriodLong:
-		return 28800 // 约24小时
-	default:
-		return 600
-	}
+	return 20 // 开发调试统一改为 20
 }
 
 // ===================== 共识阈值递减 =====================

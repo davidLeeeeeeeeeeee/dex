@@ -91,7 +91,10 @@ func (s *Service) SetCurrentHeight(height uint64) {
 	s.currentHeight = height
 	s.mu.Unlock()
 
-	// 触发周期性检查
+	// 检查投票超时
+	s.checkVotingTimeout()
+
+	// 触发公示期检查
 	s.checkChallengePeriod()
 
 	// 检查仲裁超时
@@ -255,6 +258,30 @@ func (s *Service) checkArbitrationTimeout() {
 					Height:    s.currentHeight,
 				})
 			}
+		}
+	}
+}
+
+// checkVotingTimeout 检查投票是否超时
+func (s *Service) checkVotingTimeout() {
+	s.mu.Lock()
+	// 先收集需要检查的请求，避免在处理时长时间占锁
+	requests := make([]*pb.RechargeRequest, 0)
+	for _, req := range s.requests {
+		if req.Status == pb.RechargeRequestStatus_RECHARGE_VOTING {
+			requests = append(requests, req)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, req := range requests {
+		if s.currentHeight >= req.DeadlineHeight {
+			s.mu.Lock()
+			// 再次检查状态以防在解锁期间已改变
+			if req.Status == pb.RechargeRequestStatus_RECHARGE_VOTING {
+				s.checkAndProcessConsensus(req)
+			}
+			s.mu.Unlock()
 		}
 	}
 }
