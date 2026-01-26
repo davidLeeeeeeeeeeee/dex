@@ -999,14 +999,21 @@ func fillTxDetails(tx *pb.AnyTx, info *txInfo) {
 		info.Details["new_group_pubkey"] = fmt.Sprintf("%x", t.NewGroupPubkey)
 		info.Details["signature"] = fmt.Sprintf("%x", t.Signature)
 		info.Details["msg_hash"] = fmt.Sprintf("%x", t.MsgHash)
-	case *pb.AnyTx_FrostVaultTransitionSignedTx:
-		t := c.FrostVaultTransitionSignedTx
-		info.Details["chain"] = t.Chain
-		info.Details["old_vault_id"] = t.OldVaultId
-		info.Details["new_vault_id"] = t.NewVaultId
-		info.Details["epoch_id"] = t.EpochId
-		info.Details["signature"] = fmt.Sprintf("%x", t.Signature)
-		info.Details["msg_hash"] = fmt.Sprintf("%x", t.MsgHash)
+	case *pb.AnyTx_WitnessRequestTx:
+		r := c.WitnessRequestTx
+		info.Details["native_chain"] = r.NativeChain
+		info.Details["native_tx_hash"] = r.NativeTxHash
+		info.Details["native_vout"] = r.NativeVout
+		if len(r.NativeScript) > 0 {
+			info.Details["native_script"] = fmt.Sprintf("%x", r.NativeScript)
+		}
+		info.Details["token_address"] = r.TokenAddress
+		info.Details["amount"] = r.Amount
+		info.Details["receiver_address"] = r.ReceiverAddress
+		info.Details["recharge_fee"] = r.RechargeFee
+		if r.Memo != "" {
+			info.Details["memo"] = r.Memo
+		}
 	}
 }
 

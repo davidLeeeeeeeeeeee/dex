@@ -84,7 +84,7 @@ func generateWitnessStakeTx(from string, op pb.OrderOp, amount string, nonce uin
 }
 
 // generateWitnessRequestTx 生成上账请求交易
-func generateWitnessRequestTx(from, chain, nativeHash, token, amount, receiver, fee string, nonce uint64) *pb.AnyTx {
+func generateWitnessRequestTx(from, chain, nativeHash string, vout uint32, script []byte, token, amount, receiver, fee string, nonce uint64) *pb.AnyTx {
 	tx := &pb.WitnessRequestTx{
 		Base: &pb.BaseMessage{
 			TxId:        generateTxID(nonce),
@@ -94,6 +94,8 @@ func generateWitnessRequestTx(from, chain, nativeHash, token, amount, receiver, 
 		},
 		NativeChain:     chain,
 		NativeTxHash:    nativeHash,
+		NativeVout:      vout,
+		NativeScript:    script,
 		TokenAddress:    token,
 		Amount:          amount,
 		ReceiverAddress: receiver,

@@ -119,14 +119,17 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 
 	// 区分 BTC 和账户链/合约链的处理
 	if chain == "btc" {
-		// BTC：写入 UTXO（需要从 RechargeRequest 或 WitnessRequestTx 中获取 txid 和 vout）
-		// 约定：NativeTxHash 为 "txid:vout" 或仅 "txid" (默认 vout=0)
+		// BTC：写入 UTXO
 		txid := stored.NativeTxHash
-		vout := uint32(0)
-		if idx := strings.Index(txid, ":"); idx != -1 {
-			if v, err := strconv.ParseUint(txid[idx+1:], 10, 32); err == nil {
-				vout = uint32(v)
-				txid = txid[:idx]
+		vout := stored.NativeVout
+
+		// 降级处理：针对旧格式 "txid:vout"
+		if vout == 0 && strings.Contains(txid, ":") {
+			if idx := strings.Index(txid, ":"); idx != -1 {
+				if v, err := strconv.ParseUint(txid[idx+1:], 10, 32); err == nil {
+					vout = uint32(v)
+					txid = txid[:idx]
+				}
 			}
 		}
 
@@ -139,6 +142,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 			VaultId:        vaultID,
 			FinalizeHeight: finalizeHeight,
 			RequestId:      stored.RequestId,
+			ScriptPubkey:   stored.NativeScript, // 新增：保存锁定脚本以备后续提现签名使用
 		}
 		utxoData, err := proto.Marshal(utxo)
 		if err != nil {

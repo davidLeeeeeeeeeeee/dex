@@ -317,6 +317,8 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 			RequestId:        requestID,
 			NativeChain:      request.NativeChain,
 			NativeTxHash:     request.NativeTxHash,
+			NativeVout:       request.NativeVout,
+			NativeScript:     request.NativeScript,
 			TokenAddress:     request.TokenAddress,
 			Amount:           request.Amount,
 			ReceiverAddress:  request.ReceiverAddress,
@@ -325,18 +327,6 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 			CreateHeight:     request.Base.ExecutedHeight,
 			RechargeFee:      request.RechargeFee,
 		}
-	}
-
-	requestData, err := proto.Marshal(rechargeRequest)
-	if err != nil {
-		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "failed to marshal request"}, err
-	}
-	ws = append(ws, WriteOp{Key: existingKey, Value: requestData, Del: false, SyncStateDB: true, Category: "witness_request"})
-	ws = append(ws, WriteOp{Key: nativeTxKey, Value: []byte(requestID), Del: false, SyncStateDB: false, Category: "index"})
-
-	pendingHeight := rechargeRequest.CreateHeight
-	if pendingHeight == 0 {
-		pendingHeight = request.Base.ExecutedHeight
 	}
 
 	// 确定性分配 vault_id，避免跨 Vault 混用资金
@@ -350,6 +340,19 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: err.Error()}, err
 	}
 	rechargeRequest.VaultId = vaultID
+
+	// 序列化最终的请求数据
+	requestData, err = proto.Marshal(rechargeRequest)
+	if err != nil {
+		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "failed to marshal request"}, err
+	}
+	ws = append(ws, WriteOp{Key: existingKey, Value: requestData, Del: false, SyncStateDB: true, Category: "witness_request"})
+	ws = append(ws, WriteOp{Key: nativeTxKey, Value: []byte(requestID), Del: false, SyncStateDB: false, Category: "index"})
+
+	pendingHeight := rechargeRequest.CreateHeight
+	if pendingHeight == 0 {
+		pendingHeight = request.Base.ExecutedHeight
+	}
 
 	pendingSeqKey := keys.KeyFrostFundsPendingLotSeq(request.NativeChain, request.TokenAddress, vaultID, pendingHeight)
 	pendingSeq := readUintSeq(sv, pendingSeqKey)

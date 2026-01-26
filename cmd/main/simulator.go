@@ -145,6 +145,8 @@ func (s *TxSimulator) runRechargeScenario() {
 			userNode.Address,
 			"btc",
 			"tx_hash_"+time.Now().Format("150405"),
+			0,                     // 模拟 Vout 0
+			[]byte("lock_script"), // 模拟锁定脚本
 			"BTC",
 			"500",
 			userNode.Address,

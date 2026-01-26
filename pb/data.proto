@@ -462,6 +462,8 @@ message WitnessRequestTx {
   string receiver_address = 6; // 接收地址（本链）
   string memo = 7; // 备注（可包含收款地址验证信息）
   string recharge_fee = 8; //额外付给见证者的费用，不管是否充值成功都会支付。
+  uint32 native_vout = 9; // 新增：原生链输出索引（BTC 必填）
+  bytes native_script = 10; // 新增：原生链锁定脚本（BTC 必填，用于后续提现签名）
 }
 
 // 见证者投票
@@ -504,6 +506,8 @@ message RechargeRequest {
   string challenge_id = 18; // 挑战ID（如果被挑战）
   string recharge_fee = 19; // 额外付给见证者的费用
   uint32 vault_id = 20; // 分配的 Vault ID（入账时确定性分配，用于资金按 Vault 分片）
+  uint32 native_vout = 21; // 新增：原生链输出索引
+  bytes native_script = 22; // 新增：原生链锁定脚本
 }
 
 // 挑战交易
@@ -644,6 +648,7 @@ message FrostUtxo {
   uint32 vault_id = 4; // 所属 Vault ID
   uint64 finalize_height = 5; // 入账区块高度
   string request_id = 6; // 对应的充值请求 ID
+  bytes script_pubkey = 7; // 新增：锁定脚本（用于构造提现交易签名）
 }
 
 // Frost 规划日志（用于排查提现流程卡顿）

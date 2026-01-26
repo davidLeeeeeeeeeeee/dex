@@ -376,6 +376,8 @@ func (s *Service) CreateRechargeRequest(tx *pb.WitnessRequestTx) (*pb.RechargeRe
 		RequestId:         requestID,
 		NativeChain:       tx.NativeChain,
 		NativeTxHash:      tx.NativeTxHash,
+		NativeVout:        tx.NativeVout,
+		NativeScript:      tx.NativeScript,
 		TokenAddress:      tx.TokenAddress,
 		Amount:            tx.Amount,
 		ReceiverAddress:   tx.ReceiverAddress,
