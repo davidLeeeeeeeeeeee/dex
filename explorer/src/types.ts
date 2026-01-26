@@ -221,7 +221,8 @@ export interface FrostWithdrawQueueItem {
 export interface WitnessVote {
   request_id: string
   witness_address: string
-  vote_type: string
+  vote_type: number
+  status: string
   reason?: string
   timestamp?: number
   tx_id?: string

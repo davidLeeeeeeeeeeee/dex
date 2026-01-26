@@ -999,6 +999,36 @@ func fillTxDetails(tx *pb.AnyTx, info *txInfo) {
 		info.Details["new_group_pubkey"] = fmt.Sprintf("%x", t.NewGroupPubkey)
 		info.Details["signature"] = fmt.Sprintf("%x", t.Signature)
 		info.Details["msg_hash"] = fmt.Sprintf("%x", t.MsgHash)
+	case *pb.AnyTx_WitnessVoteTx:
+		v := c.WitnessVoteTx.Vote
+		if v != nil {
+			info.Details["request_id"] = v.RequestId
+			info.Details["witness_address"] = v.WitnessAddress
+			info.Details["vote_type"] = v.VoteType.String()
+			info.Details["reason"] = v.Reason
+			info.Details["timestamp"] = v.Timestamp
+		}
+	case *pb.AnyTx_WitnessChallengeTx:
+		t := c.WitnessChallengeTx
+		info.Details["request_id"] = t.RequestId
+		info.Details["stake_amount"] = t.StakeAmount
+		info.Details["reason"] = t.Reason
+		info.Details["evidence"] = t.Evidence
+	case *pb.AnyTx_ArbitrationVoteTx:
+		t := c.ArbitrationVoteTx
+		info.Details["challenge_id"] = t.ChallengeId
+		if t.Vote != nil {
+			info.Details["vote_type"] = t.Vote.VoteType.String()
+			info.Details["reason"] = t.Vote.Reason
+		}
+	case *pb.AnyTx_FrostVaultTransitionSignedTx:
+		t := c.FrostVaultTransitionSignedTx
+		info.Details["chain"] = t.Chain
+		info.Details["old_vault_id"] = t.OldVaultId
+		info.Details["new_vault_id"] = t.NewVaultId
+		info.Details["epoch_id"] = t.EpochId
+		info.Details["signature"] = fmt.Sprintf("%x", t.Signature)
+		info.Details["msg_hash"] = fmt.Sprintf("%x", t.MsgHash)
 	case *pb.AnyTx_WitnessRequestTx:
 		r := c.WitnessRequestTx
 		info.Details["native_chain"] = r.NativeChain

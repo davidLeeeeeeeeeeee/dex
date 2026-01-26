@@ -445,15 +445,40 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 		x.DB.EnqueueSet(heightKey, fmt.Sprintf("%d", b.Height))
 	}
 
-	// ========== 第四步补充：保存交易原文 ==========
-	// 将区块中的交易原文保存到数据库（不可变），以便后续查询
-	// 注意：这里只保存交易原文，不写任何订单簿索引
+	// ========== 第四步补充：更新区块交易状态并保存原文 ==========
+	// 创建 TxID 到 Receipt 的映射，加速查找
+	receiptMap := make(map[string]*Receipt, len(res.Receipts))
+	for _, rc := range res.Receipts {
+		receiptMap[rc.TxID] = rc
+	}
+
+	// 1. 先更新区块中所有交易的状态和执行高度
+	// 修改对象引用，会反映到传入的 pb.Block 中
+	for _, tx := range b.Body {
+		if tx == nil {
+			continue
+		}
+		base := tx.GetBase()
+		if base == nil {
+			continue
+		}
+
+		// 统一注入执行高度
+		base.ExecutedHeight = b.Height
+
+		// 根据执行收据更新状态
+		if rc, ok := receiptMap[base.TxId]; ok {
+			if rc.Status == "SUCCEED" || rc.Status == "" {
+				base.Status = pb.Status_SUCCEED
+			} else {
+				base.Status = pb.Status_FAILED
+			}
+		}
+	}
+
+	// 2. 将更新后的交易原文保存到数据库（不可变），以便后续查询
 	// 订单簿状态（订单状态、价格索引等）全部由 Diff 中的 WriteOp 控制
-	//
-	// 设计原则（解耦交易原文存储和订单簿状态存储）：
-	// - VM（applyResult）只负责状态类 key：订单状态、price index、余额等（全部来自 Diff）
-	// - 交易原文使用独立 key：v1_txraw_<txid>
-	// - OrderTx 在"交易查询"里是不可变原文；在"订单簿"里是可变状态，两者彻底分离
+	// 注意：OrderTx 在"交易查询"里是不可变原文；在"订单簿"里是可变状态，两者彻底分离
 	type txRawSaver interface {
 		SaveTxRaw(tx *pb.AnyTx) error
 	}
@@ -462,27 +487,10 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 			if tx == nil {
 				continue
 			}
-			base := tx.GetBase()
-			if base == nil {
-				continue
-			}
-			// 更新交易状态为已执行（这是原文的一部分，记录执行结果）
-			base.ExecutedHeight = b.Height
-			// 从 receipts 中查找状态
-			for _, rc := range res.Receipts {
-				if rc.TxID == base.TxId {
-					if rc.Status == "SUCCEED" || rc.Status == "" {
-						base.Status = pb.Status_SUCCEED
-					} else {
-						base.Status = pb.Status_FAILED
-					}
-					break
-				}
-			}
-			// 保存交易原文（只存储，不写索引）
+			// 保存交易原文（已更新 Status 和 ExecutedHeight）
 			if err := saver.SaveTxRaw(tx); err != nil {
 				// 记录错误但不中断提交
-				fmt.Printf("[VM] Warning: failed to save tx raw %s: %v\n", base.TxId, err)
+				fmt.Printf("[VM] Warning: failed to save tx raw %s: %v\n", tx.GetTxId(), err)
 			}
 		}
 	}

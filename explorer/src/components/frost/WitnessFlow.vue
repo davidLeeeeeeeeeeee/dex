@@ -56,6 +56,7 @@ function getProgress(status: any) {
   const s = getStatusStr(status)
   if (s.includes('FINALIZED')) return { percent: 100, color: 'linear-gradient(90deg, #10b981, #34d399)' }
   if (s.includes('FAILED') || s.includes('REJECTED')) return { percent: 100, color: 'linear-gradient(90deg, #ef4444, #f87171)' }
+  if (s.includes('CHALLENGE_PERIOD')) return { percent: 90, color: 'linear-gradient(90deg, #3b82f6, #60a5fa)' }
   if (s.includes('VOTING')) return { percent: 60, color: 'linear-gradient(90deg, #6366f1, #818cf8)' }
   if (s.includes('PENDING')) return { percent: 20, color: 'linear-gradient(90deg, #f59e0b, #fbbf24)' }
   return { percent: 0, color: '#334155' }
@@ -67,6 +68,44 @@ const stats = computed(() => ({
   voting: requests.value.filter(r => getStatusStr(r.status).includes('VOTING')).length,
   finalized: requests.value.filter(r => getStatusStr(r.status).includes('FINALIZED')).length,
 }))
+
+const getVoteLabel = (vote: any) => {
+  // 优先使用 status 字符串
+  const status = vote.status || ''
+  if (status.startsWith('VOTE_')) return status.substring(5)
+  if (status) return status
+
+  const vt = vote.vote_type ?? vote.voteType
+  if (vt === undefined) return 'VOTE'
+  if (typeof vt === 'number') {
+    const labels: Record<number, string> = { 0: 'PASS', 1: 'FAIL', 2: 'ABSTAIN' }
+    return labels[vt] || 'VOTE'
+  }
+  if (typeof vt === 'string') {
+    if (vt.startsWith('VOTE_')) return vt.substring(5)
+    return vt
+  }
+  return 'VOTE'
+}
+
+const getVoteClass = (vote: any) => {
+  const status = (vote.status || '').toLowerCase()
+  if (status.includes('pass')) return 'pass'
+  if (status.includes('fail')) return 'fail'
+  if (status.includes('abstain')) return 'abstain'
+
+  const vt = vote.vote_type ?? vote.voteType
+  if (vt === undefined) return ''
+  if (typeof vt === 'number') {
+    const classes: Record<number, string> = { 0: 'pass', 1: 'fail', 2: 'abstain' }
+    return classes[vt] || ''
+  }
+  if (typeof vt === 'string') {
+    const s = vt.toLowerCase()
+    return s.startsWith('vote_') ? s.substring(5) : s
+  }
+  return ''
+}
 
 const expandedRequests = ref<Set<string>>(new Set())
 
@@ -84,49 +123,73 @@ const mermaidDefinition = ref('')
 const selectedRequest = ref<WitnessRequest | null>(null)
 
 const getMermaidDefinition = (req: WitnessRequest) => {
-  const status = getStatusStr(req.status)
-  const isFinalized = status.includes('FINALIZED')
-  const isFailed = status.includes('FAILED') || status.includes('REJECTED')
+  const s = getStatusStr(req.status)
   
+  // Define stage status
+  const isPending = s.includes('PENDING')
+  const isVoting = s.includes('VOTING')
+  const isConsensusPass = s.includes('CONSENSUS_PASS') || s.includes('CHALLENGE') || s.includes('ARBITRATION') || s.includes('FINALIZED')
+  const isConsensusFail = s.includes('CONSENSUS_FAIL') || s.includes('REJECTED')
+  const isChallenge = s.includes('CHALLENGE_PERIOD')
+  const isChallenged = s.includes('CHALLENGED') || s.includes('ARBITRATION')
+  const isFinalized = s.includes('FINALIZED')
+  const isRejected = s.includes('REJECTED') || s.includes('CONSENSUS_FAIL')
+  const isShelved = s.includes('SHELVED')
+
   const pass = req.pass_count || 0
   const fail = req.fail_count || 0
   
   let flow = 'graph LR\n'
   
+  // Nodes
   flow += '  A[Deposit Detected] --> B[Witness Voting]\n'
-  flow += `  B --> C{${pass} Pass / ${fail} Fail}\n`
+  flow += `  B --> C{Consensus: ${pass}P/${fail}F}\n`
+  flow += '  C -- Pass --> D[Challenge Period]\n'
+  flow += '  C -- Fail --> H[Rejected]\n'
+  flow += '  D --> E{Challenged?}\n'
+  flow += '  E -- No --> F[Finalized]\n'
+  flow += '  E -- Yes --> G[Arbitration]\n'
+  flow += '  G --> F\n'
+  flow += '  G --> H\n'
   
-  // Progress Logic Colors
-  const doneColor = '#10b981'
-  const todoColor = '#000000'
-  const isFinished = isFinalized || isFailed
-
-  if (isFinalized) {
-    flow += '  C -->|Consensus| D[Finalized]\n'
-    flow += `  style D fill:${doneColor},color:#fff\n`
-  } else if (isFailed) {
-    flow += '  C -->|Rejected| E[Rejected]\n'
-    flow += `  style E fill:${doneColor},color:#fff\n`
-  } else {
-    flow += '  C -.->|In Progress| F[Verifying]\n'
-    flow += `  style F fill:${todoColor},color:#fff\n`
+  if (isShelved) {
+    flow += '  I[Shelved/Error]\n'
+    flow += '  style I fill:#f59e0b,color:#fff,stroke:#fff,stroke-width:2px\n'
   }
 
-  // Node A is always completed if we see the request
-  flow += `  style A fill:${doneColor},color:#fff\n`
+  // Styles
+  const done = 'fill:#10b981,color:#fff,stroke:#059669,stroke-width:1px'
+  const active = 'fill:#3b82f6,color:#fff,stroke:#2563eb,stroke-width:2px'
+  const error = 'fill:#ef4444,color:#fff,stroke:#dc2626,stroke-width:1px'
+  const todo = 'fill:#1e293b,color:#64748b,stroke:#334155,stroke-width:1px'
+
+  // Apply Styles based on current state
+  flow += `  style A ${!isPending ? done : active}\n`
+  flow += `  style B ${isVoting ? active : (isConsensusPass || isConsensusFail ? done : todo)}\n`
+  flow += `  style C ${isVoting ? todo : (isConsensusPass || isConsensusFail ? done : todo)}\n`
   
-  // B and C are completed only if the process is finalized or failed
-  flow += `  style B fill:${isFinished ? doneColor : todoColor},color:#fff\n`
-  flow += `  style C fill:${isFinished ? doneColor : todoColor},color:#fff\n`
+  // Branching Pass/Fail
+  if (isConsensusPass) {
+    flow += `  style D ${isChallenge ? active : (isChallenged || isFinalized ? done : todo)}\n`
+    flow += `  style E ${isChallenge ? todo : (isChallenged || isFinalized ? done : todo)}\n`
+    flow += `  style F ${isFinalized ? done : todo}\n`
+    flow += `  style G ${isChallenged ? active : (isFinalized || isRejected ? done : todo)}\n`
+  }
+
+  if (isRejected) {
+    flow += `  style H ${error}\n`
+  } else {
+    flow += `  style H ${todo}\n`
+  }
 
   // Base styles for font
-  flow += '  classDef default font-family:Outfit,font-size:12px\n'
+  flow += '  classDef default font-family:Outfit,font-size:11px\n'
   
   return flow
 }
 
 const openFlow = (req: WitnessRequest) => {
-  modalTitle.value = `Witness Flow: ${req.request_id.substring(0, 12)}`
+  modalTitle.value = `Witness Flow: ${req.request_id}`
   mermaidDefinition.value = getMermaidDefinition(req)
   selectedRequest.value = req
   modalVisible.value = true
@@ -134,23 +197,33 @@ const openFlow = (req: WitnessRequest) => {
 
 // For embedded mermaid
 const renderedSvgs = ref<Record<string, string>>({})
+const lastRenderedDefs = new Map<string, string>()
 
 const renderEmbed = async (req: WitnessRequest) => {
   const rid = req.request_id || ''
-  const id = `mermaid-embed-${rid.replace(/[^a-zA-Z0-9]/g, '')}`
   const def = getMermaidDefinition(req)
+  
+  // Skip if already rendered with the same definition
+  if (lastRenderedDefs.get(rid) === def && renderedSvgs.value[rid]) {
+    return
+  }
+
+  // Use a unique random ID for rendering to avoid Mermaid ID conflicts in DOM
+  const uniqueId = `mermaid-svg-${Math.random().toString(36).substring(2, 9)}`
+  
   try {
-    const { svg } = await mermaid.render(id, def)
+    const { svg } = await mermaid.render(uniqueId, def)
     renderedSvgs.value[rid] = svg
+    lastRenderedDefs.set(rid, def)
   } catch (e) {
-    console.error('Mermaid render failed', e)
+    console.error('Mermaid render failed for', rid, e)
     renderedSvgs.value[rid] = '<p class="render-error">Diagram render failed</p>'
   }
 }
 
 // Re-render when expanded list changes or when request data updates
 watch([() => Array.from(expandedRequests.value), () => requests.value], async ([newExpanded, newReqs]) => {
-  // Update embedded diagrams
+  // Update embedded diagrams sequentially to avoid excessive concurrency issues with Mermaid
   for (const rid of newExpanded) {
     const req = newReqs.find(r => r.request_id === rid)
     if (req) {
@@ -167,7 +240,7 @@ watch([() => Array.from(expandedRequests.value), () => requests.value], async ([
       mermaidDefinition.value = getMermaidDefinition(updated)
     }
   }
-}, { deep: true })
+}, { deep: true, immediate: true })
 
 onMounted(() => {
   mermaid.initialize({
@@ -231,7 +304,7 @@ const handleSelectTx = (txId: string) => {
           <!-- Row 1: ID & Status & Meta -->
           <div class="card-top-row">
             <div class="id-badge-group">
-              <span class="req-id-short">#{{ (req.request_id || '').substring(0, 10) }}</span>
+              <span class="req-id-short">#{{ (req.request_id || '') }}</span>
               <span v-if="req.vault_id !== undefined" class="meta-label">Vault {{ req.vault_id }}</span>
               <span v-if="req.create_height" class="meta-label height">H:{{ req.create_height }}</span>
               <div class="flow-entry-link" @click.stop="openFlow(req)">
@@ -355,10 +428,10 @@ const handleSelectTx = (txId: string) => {
                 <div v-for="vote in req.votes" :key="vote.tx_id" 
                      class="vote-entry-item" 
                      @click="handleSelectTx(vote.tx_id || '')">
-                  <div :class="['v-marker', Number(vote.vote_type) === 1 ? 'pass' : 'fail']"></div>
+                  <div :class="['v-marker', getVoteClass(vote)]"></div>
                   <div class="v-body">
                     <div class="v-header">
-                      <span class="v-type">{{ Number(vote.vote_type) === 1 ? 'APPROVE' : 'REJECT' }}</span>
+                      <span class="v-type">{{ getVoteLabel(vote) }}</span>
                       <span class="v-time">{{ formatTime(vote.timestamp) }}</span>
                     </div>
                     <div class="v-footer">
@@ -483,7 +556,7 @@ const handleSelectTx = (txId: string) => {
 .card-top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 
 .id-badge-group { display: flex; align-items: center; gap: 8px; }
-.req-id-short { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 600; color: #818cf8; }
+.req-id-short { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 600; color: #818cf8; word-break: break-all; }
 .meta-label { 
   font-size: 0.65rem; font-weight: 700; 
   background: rgba(255, 255, 255, 0.05); 
@@ -641,6 +714,7 @@ const handleSelectTx = (txId: string) => {
 .v-marker.intent { background: #818cf8; }
 .v-marker.pass { background: #10b981; }
 .v-marker.fail { background: #ef4444; }
+.v-marker.abstain { background: #64748b; }
 
 .v-body { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .v-header { display: flex; justify-content: space-between; align-items: center; }

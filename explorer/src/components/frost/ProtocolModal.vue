@@ -181,8 +181,8 @@ const getVoteClass = (vote: any) => {
                   <div v-for="vote in request.votes" :key="vote.tx_id || Math.random()" class="tx-link-item" @click="emit('select-tx', vote.tx_id)">
                     <div :class="['tx-badge', getVoteClass(vote)]">{{ getVoteLabel(vote) }}</div>
                     <div class="tx-info">
-                      <span class="tx-label">Witness: {{ (vote.witness_address ?? vote.witnessAddress ?? '').substring(0, 8) }}...{{ (vote.witness_address ?? vote.witnessAddress ?? '').slice(-6) }}</span>
-                      <code class="tx-hash">{{ vote.tx_id || vote.txId || 'Unknown ID' }}</code>
+                      <span class="tx-label">Witness: {{ (vote.witness_address || '').substring(0, 8) }}...{{ (vote.witness_address || '').slice(-6) }}</span>
+                    <code class="tx-hash">{{ vote.tx_id || 'Unknown ID' }}</code>
                     </div>
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
                   </div>
@@ -363,9 +363,7 @@ const getVoteClass = (vote: any) => {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.7rem;
   color: #64748b;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
 }
 
 .empty-votes {

@@ -19,6 +19,17 @@ type FrostWithdrawQueueItem struct {
 	PlanningLogs []*pb.FrostPlanningLog `json:"planning_logs"`
 }
 
+// WitnessVoteItem 供前端使用的见证投票结构
+type WitnessVoteItem struct {
+	RequestId      string `json:"request_id"`
+	WitnessAddress string `json:"witness_address"`
+	VoteType       int32  `json:"vote_type"`
+	Status         string `json:"status"` // 新增状态字段，对应 VoteType 的字符串表示
+	Reason         string `json:"reason,omitempty"`
+	Timestamp      uint64 `json:"timestamp"`
+	TxId           string `json:"tx_id"`
+}
+
 func (s *server) handleFrostWithdrawQueue(w http.ResponseWriter, r *http.Request) {
 	node := r.URL.Query().Get("node")
 	if node == "" {
@@ -74,7 +85,7 @@ type WitnessRequestItem struct {
 	FailCount        uint32            `json:"fail_count"`
 	AbstainCount     uint32            `json:"abstain_count"`
 	VaultID          uint32            `json:"vault_id"`
-	Votes            []*pb.WitnessVote `json:"votes"`
+	Votes            []WitnessVoteItem `json:"votes"`
 }
 
 func (s *server) handleWitnessRequests(w http.ResponseWriter, r *http.Request) {
@@ -110,11 +121,30 @@ func (s *server) handleWitnessRequests(w http.ResponseWriter, r *http.Request) {
 			FailCount:        req.FailCount,
 			AbstainCount:     req.AbstainCount,
 			VaultID:          req.VaultId,
-			Votes:            req.Votes,
+			Votes:            convertVotes(req.Votes),
 		})
 	}
 
 	writeJSON(w, items)
+}
+
+func convertVotes(protoVotes []*pb.WitnessVote) []WitnessVoteItem {
+	if protoVotes == nil {
+		return nil
+	}
+	votes := make([]WitnessVoteItem, 0, len(protoVotes))
+	for _, v := range protoVotes {
+		votes = append(votes, WitnessVoteItem{
+			RequestId:      v.RequestId,
+			WitnessAddress: v.WitnessAddress,
+			VoteType:       int32(v.VoteType),
+			Status:         v.VoteType.String(),
+			Reason:         v.Reason,
+			Timestamp:      v.Timestamp,
+			TxId:           v.TxId,
+		})
+	}
+	return votes
 }
 
 // DKGSessionItem 供前端使用的 DKG 会话结构（snake_case）

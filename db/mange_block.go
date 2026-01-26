@@ -59,12 +59,23 @@ func (mgr *Manager) SaveBlock(block *pb.Block) error {
 	mgr.EnqueueSet(KeyLatestHeight(), strconv.FormatUint(block.Height, 10))
 
 	// 5. 更新内存缓存
-	cfg := config.DefaultConfig()
+	// 5. 更新内存缓存
 	mgr.cachedBlocksMu.Lock()
-	if len(mgr.cachedBlocks) >= cfg.Database.BlockCacheSize {
-		mgr.cachedBlocks = mgr.cachedBlocks[1:]
+	cacheFound := false
+	for i, v := range mgr.cachedBlocks {
+		if v != nil && v.BlockHash == block.BlockHash {
+			mgr.cachedBlocks[i] = block
+			cacheFound = true
+			break
+		}
 	}
-	mgr.cachedBlocks = append(mgr.cachedBlocks, block)
+	if !cacheFound {
+		cfg := config.DefaultConfig()
+		if len(mgr.cachedBlocks) >= cfg.Database.BlockCacheSize {
+			mgr.cachedBlocks = mgr.cachedBlocks[1:]
+		}
+		mgr.cachedBlocks = append(mgr.cachedBlocks, block)
+	}
 	mgr.cachedBlocksMu.Unlock()
 
 	return nil

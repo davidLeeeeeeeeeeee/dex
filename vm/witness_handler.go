@@ -404,7 +404,9 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 	requestKey := keys.KeyRechargeRequest(requestID)
 	requestData, requestExists, err := sv.Get(requestKey)
 	if err != nil || !requestExists {
-		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "request not found"}, fmt.Errorf("request not found")
+		// 如果请求找不到，返回 FAILED 凭据，但不返回 error
+		// 这样可以避免整笔交易导致区块验证失败，从而解决共识停滞问题
+		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "request not found"}, nil
 	}
 
 	var request pb.RechargeRequest
@@ -425,7 +427,8 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 		vote.Vote.TxId = vote.Base.TxId
 		updatedRequest, err := h.witnessSvc.ProcessVote(vote.Vote)
 		if err != nil {
-			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, err
+			// 业务逻辑错误（例如状态不对）不应该废掉整个区块
+			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, nil
 		}
 		finalRequest = updatedRequest
 	} else {
@@ -496,7 +499,7 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 	requestKey := keys.KeyRechargeRequest(requestID)
 	requestData, requestExists, err := sv.Get(requestKey)
 	if err != nil || !requestExists {
-		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "request not found"}, fmt.Errorf("request not found")
+		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "request not found"}, nil
 	}
 
 	var request pb.RechargeRequest
@@ -505,7 +508,7 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 	}
 
 	if request.Status != pb.RechargeRequestStatus_RECHARGE_CHALLENGE_PERIOD {
-		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "request is not in challenge period"}, fmt.Errorf("request is not in challenge period")
+		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "request is not in challenge period"}, nil
 	}
 
 	if request.ChallengeId != "" {
@@ -624,7 +627,7 @@ func (h *ArbitrationVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp
 	challengeKey := keys.KeyChallengeRecord(challengeID)
 	challengeData, challengeExists, err := sv.Get(challengeKey)
 	if err != nil || !challengeExists {
-		return nil, &Receipt{TxID: arbVote.Base.TxId, Status: "FAILED", Error: "challenge not found"}, fmt.Errorf("challenge not found")
+		return nil, &Receipt{TxID: arbVote.Base.TxId, Status: "FAILED", Error: "challenge not found"}, nil
 	}
 
 	var challenge pb.ChallengeRecord
