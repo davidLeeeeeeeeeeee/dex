@@ -238,10 +238,14 @@ export interface WitnessRequest {
   requester_address?: string
   status: string
   create_height?: number
+  deadline_height?: number
+  finalize_height?: number
+  round?: number
   pass_count?: number
   fail_count?: number
   abstain_count?: number
   vault_id?: number
+  selected_witnesses?: string[]
   votes?: WitnessVote[]
 }
 

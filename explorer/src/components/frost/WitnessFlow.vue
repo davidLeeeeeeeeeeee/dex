@@ -141,10 +141,12 @@ const getMermaidDefinition = (req: WitnessRequest) => {
   
   let flow = 'graph LR\n'
   
+  const deadlineLabel = (isChallenge && req.deadline_height) ? `[Challenge Period<br/>Ends at H:${req.deadline_height}]` : '[Challenge Period]'
+  
   // Nodes
   flow += '  A[Deposit Detected] --> B[Witness Voting]\n'
   flow += `  B --> C{Consensus: ${pass}P/${fail}F}\n`
-  flow += '  C -- Pass --> D[Challenge Period]\n'
+  flow += `  C -- Pass --> D${deadlineLabel}\n`
   flow += '  C -- Fail --> H[Rejected]\n'
   flow += '  D --> E{Challenged?}\n'
   flow += '  E -- No --> F[Finalized]\n'
@@ -307,6 +309,7 @@ const handleSelectTx = (txId: string) => {
               <span class="req-id-short">#{{ (req.request_id || '') }}</span>
               <span v-if="req.vault_id !== undefined" class="meta-label">Vault {{ req.vault_id }}</span>
               <span v-if="req.create_height" class="meta-label height">H:{{ req.create_height }}</span>
+              <span v-if="req.deadline_height && req.status.includes('CHALLENGE_PERIOD')" class="meta-label deadline">D:{{ req.deadline_height }}</span>
               <div class="flow-entry-link" @click.stop="openFlow(req)">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
                 <span>Flow</span>
@@ -405,6 +408,18 @@ const handleSelectTx = (txId: string) => {
               <div class="meta-item">
                 <span class="m-label">Target Receiver</span>
                 <span class="m-value mono">{{ req.receiver_address }}</span>
+              </div>
+              <div class="meta-item">
+                <span class="m-label">Consensus Round</span>
+                <span class="m-value bold">{{ req.round !== undefined ? req.round + 1 : 1 }}</span>
+              </div>
+              <div class="meta-item">
+                <span class="m-label">Deadline Height</span>
+                <span class="m-value bold highlight">{{ req.deadline_height || 'N/A' }}</span>
+              </div>
+              <div class="meta-item" v-if="req.selected_witnesses">
+                <span class="m-label">Selected Witnesses</span>
+                <span class="m-value">{{ req.selected_witnesses.length }} Nodes</span>
               </div>
             </div>
 
@@ -563,6 +578,7 @@ const handleSelectTx = (txId: string) => {
   padding: 2px 8px; border-radius: 4px; color: #94a3b8; 
 }
 .meta-label.height { background: rgba(52, 211, 153, 0.1); color: #34d399; }
+.meta-label.deadline { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); }
 
 /* Progress Bar Styles */
 .progress-cell {
