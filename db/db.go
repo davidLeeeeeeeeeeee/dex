@@ -2,10 +2,10 @@ package db
 
 import (
 	"dex/config"
+	smt "dex/jmt"
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
-	statedb "dex/stateDB"
 	"dex/utils"
 	"fmt"
 	"path/filepath"
@@ -21,7 +21,7 @@ import (
 // Manager 封装 BadgerDB 的管理器
 type Manager struct {
 	Db      *badger.DB
-	StateDB *statedb.DB
+	StateDB *smt.JMTStateDB // 使用 JMT 作为状态存储
 	mu      sync.RWMutex
 
 	// 队列通道，批量写的 goroutine 用它来取写请求
@@ -72,22 +72,17 @@ func NewManager(path string, logger logs.Logger) (*Manager, error) {
 		return nil, fmt.Errorf("failed to create sequence: %w", err)
 	}
 
-	// 初始化 StateDB，使用主 DB 目录下的 state 子目录
-	stateCfg := statedb.Config{
-		DataDir:         filepath.Join(path, "state"),
-		EpochSize:       40000,
-		ShardHexWidth:   1,
-		PageSize:        1000,
-		UseWAL:          true,
-		VersionsToKeep:  10,
-		AccountNSPrefix: "v1_account_",
+	// 初始化 JMT StateDB，使用主 DB 的实例（共享 BadgerDB）
+	jmtCfg := smt.JMTConfig{
+		DataDir: filepath.Join(path, "jmt_state"),
+		Prefix:  []byte("jmt:"),
 	}
 
-	stateDB, err := statedb.New(stateCfg)
+	stateDB, err := smt.NewJMTStateDB(jmtCfg)
 	if err != nil {
 		_ = seq.Release()
 		_ = db.Close()
-		return nil, fmt.Errorf("failed to create StateDB: %w", err)
+		return nil, fmt.Errorf("failed to create JMT StateDB: %w", err)
 	}
 
 	manager := &Manager{
@@ -652,9 +647,9 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
 		return fmt.Errorf("StateDB is not initialized")
 	}
 
-	// 将 WriteOp 转换为 StateDB 的 KVUpdate
+	// 将 WriteOp 转换为 JMT 的 KVUpdate
 	// 使用 keys.IsStatefulKey 进行二次过滤，确保只有状态数据才会同步
-	kvUpdates := make([]statedb.KVUpdate, 0, len(updates))
+	kvUpdates := make([]smt.KVUpdate, 0, len(updates))
 	for _, u := range updates {
 		// 使用接口类型断言（避免循环依赖）
 		type writeOpInterface interface {
@@ -670,7 +665,7 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
 			if !keys.IsStatefulKey(key) {
 				continue
 			}
-			kvUpdates = append(kvUpdates, statedb.KVUpdate{
+			kvUpdates = append(kvUpdates, smt.KVUpdate{
 				Key:     key,
 				Value:   writeOp.GetValue(),
 				Deleted: writeOp.IsDel(),
@@ -680,7 +675,7 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
 		}
 	}
 
-	// 调用 StateDB 的 ApplyAccountUpdate
+	// 调用 JMT StateDB 的 ApplyAccountUpdate
 	if len(kvUpdates) > 0 {
 		if err := m.StateDB.ApplyAccountUpdate(height, kvUpdates...); err != nil {
 			logs.Error("[DB] Failed to sync to StateDB: %v", err)
