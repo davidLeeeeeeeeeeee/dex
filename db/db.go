@@ -440,7 +440,18 @@ func (manager *Manager) Close() {
 }
 
 // Read 读取键对应的值
+// 对于状态数据（账户、订单状态、Token、Witness 等）优先从 StateDB 读取
+// 对于流水数据（区块、交易原文、历史记录）直接从 KV 读取
 func (manager *Manager) Read(key string) (string, error) {
+	// 1. 对于状态数据，优先尝试从 StateDB 读取
+	if keys.IsStatefulKey(key) && manager.StateDB != nil {
+		if val, exists, err := manager.StateDB.Get(key); err == nil && exists && len(val) > 0 {
+			return string(val), nil
+		}
+		// StateDB 没有找到，继续回退到 KV
+	}
+
+	// 2. 从 KV 读取
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
@@ -469,7 +480,18 @@ func (manager *Manager) Read(key string) (string, error) {
 }
 
 // Get 实现 vm.DBManager 接口，返回 []byte
+// 对于状态数据（账户、订单状态、Token、Witness 等）优先从 StateDB 读取
+// 对于流水数据（区块、交易原文、历史记录）直接从 KV 读取
 func (manager *Manager) Get(key string) ([]byte, error) {
+	// 1. 对于状态数据，优先尝试从 StateDB 读取
+	if keys.IsStatefulKey(key) && manager.StateDB != nil {
+		if val, exists, err := manager.StateDB.Get(key); err == nil && exists && len(val) > 0 {
+			return val, nil
+		}
+		// StateDB 没有找到，继续回退到 KV
+	}
+
+	// 2. 从 KV 读取
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
@@ -624,12 +646,14 @@ func RebuildOrderPriceIndexes(m *Manager) (int, error) {
 
 // SyncToStateDB 同步状态变化到 StateDB
 // 这是 VM 的 applyResult 调用的接口，用于将 WriteOp 同步到 StateDB
+// 注意：只有被 keys.IsStatefulKey 判定为状态数据的 key 才会被同步
 func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
 	if m.StateDB == nil {
 		return fmt.Errorf("StateDB is not initialized")
 	}
 
 	// 将 WriteOp 转换为 StateDB 的 KVUpdate
+	// 使用 keys.IsStatefulKey 进行二次过滤，确保只有状态数据才会同步
 	kvUpdates := make([]statedb.KVUpdate, 0, len(updates))
 	for _, u := range updates {
 		// 使用接口类型断言（避免循环依赖）
@@ -640,8 +664,14 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
 		}
 
 		if writeOp, ok := u.(writeOpInterface); ok {
+			key := writeOp.GetKey()
+			// 只同步状态数据（可变证明状态）
+			// 流水数据（不可变区块/交易）和索引数据不会同步到 StateDB
+			if !keys.IsStatefulKey(key) {
+				continue
+			}
 			kvUpdates = append(kvUpdates, statedb.KVUpdate{
-				Key:     writeOp.GetKey(),
+				Key:     key,
 				Value:   writeOp.GetValue(),
 				Deleted: writeOp.IsDel(),
 			})

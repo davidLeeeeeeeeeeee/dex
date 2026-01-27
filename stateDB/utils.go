@@ -14,6 +14,13 @@ func u64ToBytes(u uint64) []byte {
 	return b
 }
 
+func bytesToU64(b []byte) uint64 {
+	if len(b) < 8 {
+		return 0
+	}
+	return binary.BigEndian.Uint64(b)
+}
+
 func encodeToken(s string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(s))
 }

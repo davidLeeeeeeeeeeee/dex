@@ -45,6 +45,27 @@ func (m *memWindow) apply(height uint64, key string, val []byte, deleted bool, s
 	e.heights = append(e.heights, height)
 }
 
+// get 从内存窗口中获取指定 key 的条目
+// 返回值：entry, exists
+func (m *memWindow) get(shard, key string) (*memEntry, bool) {
+	mu, ok := m.muByShard[shard]
+	if !ok {
+		return nil, false
+	}
+	mu.RLock()
+	defer mu.RUnlock()
+	e, ok := m.byShard[shard][key]
+	if !ok {
+		return nil, false
+	}
+	// 返回副本避免并发问题
+	return &memEntry{
+		latest:  append([]byte(nil), e.latest...),
+		del:     e.del,
+		heights: append([]uint64(nil), e.heights...),
+	}, true
+}
+
 func (m *memWindow) snapshotShard(shard string, startAfter string, limit int) (items []KVUpdate, lastKey string) {
 	m.muByShard[shard].RLock()
 	defer m.muByShard[shard].RUnlock()

@@ -2,54 +2,15 @@
 package statedb
 
 import (
+	"dex/keys"
 	"encoding/binary"
-	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 )
 
-// ---- 辅助方法：判断 key 是否需要同步到 StateDB ----
-// isStatefulKey 判断 key 是否属于需要同步到 StateDB 的状态数据
-// 支持的前缀：account、freeze、order、token、recharge_record、token_registry
-// 注意：需要排除历史记录类的 key（如 freeze_history、order_index 等）
-func (s *DB) isStatefulKey(key string) bool {
-	// 先排除历史记录类的 key 和索引类的 key
-	excludePrefixes := []string{
-		"v1_freeze_history_",    // 冻结历史（不是状态数据）
-		"v1_transfer_history_",  // 转账历史
-		"v1_miner_history_",     // 矿工历史
-		"v1_candidate_history_", // 候选人历史
-		"v1_recharge_history_",  // 充值历史
-		"v1_pair:",              // 订单价格索引（不是状态数据）
-		"v1_order_index_",       // 订单索引（如果有的话，不是状态数据）
-	}
-
-	for _, prefix := range excludePrefixes {
-		if strings.HasPrefix(key, prefix) {
-			return false
-		}
-	}
-
-	// 定义需要同步到 StateDB 的数据前缀
-	statefulPrefixes := []string{
-		"v1_account_",         // 账户数据
-		"v1_freeze_",          // 冻结标记（但不包括 freeze_history）
-		"v1_order_",           // 订单数据（但不包括 pair: 索引）
-		"v1_token_",           // Token 数据（包括 v1_token_registry）
-		"v1_recharge_record_", // 充值记录（但不包括 recharge_history）
-	}
-
-	for _, prefix := range statefulPrefixes {
-		if strings.HasPrefix(key, prefix) {
-			return true
-		}
-	}
-
-	return false
-}
-
 // ---- 外部调用：管理更新 ----
-// 在 db/manage_account.go 里每次账户变更都调用stateDB.ApplyAccountUpdate(height, key, val)
+// 使用 keys.IsStatefulKey 统一判断 key 是否属于状态数据
+// 详见 keys/category.go 中的分类定义
 func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 	E := epochOf(height, s.conf.EpochSize)
 	s.mu.Lock()
@@ -80,9 +41,9 @@ func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 		// 构造 WAL 记录
 		var walRecords []WalRecord
 		for _, kv := range kvs {
-			// ✨ 使用 isStatefulKey 支持多种数据类型
-			if !s.isStatefulKey(kv.Key) {
-				continue // 跳过非状态数据
+			// ✨ 使用 keys.IsStatefulKey 判断是否为状态数据
+			if !keys.IsStatefulKey(kv.Key) {
+				continue // 跳过非状态数据（流水/索引）
 			}
 			op := byte(0) // SET
 			if kv.Deleted {
@@ -107,9 +68,9 @@ func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 
 	// 写入内存窗口
 	for _, kv := range kvs {
-		// ✨ 使用 isStatefulKey 支持多种数据类型
-		if !s.isStatefulKey(kv.Key) {
-			continue // 跳过非状态数据
+		// ✨ 使用 keys.IsStatefulKey 判断是否为状态数据
+		if !keys.IsStatefulKey(kv.Key) {
+			continue // 跳过非状态数据（流水/索引）
 		}
 		sh := shardOf(kv.Key, s.conf.ShardHexWidth)
 		s.mem.apply(height, kv.Key, kv.Value, kv.Deleted, sh)

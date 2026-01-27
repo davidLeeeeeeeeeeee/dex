@@ -1,9 +1,7 @@
 package db
 
 import (
-	"dex/logs"
 	"dex/pb"
-	statedb "dex/stateDB"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -13,39 +11,42 @@ import (
 
 // SaveAccount stores an Account in the database
 //
-// ⚠️ INTERNAL API - DO NOT CALL DIRECTLY FROM OUTSIDE DB PACKAGE
-// This method is used internally by db package for legacy compatibility.
-// New code should use VM's unified write path (applyResult) instead.
+// ⚠️ DEPRECATED API - 仅用于过渡期兼容
+// 账户状态现在由 VM 的 applyResult 统一处理：
+//   - 可变状态数据写入 StateDB（通过 SyncToStateDB）
+//   - 所有数据同时写入 KV（当前阶段保持双写以确保兼容）
 //
-// Deprecated: Use VM's WriteOp mechanism for all state changes.
+// 新代码不应直接调用此方法，而应使用 VM 的 WriteOp 机制。
 func (mgr *Manager) SaveAccount(account *pb.Account) error {
 	key := KeyAccount(account.Address)
 	data, err := ProtoMarshal(account)
 	if err != nil {
 		return err
 	}
-	//logs.Trace("SaveAccount key:%s", key)
+	// 写入 KV（当前阶段保持双写，后续可移除）
 	mgr.EnqueueSet(key, string(data))
-
-	// 同步到 StateDB（如果已初始化）
-	if mgr.StateDB != nil {
-		height := mgr.GetCurrentHeight()
-		if err := mgr.StateDB.ApplyAccountUpdate(height, statedb.KVUpdate{
-			Key:     key,
-			Value:   data,
-			Deleted: false,
-		}); err != nil {
-			logs.Error("[DB] failed to sync account to StateDB: %v", err)
-		}
-	}
-
+	// 注意：StateDB 同步已由 VM 的 applyResult -> SyncToStateDB 统一处理
+	// 此处不再重复调用 StateDB.ApplyAccountUpdate
 	return nil
 }
 
 // GetAccount retrieves an Account from the database
+// 优先从 StateDB 读取（最新状态），如果没有则回退到 KV
 func (mgr *Manager) GetAccount(address string) (*pb.Account, error) {
 	key := KeyAccount(address)
-	//logs.Trace("GetAccount key:%s", key)
+
+	// 1. 优先尝试从 StateDB 读取（如果已初始化）
+	if mgr.StateDB != nil {
+		if val, exists, err := mgr.StateDB.Get(key); err == nil && exists && len(val) > 0 {
+			account := &pb.Account{}
+			if err := ProtoUnmarshal(val, account); err == nil {
+				return account, nil
+			}
+			// 解析失败，回退到 KV
+		}
+	}
+
+	// 2. 回退到 KV 读取
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -164,8 +165,21 @@ func (mgr *Manager) getAccountByIndex(idx uint64) (*pb.Account, error) {
 }
 
 // GetToken 获取 Token 信息
+// 优先从 StateDB 读取（最新状态），如果没有则回退到 KV
 func (mgr *Manager) GetToken(tokenAddress string) (*pb.Token, error) {
 	key := KeyToken(tokenAddress)
+
+	// 1. 优先尝试从 StateDB 读取
+	if mgr.StateDB != nil {
+		if val, exists, err := mgr.StateDB.Get(key); err == nil && exists && len(val) > 0 {
+			token := &pb.Token{}
+			if err := ProtoUnmarshal(val, token); err == nil {
+				return token, nil
+			}
+		}
+	}
+
+	// 2. 回退到 KV 读取
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -181,8 +195,21 @@ func (mgr *Manager) GetToken(tokenAddress string) (*pb.Token, error) {
 }
 
 // GetTokenRegistry 获取 Token 注册表
+// 优先从 StateDB 读取（最新状态），如果没有则回退到 KV
 func (mgr *Manager) GetTokenRegistry() (*pb.TokenRegistry, error) {
 	key := KeyTokenRegistry()
+
+	// 1. 优先尝试从 StateDB 读取
+	if mgr.StateDB != nil {
+		if val, exists, err := mgr.StateDB.Get(key); err == nil && exists && len(val) > 0 {
+			registry := &pb.TokenRegistry{}
+			if err := ProtoUnmarshal(val, registry); err == nil {
+				return registry, nil
+			}
+		}
+	}
+
+	// 2. 回退到 KV 读取
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
