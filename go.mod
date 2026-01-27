@@ -8,6 +8,7 @@ require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5
 	github.com/btcsuite/btcd/btcutil v1.1.6
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
+	github.com/celestiaorg/smt v0.3.0
 	github.com/dchest/siphash v1.2.3
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/dgraph-io/badger/v4 v4.8.0

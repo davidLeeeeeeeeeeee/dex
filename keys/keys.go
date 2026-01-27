@@ -548,3 +548,21 @@ func KeyShelvedRequest(requestID string) string {
 func KeyShelvedRequestPrefix() string {
 	return withVer("shelved_request_")
 }
+
+// ===================== JMT 相关 =====================
+
+// KeyJMTRoot JMT 状态根哈希
+// 例：v1_jmt_root
+func KeyJMTRoot() string {
+	return withVer("jmt_root")
+}
+
+// KeyJMTNodePrefix JMT 节点前缀
+func KeyJMTNodePrefix() string {
+	return withVer("jmt_n_")
+}
+
+// KeyJMTValuePrefix JMT 叶子值前缀
+func KeyJMTValuePrefix() string {
+	return withVer("jmt_v_")
+}
