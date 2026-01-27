@@ -96,12 +96,21 @@ func (n *Node) Start() {
 			immCh = tr.ReceiveImmediate()
 		}
 
+		// 使用信号量限制并发处理，防止阻塞接收队列
+		// 允许最高 2000 个并发处理 (考虑到 I/O 等待)
+		const maxConcurrency = 2000
+		sem := make(chan struct{}, maxConcurrency)
+
 		for {
 			// 1. 最高优先级：紧急消息（区块补全）
 			if immCh != nil {
 				select {
 				case msg := <-immCh:
-					n.messageHandler.HandleMsg(msg)
+					sem <- struct{}{}
+					go func(m types.Message) {
+						defer func() { <-sem }()
+						n.messageHandler.HandleMsg(m)
+					}(msg)
 					continue
 				default:
 				}
@@ -111,7 +120,11 @@ func (n *Node) Start() {
 			if dataCh != nil {
 				select {
 				case msg := <-dataCh:
-					n.messageHandler.HandleMsg(msg)
+					sem <- struct{}{}
+					go func(m types.Message) {
+						defer func() { <-sem }()
+						n.messageHandler.HandleMsg(m)
+					}(msg)
 					continue
 				default:
 				}
@@ -119,14 +132,26 @@ func (n *Node) Start() {
 
 			// 3. 普通消息（共识查询等）
 			select {
-			case msg := <-immCh:
-				n.messageHandler.HandleMsg(msg)
-			case msg := <-dataCh:
-				n.messageHandler.HandleMsg(msg)
-			case msg := <-controlCh:
-				n.messageHandler.HandleMsg(msg)
 			case <-n.ctx.Done():
 				return
+			case msg := <-immCh:
+				sem <- struct{}{}
+				go func(m types.Message) {
+					defer func() { <-sem }()
+					n.messageHandler.HandleMsg(m)
+				}(msg)
+			case msg := <-dataCh:
+				sem <- struct{}{}
+				go func(m types.Message) {
+					defer func() { <-sem }()
+					n.messageHandler.HandleMsg(m)
+				}(msg)
+			case msg := <-controlCh:
+				sem <- struct{}{}
+				go func(m types.Message) {
+					defer func() { <-sem }()
+					n.messageHandler.HandleMsg(m)
+				}(msg)
 			}
 		}
 	}()

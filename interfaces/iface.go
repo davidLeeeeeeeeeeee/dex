@@ -89,7 +89,7 @@ type BlockProposer interface {
 	// currentHeight: 当前高度
 	// proposeHeight: 提案高度
 	// lastBlockTime: 上次出块时间
-	ShouldPropose(nodeID types.NodeID, window int, currentBlocks int, currentHeight int, proposeHeight int, lastBlockTime time.Time) bool
+	ShouldPropose(nodeID types.NodeID, window int, currentBlocks int, currentHeight int, proposeHeight int, lastBlockTime time.Time, parentID string) bool
 }
 
 // ============================================

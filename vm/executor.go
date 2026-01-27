@@ -229,8 +229,12 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 		}
 
 		// Step 4: 如果是 OrderTxHandler，注入 pairBooks
+		// 特别注意：因为 HandlerRegistry 中存储的是单例，在并发执行多个区块时
+		// 不能直接修改单例的状态。必须克隆一个局部实例，确保本次执行使用正确的订单簿。
 		if orderHandler, ok := h.(*OrderTxHandler); ok {
-			orderHandler.SetOrderBooks(pairBooks)
+			localHandler := *orderHandler // 浅拷贝，因为 OrderTxHandler 结构简单，只需拷贝 map 指针字段
+			localHandler.SetOrderBooks(pairBooks)
+			h = &localHandler
 		}
 
 		// Step 5: 如果是 WitnessServiceAware handler，注入 WitnessService

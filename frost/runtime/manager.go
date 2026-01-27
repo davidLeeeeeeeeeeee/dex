@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"errors"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -491,13 +490,13 @@ func (m *Manager) handleBlockFinalized(height uint64) {
 	}
 
 	m.lastFinalizedHeight.Store(height)
-	log.Printf("[FrostManager] Block finalized: height=%d", height)
+	m.Logger.Info("[FrostManager] Block finalized: height=%d", height)
 
 	// 发送到处理队列
 	select {
 	case m.finalizedCh <- height:
 	default:
-		log.Printf("[FrostManager] finalized channel full, dropping height=%d", height)
+		m.Logger.Warn("[FrostManager] finalized channel full, dropping height=%d", height)
 	}
 
 	// 调用测试回调
@@ -522,7 +521,7 @@ func (m *Manager) runLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[FrostManager] Context cancelled")
+			m.Logger.Info("[FrostManager] Context cancelled")
 			return
 		case <-m.stopCh:
 			return
@@ -536,12 +535,12 @@ func (m *Manager) runLoop(ctx context.Context) {
 
 // onFinalized 处理 finalized 事件
 func (m *Manager) onFinalized(ctx context.Context, height uint64) {
-	log.Printf("[FrostManager] Processing finalized block: height=%d", height)
+	m.Logger.Trace("[FrostManager] Processing finalized block: height=%d", height)
 
 	// 检查是否有需要启动的 DKG 会话（触发条件检测）
 	if m.transitionWorker != nil {
 		if err := m.transitionWorker.CheckTriggerConditions(ctx, height); err != nil {
-			log.Printf("[FrostManager] CheckTriggerConditions error: %v", err)
+			m.Logger.Error("[FrostManager] CheckTriggerConditions error: %v", err)
 		}
 	}
 }
@@ -550,7 +549,7 @@ func (m *Manager) onFinalized(ctx context.Context, height uint64) {
 func (m *Manager) scanAndProcess(ctx context.Context) {
 	if m.transitionWorker != nil {
 		if err := m.transitionWorker.StartPendingSessions(ctx); err != nil {
-			log.Printf("[FrostManager] StartPendingSessions error: %v", err)
+			m.Logger.Error("[FrostManager] StartPendingSessions error: %v", err)
 		}
 	}
 	for _, pair := range m.config.SupportedChains {
@@ -563,7 +562,7 @@ func (m *Manager) processChainAsset(ctx context.Context, chainName, asset string
 	// 扫描队首 QUEUED withdraw
 	scanResult, err := m.scanner.ScanOnce(chainName, asset)
 	if err != nil {
-		log.Printf("[FrostManager] Scan error for %s/%s: %v", chainName, asset, err)
+		m.Logger.Error("[FrostManager] Scan error for %s/%s: %v", chainName, asset, err)
 		return
 	}
 
@@ -572,18 +571,18 @@ func (m *Manager) processChainAsset(ctx context.Context, chainName, asset string
 		return
 	}
 
-	log.Printf("[FrostManager] Found pending withdraw: chain=%s, asset=%s, id=%s, seq=%d",
+	m.Logger.Trace("[FrostManager] Found pending withdraw: chain=%s, asset=%s, id=%s, seq=%d",
 		chainName, asset, scanResult.WithdrawID, scanResult.Seq)
 
 	// 处理提现（传入 context）
 	job, err := m.withdrawWorker.ProcessOnce(ctx, chainName, asset)
 	if err != nil {
-		log.Printf("[FrostManager] ProcessOnce error: %v", err)
+		m.Logger.Info("[FrostManager] ProcessOnce error: %v", err)
 		return
 	}
 
 	if job != nil {
-		log.Printf("[FrostManager] Created job: id=%s, withdraws=%v", job.JobID, job.WithdrawIDs)
+		m.Logger.Info("[FrostManager] Created job: id=%s, withdraws=%v", job.JobID, job.WithdrawIDs)
 	}
 }
 

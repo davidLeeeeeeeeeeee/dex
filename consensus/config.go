@@ -77,7 +77,7 @@ func DefaultConfig() *Config {
 			ProposalInterval: 3000 * time.Millisecond,
 		},
 		Sync: SyncConfig{
-			CheckInterval:     2 * time.Second,
+			CheckInterval:     5 * time.Second,
 			BehindThreshold:   2,
 			BatchSize:         10,
 			Timeout:           5 * time.Second,

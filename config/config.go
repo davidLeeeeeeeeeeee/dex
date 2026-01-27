@@ -193,7 +193,7 @@ func DefaultConfig() *Config {
 			BroadcastPeerCount: 5,
 			MaxBroadcastPeers:  20,
 			NetworkLatency:     100 * time.Millisecond,
-			ConnectionTimeout:  5 * time.Second,
+			ConnectionTimeout:  10 * time.Second,
 			HandshakeTimeout:   10 * time.Second,
 			PacketLossRate:     0.0,
 			MinLatency:         0,
@@ -213,13 +213,13 @@ func DefaultConfig() *Config {
 			TxExpirationTime:        24 * time.Hour,
 		},
 		Sender: SenderConfig{
-			WorkerCount:         10000,
+			WorkerCount:         200,
 			QueueCapacity:       10000,
 			DefaultMaxRetries:   0, // 不重试，依赖 QueryManager 周期性发起新 Query
 			ControlMaxRetries:   0, // 共识消息不重试
 			DataMaxRetries:      0, // 数据消息不重试
 			JitterFactor:        0.3,
-			TaskExpireTimeout:   3 * time.Second, // 超过 3s 的任务直接丢弃
+			TaskExpireTimeout:   10 * time.Second, // 超过 10s 的任务直接丢弃
 			BaseRetryDelay:      100 * time.Millisecond,
 			MaxRetryDelay:       2 * time.Second,
 			ControlTaskTimeout:  180 * time.Millisecond,

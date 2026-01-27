@@ -2,6 +2,7 @@ package sender
 
 import (
 	"crypto/tls"
+	"dex/config"
 	"net/http"
 	"time"
 
@@ -30,8 +31,9 @@ func createHttp3Client() *http.Client {
 		},
 	}
 
+	cfg := config.DefaultConfig()
 	return &http.Client{
 		Transport: tr,
-		Timeout:   30 * time.Second,
+		Timeout:   cfg.Network.ConnectionTimeout,
 	}
 }

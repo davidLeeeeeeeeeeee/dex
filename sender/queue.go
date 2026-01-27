@@ -82,7 +82,7 @@ func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client, nodeI
 		controlWorkerCount: controlWorkers,
 		dataWorkerCount:    dataWorkers,
 		controlChan:        make(chan *SendTask, controlCapacity),
-		immediateChan:      make(chan *SendTask, 32), // 紧急队列较小
+		immediateChan:      make(chan *SendTask, 1024), // 紧急队列增加容量
 		dataChan:           make(chan *SendTask, dataCapacity),
 		stopChan:           make(chan struct{}),
 		httpClient:         httpClient,
@@ -101,8 +101,11 @@ func (sq *SendQueue) Start() {
 	}
 
 	// 启动紧急面 worker (共享控制面 worker 逻辑，但监听不同 chan)
-	sq.wg.Add(1)
-	go sq.workerLoop(999, sq.immediateChan, "immediate")
+	const immediateWorkers = 8
+	sq.wg.Add(immediateWorkers)
+	for i := 0; i < immediateWorkers; i++ {
+		go sq.workerLoop(900+i, sq.immediateChan, "immediate")
+	}
 
 	// 启动数据面 worker
 	sq.wg.Add(sq.dataWorkerCount)

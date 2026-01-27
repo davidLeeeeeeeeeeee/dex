@@ -60,7 +60,7 @@ func NewService(config *Config) *Service {
 		stakeManager:     NewStakeManager(config),
 		challengeManager: NewChallengeManager(config),
 		requests:         make(map[string]*pb.RechargeRequest),
-		eventChan:        make(chan *Event, 100),
+		eventChan:        make(chan *Event, 10000),
 		ctx:              ctx,
 		cancel:           cancel,
 	}
@@ -727,7 +727,9 @@ func (s *Service) checkChallengePeriod() {
 		// 检查是否过期
 		if s.currentHeight > request.DeadlineHeight {
 			// 公示期结束且无挑战，自动完成
-			request.Status = pb.RechargeRequestStatus_RECHARGE_FINALIZED
+			// 暂时不直接修改内存状态为 FINALIZED，以防对应区块未被接受导致事件丢失。
+			// 这种设计允许我们在后续区块中重试发送 Finalized 事件（幂等处理）。
+			// 只有通过 LoadRequest 加载到终态，或者节点重启后才会真正从活跃请求中移除。
 			request.FinalizeHeight = s.currentHeight
 
 			// 分配奖励给投 PASS 的见证者

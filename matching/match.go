@@ -323,8 +323,11 @@ func (ob *OrderBook) executeTrade(pl *PriceLevel, side OrderSide) bool {
 
 		// 处理当前单耗尽
 		if o.Amount.Cmp(decimal.Zero) <= 0 {
-			pl.Orders = pl.Orders[1:]
-			ob.removeOrderIndex(o.ID)
+			// 安全检查：确保 slice 不为空且首元素仍是 o
+			if len(pl.Orders) > 0 && pl.Orders[0].ID == o.ID {
+				pl.Orders = pl.Orders[1:]
+				ob.removeOrderIndex(o.ID)
+			}
 		}
 		// 如果 o 还有剩余，本轮循环会继续用同一个 o 匹配下一个 opp
 	}

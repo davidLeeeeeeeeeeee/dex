@@ -64,7 +64,7 @@ func (sm *SyncManager) Start(ctx context.Context) {
 	}()
 
 	go func() {
-		ticker := time.NewTicker(1 * time.Second)
+		ticker := time.NewTicker(sm.config.CheckInterval)
 		defer ticker.Stop()
 
 		for {

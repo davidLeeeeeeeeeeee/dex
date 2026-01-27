@@ -118,7 +118,7 @@ func (pm *ProposalManager) proposeBlock() {
 	}
 
 	// 判断是否应该在当前window提出区块
-	if !pm.proposer.ShouldPropose(pm.nodeID, currentWindow, currentBlocks, int(lastHeight), int(targetHeight), lastBlockTime) {
+	if !pm.proposer.ShouldPropose(pm.nodeID, currentWindow, currentBlocks, int(lastHeight), int(targetHeight), lastBlockTime, parentID) {
 		return
 	}
 

@@ -129,7 +129,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 }
 
 // 决定是否应该在当前时间窗口提出区块
-func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, currentBlocks int, currentHeight int, proposeHeight int, lastBlockTime time.Time) bool {
+func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, currentBlocks int, currentHeight int, proposeHeight int, lastBlockTime time.Time, parentID string) bool {
 	// 新增的高度检查逻辑：当前高度必须是要提议高度减1
 	if currentHeight != proposeHeight-1 {
 		logs.Debug("[RealBlockProposer] Height check failed: currentHeight=%d, proposeHeight=%d",
@@ -170,12 +170,14 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, curre
 		return false
 	}
 
-	// 使用上一个高度的实际 ID (对于高度 1，父块是 genesis)
-	parentID := "genesis"
-	if currentHeight > 0 {
-		parentID = fmt.Sprintf("block-%d", currentHeight) // 这是一个简化的假设，实际上建议从 store 获取，但目前 ShouldPropose 没法直接访问 store
-		// 由于 ShouldPropose 主要用于概率过滤，只要与 ProposeBlock 逻辑中的 parentID 选择一致即可。
-		// 在 ProposeBlock 中，height 1 的 parentID 被明确设置为传入的 parentID (即 genesis)
+	// 默认 parentID 之前处理逻辑已移除，现在直接使用传入的真实 parentID
+	if parentID == "" {
+		if currentHeight == 0 {
+			parentID = "genesis"
+		} else {
+			// 如果没传且不是高度1，尝试回退（虽然理论上 ProposalManager 会传）
+			parentID = fmt.Sprintf("block-%d", currentHeight)
+		}
 	}
 
 	vrfOutput, _, err := p.vrfProvider.GenerateVRF(

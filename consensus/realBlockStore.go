@@ -195,12 +195,12 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 // Get 获取区块
 func (s *RealBlockStore) Get(id string) (*types.Block, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	// 先从内存缓存查找
 	if block, exists := s.blockCache[id]; exists {
+		defer s.mu.RUnlock()
 		return block, true
 	}
+	s.mu.RUnlock()
 
 	// 从数据库通过ID查找
 	dbBlock, err := s.dbManager.GetBlockByID(id)
@@ -213,7 +213,9 @@ func (s *RealBlockStore) Get(id string) (*types.Block, bool) {
 	block := s.convertDBBlockToTypes(dbBlock)
 	if block != nil {
 		// 加入缓存以加速后续访问
+		s.mu.Lock()
 		s.blockCache[id] = block
+		s.mu.Unlock()
 		return block, true
 	}
 
@@ -223,18 +225,21 @@ func (s *RealBlockStore) Get(id string) (*types.Block, bool) {
 // GetByHeight 获取指定高度的所有区块
 func (s *RealBlockStore) GetByHeight(height uint64) []*types.Block {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	// 先从内存查找
 	if blocks, exists := s.heightIndex[height]; exists {
 		result := make([]*types.Block, len(blocks))
 		copy(result, blocks)
+		s.mu.RUnlock()
 		return result
 	}
+
 	// NEW: 如果请求的高度还没被任何区块覆盖，就直接返回空，避免打 DB
 	if height > s.maxHeight {
+		s.mu.RUnlock()
 		return []*types.Block{}
 	}
+	s.mu.RUnlock()
+
 	// 从数据库查找
 	dbBlock, err := s.dbManager.GetBlock(height)
 	if err != nil || dbBlock == nil {
@@ -244,8 +249,10 @@ func (s *RealBlockStore) GetByHeight(height uint64) []*types.Block {
 	// 转换为types.Block
 	block := s.convertDBBlockToTypes(dbBlock)
 	if block != nil {
+		s.mu.Lock()
 		s.blockCache[block.ID] = block
 		s.heightIndex[height] = []*types.Block{block}
+		s.mu.Unlock()
 		return []*types.Block{block}
 	}
 
@@ -275,12 +282,12 @@ func (s *RealBlockStore) GetLastAccepted() (string, uint64) {
 // GetFinalizedAtHeight 获取指定高度的最终化区块
 func (s *RealBlockStore) GetFinalizedAtHeight(height uint64) (*types.Block, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	// 从内存查找
 	if block, exists := s.finalizedBlocks[height]; exists {
+		s.mu.RUnlock()
 		return block, true
 	}
+	s.mu.RUnlock()
 
 	// 从数据库查找
 	dbBlock, err := s.dbManager.GetBlock(height)
@@ -290,7 +297,9 @@ func (s *RealBlockStore) GetFinalizedAtHeight(height uint64) (*types.Block, bool
 
 	block := s.convertDBBlockToTypes(dbBlock)
 	if block != nil {
+		s.mu.Lock()
 		s.finalizedBlocks[height] = block
+		s.mu.Unlock()
 		return block, true
 	}
 

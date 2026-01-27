@@ -141,7 +141,7 @@ const getMermaidDefinition = (req: WitnessRequest) => {
   
   let flow = 'graph LR\n'
   
-  const deadlineLabel = (isChallenge && req.deadline_height) ? `[Challenge Period<br/>Ends at H:${req.deadline_height}]` : '[Challenge Period]'
+  const deadlineLabel = ((isChallenge || isFinalized) && req.deadline_height) ? `[Challenge Period<br/>Ends at H:${req.deadline_height}]` : '[Challenge Period]'
   
   // Nodes
   flow += '  A[Deposit Detected] --> B[Witness Voting]\n'
@@ -309,7 +309,7 @@ const handleSelectTx = (txId: string) => {
               <span class="req-id-short">#{{ (req.request_id || '') }}</span>
               <span v-if="req.vault_id !== undefined" class="meta-label">Vault {{ req.vault_id }}</span>
               <span v-if="req.create_height" class="meta-label height">H:{{ req.create_height }}</span>
-              <span v-if="req.deadline_height && req.status.includes('CHALLENGE_PERIOD')" class="meta-label deadline">D:{{ req.deadline_height }}</span>
+              <span v-if="req.deadline_height && (req.status.includes('CHALLENGE_PERIOD') || req.status.includes('FINALIZED'))" class="meta-label deadline">D:{{ req.deadline_height }}</span>
               <div class="flow-entry-link" @click.stop="openFlow(req)">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
                 <span>Flow</span>

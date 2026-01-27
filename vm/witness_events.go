@@ -6,6 +6,7 @@ import (
 	"dex/pb"
 	"dex/witness"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -163,6 +164,60 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		seq++
 		setWithMeta(sv, seqKey, []byte(strconv.FormatUint(seq, 10)), true, "frost_funds")
 	}
+
+	// 增加用户余额
+	userAddr := stored.ReceiverAddress
+	if userAddr != "" {
+		userKey := keys.KeyAccount(userAddr)
+		userData, userExists, _ := sv.Get(userKey)
+
+		var userAccount pb.Account
+		if userExists {
+			if err := proto.Unmarshal(userData, &userAccount); err != nil {
+				return fmt.Errorf("failed to unmarshal user account: %w", err)
+			}
+		} else {
+			userAccount = pb.Account{
+				Address:  userAddr,
+				Balances: make(map[string]*pb.TokenBalance),
+			}
+		}
+
+		if userAccount.Balances == nil {
+			userAccount.Balances = make(map[string]*pb.TokenBalance)
+		}
+
+		if userAccount.Balances[stored.TokenAddress] == nil {
+			userAccount.Balances[stored.TokenAddress] = &pb.TokenBalance{
+				Balance: "0",
+			}
+		}
+
+		balanceStr := userAccount.Balances[stored.TokenAddress].Balance
+		currentBalance, _ := new(big.Int).SetString(balanceStr, 10)
+		if currentBalance == nil {
+			currentBalance = big.NewInt(0)
+		}
+
+		amount, ok := new(big.Int).SetString(stored.Amount, 10)
+		if !ok {
+			return fmt.Errorf("invalid recharge amount: %s", stored.Amount)
+		}
+
+		newBalance, err := SafeAdd(currentBalance, amount)
+		if err != nil {
+			return fmt.Errorf("balance overflow: %w", err)
+		}
+
+		userAccount.Balances[stored.TokenAddress].Balance = newBalance.String()
+
+		updatedUserData, err := proto.Marshal(&userAccount)
+		if err != nil {
+			return fmt.Errorf("failed to marshal updated user account: %w", err)
+		}
+		setWithMeta(sv, userKey, updatedUserData, true, "account")
+	}
+
 	return nil
 }
 

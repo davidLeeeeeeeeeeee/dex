@@ -42,7 +42,7 @@ func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, prop
 	return block, nil
 }
 
-func (p *DefaultBlockProposer) ShouldPropose(nodeID types.NodeID, window int, currentBlocks int, currentHeight int, proposeHeight int, lastBlockTime time.Time) bool {
+func (p *DefaultBlockProposer) ShouldPropose(nodeID types.NodeID, window int, currentBlocks int, currentHeight int, proposeHeight int, lastBlockTime time.Time, parentID string) bool {
 	// 新增的高度检查逻辑：当前高度必须是要提议高度减1
 	if currentHeight != proposeHeight-1 {
 		// 当前高度不是 proposeHeight-1，不允许提议

@@ -63,7 +63,7 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 		}
 
 		qm.cleanupPollsByQueryKeys(data.QueryKeys, data.Reason)
-		if (data.Reason == "timeout" || data.Reason == "parent_missing" || data.Reason == "candidates_missing") && len(data.QueryKeys) > 0 {
+		if (data.Reason == "timeout" || data.Reason == "parent_missing") && len(data.QueryKeys) > 0 {
 			// 添加退避延迟，避免超时或因缺数据失败后立即重发导致自激荡
 			// 使用 200-500ms 随机退避 + jitter
 			backoff := 200*time.Millisecond + time.Duration(rand.Int63n(300))*time.Millisecond
@@ -72,6 +72,9 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 				qm.tryIssueQuery()
 			})
 		}
+		// "candidates_missing" 不再触发自动重发。
+		// 原因：如果是"当前高度存在块但都不符合父链"，立即重发也依然选不到合法块，只会空转。
+		// 应该等待下一次 EventBlockReceived 或其他触发源。
 		//只有timeout才需要清理
 	})
 
