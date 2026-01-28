@@ -231,6 +231,16 @@ func (m *ConsensusNodeManager) GetCurrentHeight() uint64 {
 	return m.store.GetCurrentHeight()
 }
 
+// GetPendingBlocksCount 获取候选区块数量
+func (m *ConsensusNodeManager) GetPendingBlocksCount() int {
+	return m.store.GetPendingBlocksCount()
+}
+
+// GetPendingBlocks 获取候选区块列表
+func (m *ConsensusNodeManager) GetPendingBlocks() []*types.Block {
+	return m.store.GetPendingBlocks()
+}
+
 // GetEventBus 获取事件总线（用于适配器）
 func (m *ConsensusNodeManager) GetEventBus() interfaces.EventBus {
 	if m.Node != nil {
@@ -269,4 +279,12 @@ func (m *ConsensusNodeManager) Stop() {
 		m.Node.Stop()
 	}
 	logs.Info("[ConsensusManager] Stopped")
+}
+
+// GetPendingHeightsState 获取未最终化高度的共识状态
+func (m *ConsensusNodeManager) GetPendingHeightsState() []*HeightState {
+	if se, ok := m.engine.(*SnowmanEngine); ok {
+		return se.GetPendingHeightsState()
+	}
+	return nil
 }

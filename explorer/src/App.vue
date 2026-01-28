@@ -13,6 +13,7 @@ import DkgTimeline from './components/frost/DkgTimeline.vue'
 import WitnessList from './components/frost/WitnessList.vue'
 import TradingPanel from './components/TradingPanel.vue'
 import TxDetail from './components/TxDetail.vue'
+import PendingBlocksModal from './components/PendingBlocksModal.vue'
 
 type TabType = 'overview' | 'search' | 'trading' | 'withdrawals' | 'recharges' | 'dkg'
 
@@ -67,6 +68,15 @@ function handleSelectTx(txId: string) {
   txModalId.value = txId
   txModalNode.value = selectedProtocolNode.value || firstSelectedNode.value 
   txModalVisible.value = true
+}
+
+// 候选区块弹窗状态
+const pendingBlocksModalVisible = ref(false)
+const pendingBlocksNodeAddress = ref('')
+
+function handleViewPending(address: string) {
+  pendingBlocksNodeAddress.value = address
+  pendingBlocksModalVisible.value = true
 }
 
 function handleAddressClick(_address: string) {
@@ -262,7 +272,7 @@ onMounted(() => {
                  <span class="pulse-badge">{{ lastUpdate }}</span>
               </div>
             </header>
-            <NodeCards :nodes="summaryNodes" @card-click="handleCardClick" />
+            <NodeCards :nodes="summaryNodes" @card-click="handleCardClick" @view-pending="handleViewPending" />
           </section>
         </div>
       </main>
@@ -334,6 +344,12 @@ onMounted(() => {
       :tx-id="txModalId"
       @close="txModalVisible = false"
       @address-click="handleAddressClick"
+    />
+    
+    <PendingBlocksModal
+      :visible="pendingBlocksModalVisible"
+      :node-address="pendingBlocksNodeAddress"
+      @close="pendingBlocksModalVisible = false"
     />
   </div>
 </template>

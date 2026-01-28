@@ -7,6 +7,7 @@ defineProps<{
 
 const emit = defineEmits<{
   cardClick: [address: string]
+  viewPending: [address: string]
 }>()
 
 const numberFormat = new Intl.NumberFormat('en-US')
@@ -117,6 +118,15 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <span>FROST Jobs</span>
           <span class="text-indigo-400 font-bold ml-auto">{{ formatNumber(node.frost_metrics.frost_jobs) }}</span>
+        </div>
+
+        <div class="detail-row pending-row" 
+             v-if="node.pending_blocks_count && node.pending_blocks_count > 0"
+             @click.stop="emit('viewPending', node.address)">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><circle cx="12" cy="12" r="4"/></svg>
+          <span class="text-amber-400">候选区块</span>
+          <span class="text-amber-400 font-bold ml-auto">{{ node.pending_blocks_count }}</span>
+          <svg class="view-arrow" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
         </div>
       </div>
 
@@ -266,6 +276,30 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
 .text-emerald-400 { color: #34d399; font-size: 0.65rem; font-weight: 700; }
 .text-emerald-300 { color: #6ee7b7; }
 .state-root-row { background: rgba(16, 185, 129, 0.03); padding: 4px 8px; border-radius: 6px; margin-top: 4px; }
+
+/* 候选区块行样式 */
+.pending-row {
+  background: rgba(245, 158, 11, 0.08);
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-top: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+.pending-row:hover {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+.text-amber-400 { color: #fbbf24; }
+.view-arrow { 
+  color: #fbbf24; 
+  margin-left: 4px;
+  transition: transform 0.2s ease;
+}
+.pending-row:hover .view-arrow {
+  transform: translateX(2px);
+}
 
 .api-footer {
   border-top: 1px solid rgba(255, 255, 255, 0.05);

@@ -144,6 +144,17 @@ func (sb *Snowball) GetConfidence() int {
 	return sb.confidence
 }
 
+// GetLastVotes 获取最后一轮每个区块的投票数
+func (sb *Snowball) GetLastVotes() map[string]int {
+	sb.mu.RLock()
+	defer sb.mu.RUnlock()
+	result := make(map[string]int, len(sb.lastVotes))
+	for k, v := range sb.lastVotes {
+		result[k] = v
+	}
+	return result
+}
+
 func (sb *Snowball) CanFinalize(beta int) bool {
 	sb.mu.RLock()
 	defer sb.mu.RUnlock()

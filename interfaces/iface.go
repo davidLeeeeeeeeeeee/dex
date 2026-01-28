@@ -17,6 +17,10 @@ type BlockStore interface {
 	GetBlocksFromHeight(from, to uint64) []*types.Block
 	GetCurrentHeight() uint64
 
+	// 候选区块相关
+	GetPendingBlocksCount() int
+	GetPendingBlocks() []*types.Block
+
 	// 快照相关
 	CreateSnapshot(height uint64) (*types.Snapshot, error)
 	LoadSnapshot(snapshot *types.Snapshot) error

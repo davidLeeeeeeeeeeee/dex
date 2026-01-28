@@ -282,3 +282,51 @@ func (e *SnowmanEngine) GetPreference(height uint64) string {
 
 	return ""
 }
+
+// HeightState 表示某个高度的共识状态
+type HeightState struct {
+	Height     uint64
+	Preference string
+	Confidence int
+	Finalized  bool
+	LastVotes  map[string]int
+}
+
+// GetHeightState 获取指定高度的共识状态
+func (e *SnowmanEngine) GetHeightState(height uint64) *HeightState {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	sb, exists := e.snowballs[height]
+	if !exists {
+		return nil
+	}
+
+	return &HeightState{
+		Height:     height,
+		Preference: sb.GetPreference(),
+		Confidence: sb.GetConfidence(),
+		Finalized:  sb.IsFinalized(),
+		LastVotes:  sb.GetLastVotes(),
+	}
+}
+
+// GetPendingHeightsState 获取所有未最终化高度的共识状态
+func (e *SnowmanEngine) GetPendingHeightsState() []*HeightState {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	result := make([]*HeightState, 0)
+	for height, sb := range e.snowballs {
+		if !sb.IsFinalized() {
+			result = append(result, &HeightState{
+				Height:     height,
+				Preference: sb.GetPreference(),
+				Confidence: sb.GetConfidence(),
+				Finalized:  false,
+				LastVotes:  sb.GetLastVotes(),
+			})
+		}
+	}
+	return result
+}

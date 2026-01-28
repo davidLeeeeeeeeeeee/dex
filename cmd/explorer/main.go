@@ -72,6 +72,7 @@ type nodeSummary struct {
 	Error              string        `json:"error,omitempty"`
 	Block              *blockSummary `json:"block,omitempty"`
 	FrostMetrics       *frostMetrics `json:"frost_metrics,omitempty"`
+	PendingBlocksCount uint32        `json:"pending_blocks_count,omitempty"` // 候选区块数量
 }
 
 type nodeDetails struct {
@@ -278,6 +279,7 @@ func main() {
 	mux.HandleFunc("/api/orderbook", srv.handleOrderBook)
 	mux.HandleFunc("/api/orderbook/debug", srv.handleOrderBookDebug)
 	mux.HandleFunc("/api/trades", srv.handleTrades)
+	mux.HandleFunc("/api/pendingblocks", srv.handlePendingBlocks)
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	log.Printf("Explorer listening at http://%s (ui: %s, data: %s)", *listenAddr, webDir, *dataDir)
@@ -1104,6 +1106,7 @@ func (s *server) collectSummary(ctx context.Context, nodes []string, includeBloc
 			} else {
 				summary.CurrentHeight = height.CurrentHeight
 				summary.LastAcceptedHeight = height.LastAcceptedHeight
+				summary.PendingBlocksCount = height.PendingBlocksCount
 			}
 
 			if includeFrost {
@@ -1701,4 +1704,87 @@ func (s *server) fetchTradesFromNode(ctx context.Context, node, pair string, lim
 	}
 
 	return trades, nil
+}
+
+// pendingBlocksRequest 候选区块请求
+type pendingBlocksRequest struct {
+	Node string `json:"node"`
+}
+
+// pendingBlockInfo 候选区块信息
+type pendingBlockInfo struct {
+	BlockID     string `json:"block_id"`
+	Height      uint64 `json:"height"`
+	ParentID    string `json:"parent_id"`
+	Proposer    string `json:"proposer"`
+	Window      int32  `json:"window"`
+	Votes       int32  `json:"votes"`        // 最近一轮投票数
+	IsPreferred bool   `json:"is_preferred"` // 是否是当前偏好区块
+}
+
+// heightConsensusState 高度共识状态
+type heightConsensusState struct {
+	Height     uint64 `json:"height"`
+	Preference string `json:"preference"`
+	Confidence int32  `json:"confidence"`
+	Finalized  bool   `json:"finalized"`
+}
+
+// pendingBlocksResponse 候选区块响应
+type pendingBlocksResponse struct {
+	Blocks       []pendingBlockInfo     `json:"blocks"`
+	HeightStates []heightConsensusState `json:"height_states,omitempty"`
+	Error        string                 `json:"error,omitempty"`
+}
+
+// handlePendingBlocks 获取节点的候选区块列表
+func (s *server) handlePendingBlocks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req pendingBlocksRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, pendingBlocksResponse{Error: "invalid request body"})
+		return
+	}
+	if req.Node == "" {
+		writeJSON(w, pendingBlocksResponse{Error: "node is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+	defer cancel()
+
+	var pbResp pb.PendingBlocksResponse
+	if err := s.fetchProto(ctx, req.Node, "/pendingblocks", nil, &pbResp); err != nil {
+		writeJSON(w, pendingBlocksResponse{Error: err.Error()})
+		return
+	}
+
+	blocks := make([]pendingBlockInfo, 0, len(pbResp.Blocks))
+	for _, b := range pbResp.Blocks {
+		blocks = append(blocks, pendingBlockInfo{
+			BlockID:     b.BlockId,
+			Height:      b.Height,
+			ParentID:    b.ParentId,
+			Proposer:    b.Proposer,
+			Window:      b.Window,
+			Votes:       b.Votes,
+			IsPreferred: b.IsPreferred,
+		})
+	}
+
+	heightStates := make([]heightConsensusState, 0, len(pbResp.HeightStates))
+	for _, hs := range pbResp.HeightStates {
+		heightStates = append(heightStates, heightConsensusState{
+			Height:     hs.Height,
+			Preference: hs.Preference,
+			Confidence: hs.Confidence,
+			Finalized:  hs.Finalized,
+		})
+	}
+
+	writeJSON(w, pendingBlocksResponse{Blocks: blocks, HeightStates: heightStates})
 }

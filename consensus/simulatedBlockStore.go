@@ -284,3 +284,31 @@ func (s *MemoryBlockStore) GetSnapshotAtHeight(height uint64) (*types.Snapshot, 
 	snapshot, exists := s.snapshots[bestHeight]
 	return snapshot, exists
 }
+
+// GetPendingBlocksCount 获取候选区块数量（未最终化）
+func (s *MemoryBlockStore) GetPendingBlocksCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for height := s.lastAcceptedHeight + 1; height <= s.maxHeight; height++ {
+		if blocks, exists := s.heightIndex[height]; exists {
+			count += len(blocks)
+		}
+	}
+	return count
+}
+
+// GetPendingBlocks 获取候选区块列表
+func (s *MemoryBlockStore) GetPendingBlocks() []*types.Block {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]*types.Block, 0)
+	for height := s.lastAcceptedHeight + 1; height <= s.maxHeight; height++ {
+		if blocks, exists := s.heightIndex[height]; exists {
+			result = append(result, blocks...)
+		}
+	}
+	return result
+}

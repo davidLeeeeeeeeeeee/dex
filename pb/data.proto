@@ -393,9 +393,35 @@ message HeightResponse{ // 需要在proto中定义
   uint64 LastAcceptedHeight = 1;
   uint64 CurrentHeight = 2;
   string address = 3; // 响应方地址
+  uint32 pending_blocks_count = 4; // 候选区块数量（未确认）
 }
 
 message GetBlockByIDRequest { string block_id = 1; }
+
+// 候选区块信息（未确认）
+message PendingBlockInfo {
+  string block_id = 1; // 区块ID
+  uint64 height = 2; // 区块高度
+  string parent_id = 3; // 父区块ID
+  string proposer = 4; // 提案者
+  int32 window = 5; // 时间窗口
+  int32 votes = 6; // 最近一轮投票数
+  bool is_preferred = 7; // 是否是当前偏好区块
+}
+
+// 高度共识状态
+message HeightConsensusState {
+  uint64 height = 1; // 高度
+  string preference = 2; // 偏好区块ID
+  int32 confidence = 3; // 累计信心值
+  bool finalized = 4; // 是否已最终化
+}
+
+// 候选区块列表响应
+message PendingBlocksResponse {
+  repeated PendingBlockInfo blocks = 1;
+  repeated HeightConsensusState height_states = 2; // 各高度的共识状态
+}
 
 // --------------------- Witness 见证者相关 ---------------------
 

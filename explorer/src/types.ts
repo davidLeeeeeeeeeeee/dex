@@ -9,6 +9,7 @@ export interface NodeSummary {
   error?: string
   block?: BlockSummary
   frost_metrics?: FrostMetrics
+  pending_blocks_count?: number  // 候选区块数量（未确认）
 }
 
 // 节点详情（包含日志和最近区块）
@@ -354,4 +355,30 @@ export interface TradeRecord {
   side: 'buy' | 'sell'
   maker_order_id?: string
   taker_order_id?: string
+}
+
+// 候选区块信息（未确认）
+export interface PendingBlock {
+  block_id: string
+  height: number
+  parent_id: string
+  proposer: string
+  window: number
+  votes: number        // 最近一轮投票数
+  is_preferred: boolean // 是否是当前偏好区块
+}
+
+// 高度共识状态
+export interface HeightConsensusState {
+  height: number
+  preference: string
+  confidence: number
+  finalized: boolean
+}
+
+// 候选区块列表响应
+export interface PendingBlocksResponse {
+  blocks: PendingBlock[]
+  height_states?: HeightConsensusState[]
+  error?: string
 }

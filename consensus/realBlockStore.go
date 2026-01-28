@@ -143,16 +143,11 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 	s.heightIndex[block.Height] = append(s.heightIndex[block.Height], block)
 	s.mu.Unlock()
 
-	// 第二步：VM预执行（不持锁，这是耗时操作）
-	preExecStart := time.Now()
 	// 获取完整的 pb.Block（包含交易）
 	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
 		// 调用 VM 预执行
 		result, err := s.vmExecutor.PreExecuteBlock(pbBlock)
 
-		if duration := time.Since(preExecStart); duration > 100*time.Millisecond {
-			logs.Info("[RealBlockStore] SLOW VM PreExecute: block=%s, txs=%d, duration=%v", block.ID, len(pbBlock.Body), duration)
-		}
 		if err != nil {
 			logs.Error("[RealBlockStore] VM PreExecuteBlock failed for block %s: %v", block.ID, err)
 			// 执行失败，需要把刚才占坑的数据撤回
@@ -839,4 +834,32 @@ func (s *RealBlockStore) GetWitnessService() *witness.Service {
 		return nil
 	}
 	return s.vmExecutor.GetWitnessService()
+}
+
+// GetPendingBlocksCount 获取候选区块数量（未最终化）
+func (s *RealBlockStore) GetPendingBlocksCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for height := s.lastAcceptedHeight + 1; height <= s.maxHeight; height++ {
+		if blocks, exists := s.heightIndex[height]; exists {
+			count += len(blocks)
+		}
+	}
+	return count
+}
+
+// GetPendingBlocks 获取候选区块列表
+func (s *RealBlockStore) GetPendingBlocks() []*types.Block {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]*types.Block, 0)
+	for height := s.lastAcceptedHeight + 1; height <= s.maxHeight; height++ {
+		if blocks, exists := s.heightIndex[height]; exists {
+			result = append(result, blocks...)
+		}
+	}
+	return result
 }
