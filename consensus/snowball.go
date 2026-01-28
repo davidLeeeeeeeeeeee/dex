@@ -60,30 +60,17 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 		}
 	}
 
-	// 找出最高票数
-	maxVotes := 0
-	for _, v := range votes {
-		if v > maxVotes {
-			maxVotes = v
-		}
-	}
-
-	// 收集所有达到最高票数的候选（可能有多个并列）
-	var topCandidates []string
-	for cid, v := range votes {
-		if v == maxVotes {
-			topCandidates = append(topCandidates, cid)
-		}
-	}
-
-	// 确定性选择：按 hash 最小
+	// 确定性选择：无论票数如何，直接选择所有候选区块中 hash 最小的作为本轮“赢家”
+	// 这强行引导节点向最小 hash 的块收敛。只有当这个特定的 winner 获得足够票数 (alpha) 时，才更新偏好或增加置信度。
 	var winner string
-	if len(topCandidates) > 0 {
-		winner = selectByMinHash(topCandidates)
+	winnerVotes := 0
+	if len(candidates) > 0 {
+		winner = selectByMinHash(candidates)
+		winnerVotes = votes[winner]
 	}
 
-	if maxVotes >= alpha {
-		// 关键：只有当 winner 获得足够票数时才考虑切换
+	if winnerVotes >= alpha {
+		// 关键：只有当这个最小 hash 的区块获得足够票数时才考虑切换或增加置信度
 		if winner != sb.preference {
 			sb.events.PublishAsync(types.BaseEvent{
 				EventType: types.EventPreferenceChanged,
