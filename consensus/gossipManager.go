@@ -6,6 +6,7 @@ import (
 	"dex/logs"
 	"dex/types"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,15 +16,16 @@ import (
 // ============================================
 
 type GossipManager struct {
-	nodeID     types.NodeID
-	node       *Node
-	transport  interfaces.Transport
-	store      interfaces.BlockStore
-	config     *GossipConfig
-	events     interfaces.EventBus
-	Logger     logs.Logger
-	seenBlocks map[string]bool
-	mu         sync.RWMutex
+	nodeID       types.NodeID
+	node         *Node
+	transport    interfaces.Transport
+	store        interfaces.BlockStore
+	config       *GossipConfig
+	events       interfaces.EventBus
+	Logger       logs.Logger
+	queryManager *QueryManager
+	seenBlocks   map[string]bool
+	mu           sync.RWMutex
 }
 
 func NewGossipManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *GossipConfig, events interfaces.EventBus, logger logs.Logger) *GossipManager {
@@ -44,6 +46,10 @@ func NewGossipManager(id types.NodeID, transport interfaces.Transport, store int
 	})
 
 	return gm
+}
+
+func (gm *GossipManager) SetQueryManager(qm *QueryManager) {
+	gm.queryManager = qm
 }
 
 func (gm *GossipManager) Start(ctx context.Context) {
@@ -158,6 +164,12 @@ func (gm *GossipManager) HandleGossip(msg types.Message) {
 
 	isNew, err := gm.store.Add(msg.Block)
 	if err != nil {
+		// 如果是因为缺父块导致的拒绝，自动请求父块
+		if strings.Contains(err.Error(), "parent block") && strings.Contains(err.Error(), "not found") {
+			if gm.queryManager != nil {
+				gm.queryManager.RequestBlock(msg.Block.ParentID, types.NodeID(msg.From))
+			}
+		}
 		return
 	}
 

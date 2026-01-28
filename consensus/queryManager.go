@@ -17,17 +17,18 @@ import (
 // ============================================
 
 type QueryManager struct {
-	nodeID      types.NodeID
-	node        *Node
-	transport   interfaces.Transport
-	store       interfaces.BlockStore
-	engine      interfaces.ConsensusEngine
-	config      *ConsensusConfig
-	events      interfaces.EventBus
-	Logger      logs.Logger
-	activePolls sync.Map
-	nextReqID   uint32
-	mu          sync.Mutex
+	nodeID               types.NodeID
+	node                 *Node
+	transport            interfaces.Transport
+	store                interfaces.BlockStore
+	engine               interfaces.ConsensusEngine
+	config               *ConsensusConfig
+	events               interfaces.EventBus
+	Logger               logs.Logger
+	activePolls          sync.Map
+	nextReqID            uint32
+	mu                   sync.Mutex
+	missingBlockRequests sync.Map
 }
 
 type Poll struct {
@@ -208,24 +209,41 @@ func secureRandUint32() (uint32, error) {
 	return binary.BigEndian.Uint32(b[:]), nil
 }
 
+// RequestBlock 尝试请求缺失的区块，带有自激荡保护（限流）
+func (qm *QueryManager) RequestBlock(blockID string, from types.NodeID) {
+	// 检查是否最近已请求过该块，避免自激
+	lastReqTime, loaded := qm.missingBlockRequests.LoadOrStore(blockID, time.Now())
+	shouldRequest := true
+	if loaded {
+		if time.Since(lastReqTime.(time.Time)) < 3*time.Second {
+			shouldRequest = false
+		} else {
+			// 更新时间
+			qm.missingBlockRequests.Store(blockID, time.Now())
+		}
+	}
+
+	if shouldRequest {
+		logs.Warn("[QueryManager] Requesting missing block %s from %s", blockID, from)
+		if err := qm.transport.Send(from, types.Message{
+			Type:      types.MsgGet,
+			From:      qm.nodeID,
+			RequestID: 0, // 主动请求不需要 RequestID
+			BlockID:   blockID,
+		}); err != nil {
+			logs.Warn("[QueryManager] Failed to request missing block %s from %s: %v",
+				blockID, from, err)
+		}
+	}
+}
+
 func (qm *QueryManager) HandleChit(msg types.Message) {
 	if poll, ok := qm.activePolls.Load(msg.RequestID); ok {
 		p := poll.(*Poll)
 		if msg.PreferredID != "" {
 			if _, exists := qm.store.Get(msg.PreferredID); !exists {
-				logs.Warn("[QueryManager] Missing preferred block %s (h=%d) from %s; requesting",
-					msg.PreferredID, msg.PreferredIDHeight, msg.From)
-				if err := qm.transport.Send(types.NodeID(msg.From), types.Message{
-					Type:      types.MsgGet,
-					From:      qm.nodeID,
-					RequestID: msg.RequestID,
-					BlockID:   msg.PreferredID,
-					Height:    msg.PreferredIDHeight,
-				}); err != nil {
-					// 重要：原逻辑吞掉 Send 错误，导致“看起来在 requesting，实际没发出去/失败了”很难排查。
-					logs.Warn("[QueryManager] Failed to request missing block %s (h=%d) from %s: %v",
-						msg.PreferredID, msg.PreferredIDHeight, msg.From, err)
-				}
+				// 使用重构后的 RequestBlock 方法
+				qm.RequestBlock(msg.PreferredID, types.NodeID(msg.From))
 			}
 		}
 		qm.engine.SubmitChit(types.NodeID(msg.From), p.queryKey, msg.PreferredID)

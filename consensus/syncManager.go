@@ -80,6 +80,20 @@ func (sm *SyncManager) Start(ctx context.Context) {
 
 // 定时查询其他节点高度
 func (sm *SyncManager) pollPeerHeights() {
+	// 如果正在同步中，暂停轮询高度，避免网络拥堵
+	sm.Mu.RLock()
+	if sm.Syncing {
+		sm.Mu.RUnlock()
+		return
+	}
+	sm.Mu.RUnlock()
+
+	// 限制轮询频率，至少间隔 2 秒
+	if time.Since(sm.lastPoll) < 2*time.Second {
+		return
+	}
+	sm.lastPoll = time.Now()
+
 	peers := sm.transport.SamplePeers(sm.nodeID, 10)
 	for _, peer := range peers {
 		sm.transport.Send(peer, types.Message{

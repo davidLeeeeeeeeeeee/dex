@@ -36,6 +36,12 @@ const totalApiCalls = computed(() => {
   return Object.values(stats).reduce((sum, count) => Number(sum) + Number(count), 0)
 })
 
+function getUsageClass(usage: number): string {
+  if (usage < 0.5) return 'text-emerald-400'
+  if (usage < 0.8) return 'text-amber-400'
+  return 'text-red-400 font-bold'
+}
+
 async function loadDetails() {
   if (!props.address) return
   loading.value = true
@@ -115,6 +121,35 @@ watch(() => props.address, () => { if (props.visible && props.address) loadDetai
                      <td class="mono">{{ api }}</td>
                      <td class="text-right font-bold">{{ formatNumber(count) }}</td>
                      <td class="text-right text-indigo-400">{{ ((Number(count) / totalApiCalls) * 100).toFixed(1) }}%</td>
+                   </tr>
+                 </tbody>
+               </table>
+             </div>
+          </div>
+
+          <!-- Channel Capacity Details -->
+          <div v-if="details.frost_metrics?.channel_stats?.length" class="sub-section">
+             <div class="sub-title">Channel Capacity</div>
+             <div class="table-wrap">
+               <table class="premium-table">
+                 <thead>
+                   <tr>
+                     <th>CHANNEL</th>
+                     <th>MODULE</th>
+                     <th class="text-right">LENGTH</th>
+                     <th class="text-right">CAPACITY</th>
+                     <th class="text-right">USAGE</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   <tr v-for="ch in details.frost_metrics.channel_stats" :key="ch.name + ch.module">
+                     <td class="mono font-bold">{{ ch.name }}</td>
+                     <td class="text-gray-500">{{ ch.module }}</td>
+                     <td class="text-right mono">{{ formatNumber(ch.len) }}</td>
+                     <td class="text-right mono">{{ formatNumber(ch.cap) }}</td>
+                     <td class="text-right">
+                       <span :class="getUsageClass(ch.usage)">{{ (ch.usage * 100).toFixed(1) }}%</span>
+                     </td>
                    </tr>
                  </tbody>
                </table>

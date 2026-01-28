@@ -107,6 +107,12 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
           <span class="badge ml-auto">{{ formatNumber(node.block.tx_count) }} TXs</span>
         </div>
 
+        <div class="detail-row state-root-row" v-if="node.block?.state_root">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+          <span class="text-emerald-400">State Root</span>
+          <span class="mono text-emerald-300 ml-auto">{{ truncate(node.block.state_root, 10) }}</span>
+        </div>
+
         <div class="detail-row" v-if="node.frost_metrics">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <span>FROST Jobs</span>
@@ -256,6 +262,10 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
 }
 
 .mono { font-family: 'JetBrains Mono', monospace; }
+.ml-auto { margin-left: auto; }
+.text-emerald-400 { color: #34d399; font-size: 0.65rem; font-weight: 700; }
+.text-emerald-300 { color: #6ee7b7; }
+.state-root-row { background: rgba(16, 185, 129, 0.03); padding: 4px 8px; border-radius: 6px; margin-top: 4px; }
 
 .api-footer {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
@@ -289,5 +299,101 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
   background: rgba(255, 255, 255, 0.02);
   display: flex; align-items: center; justify-content: center;
   margin: 0 auto 20px;
+}
+
+/* Channel Health Styles */
+.channel-health {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.channel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+.channel-header svg {
+  color: #6366f1;
+}
+
+.channel-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.channel-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.65rem;
+}
+
+.channel-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 80px;
+}
+
+.channel-name {
+  font-family: 'JetBrains Mono', monospace;
+  color: #94a3b8;
+  font-size: 0.6rem;
+  font-weight: 500;
+}
+
+.channel-module {
+  font-size: 0.5rem;
+  color: #475569;
+  text-transform: uppercase;
+}
+
+.channel-bar-container {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.channel-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.bar-healthy {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.bar-warning {
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+.bar-critical {
+  background: linear-gradient(90deg, #ef4444, #f87171);
+  animation: pulse-critical 1s infinite alternate;
+}
+
+@keyframes pulse-critical {
+  from { opacity: 1; }
+  to { opacity: 0.7; }
+}
+
+.channel-stat {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  color: #64748b;
+  min-width: 50px;
+  text-align: right;
 }
 </style>

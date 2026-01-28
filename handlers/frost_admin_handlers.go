@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"dex/consensus"
 	"dex/pb"
 	"io"
 	"net/http"
@@ -88,6 +89,63 @@ func (hm *HandlerManager) HandleGetMetrics(w http.ResponseWriter, r *http.Reques
 	// 获取 API 调用统计
 	apiCallStats := hm.Stats.GetAPICallStats()
 
+	// 收集 Channel 状态
+	var channelStats []*pb.ChannelStat
+
+	// 收集 SenderManager 的 channel stats
+	if hm.senderManager != nil && hm.senderManager.SendQueue != nil {
+		for _, stat := range hm.senderManager.SendQueue.GetChannelStats() {
+			channelStats = append(channelStats, &pb.ChannelStat{
+				Name:   stat.Name,
+				Module: stat.Module,
+				Len:    int32(stat.Len),
+				Cap:    int32(stat.Cap),
+				Usage:  stat.Usage,
+			})
+		}
+	}
+
+	// 收集 ConsensusManager (Transport) 的 channel stats
+	if hm.consensusManager != nil && hm.consensusManager.Transport != nil {
+		if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
+			for _, stat := range rt.GetChannelStats() {
+				channelStats = append(channelStats, &pb.ChannelStat{
+					Name:   stat.Name,
+					Module: stat.Module,
+					Len:    int32(stat.Len),
+					Cap:    int32(stat.Cap),
+					Usage:  stat.Usage,
+				})
+			}
+		}
+	}
+
+	// 收集 TxPool 的 channel stats
+	if hm.txPool != nil {
+		for _, stat := range hm.txPool.GetChannelStats() {
+			channelStats = append(channelStats, &pb.ChannelStat{
+				Name:   stat.Name,
+				Module: stat.Module,
+				Len:    int32(stat.Len),
+				Cap:    int32(stat.Cap),
+				Usage:  stat.Usage,
+			})
+		}
+	}
+
+	// 收集 DB Manager 的 channel stats
+	if hm.dbManager != nil {
+		for _, stat := range hm.dbManager.GetChannelStats() {
+			channelStats = append(channelStats, &pb.ChannelStat{
+				Name:   stat.Name,
+				Module: stat.Module,
+				Len:    int32(stat.Len),
+				Cap:    int32(stat.Cap),
+				Usage:  stat.Usage,
+			})
+		}
+	}
+
 	resp := &pb.MetricsResponse{
 		HeapAlloc:      m.HeapAlloc,
 		HeapSys:        m.HeapSys,
@@ -95,6 +153,7 @@ func (hm *HandlerManager) HandleGetMetrics(w http.ResponseWriter, r *http.Reques
 		FrostJobs:      int32(frostJobs),
 		FrostWithdraws: int32(frostWithdraws),
 		ApiCallStats:   apiCallStats,
+		ChannelStats:   channelStats,
 	}
 
 	// 序列化为 protobuf

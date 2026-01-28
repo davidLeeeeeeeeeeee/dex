@@ -3,6 +3,7 @@ package sender
 import (
 	"dex/config"
 	"dex/logs"
+	"dex/stats"
 	"fmt"
 	"log"
 	"math"
@@ -155,7 +156,6 @@ func (sq *SendQueue) Enqueue(task *SendTask) {
 }
 
 func (sq *SendQueue) enqueueNow(task *SendTask) {
-	cfg := config.DefaultConfig()
 
 	if task.Priority == PriorityImmediate {
 		// 紧急任务：非阻塞尝试，失败则同步等待一个非常短的时间。
@@ -168,13 +168,13 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 			return
 		}
 	} else if task.Priority == PriorityControl {
-		// 控制面任务：使用 controlChan，给一个短暂的阻塞窗口
+		// 控制面任务：非阻塞，满了直接丢弃并打警告，避免阻塞调用方
 		select {
 		case sq.controlChan <- task:
 			return
-		case <-time.After(cfg.Sender.ControlTaskTimeout):
-			sq.Logger.Error("[SendQueue] Control task timeout: len=%d cap=%d target=%s",
-				len(sq.controlChan), cap(sq.controlChan), task.Target)
+		default:
+			sq.Logger.Warn("[SendQueue] Control queue FULL, dropping task target=%s func=%s len=%d",
+				task.Target, task.FuncName(), len(sq.controlChan))
 			return
 		}
 	} else {
@@ -324,4 +324,18 @@ func (sq *SendQueue) ControlQueueLen() int {
 // DataQueueLen 返回数据面队列长度
 func (sq *SendQueue) DataQueueLen() int {
 	return len(sq.dataChan)
+}
+
+// ImmediateQueueLen 返回紧急队列长度
+func (sq *SendQueue) ImmediateQueueLen() int {
+	return len(sq.immediateChan)
+}
+
+// GetChannelStats 返回所有队列的 channel 状态
+func (sq *SendQueue) GetChannelStats() []stats.ChannelStat {
+	return []stats.ChannelStat{
+		stats.NewChannelStat("controlChan", "SendQueue", len(sq.controlChan), cap(sq.controlChan)),
+		stats.NewChannelStat("immediateChan", "SendQueue", len(sq.immediateChan), cap(sq.immediateChan)),
+		stats.NewChannelStat("dataChan", "SendQueue", len(sq.dataChan), cap(sq.dataChan)),
+	}
 }

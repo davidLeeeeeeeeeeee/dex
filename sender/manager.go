@@ -440,6 +440,7 @@ func (sm *SenderManager) SendChits(targetAddress string, chits *pb.Chits) error 
 		RetryCount: 0,
 		MaxRetries: 2,
 		SendFunc:   doSendChits,
+		Priority:   PriorityControl,
 	}
 	sm.SendQueue.Enqueue(task)
 	return nil
@@ -502,6 +503,7 @@ func (sm *SenderManager) SendHeightQuery(targetAddress string, onSuccess func(*p
 		RetryCount: 0,
 		MaxRetries: 2,
 		SendFunc:   doSendHeightQuery,
+		Priority:   PriorityControl,
 	}
 	sm.SendQueue.Enqueue(task)
 	return nil

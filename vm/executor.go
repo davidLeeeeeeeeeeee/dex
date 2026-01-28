@@ -494,10 +494,14 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 	// ========== 第四步：同步到 StateDB ==========
 	// 统一处理所有需要同步到 StateDB 的数据
 	if len(stateDBUpdates) > 0 && x.DB != nil {
-		if err := x.syncToStateDB(b.Height, stateDBUpdates); err != nil {
+		stateRoot, err := x.syncToStateDB(b.Height, stateDBUpdates)
+		if err != nil {
 			// StateDB 同步失败，记录错误但不中断提交
 			// 因为 Badger 已经写入了，StateDB 是可选的加速层
 			fmt.Printf("[VM] Warning: StateDB sync failed: %v\n", err)
+		} else if stateRoot != nil {
+			// 设置区块的状态根哈希
+			b.StateRoot = stateRoot
 		}
 	}
 
@@ -584,23 +588,24 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 }
 
 // syncToStateDB 同步状态变化到 StateDB
-func (x *Executor) syncToStateDB(height uint64, updates []interface{}) error {
+// 返回：(stateRoot, error) - stateRoot 是同步后的状态树根哈希
+func (x *Executor) syncToStateDB(height uint64, updates []interface{}) ([]byte, error) {
 	// 检查 DB 是否支持 StateDB 同步
 	if x.DB == nil {
-		return fmt.Errorf("DB manager is nil")
+		return nil, fmt.Errorf("DB manager is nil")
 	}
 
 	// 尝试调用 DB 的 StateDB 同步方法
 	// 这里假设 DBManager 接口有 SyncToStateDB 方法
 	// 如果没有，可以通过类型断言来调用
 	if syncable, ok := x.DB.(interface {
-		SyncToStateDB(uint64, []interface{}) error
+		SyncToStateDB(uint64, []interface{}) ([]byte, error)
 	}); ok {
 		return syncable.SyncToStateDB(height, updates)
 	}
 
 	// 如果 DB 不支持 StateDB 同步，返回 nil（不是错误）
-	return nil
+	return nil, nil
 }
 
 // IsBlockCommitted 检查区块是否已提交

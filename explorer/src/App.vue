@@ -69,7 +69,7 @@ function handleSelectTx(txId: string) {
   txModalVisible.value = true
 }
 
-function handleAddressClick(address: string) {
+function handleAddressClick(_address: string) {
   // For now, switch to search tab for address lookup 
   // (In future we could also do an AddressModal)
   activeTab.value = 'search'

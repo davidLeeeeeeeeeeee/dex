@@ -41,10 +41,12 @@ func NewRealBlockProposer(dbManager *db.Manager, pool *txpool.TxPool) interfaces
 func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, window int) (*types.Block, error) {
 	// 1. 从TxPool获取待打包的交易
 	pendingTxs := p.pool.GetPendingTxs()
+	// 如果没有交易，且当前window较小，不生成区块（除非强制出空块维持活性）
+	// 这里我们在ShouldPropose已经做了控制，如果进了这里说明 permitted to propose empty block
 	if len(pendingTxs) == 0 {
-		logs.Debug("[RealBlockProposer] no txs for height %d, skip", height)
-		return nil, nil
+		logs.Debug("[RealBlockProposer] Generating empty block at height %d window %d", height, window)
 	}
+
 	// 限制交易数量
 	if len(pendingTxs) > p.maxTxsPerBlock {
 		pendingTxs = pendingTxs[:p.maxTxsPerBlock]
@@ -144,7 +146,10 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, curre
 
 	// 检查TxPool中是否有足够的待处理交易
 	pendingCount := len(p.pool.GetPendingAnyTx())
-	if pendingCount < 1 { // 至少要有1笔交易才提案
+	// 策略修改：
+	// 1. 如果有交易，任何window都可以出块
+	// 2. 如果没交易，只有在 window >= 4 时才允许出空块（维持活性）
+	if pendingCount < 1 && window < 4 {
 		return false
 	}
 

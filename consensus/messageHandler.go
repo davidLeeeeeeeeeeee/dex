@@ -5,6 +5,7 @@ import (
 	"dex/logs"
 	"dex/stats"
 	"dex/types"
+	"strings"
 	"sync"
 )
 
@@ -183,6 +184,13 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 
 	isNew, err := h.store.Add(msg.Block)
 	if err != nil {
+		// 如果是因为缺父块导致的拒绝，自动请求父块
+		if strings.Contains(err.Error(), "parent block") && strings.Contains(err.Error(), "not found") {
+			if h.queryManager != nil {
+				h.queryManager.RequestBlock(msg.Block.ParentID, types.NodeID(msg.From))
+			}
+		}
+
 		// 区块被拒绝也应回复，避免对方长期等待
 		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
 		return
@@ -284,6 +292,13 @@ func (h *MessageHandler) handlePut(msg types.Message) {
 	if msg.Block != nil {
 		isNew, err := h.store.Add(msg.Block)
 		if err != nil {
+			// 如果是因为缺父块导致的拒绝，自动请求父块
+			if strings.Contains(err.Error(), "parent block") && strings.Contains(err.Error(), "not found") {
+				if h.queryManager != nil {
+					h.queryManager.RequestBlock(msg.Block.ParentID, types.NodeID(msg.From))
+				}
+			}
+
 			// 仍尝试清理 pendingQueries，避免泄漏
 			h.checkPendingQueries(msg.RequestID)
 			return

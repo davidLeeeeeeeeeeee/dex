@@ -315,6 +315,14 @@ func (t *RealTransport) sendSnapshotRequest(to types.NodeID, targetIP string, ms
 func (t *RealTransport) GetReceiveQueueLen() int {
 	return len(t.receiveQueue)
 }
+
+// GetChannelStats 返回 Transport 的 channel 状态
+func (t *RealTransport) GetChannelStats() []stats.ChannelStat {
+	return []stats.ChannelStat{
+		stats.NewChannelStat("inbox", "Transport", len(t.inbox), cap(t.inbox)),
+		stats.NewChannelStat("receiveQueue", "Transport", len(t.receiveQueue), cap(t.receiveQueue)),
+	}
+}
 func (t *RealTransport) EnqueueReceivedMessage(msg types.Message) error {
 	// 根据消息类型判断优先级
 	isControlMessage := false

@@ -6,6 +6,7 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+	"dex/stats"
 	"dex/utils"
 	"fmt"
 	"path/filepath"
@@ -642,9 +643,10 @@ func RebuildOrderPriceIndexes(m *Manager) (int, error) {
 // SyncToStateDB 同步状态变化到 StateDB
 // 这是 VM 的 applyResult 调用的接口，用于将 WriteOp 同步到 StateDB
 // 注意：只有被 keys.IsStatefulKey 判定为状态数据的 key 才会被同步
-func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
+// 返回值：(stateRoot, error) - stateRoot 是同步后的状态树根哈希
+func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) ([]byte, error) {
 	if m.StateDB == nil {
-		return fmt.Errorf("StateDB is not initialized")
+		return nil, fmt.Errorf("StateDB is not initialized")
 	}
 
 	// 将 WriteOp 转换为 JMT 的 KVUpdate
@@ -679,9 +681,28 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) error {
 	if len(kvUpdates) > 0 {
 		if err := m.StateDB.ApplyAccountUpdate(height, kvUpdates...); err != nil {
 			logs.Error("[DB] Failed to sync to StateDB: %v", err)
-			return err
+			return nil, err
 		}
 	}
 
-	return nil
+	// 返回当前状态树根哈希
+	return m.StateDB.Root(), nil
+}
+
+// GetStateRoot 获取当前状态树根哈希
+func (m *Manager) GetStateRoot() []byte {
+	if m.StateDB == nil {
+		return nil
+	}
+	return m.StateDB.Root()
+}
+
+// GetChannelStats 返回 DB Manager 的 channel 状态
+func (m *Manager) GetChannelStats() []stats.ChannelStat {
+	if m.writeQueueChan == nil {
+		return nil
+	}
+	return []stats.ChannelStat{
+		stats.NewChannelStat("writeQueueChan", "DB", len(m.writeQueueChan), cap(m.writeQueueChan)),
+	}
 }

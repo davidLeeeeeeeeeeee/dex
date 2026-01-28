@@ -60,6 +60,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 
 	gossipManager := NewGossipManager(id, transport, store, &config.Gossip, events, logger)
 	gossipManager.node = node
+	gossipManager.SetQueryManager(queryManager)
 
 	syncManager := NewSyncManager(id, transport, store, &config.Sync, &config.Snapshot, events, logger)
 	syncManager.node = node

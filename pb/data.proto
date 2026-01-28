@@ -121,6 +121,7 @@ message Block {
   bytes vrf_proof = 12; // VRF证明
   bytes vrf_output = 13; // VRF输出
   bytes bls_public_key = 14; // 提案者的BLS公钥（用于VRF验证）
+  bytes state_root = 15; // JMT 状态树根哈希（区块提交后的状态）
 }
 // 区块奖励发放记录
 message BlockReward {
@@ -979,6 +980,15 @@ message HealthResponse {
   int32 num_cpu = 5; // CPU 数量
 }
 
+// ChannelStat 单个 channel 的状态
+message ChannelStat {
+  string name = 1;   // channel 名称
+  string module = 2; // 所属模块
+  int32 len = 3;     // 当前长度
+  int32 cap = 4;     // 容量
+  double usage = 5;  // 使用率 (len/cap)
+}
+
 // MetricsResponse 指标响应
 message MetricsResponse {
   uint64 heap_alloc = 1; // 堆分配
@@ -987,6 +997,7 @@ message MetricsResponse {
   int32 frost_jobs = 4; // Frost 任务数
   int32 frost_withdraws = 5; // Frost 提现数
   map<string, uint64> api_call_stats = 6; // API 调用统计
+  repeated ChannelStat channel_stats = 7; // Channel 状态列表
 }
 
 // ForceRescanRequest 强制重扫请求

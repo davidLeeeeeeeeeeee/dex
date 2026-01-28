@@ -90,6 +90,7 @@ type blockSummary struct {
 	TxTypeCounts  map[string]int `json:"tx_type_counts,omitempty"`
 	Accumulated   string         `json:"accumulated_reward,omitempty"`
 	Window        int32          `json:"window,omitempty"`
+	StateRoot     string         `json:"state_root,omitempty"` // JMT 状态树根哈希
 }
 
 type frostMetrics struct {
@@ -99,6 +100,15 @@ type frostMetrics struct {
 	FrostJobs      int32             `json:"frost_jobs"`
 	FrostWithdraws int32             `json:"frost_withdraws"`
 	ApiCallStats   map[string]uint64 `json:"api_call_stats,omitempty"`
+	ChannelStats   []channelStat     `json:"channel_stats,omitempty"`
+}
+
+type channelStat struct {
+	Name   string  `json:"name"`
+	Module string  `json:"module"`
+	Len    int32   `json:"len"`
+	Cap    int32   `json:"cap"`
+	Usage  float64 `json:"usage"`
 }
 
 // Block/Tx search request/response types
@@ -122,6 +132,7 @@ type blockInfo struct {
 	TxCount     int         `json:"tx_count"`
 	Accumulated string      `json:"accumulated_reward,omitempty"`
 	Window      int32       `json:"window,omitempty"`
+	StateRoot   string      `json:"state_root,omitempty"` // JMT 状态树根哈希
 	Txs         []txSummary `json:"transactions,omitempty"`
 }
 
@@ -756,6 +767,10 @@ func convertBlockToInfo(block *pb.Block) *blockInfo {
 		Window:      block.Window,
 		Txs:         make([]txSummary, 0, len(block.Body)),
 	}
+	// 将 StateRoot ([]byte) 转换为十六进制字符串
+	if len(block.StateRoot) > 0 {
+		info.StateRoot = fmt.Sprintf("%x", block.StateRoot)
+	}
 	for _, tx := range block.Body {
 		summary := convertAnyTxToSummary(tx)
 		info.Txs = append(info.Txs, summary)
@@ -1102,6 +1117,19 @@ func (s *server) collectSummary(ctx context.Context, nodes []string, includeBloc
 						FrostWithdraws: metrics.FrostWithdraws,
 						ApiCallStats:   metrics.ApiCallStats,
 					}
+					// 转换 channel stats
+					if len(metrics.ChannelStats) > 0 {
+						summary.FrostMetrics.ChannelStats = make([]channelStat, 0, len(metrics.ChannelStats))
+						for _, cs := range metrics.ChannelStats {
+							summary.FrostMetrics.ChannelStats = append(summary.FrostMetrics.ChannelStats, channelStat{
+								Name:   cs.Name,
+								Module: cs.Module,
+								Len:    cs.Len,
+								Cap:    cs.Cap,
+								Usage:  cs.Usage,
+							})
+						}
+					}
 				}
 			}
 
@@ -1230,7 +1258,7 @@ func buildBlockSummary(block *pb.Block) *blockSummary {
 		typeCounts[txTypeName(tx)]++
 	}
 
-	return &blockSummary{
+	summary := &blockSummary{
 		Height:        block.Height,
 		BlockHash:     block.BlockHash,
 		PrevBlockHash: block.PrevBlockHash,
@@ -1241,6 +1269,11 @@ func buildBlockSummary(block *pb.Block) *blockSummary {
 		Accumulated:   block.AccumulatedReward,
 		Window:        block.Window,
 	}
+	// 将 StateRoot ([]byte) 转换为十六进制字符串
+	if len(block.StateRoot) > 0 {
+		summary.StateRoot = fmt.Sprintf("%x", block.StateRoot)
+	}
+	return summary
 }
 
 func txTypeName(tx *pb.AnyTx) string {

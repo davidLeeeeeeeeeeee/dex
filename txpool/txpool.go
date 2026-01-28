@@ -6,6 +6,7 @@ import (
 	"dex/logs"
 	"dex/network"
 	"dex/pb"
+	"dex/stats"
 	"dex/utils"
 	"encoding/hex"
 	"fmt"
@@ -510,4 +511,14 @@ func (p *TxPool) AnalyzeProposalTxs(proposalTxs []byte) (missing map[string]bool
 		}
 	}
 	return missing, existTx
+}
+
+// GetChannelStats 返回 TxPool 的 channel 状态
+func (tp *TxPool) GetChannelStats() []stats.ChannelStat {
+	if tp.Queue != nil {
+		return []stats.ChannelStat{
+			stats.NewChannelStat("MsgChan", "TxPool", len(tp.Queue.MsgChan), cap(tp.Queue.MsgChan)),
+		}
+	}
+	return nil
 }

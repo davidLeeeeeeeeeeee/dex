@@ -46,6 +46,7 @@ export interface BlockSummary {
   tx_type_counts?: Record<string, number>
   accumulated_reward?: string
   window?: number
+  state_root?: string  // JMT 状态树根哈希
 }
 
 // FROST 指标
@@ -56,6 +57,16 @@ export interface FrostMetrics {
   frost_jobs: number
   frost_withdraws: number
   api_call_stats?: Record<string, number>
+  channel_stats?: ChannelStat[]
+}
+
+// Channel 状态
+export interface ChannelStat {
+  name: string      // channel 名称
+  module: string    // 所属模块
+  len: number       // 当前长度
+  cap: number       // 容量
+  usage: number     // 使用率 (len/cap)
 }
 
 // 节点列表响应
@@ -104,6 +115,7 @@ export interface BlockInfo {
   accumulated_reward?: string
   window?: number
   transactions?: TxSummary[]
+  state_root?: string  // JMT 状态树根哈希
 }
 
 // 交易摘要（区块内的交易列表项）

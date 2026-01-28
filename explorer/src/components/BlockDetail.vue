@@ -78,6 +78,12 @@ function handleAddressClick(e: Event, address?: string) {
             <span class="s-label">Miner</span>
             <code class="mono text-indigo-400">{{ block.miner || '-' }}</code>
           </div>
+          <div class="spec-row">
+            <span class="s-label">State Root</span>
+            <div class="s-val-group state-root">
+               <code class="mono text-emerald-400">{{ block.state_root || 'N/A (Genesis or Pending)' }}</code>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -203,6 +209,8 @@ function handleAddressClick(e: Event, address?: string) {
 .spec-row { display: flex; flex-direction: column; gap: 8px; }
 .s-label { font-size: 0.65rem; font-weight: 700; color: #475569; text-transform: uppercase; }
 .s-val-group { background: rgba(0, 0, 0, 0.2); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.02); }
+.s-val-group.state-root { background: rgba(16, 185, 129, 0.05); border-color: rgba(16, 185, 129, 0.1); word-break: break-all; }
+.text-emerald-400 { color: #34d399; }
 
 .metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 .m-box {
