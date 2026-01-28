@@ -45,6 +45,8 @@ type ServerConfig struct {
 type DatabaseConfig struct {
 	// BadgerDB配置
 	ValueLogFileSize int64         // 64 << 20 (64MB)
+	BaseTableSize    int64         // 基础表大小
+	MemTableSize     int64         // 内存表大小
 	MaxBatchSize     int           // 100
 	FlushInterval    time.Duration // 200 * time.Millisecond
 
@@ -174,6 +176,8 @@ func DefaultConfig() *Config {
 		},
 		Database: DatabaseConfig{
 			ValueLogFileSize:    64 << 20,
+			BaseTableSize:       64 << 20, // 64MB
+			MemTableSize:        64 << 20, // 64MB
 			MaxBatchSize:        100,
 			FlushInterval:       200 * time.Millisecond,
 			WriteQueueSize:      100000,

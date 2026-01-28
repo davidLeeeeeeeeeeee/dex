@@ -38,6 +38,8 @@ type RealTransport struct {
 	packetLossRate float64       // 丢包率，范围 0.0 到 1.0
 	minLatency     time.Duration // 最小延迟
 	maxLatency     time.Duration // 最大延迟
+	nodeIPCache    map[types.NodeID]string
+	cacheMu        sync.RWMutex
 }
 
 type NodeInfo struct {
@@ -68,7 +70,7 @@ func NewRealTransportWithSimulation(nodeID types.NodeID, dbMgr *db.Manager, send
 		address:        keyMgr.GetAddress(),
 		inbox:          make(chan types.Message, 100000),
 		receiveQueue:   make(chan types.Message, 100000),
-		receiveWorkers: 1000,
+		receiveWorkers: 64, // 1000 个 worker 太重了，降为 64 核心数相关的水平
 		dbManager:      dbMgr,
 		senderManager:  senderMgr,
 		ctx:            ctx,
@@ -78,6 +80,7 @@ func NewRealTransportWithSimulation(nodeID types.NodeID, dbMgr *db.Manager, send
 		packetLossRate: packetLossRate,
 		minLatency:     minLatency,
 		maxLatency:     maxLatency,
+		nodeIPCache:    make(map[types.NodeID]string),
 	}
 
 	rt.startReceiveWorkers()
@@ -110,6 +113,7 @@ func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
 
 // doSend 实际执行发送逻辑
 func (t *RealTransport) doSend(to types.NodeID, msg types.Message) error {
+	start := time.Now()
 	t.Stats.RecordAPICall(string(msg.Type))
 	targetIP, err := t.getNodeIP(to)
 	if err != nil {
@@ -117,35 +121,58 @@ func (t *RealTransport) doSend(to types.NodeID, msg types.Message) error {
 		return err
 	}
 
+	var errSend error
 	switch msg.Type {
 	case types.MsgPushQuery:
-		return t.sendPushQuery(targetIP, msg)
+		errSend = t.sendPushQuery(targetIP, msg)
 	case types.MsgPullQuery:
-		return t.sendPullQuery(targetIP, msg)
+		errSend = t.sendPullQuery(targetIP, msg)
 	case types.MsgChits:
-		return t.sendChits(targetIP, msg)
+		errSend = t.sendChits(targetIP, msg)
 	case types.MsgGet:
-		return t.sendGet(targetIP, msg)
+		errSend = t.sendGet(targetIP, msg)
 	case types.MsgPut:
-		return t.sendBlock(targetIP, msg)
+		errSend = t.sendBlock(targetIP, msg)
 	case types.MsgGossip:
-		return t.sendGossip(targetIP, msg)
+		errSend = t.sendGossip(targetIP, msg)
 	case types.MsgSyncRequest:
-		return t.sendSyncRequest(to, targetIP, msg)
+		errSend = t.sendSyncRequest(to, targetIP, msg)
 	case types.MsgHeightQuery:
-		return t.sendHeightQuery(to, targetIP, msg)
+		errSend = t.sendHeightQuery(to, targetIP, msg)
 	case types.MsgSnapshotRequest:
-		return t.sendSnapshotRequest(to, targetIP, msg)
+		errSend = t.sendSnapshotRequest(to, targetIP, msg)
 	default:
-		return fmt.Errorf("unknown message type: %v", msg.Type)
+		errSend = fmt.Errorf("unknown message type: %v", msg.Type)
 	}
+
+	// 如果耗时超过 50ms，记录跟踪
+	if duration := time.Since(start); duration > 50*time.Millisecond {
+		logs.Debug("[RealTransport] Send Latency: Type=%v, to=%s, duration=%v", msg.Type, to, duration)
+	}
+
+	return errSend
 }
 
 func (t *RealTransport) getNodeIP(nodeID types.NodeID) (string, error) {
+	// 1. 尝试从缓存读取
+	t.cacheMu.RLock()
+	ip, ok := t.nodeIPCache[nodeID]
+	t.cacheMu.RUnlock()
+	if ok {
+		return ip, nil
+	}
+
+	// 2. 缓存没有，查库
 	acc, err := t.dbManager.GetAccount(string(nodeID))
 	if err != nil || acc == nil || acc.Ip == "" {
 		return "", fmt.Errorf("no IP for address %s", nodeID)
 	}
+
+	// 3. 存入缓存
+	t.cacheMu.Lock()
+	t.nodeIPCache[nodeID] = acc.Ip
+	t.cacheMu.Unlock()
+
 	return acc.Ip, nil
 }
 

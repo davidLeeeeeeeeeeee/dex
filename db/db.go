@@ -49,9 +49,11 @@ type Manager struct {
 // NewManager 创建一个新的 DBManager 实例
 func NewManager(path string, logger logs.Logger) (*Manager, error) {
 	cfg := config.DefaultConfig()
-	opts := badger.DefaultOptions(path).WithLoggingLevel(badger.INFO).
-		// 将单个 vlog 文件限制到 64 MB，比如 64 << 20
-		WithValueLogFileSize(cfg.Database.ValueLogFileSize)
+	opts := badger.DefaultOptions(path).WithLoggingLevel(badger.INFO)
+	// 应用调优参数
+	opts.ValueLogFileSize = cfg.Database.ValueLogFileSize
+	opts.BaseTableSize = cfg.Database.BaseTableSize
+	opts.MemTableSize = cfg.Database.MemTableSize
 	// 如果依然想用 mmap，可以保持默认 (MemoryMap) 或自己设 WithValueLogLoadingMode(options.MemoryMap)
 	// .WithValueLogLoadingMode(options.MemoryMap)
 	//

@@ -123,6 +123,11 @@ func (s *VersionedBadgerStore) getExactVersion(txn *badger.Txn, key []byte, vers
 	})
 }
 
+// GetWithTxn 允许在给定的事务中直接读取，用于高性能并行场景
+func (s *VersionedBadgerStore) GetWithTxn(txn *badger.Txn, key []byte, version Version) ([]byte, error) {
+	return s.getInternal(txn, key, version)
+}
+
 // getAtVersion 获取指定版本或之前最近版本的值
 func (s *VersionedBadgerStore) getAtVersion(txn *badger.Txn, key []byte, version Version, result *[]byte) error {
 	// 尝试精确版本

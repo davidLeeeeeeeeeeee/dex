@@ -126,57 +126,59 @@ func (s *RealBlockStore) SetEventBus(events interfaces.EventBus) {
 
 // Add 添加新区块
 func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
-	// 第一步：快速检查是否已存在 + 验证区块（短暂持锁）
-	s.mu.RLock()
+	// 第一步：快速检查是否已存在 + 验证区块（持锁）
+	s.mu.Lock()
 	if _, exists := s.blockCache[block.ID]; exists {
-		s.mu.RUnlock()
+		s.mu.Unlock()
 		return false, nil
 	}
-	// validateBlock 需要读取 blockCache，必须在锁内
+	// validateBlock 需要读取 blockCache
 	if err := s.validateBlock(block); err != nil {
-		s.mu.RUnlock()
+		s.mu.Unlock()
 		return false, err
 	}
-	s.mu.RUnlock()
+
+	// 提前占坑，防止并发 worker 重复执行 VM
+	s.blockCache[block.ID] = block
+	s.heightIndex[block.Height] = append(s.heightIndex[block.Height], block)
+	s.mu.Unlock()
 
 	// 第二步：VM预执行（不持锁，这是耗时操作）
+	preExecStart := time.Now()
 	// 获取完整的 pb.Block（包含交易）
 	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
 		// 调用 VM 预执行
 		result, err := s.vmExecutor.PreExecuteBlock(pbBlock)
+
+		if duration := time.Since(preExecStart); duration > 100*time.Millisecond {
+			logs.Info("[RealBlockStore] SLOW VM PreExecute: block=%s, txs=%d, duration=%v", block.ID, len(pbBlock.Body), duration)
+		}
 		if err != nil {
 			logs.Error("[RealBlockStore] VM PreExecuteBlock failed for block %s: %v", block.ID, err)
+			// 执行失败，需要把刚才占坑的数据撤回
+			s.mu.Lock()
+			delete(s.blockCache, block.ID)
+			// 注意：heightIndex 的清理较复杂，此处简略处理或依靠后续最终化清理
+			s.mu.Unlock()
 			return false, fmt.Errorf("VM pre-execution failed: %w", err)
 		}
 
 		// 检查预执行结果
 		if !result.Valid {
 			logs.Error("[RealBlockStore] Block %s failed VM validation: %s", block.ID, result.Reason)
+			s.mu.Lock()
+			delete(s.blockCache, block.ID)
+			s.mu.Unlock()
 			return false, fmt.Errorf("block failed VM validation: %s", result.Reason)
 		}
 
 		logs.Debug("[RealBlockStore] Block %s passed VM pre-execution", block.ID)
-	} else {
-		// 如果是创世区块或没有交易的区块，跳过VM验证
-		if block.Height > 0 {
-			logs.Debug("[RealBlockStore] No cached pb.Block for %s, skipping VM pre-execution", block.ID)
-		}
 	}
 
-	// 第四步：更新内存缓存（短暂持锁）
+	// 第三步：更新高度元数据
 	s.mu.Lock()
-	// 再次检查是否已存在（防止并发添加）
-	if _, exists := s.blockCache[block.ID]; exists {
-		s.mu.Unlock()
-		return false, nil
-	}
-
-	s.blockCache[block.ID] = block
-	s.heightIndex[block.Height] = append(s.heightIndex[block.Height], block)
-
 	if block.Height > s.maxHeight {
 		s.maxHeight = block.Height
-		// 更新数据库中的最新高度
 		s.dbManager.EnqueueSet(db.KeyLatestHeight(), strconv.FormatUint(block.Height, 10))
 	}
 	s.mu.Unlock()
@@ -405,6 +407,7 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 	s.mu.Unlock()
 
 	// 第二步：VM提交（不持锁，这是耗时操作）
+	commitStart := time.Now()
 	// 获取完整的 pb.Block（包含交易）
 	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
 		// 调用 VM 提交最终化区块
@@ -428,6 +431,10 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 				logs.Error("[RealBlockStore] Failed to save finalized block: %v", err)
 			} else {
 				s.dbManager.ForceFlush() // 最终化时强制刷盘，保证数据持久性
+			}
+
+			if duration := time.Since(commitStart); duration > 200*time.Millisecond {
+				logs.Info("[RealBlockStore] SLOW Finalization: block=%s, txs=%d, duration=%v", block.ID, len(pbBlock.Body), duration)
 			}
 		}
 	} else {

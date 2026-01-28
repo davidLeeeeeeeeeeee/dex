@@ -2,6 +2,7 @@ package smt
 
 import (
 	"crypto/sha256"
+	"dex/config"
 	"errors"
 	"fmt"
 	"sync"
@@ -48,10 +49,16 @@ func NewJMTStateDB(cfg JMTConfig) (*JMTStateDB, error) {
 		return nil, errors.New("DataDir is required")
 	}
 
+	cfg_default := config.DefaultConfig()
 	opts := badger.DefaultOptions(cfg.DataDir).
 		WithNumVersionsToKeep(10).
 		WithSyncWrites(false).
 		WithLogger(nil)
+
+	// 直接设置字段，因为该版本的 Badger 可能没有这些 WithXXX 方法
+	opts.ValueLogFileSize = cfg_default.Database.ValueLogFileSize
+	opts.BaseTableSize = cfg_default.Database.BaseTableSize
+	opts.MemTableSize = cfg_default.Database.MemTableSize
 
 	db, err := badger.Open(opts)
 	if err != nil {
@@ -252,7 +259,16 @@ func (s *JMTStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error {
 	}
 
 	if len(keys) > 0 {
-		newRoot, err := s.db.tree.UpdateWithSession(s.sess, keys, vals, Version(height))
+		var newRoot []byte
+		var err error
+
+		// 当批次 >= 100 时使用并行更新
+		if len(keys) >= 100 {
+			newRoot, err = s.db.tree.ParallelUpdate(s.sess, keys, vals, Version(height), DefaultParallelConfig())
+		} else {
+			newRoot, err = s.db.tree.UpdateWithSession(s.sess, keys, vals, Version(height))
+		}
+
 		if err != nil {
 			return err
 		}
