@@ -38,14 +38,20 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 
 	sb.lastVotes = votes
 
-	// 关键修复：如果没有偏好，首先从所有候选中选择 hash 最小的作为初始偏好
-	// 这确保了所有节点从相同的初始状态开始
-	if sb.preference == "" && len(candidates) > 0 {
-		sb.preference = selectByMinHash(candidates)
+	// 确定性增强：如果当前偏好存在，但它不是所有候选集中 hash 最小的那个，
+	// 我们必须强制切换到最小的，否则节点会因为“赢家（最小Hash）”票数不足 Alpha 而卡在旧偏好上。
+	if sb.preference != "" && len(candidates) > 0 {
+		minBlock := selectByMinHash(candidates)
+		if sb.preference != minBlock {
+			sb.events.PublishAsync(types.BaseEvent{
+				EventType: types.EventPreferenceChanged,
+				EventData: PreferenceSwitch{BlockID: sb.preference, Confidence: sb.confidence, Winner: minBlock, Alpha: alpha},
+			})
+			sb.preference = minBlock
+			sb.confidence = 0 // 切换到更好的块，重置置信度重新开始
+		}
 	}
 
-	// 如果当前偏好不在候选列表中，重置为 hash 最小的候选
-	// 这可能发生在区块被发现无效或网络分区后恢复
 	if sb.preference != "" {
 		inCandidates := false
 		for _, c := range candidates {
