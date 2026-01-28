@@ -44,6 +44,34 @@ type VersionedStore interface {
 
 	// Close 关闭存储
 	Close() error
+
+	// NewSession 创建一个新的存储会话，允许在单个事务中执行多个操作
+	NewSession() (VersionedStoreSession, error)
+}
+
+// VersionedStoreSession 是支持会话（Session）的存储接口
+// 它允许在单个数据库事务中执行多个操作，避免频繁创建/提交事务的开销
+type VersionedStoreSession interface {
+	// Get 获取指定版本的值
+	Get(key []byte, version Version) ([]byte, error)
+
+	// Set 在指定版本写入值
+	Set(key []byte, value []byte, version Version) error
+
+	// Delete 标记指定版本的 Key 为已删除
+	Delete(key []byte, version Version) error
+
+	// GetKV 直接获取原始 KV 数据（绕过版本控制逻辑，用于会话内共享事务读取）
+	GetKV(key []byte) ([]byte, error)
+
+	// Commit 提交会话中的所有更改
+	Commit() error
+
+	// Rollback 撤销会话中的所有更改
+	Rollback() error
+
+	// Close 关闭会话并释放相关资源（如果不 Commit 也会 Rollback）
+	Close() error
 }
 
 // ============================================
@@ -195,6 +223,29 @@ func (m *SimpleVersionedMap) Close() error {
 	m.data = nil
 	return nil
 }
+
+// NewSession 为内存实现创建新会话（内存实现不真正支持并发事务，仅用于接口适配）
+func (m *SimpleVersionedMap) NewSession() (VersionedStoreSession, error) {
+	return &simpleSession{m: m}, nil
+}
+
+type simpleSession struct {
+	m *SimpleVersionedMap
+}
+
+func (s *simpleSession) Get(key []byte, version Version) ([]byte, error) {
+	return s.m.Get(key, version)
+}
+func (s *simpleSession) Set(key []byte, value []byte, version Version) error {
+	return s.m.Set(key, value, version)
+}
+func (s *simpleSession) Delete(key []byte, version Version) error { return s.m.Delete(key, version) }
+func (s *simpleSession) GetKV(key []byte) ([]byte, error) {
+	return s.m.Get(key, 0)
+}
+func (s *simpleSession) Commit() error   { return nil }
+func (s *simpleSession) Rollback() error { return nil }
+func (s *simpleSession) Close() error    { return nil }
 
 // ============================================
 // 版本化 Key 编码

@@ -3,6 +3,7 @@ package interfaces
 import (
 	"context"
 	"crypto/ecdsa"
+	"dex/pb"
 	"dex/types"
 	"time"
 )
@@ -110,3 +111,41 @@ type EventBus interface {
 }
 
 type EventHandler func(Event)
+
+// ============================================
+// 数据库层接口 (收敛至此以解决循环依赖)
+// ============================================
+
+// DBSession 数据库会话接口
+type DBSession interface {
+	Get(key string) ([]byte, error)
+	ApplyStateUpdate(height uint64, updates []interface{}) ([]byte, error)
+	Commit() error
+	Rollback() error
+	Close() error
+}
+
+// DBManager 数据库管理器接口
+type DBManager interface {
+	EnqueueSet(key, value string)
+	EnqueueDel(key string)
+	ForceFlush() error
+	Get(key string) ([]byte, error)
+	Scan(prefix string) (map[string][]byte, error)
+	ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error)
+	GetKV(key string) ([]byte, error)
+	NewSession() (DBSession, error)
+	CommitRoot(height uint64, root []byte)
+
+	// Frost 相关方法
+	GetFrostVaultTransition(key string) (*pb.VaultTransitionState, error)
+	SetFrostVaultTransition(key string, state *pb.VaultTransitionState) error
+	GetFrostDkgCommitment(key string) (*pb.FrostVaultDkgCommitment, error)
+	SetFrostDkgCommitment(key string, commitment *pb.FrostVaultDkgCommitment) error
+	GetFrostDkgShare(key string) (*pb.FrostVaultDkgShare, error)
+	SetFrostDkgShare(key string, share *pb.FrostVaultDkgShare) error
+	GetFrostVaultState(key string) (*pb.FrostVaultState, error)
+	SetFrostVaultState(key string, state *pb.FrostVaultState) error
+	GetFrostDkgComplaint(key string) (*pb.FrostVaultDkgComplaint, error)
+	SetFrostDkgComplaint(key string, complaint *pb.FrostVaultDkgComplaint) error
+}

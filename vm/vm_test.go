@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	iface "dex/interfaces"
 	"dex/keys"
 	"dex/pb"
 	"dex/vm"
@@ -21,6 +22,47 @@ type MockDB struct {
 	mu      sync.RWMutex
 	data    map[string][]byte
 	pending []func()
+}
+
+// MockSession 模拟数据库会话
+type MockSession struct {
+	db *MockDB
+}
+
+func (s *MockSession) Get(key string) ([]byte, error) {
+	return s.db.Get(key)
+}
+
+func (s *MockSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]byte, error) {
+	for _, u := range updates {
+		type writeOpInterface interface {
+			GetKey() string
+			GetValue() []byte
+			IsDel() bool
+		}
+		if op, ok := u.(writeOpInterface); ok {
+			s.db.mu.Lock()
+			if op.IsDel() {
+				delete(s.db.data, op.GetKey())
+			} else {
+				s.db.data[op.GetKey()] = op.GetValue()
+			}
+			s.db.mu.Unlock()
+		}
+	}
+	return []byte("mock_root"), nil
+}
+
+func (s *MockSession) Commit() error   { return nil }
+func (s *MockSession) Rollback() error { return nil }
+func (s *MockSession) Close() error    { return nil }
+
+func (db *MockDB) NewSession() (iface.DBSession, error) {
+	return &MockSession{db: db}, nil
+}
+
+func (db *MockDB) CommitRoot(height uint64, root []byte) {
+	// Mock实现：简单记录或忽略
 }
 
 func NewMockDB() *MockDB {
@@ -38,6 +80,10 @@ func (db *MockDB) Get(key string) ([]byte, error) {
 		return nil, nil
 	}
 	return val, nil
+}
+
+func (db *MockDB) GetKV(key string) ([]byte, error) {
+	return db.Get(key)
 }
 
 func (db *MockDB) EnqueueSet(key, value string) {
@@ -220,7 +266,7 @@ func TestBasicExecution(t *testing.T) {
 			},
 		},
 	}
-	aliceData, _ := json.Marshal(aliceAccount)
+	aliceData, _ := proto.Marshal(aliceAccount)
 	db.data[keys.KeyAccount("alice")] = aliceData
 
 	bobAccount := &pb.Account{
@@ -232,7 +278,7 @@ func TestBasicExecution(t *testing.T) {
 			},
 		},
 	}
-	bobData, _ := json.Marshal(bobAccount)
+	bobData, _ := proto.Marshal(bobAccount)
 	db.data[keys.KeyAccount("bob")] = bobData
 
 	// 创建执行器
@@ -286,7 +332,7 @@ func TestBasicExecution(t *testing.T) {
 	aliceKey := keys.KeyAccount("alice")
 	val, _ := db.Get(aliceKey)
 	var checkAccount pb.Account
-	json.Unmarshal(val, &checkAccount)
+	proto.Unmarshal(val, &checkAccount)
 	if checkAccount.Balances["token123"].Balance != "1000" {
 		t.Fatal("Database should not change during PreExecute")
 	}
@@ -323,7 +369,7 @@ func TestCacheEffectiveness(t *testing.T) {
 			},
 		},
 	}
-	aliceData, _ := json.Marshal(aliceAccount)
+	aliceData, _ := proto.Marshal(aliceAccount)
 	db.data[keys.KeyAccount("alice")] = aliceData
 
 	bobAccount := &pb.Account{
@@ -335,7 +381,7 @@ func TestCacheEffectiveness(t *testing.T) {
 			},
 		},
 	}
-	bobData, _ := json.Marshal(bobAccount)
+	bobData, _ := proto.Marshal(bobAccount)
 	db.data[keys.KeyAccount("bob")] = bobData
 
 	registry := vm.NewHandlerRegistry()
@@ -446,7 +492,7 @@ func TestConcurrentExecution(t *testing.T) {
 				},
 			},
 		}
-		accountData, _ := json.Marshal(account)
+		accountData, _ := proto.Marshal(account)
 		db.data[keys.KeyAccount(userAddr)] = accountData
 	}
 
@@ -616,7 +662,7 @@ func BenchmarkPreExecute(b *testing.B) {
 				},
 			},
 		}
-		accountData, _ := json.Marshal(account)
+		accountData, _ := proto.Marshal(account)
 		db.data[keys.KeyAccount(userAddr)] = accountData
 	}
 
@@ -780,7 +826,7 @@ func TestFrostWithdrawRequest(t *testing.T) {
 	}
 
 	// 验证 seq 已递增（通过检查 FIFO index 存在性）
-	seqKey := keys.KeyFrostWithdrawFIFOSeq("BTC", "native")
+	seqKey := keys.KeyFrostWithdrawFIFOSeq("btc", "NATIVE")
 	seqData := store[seqKey]
 	assert.Equal(t, "2", string(seqData))
 

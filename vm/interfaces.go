@@ -1,6 +1,8 @@
 package vm
 
-import "dex/pb"
+import (
+	"dex/pb"
+)
 
 // ========== 核心接口定义 ==========
 
@@ -38,35 +40,6 @@ type SpecExecCache interface {
 	//把低于某高度的缓存逐步淘汰，防止内存无限增长。
 	//这能避免同一候选区块在多轮投票中反复预执行，直接复用结果，减少延迟与 CPU 开销。
 	EvictBelow(height uint64)
-}
-
-// DBManager 数据库管理器接口
-type DBManager interface {
-	EnqueueSet(key, value string)
-	EnqueueDel(key string)
-	ForceFlush() error
-	Get(key string) ([]byte, error)
-	// 前缀扫描，返回所有以 prefix 开头的键值对
-	Scan(prefix string) (map[string][]byte, error)
-	// 一次性扫描多个交易对的订单索引
-	ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error)
-
-	// ========== Frost 相关方法 ==========
-	// Vault 轮换状态
-	GetFrostVaultTransition(key string) (*pb.VaultTransitionState, error)
-	SetFrostVaultTransition(key string, state *pb.VaultTransitionState) error
-	// DKG 承诺
-	GetFrostDkgCommitment(key string) (*pb.FrostVaultDkgCommitment, error)
-	SetFrostDkgCommitment(key string, commitment *pb.FrostVaultDkgCommitment) error
-	// DKG share
-	GetFrostDkgShare(key string) (*pb.FrostVaultDkgShare, error)
-	SetFrostDkgShare(key string, share *pb.FrostVaultDkgShare) error
-	// Vault 状态
-	GetFrostVaultState(key string) (*pb.FrostVaultState, error)
-	SetFrostVaultState(key string, state *pb.FrostVaultState) error
-	// DKG 投诉
-	GetFrostDkgComplaint(key string) (*pb.FrostVaultDkgComplaint, error)
-	SetFrostDkgComplaint(key string, complaint *pb.FrostVaultDkgComplaint) error
 }
 
 // （读穿函数）

@@ -800,6 +800,7 @@ func createTransferTx(txID, from, to, token, amount string) *pb.AnyTx {
 					FromAddress: from,
 					Status:      pb.Status_PENDING,
 				},
+				To:           to,
 				TokenAddress: token,
 				Amount:       amount,
 			},

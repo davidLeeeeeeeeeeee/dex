@@ -426,6 +426,8 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 			// 保存最终化的区块
 			if err := s.dbManager.SaveBlock(pbBlock); err != nil {
 				logs.Error("[RealBlockStore] Failed to save finalized block: %v", err)
+			} else {
+				s.dbManager.ForceFlush() // 最终化时强制刷盘，保证数据持久性
 			}
 		}
 	} else {
@@ -695,7 +697,6 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 			logs.Error("[RealBlockStore] Failed to save block to DB: %v", err)
 		} else {
 			logs.Debug("[RealBlockStore] Saved block %s to DB", block.ID)
-			s.dbManager.ForceFlush() // 立刻刷盘，保证最终化的块可被 DB 即时读取
 		}
 	} else {
 		// 创建简单的数据库区块
@@ -712,7 +713,7 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 		if err := s.dbManager.SaveBlock(dbBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save simple block to DB: %v", err)
 		} else {
-			s.dbManager.ForceFlush() // 立刻刷盘，避免 /getblockbyid 读不到导致缺块卡住
+			logs.Debug("[RealBlockStore] Saved simple block %s to DB", block.ID)
 		}
 	}
 }

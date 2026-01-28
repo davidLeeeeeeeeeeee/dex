@@ -2,6 +2,7 @@ package db
 
 import (
 	"dex/config"
+	"dex/interfaces"
 	smt "dex/jmt"
 	"dex/keys"
 	"dex/logs"
@@ -166,6 +167,86 @@ func (manager *Manager) ForceFlush() error {
 		// 如果通道已满，不阻塞
 	}
 	return nil
+}
+
+// NewSession 创建一个新的数据库会话
+func (m *Manager) NewSession() (interfaces.DBSession, error) {
+	jmtSess, err := m.StateDB.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	return &dbSession{
+		manager: m,
+		jmtSess: jmtSess,
+	}, nil
+}
+
+func (m *Manager) CommitRoot(height uint64, root []byte) {
+	if m.StateDB != nil {
+		m.StateDB.CommitRoot(height, root)
+	}
+}
+
+// dbSession 数据库会话实现
+type dbSession struct {
+	manager *Manager
+	jmtSess *smt.JMTStateDBSession
+}
+
+func (s *dbSession) Get(key string) ([]byte, error) {
+	// 对于状态数据，优先尝试从 JMT 会话读取
+	if keys.IsStatefulKey(key) {
+		val, exists, err := s.jmtSess.Get(key)
+		if err == nil && exists {
+			return val, nil
+		}
+	}
+
+	// 否则从会话底层事务读取（共享事务）
+	return s.jmtSess.GetKV(key)
+}
+
+func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]byte, error) {
+	kvUpdates := make([]smt.KVUpdate, 0, len(updates))
+	for _, u := range updates {
+		type writeOpInterface interface {
+			GetKey() string
+			GetValue() []byte
+			IsDel() bool
+		}
+
+		if writeOp, ok := u.(writeOpInterface); ok {
+			key := writeOp.GetKey()
+			if !keys.IsStatefulKey(key) {
+				continue
+			}
+			kvUpdates = append(kvUpdates, smt.KVUpdate{
+				Key:     key,
+				Value:   writeOp.GetValue(),
+				Deleted: writeOp.IsDel(),
+			})
+		}
+	}
+
+	if len(kvUpdates) > 0 {
+		if err := s.jmtSess.ApplyUpdate(height, kvUpdates...); err != nil {
+			return nil, err
+		}
+	}
+
+	return s.jmtSess.Root(), nil
+}
+
+func (s *dbSession) Commit() error {
+	return s.jmtSess.Commit()
+}
+
+func (s *dbSession) Rollback() error {
+	return s.jmtSess.Rollback()
+}
+
+func (s *dbSession) Close() error {
+	return s.jmtSess.Close()
 }
 
 // Scan scans all keys with the given prefix and returns a map of key-value pairs
@@ -481,13 +562,43 @@ func (manager *Manager) Read(key string) (string, error) {
 func (manager *Manager) Get(key string) ([]byte, error) {
 	// 1. 对于状态数据，优先尝试从 StateDB 读取
 	if keys.IsStatefulKey(key) && manager.StateDB != nil {
-		if val, exists, err := manager.StateDB.Get(key); err == nil && exists && len(val) > 0 {
+		val, exists, err := manager.StateDB.Get(key)
+		if err == nil && exists && len(val) > 0 {
 			return val, nil
 		}
 		// StateDB 没有找到，继续回退到 KV
 	}
 
 	// 2. 从 KV 读取
+	manager.mu.RLock()
+	db := manager.Db
+	manager.mu.RUnlock()
+
+	if db == nil {
+		return nil, fmt.Errorf("database is not initialized or closed")
+	}
+
+	var value []byte
+	err := db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			return err
+		}
+		val, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		value = val
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+// GetKV 直接从 KV 读取（绕过 StateDB）
+func (manager *Manager) GetKV(key string) ([]byte, error) {
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()

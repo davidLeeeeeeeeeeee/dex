@@ -162,7 +162,7 @@ func (s *JMTStateDB) Get(key string) ([]byte, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	value, err := s.tree.Get([]byte(key), 0) // version=0 表示最新
+	value, err := s.tree.Get([]byte(key), 0)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil, false, nil
@@ -170,6 +170,11 @@ func (s *JMTStateDB) Get(key string) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	return value, true, nil
+}
+
+// CommitRoot 显式提交新的根哈希和版本（用于同步会话提交后的内存状态）
+func (s *JMTStateDB) CommitRoot(version uint64, root []byte) {
+	s.tree.CommitRoot(Version(version), root)
 }
 
 // GetAtVersion 获取指定版本的值
@@ -193,60 +198,106 @@ func (s *JMTStateDB) Exists(key string) (bool, error) {
 // ApplyAccountUpdate 批量更新状态（区块级别）
 // height 作为版本号，所有更新在同一版本中原子提交
 func (s *JMTStateDB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
-	if len(kvs) == 0 {
-		return nil
+	sess, err := s.NewSession()
+	if err != nil {
+		return err
 	}
+	defer sess.Close()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if err := sess.ApplyUpdate(height, kvs...); err != nil {
+		return err
+	}
+	return sess.Commit()
+}
 
-	version := Version(height)
+// ============================================
+// JMTStateDBSession 会话实现
+// ============================================
 
-	// 分离更新和删除操作
-	updateKeys := make([][]byte, 0, len(kvs))
-	updateValues := make([][]byte, 0, len(kvs))
-	deleteKeys := make([][]byte, 0)
+type JMTStateDBSession struct {
+	db       *JMTStateDB
+	sess     VersionedStoreSession
+	lastRoot []byte
+}
 
+func (s *JMTStateDBSession) Get(key string) ([]byte, bool, error) {
+	val, err := s.db.tree.GetWithSession(s.sess, []byte(key), 0)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return val, true, nil
+}
+
+func (s *JMTStateDBSession) GetKV(key string) ([]byte, error) {
+	return s.sess.GetKV([]byte(key))
+}
+
+func (s *JMTStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error {
+	keys := make([][]byte, 0, len(kvs))
+	vals := make([][]byte, 0, len(kvs))
 	for _, kv := range kvs {
 		if kv.Deleted {
-			deleteKeys = append(deleteKeys, []byte(kv.Key))
-		} else {
-			updateKeys = append(updateKeys, []byte(kv.Key))
-			updateValues = append(updateValues, kv.Value)
-		}
-	}
-
-	var root []byte
-	var err error
-
-	// 先执行更新操作
-	if len(updateKeys) > 0 {
-		root, err = s.tree.Update(updateKeys, updateValues, version)
-		if err != nil {
-			return fmt.Errorf("JMT update failed: %w", err)
-		}
-	}
-
-	// 再执行删除操作
-	for _, key := range deleteKeys {
-		root, err = s.tree.Delete(key, version)
-		if err != nil {
-			// 删除不存在的 key 不应报错
-			if !errors.Is(err, ErrNotFound) {
-				return fmt.Errorf("JMT delete failed: %w", err)
+			// JMT 原生支持从树中删除
+			_, err := s.db.tree.DeleteWithSession(s.sess, []byte(kv.Key), Version(height))
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return err
 			}
+			continue
 		}
+		keys = append(keys, []byte(kv.Key))
+		vals = append(vals, kv.Value)
 	}
 
-	// 保存根哈希到 BadgerDB（如果有任何更新或删除）
-	if len(updateKeys) > 0 || len(deleteKeys) > 0 {
-		root = s.tree.Root() // 获取最新的根
-		if err := s.saveRootHash(version, root); err != nil {
-			return fmt.Errorf("failed to save root hash: %w", err)
+	if len(keys) > 0 {
+		newRoot, err := s.db.tree.UpdateWithSession(s.sess, keys, vals, Version(height))
+		if err != nil {
+			return err
 		}
+		s.lastRoot = newRoot
+	} else {
+		s.lastRoot = s.db.tree.Root()
+	}
+
+	// 保存根哈希到 BadgerDB (使用会话)
+	err := s.sess.Set(s.db.rootKey(Version(height)), s.lastRoot, Version(height))
+	if err != nil {
+		return fmt.Errorf("failed to save root hash in session: %w", err)
 	}
 
 	return nil
+}
+
+func (s *JMTStateDBSession) Commit() error {
+	return s.sess.Commit()
+}
+
+func (s *JMTStateDBSession) Rollback() error {
+	return s.sess.Rollback()
+}
+
+func (s *JMTStateDBSession) Close() error {
+	return s.sess.Close()
+}
+
+// NewSession 创建新的状态会话
+func (s *JMTStateDB) NewSession() (*JMTStateDBSession, error) {
+	storeSess, err := s.store.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	return &JMTStateDBSession{
+		db:       s,
+		sess:     storeSess,
+		lastRoot: s.tree.Root(),
+	}, nil
+}
+
+// Root 返回当前会话的状态根（基于 tree 的内存根）
+func (s *JMTStateDBSession) Root() []byte {
+	return s.lastRoot
 }
 
 // saveRootHash 保存版本的根哈希

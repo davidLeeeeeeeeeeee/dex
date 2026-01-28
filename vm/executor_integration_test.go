@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	iface "dex/interfaces"
 	"dex/keys"
 	"dex/pb"
 	"dex/vm"
@@ -64,33 +65,12 @@ func NewEnhancedMockDB() *EnhancedMockDB {
 	}
 }
 
-func (db *EnhancedMockDB) SyncToStateDB(height uint64, updates []interface{}) error {
-	for _, update := range updates {
-		// 将 WriteOp 转换为 StateDB 更新
-		if w, ok := update.(vm.WriteOp); ok {
-			updateMap := map[string]interface{}{
-				"Key":     w.GetKey(),
-				"Value":   w.GetValue(),
-				"Deleted": w.IsDel(),
-			}
-			if err := db.stateDB.ApplyAccountUpdate(height, updateMap); err != nil {
-				return err
-			}
-		} else {
-			// 尝试其他类型
-			if w, ok := update.(*vm.WriteOp); ok {
-				updateMap := map[string]interface{}{
-					"Key":     w.GetKey(),
-					"Value":   w.GetValue(),
-					"Deleted": w.IsDel(),
-				}
-				if err := db.stateDB.ApplyAccountUpdate(height, updateMap); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
+func (db *EnhancedMockDB) NewSession() (iface.DBSession, error) {
+	return db.MockDB.NewSession()
+}
+
+func (db *EnhancedMockDB) CommitRoot(height uint64, root []byte) {
+	// 简单实现
 }
 
 // ========== 测试用例 ==========

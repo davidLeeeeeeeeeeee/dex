@@ -1,6 +1,7 @@
 package vm
 
 import (
+	iface "dex/interfaces"
 	"dex/keys"
 	"dex/matching"
 	"dex/pb"
@@ -19,7 +20,7 @@ import (
 // Executor VM执行器
 type Executor struct {
 	mu             sync.RWMutex
-	DB             DBManager
+	DB             iface.DBManager
 	Reg            *HandlerRegistry
 	Cache          SpecExecCache
 	KFn            KindFn
@@ -28,13 +29,12 @@ type Executor struct {
 	WitnessService *witness.Service // 见证者服务（纯内存计算模块）
 }
 
-// 创建新的执行器
-func NewExecutor(db DBManager, reg *HandlerRegistry, cache SpecExecCache) *Executor {
+func NewExecutor(db iface.DBManager, reg *HandlerRegistry, cache SpecExecCache) *Executor {
 	return NewExecutorWithWitness(db, reg, cache, nil)
 }
 
 // NewExecutorWithWitnessService 使用已有的见证者服务创建子执行器
-func NewExecutorWithWitnessService(db DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessSvc *witness.Service) *Executor {
+func NewExecutorWithWitnessService(db iface.DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessSvc *witness.Service) *Executor {
 	if reg == nil {
 		reg = NewHandlerRegistry()
 	}
@@ -64,7 +64,7 @@ func NewExecutorWithWitnessService(db DBManager, reg *HandlerRegistry, cache Spe
 }
 
 // NewExecutorWithWitness 创建带见证者服务的执行器
-func NewExecutorWithWitness(db DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessConfig *witness.Config) *Executor {
+func NewExecutorWithWitness(db iface.DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessConfig *witness.Config) *Executor {
 	// 创建并启动见证者服务
 	witnessSvc := witness.NewService(witnessConfig)
 	_ = witnessSvc.Start()
@@ -409,7 +409,14 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 
 // applyResult 应用执行结果到数据库（统一提交入口）
 // 这是唯一的最终化提交点，所有状态变化都在这里处理
-func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
+func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
+	// 开启数据库会话
+	sess, err := x.DB.NewSession()
+	if err != nil {
+		return fmt.Errorf("failed to open db session: %v", err)
+	}
+	defer sess.Close()
+
 	// ========== 第一步：检查幂等性 ==========
 	// 防止同一区块被重复提交
 	if committed, blockHash := x.IsBlockCommitted(b.Height); committed {
@@ -464,7 +471,8 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 				}
 
 				// 读取旧的账户数据（在应用 WriteOp 之前）
-				oldAccountData, err := x.DB.Get(w.Key)
+				// 优化：从会话中读取，利用会话内的缓存或单一事务
+				oldAccountData, err := sess.Get(w.Key)
 				var oldAccount pb.Account
 				var oldStake decimal.Decimal
 				if err == nil && oldAccountData != nil {
@@ -493,12 +501,12 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 
 	// ========== 第四步：同步到 StateDB ==========
 	// 统一处理所有需要同步到 StateDB 的数据
-	if len(stateDBUpdates) > 0 && x.DB != nil {
-		stateRoot, err := x.syncToStateDB(b.Height, stateDBUpdates)
+	if len(stateDBUpdates) > 0 {
+		stateRoot, err := sess.ApplyStateUpdate(b.Height, stateDBUpdates)
 		if err != nil {
 			// StateDB 同步失败，记录错误但不中断提交
 			// 因为 Badger 已经写入了，StateDB 是可选的加速层
-			fmt.Printf("[VM] Warning: StateDB sync failed: %v\n", err)
+			fmt.Printf("[VM] Warning: StateDB sync failed via session: %v\n", err)
 		} else if stateRoot != nil {
 			// 设置区块的状态根哈希
 			b.StateRoot = stateRoot
@@ -582,30 +590,18 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) error {
 	blockHeightKey := keys.KeyVMBlockHeight(b.Height)
 	x.DB.EnqueueSet(blockHeightKey, b.BlockHash)
 
-	// ========== 第六步：原子提交 ==========
-	// 强制刷新到数据库，确保所有写操作原子性提交
+	// ========== 第六步：提交会话并同步 ==========
+	if err := sess.Commit(); err != nil {
+		return fmt.Errorf("failed to commit db session: %v", err)
+	}
+
+	// 更新内存中的状态根（确保后续执行能看到最新版本）
+	if b.StateRoot != nil {
+		x.DB.CommitRoot(b.Height, b.StateRoot)
+	}
+
+	// 强制刷新到数据库（用于非状态数据的 EnqueueSet）
 	return x.DB.ForceFlush()
-}
-
-// syncToStateDB 同步状态变化到 StateDB
-// 返回：(stateRoot, error) - stateRoot 是同步后的状态树根哈希
-func (x *Executor) syncToStateDB(height uint64, updates []interface{}) ([]byte, error) {
-	// 检查 DB 是否支持 StateDB 同步
-	if x.DB == nil {
-		return nil, fmt.Errorf("DB manager is nil")
-	}
-
-	// 尝试调用 DB 的 StateDB 同步方法
-	// 这里假设 DBManager 接口有 SyncToStateDB 方法
-	// 如果没有，可以通过类型断言来调用
-	if syncable, ok := x.DB.(interface {
-		SyncToStateDB(uint64, []interface{}) ([]byte, error)
-	}); ok {
-		return syncable.SyncToStateDB(height, updates)
-	}
-
-	// 如果 DB 不支持 StateDB 同步，返回 nil（不是错误）
-	return nil, nil
 }
 
 // IsBlockCommitted 检查区块是否已提交
@@ -760,9 +756,12 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 			}
 
 			// 优先从 OrderState 读取（新版本）
+			// 优先从 OrderState 读取（新版本）
+			// 优化：直接从 KV 读取，绕过 JMT，避免大量随机读树带来的性能问题
+			// 这显著降低了 rebuildOrderBooksForPairs 的 IO 开销
 			orderStateKey := keys.KeyOrderState(orderID)
-			orderStateData, exists, err := sv.Get(orderStateKey)
-			if err == nil && exists {
+			orderStateData, err := x.DB.GetKV(orderStateKey)
+			if err == nil && len(orderStateData) > 0 {
 				var orderState pb.OrderState
 				if err := proto.Unmarshal(orderStateData, &orderState); err != nil {
 					continue

@@ -17,6 +17,7 @@ import (
 	"dex/witness"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"strconv"
 	"time"
 
@@ -148,6 +149,13 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 	// 使用HandlerManager注册路由
 	node.HandlerManager.RegisterRoutes(mux)
 
+	// 注册 pprof 路由 - 用于性能分析
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
 	// 应用中间件
 	handler := middleware.RateLimit(mux)
 
@@ -166,7 +174,7 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 		MinVersion:   tls.VersionTLS13,
 		MaxVersion:   tls.VersionTLS13,
 		// 添加ALPN协议支持 - 这是关键修复
-		NextProtos: []string{"h3", "h3-29", "h3-28", "h3-27"}, // HTTP/3协议标识符
+		NextProtos: []string{"h3", "h3-29", "h3-28", "h3-27", "http/1.1"}, // 增加 http/1.1 支持 TCP
 	}
 
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
@@ -207,6 +215,18 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 
 	// 服务器成功创建监听器，发送就绪信号
 	readyChan <- node.ID
+
+	// 启动一个后台 TCP TLS 服务器，以便 pprof 等 TCP 工具可以连接
+	tcpServer := &http.Server{
+		Addr:      ":" + node.Port,
+		Handler:   handler,
+		TLSConfig: tlsConfig,
+	}
+	go func() {
+		if err := tcpServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			logs.Error("Node %d: TCP TLS Server error: %v", node.ID, err)
+		}
+	}()
 
 	// 启动服务器（这是阻塞调用）
 	if err := server.ServeListener(listener); err != nil {

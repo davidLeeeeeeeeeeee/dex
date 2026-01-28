@@ -6,9 +6,41 @@ import (
 	"log"
 	"strings"
 
+	iface "dex/interfaces"
 	"dex/pb"
 	"dex/vm"
 )
+
+// SimpleSession 简单的会话实现
+type SimpleSession struct {
+	db *SimpleDB
+}
+
+func (s *SimpleSession) Get(key string) ([]byte, error) {
+	return s.db.Get(key)
+}
+
+func (s *SimpleSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]byte, error) {
+	for _, u := range updates {
+		type writeOpInterface interface {
+			GetKey() string
+			GetValue() []byte
+			IsDel() bool
+		}
+		if op, ok := u.(writeOpInterface); ok {
+			if op.IsDel() {
+				delete(s.db.data, op.GetKey())
+			} else {
+				s.db.data[op.GetKey()] = op.GetValue()
+			}
+		}
+	}
+	return []byte("simple_root"), nil
+}
+
+func (s *SimpleSession) Commit() error   { return nil }
+func (s *SimpleSession) Rollback() error { return nil }
+func (s *SimpleSession) Close() error    { return nil }
 
 // SimpleDB 简单的内存数据库实现
 type SimpleDB struct {
@@ -21,12 +53,24 @@ func NewSimpleDB() *SimpleDB {
 	}
 }
 
+func (db *SimpleDB) NewSession() (iface.DBSession, error) {
+	return &SimpleSession{db: db}, nil
+}
+
+func (db *SimpleDB) CommitRoot(height uint64, root []byte) {
+	// Simple 实现：简单记录
+}
+
 func (db *SimpleDB) Get(key string) ([]byte, error) {
 	val, exists := db.data[key]
 	if !exists {
 		return nil, nil
 	}
 	return val, nil
+}
+
+func (db *SimpleDB) GetKV(key string) ([]byte, error) {
+	return db.Get(key)
 }
 
 func (db *SimpleDB) EnqueueSet(key, value string) {

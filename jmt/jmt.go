@@ -5,6 +5,8 @@ import (
 	"errors"
 	"hash"
 	"sync"
+
+	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 // ============================================
@@ -24,18 +26,40 @@ type JellyfishMerkleTree struct {
 	rootHistory map[Version][]byte
 
 	mu sync.RWMutex
+
+	// 节点缓存 (不可变节点)
+	nodeCache *lru.Cache[string, []byte]
 }
 
 // NewJMT 创建新的空 JMT
 func NewJMT(store VersionedStore, hasher hash.Hash) *JellyfishMerkleTree {
 	jh := NewJMTHasher(hasher)
+	cache, _ := lru.New[string, []byte](10000)
 	return &JellyfishMerkleTree{
 		hasher:      jh,
 		store:       store,
 		version:     0,
 		root:        jh.Placeholder(),
 		rootHistory: make(map[Version][]byte),
+		nodeCache:   cache,
 	}
+}
+
+// setCache 设置缓存
+func (jmt *JellyfishMerkleTree) setCache(hash []byte, data []byte) {
+	if jmt.nodeCache != nil {
+		jmt.nodeCache.Add(string(hash), data)
+	}
+}
+
+// getCache 获取缓存
+func (jmt *JellyfishMerkleTree) getCache(hash []byte) []byte {
+	if jmt.nodeCache != nil {
+		if val, ok := jmt.nodeCache.Get(string(hash)); ok {
+			return val
+		}
+	}
+	return nil
 }
 
 // ImportJMT 从指定版本导入 JMT
@@ -43,12 +67,14 @@ func ImportJMT(store VersionedStore, hasher hash.Hash, version Version, root []b
 	jh := NewJMTHasher(hasher)
 	history := make(map[Version][]byte)
 	history[version] = root
+	cache, _ := lru.New[string, []byte](10000)
 	return &JellyfishMerkleTree{
 		hasher:      jh,
 		store:       store,
 		version:     version,
 		root:        root,
 		rootHistory: history,
+		nodeCache:   cache,
 	}
 }
 
@@ -68,6 +94,18 @@ func (jmt *JellyfishMerkleTree) Version() Version {
 	jmt.mu.RLock()
 	defer jmt.mu.RUnlock()
 	return jmt.version
+}
+
+// CommitRoot 更新树的根哈希和版本号（通常在会话提交后调用）
+func (jmt *JellyfishMerkleTree) CommitRoot(version Version, root []byte) {
+	jmt.mu.Lock()
+	defer jmt.mu.Unlock()
+	jmt.version = version
+	jmt.root = root
+	if jmt.rootHistory == nil {
+		jmt.rootHistory = make(map[Version][]byte)
+	}
+	jmt.rootHistory[version] = root
 }
 
 // Hasher 获取哈希器
@@ -99,7 +137,52 @@ func (jmt *JellyfishMerkleTree) Get(key []byte, version Version) ([]byte, error)
 		return nil, ErrNotFound
 	}
 
-	return jmt.getForRoot(key, rootHash, version)
+	return jmt.getForRoot(key, rootHash, version, nil)
+}
+
+// GetWithSession 在会话中获取指定版本的值
+func (jmt *JellyfishMerkleTree) GetWithSession(sess VersionedStoreSession, key []byte, version Version) ([]byte, error) {
+	jmt.mu.RLock()
+	defer jmt.mu.RUnlock()
+
+	if version == 0 {
+		version = jmt.version
+	}
+
+	rootHash, err := jmt.getRootForVersionWithSession(sess, version)
+	if err != nil {
+		return nil, err
+	}
+
+	if jmt.hasher.IsPlaceholder(rootHash) {
+		return nil, ErrNotFound
+	}
+
+	return jmt.getForRoot(key, rootHash, version, sess)
+}
+
+// getRootForVersionWithSession 获取指定版本的根哈希
+func (jmt *JellyfishMerkleTree) getRootForVersionWithSession(sess VersionedStoreSession, version Version) ([]byte, error) {
+	if version == jmt.version {
+		return jmt.root, nil
+	}
+	if root, ok := jmt.rootHistory[version]; ok {
+		return root, nil
+	}
+
+	// 尝试从存储中获取
+	var rootData []byte
+	var err error
+	if sess != nil {
+		rootData, err = sess.Get(rootKey(version), version)
+	} else {
+		rootData, err = jmt.store.Get(rootKey(version), version)
+	}
+
+	if err != nil {
+		return nil, ErrVersionNotFound
+	}
+	return rootData, nil
 }
 
 // getRootForVersion 获取指定版本的根哈希
@@ -119,7 +202,7 @@ func (jmt *JellyfishMerkleTree) getRootForVersion(version Version) ([]byte, erro
 }
 
 // getForRoot 在指定根下获取值
-func (jmt *JellyfishMerkleTree) getForRoot(key []byte, root []byte, version Version) ([]byte, error) {
+func (jmt *JellyfishMerkleTree) getForRoot(key []byte, root []byte, version Version, sess VersionedStoreSession) ([]byte, error) {
 	if jmt.hasher.IsPlaceholder(root) {
 		return nil, ErrNotFound
 	}
@@ -129,13 +212,26 @@ func (jmt *JellyfishMerkleTree) getForRoot(key []byte, root []byte, version Vers
 
 	// 遍历树
 	for depth := 0; depth < jmt.hasher.MaxDepth(); depth++ {
-		// 从存储中获取当前节点
-		nodeData, err := jmt.store.Get(currentHash, version)
-		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				return nil, ErrNotFound
+		// 尝试从缓存获取
+		nodeData := jmt.getCache(currentHash)
+		var err error
+
+		if nodeData == nil {
+			// 从存储中获取当前节点
+			if sess != nil {
+				nodeData, err = sess.Get(currentHash, version)
+			} else {
+				nodeData, err = jmt.store.Get(currentHash, version)
 			}
-			return nil, err
+
+			if err != nil {
+				if errors.Is(err, ErrNotFound) {
+					return nil, ErrNotFound
+				}
+				return nil, err
+			}
+			// 写入缓存
+			jmt.setCache(currentHash, nodeData)
 		}
 
 		nodeType := jmt.hasher.GetNodeType(nodeData)
@@ -150,6 +246,9 @@ func (jmt *JellyfishMerkleTree) getForRoot(key []byte, root []byte, version Vers
 			// 检查是否匹配
 			if bytes.Equal(leaf.KeyHash, path) {
 				// 获取实际值
+				if sess != nil {
+					return sess.Get(valueKey(path), version)
+				}
 				return jmt.store.Get(valueKey(path), version)
 			}
 			// Key 不存在
@@ -196,7 +295,7 @@ func (jmt *JellyfishMerkleTree) Update(keys [][]byte, values [][]byte, newVersio
 	// 逐个更新
 	for i := 0; i < len(keys); i++ {
 		var err error
-		currentRoot, err = jmt.updateSingle(keys[i], values[i], currentRoot, newVersion)
+		currentRoot, err = jmt.updateSingle(keys[i], values[i], currentRoot, newVersion, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -215,48 +314,105 @@ func (jmt *JellyfishMerkleTree) Update(keys [][]byte, values [][]byte, newVersio
 	return currentRoot, nil
 }
 
+// UpdateWithSession 在会话中批量更新 Key-Value
+func (jmt *JellyfishMerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte, values [][]byte, newVersion Version) ([]byte, error) {
+	if len(keys) != len(values) {
+		return nil, errors.New("keys and values must have the same length")
+	}
+
+	jmt.mu.Lock()
+	defer jmt.mu.Unlock()
+
+	currentRoot := jmt.root
+
+	for i := 0; i < len(keys); i++ {
+		var err error
+		currentRoot, err = jmt.updateSingle(keys[i], values[i], currentRoot, newVersion, sess)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	jmt.rootHistory[newVersion] = currentRoot
+	if err := sess.Set(rootKey(newVersion), currentRoot, newVersion); err != nil {
+		return nil, err
+	}
+
+	jmt.root = currentRoot
+	jmt.version = newVersion
+
+	return currentRoot, nil
+}
+
 // updateSingle 更新单个 Key-Value
-func (jmt *JellyfishMerkleTree) updateSingle(key, value []byte, root []byte, version Version) ([]byte, error) {
+func (jmt *JellyfishMerkleTree) updateSingle(key, value []byte, root []byte, version Version, sess VersionedStoreSession) ([]byte, error) {
 	path := jmt.hasher.Path(key)
 	valueHash := jmt.hasher.Digest(value)
 
 	// 存储实际值
-	if err := jmt.store.Set(valueKey(path), value, version); err != nil {
+	var err error
+	if sess != nil {
+		err = sess.Set(valueKey(path), value, version)
+	} else {
+		err = jmt.store.Set(valueKey(path), value, version)
+	}
+	if err != nil {
 		return nil, err
 	}
 
 	// 如果是空树，直接创建叶子节点
 	if jmt.hasher.IsPlaceholder(root) {
 		leafHash, leafData := jmt.hasher.DigestLeafNode(path, valueHash)
-		if err := jmt.store.Set(leafHash, leafData, version); err != nil {
+		if sess != nil {
+			err = sess.Set(leafHash, leafData, version)
+		} else {
+			err = jmt.store.Set(leafHash, leafData, version)
+		}
+		if err != nil {
 			return nil, err
 		}
 		return leafHash, nil
 	}
 
 	// 遍历树找到插入点
-	return jmt.insertIntoTree(path, valueHash, root, 0, version)
+	return jmt.insertIntoTree(path, valueHash, root, 0, version, sess)
 }
 
 // insertIntoTree 递归插入节点
-func (jmt *JellyfishMerkleTree) insertIntoTree(path, valueHash, nodeHash []byte, depth int, version Version) ([]byte, error) {
+func (jmt *JellyfishMerkleTree) insertIntoTree(path, valueHash, nodeHash []byte, depth int, version Version, sess VersionedStoreSession) ([]byte, error) {
 	if jmt.hasher.IsPlaceholder(nodeHash) {
 		// 到达空节点，创建叶子
 		leafHash, leafData := jmt.hasher.DigestLeafNode(path, valueHash)
-		if err := jmt.store.Set(leafHash, leafData, version); err != nil {
+		var err error
+		if sess != nil {
+			err = sess.Set(leafHash, leafData, version)
+		} else {
+			err = jmt.store.Set(leafHash, leafData, version)
+		}
+		if err != nil {
 			return nil, err
 		}
 		return leafHash, nil
 	}
 
 	// 获取当前节点
-	nodeData, err := jmt.store.Get(nodeHash, version)
-	if err != nil {
-		// 如果当前版本不存在，尝试旧版本
-		nodeData, err = jmt.store.Get(nodeHash, 0)
+	var nodeData []byte
+	var err error
+	if sess != nil {
+		nodeData, err = sess.Get(nodeHash, version)
 		if err != nil {
-			return nil, err
+			// 如果当前版本不存在，尝试旧版本
+			nodeData, err = sess.Get(nodeHash, 0)
 		}
+	} else {
+		nodeData, err = jmt.store.Get(nodeHash, version)
+		if err != nil {
+			nodeData, err = jmt.store.Get(nodeHash, 0)
+		}
+	}
+
+	if err != nil {
+		return nil, err
 	}
 
 	nodeType := jmt.hasher.GetNodeType(nodeData)
@@ -272,14 +428,20 @@ func (jmt *JellyfishMerkleTree) insertIntoTree(path, valueHash, nodeHash []byte,
 		if bytes.Equal(existingLeaf.KeyHash, path) {
 			// 更新现有叶子
 			newLeafHash, newLeafData := jmt.hasher.DigestLeafNode(path, valueHash)
-			if err := jmt.store.Set(newLeafHash, newLeafData, version); err != nil {
+			var err error
+			if sess != nil {
+				err = sess.Set(newLeafHash, newLeafData, version)
+			} else {
+				err = jmt.store.Set(newLeafHash, newLeafData, version)
+			}
+			if err != nil {
 				return nil, err
 			}
 			return newLeafHash, nil
 		}
 
 		// 需要分裂：创建内部节点
-		return jmt.splitLeaf(existingLeaf, path, valueHash, depth, version)
+		return jmt.splitLeaf(existingLeaf, path, valueHash, depth, version, sess)
 
 	case NodeTypeInternal:
 		// 继续向下遍历
@@ -295,7 +457,7 @@ func (jmt *JellyfishMerkleTree) insertIntoTree(path, valueHash, nodeHash []byte,
 		}
 
 		// 递归更新子树
-		newChildHash, err := jmt.insertIntoTree(path, valueHash, childHash, depth+1, version)
+		newChildHash, err := jmt.insertIntoTree(path, valueHash, childHash, depth+1, version, sess)
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +471,12 @@ func (jmt *JellyfishMerkleTree) insertIntoTree(path, valueHash, nodeHash []byte,
 		newNode.SetChild(nibble, newChildHash)
 
 		newNodeHash, newNodeData := jmt.hasher.DigestInternalNodeFromNode(newNode)
-		if err := jmt.store.Set(newNodeHash, newNodeData, version); err != nil {
+		if sess != nil {
+			err = sess.Set(newNodeHash, newNodeData, version)
+		} else {
+			err = jmt.store.Set(newNodeHash, newNodeData, version)
+		}
+		if err != nil {
 			return nil, err
 		}
 		return newNodeHash, nil
@@ -320,7 +487,7 @@ func (jmt *JellyfishMerkleTree) insertIntoTree(path, valueHash, nodeHash []byte,
 }
 
 // splitLeaf 分裂叶子节点
-func (jmt *JellyfishMerkleTree) splitLeaf(existingLeaf *LeafNode, newPath, newValueHash []byte, depth int, version Version) ([]byte, error) {
+func (jmt *JellyfishMerkleTree) splitLeaf(existingLeaf *LeafNode, newPath, newValueHash []byte, depth int, version Version, sess VersionedStoreSession) ([]byte, error) {
 	existingPath := existingLeaf.KeyHash
 
 	// 找到分叉点
@@ -328,12 +495,23 @@ func (jmt *JellyfishMerkleTree) splitLeaf(existingLeaf *LeafNode, newPath, newVa
 
 	// 创建两个叶子节点
 	existingLeafHash, existingLeafData := jmt.hasher.DigestLeafNode(existingPath, existingLeaf.ValueHash)
-	if err := jmt.store.Set(existingLeafHash, existingLeafData, version); err != nil {
+	var err error
+	if sess != nil {
+		err = sess.Set(existingLeafHash, existingLeafData, version)
+	} else {
+		err = jmt.store.Set(existingLeafHash, existingLeafData, version)
+	}
+	if err != nil {
 		return nil, err
 	}
 
 	newLeafHash, newLeafData := jmt.hasher.DigestLeafNode(newPath, newValueHash)
-	if err := jmt.store.Set(newLeafHash, newLeafData, version); err != nil {
+	if sess != nil {
+		err = sess.Set(newLeafHash, newLeafData, version)
+	} else {
+		err = jmt.store.Set(newLeafHash, newLeafData, version)
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -351,7 +529,12 @@ func (jmt *JellyfishMerkleTree) splitLeaf(existingLeaf *LeafNode, newPath, newVa
 
 	node := InternalNodeFromChildren(children, jmt.hasher.Placeholder())
 	nodeHash, nodeData := jmt.hasher.DigestInternalNodeFromNode(node)
-	if err := jmt.store.Set(nodeHash, nodeData, version); err != nil {
+	if sess != nil {
+		err = sess.Set(nodeHash, nodeData, version)
+	} else {
+		err = jmt.store.Set(nodeHash, nodeData, version)
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -368,7 +551,12 @@ func (jmt *JellyfishMerkleTree) splitLeaf(existingLeaf *LeafNode, newPath, newVa
 
 		node := InternalNodeFromChildren(children, jmt.hasher.Placeholder())
 		nodeHash, nodeData := jmt.hasher.DigestInternalNodeFromNode(node)
-		if err := jmt.store.Set(nodeHash, nodeData, version); err != nil {
+		if sess != nil {
+			err = sess.Set(nodeHash, nodeData, version)
+		} else {
+			err = jmt.store.Set(nodeHash, nodeData, version)
+		}
+		if err != nil {
 			return nil, err
 		}
 		currentHash = nodeHash
@@ -392,7 +580,7 @@ func (jmt *JellyfishMerkleTree) Delete(key []byte, newVersion Version) ([]byte, 
 		return jmt.root, nil // 空树，无需删除
 	}
 
-	newRoot, err := jmt.deleteFromTree(path, jmt.root, 0, newVersion)
+	newRoot, err := jmt.deleteFromTree(path, jmt.root, 0, newVersion, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -414,18 +602,59 @@ func (jmt *JellyfishMerkleTree) Delete(key []byte, newVersion Version) ([]byte, 
 	return newRoot, nil
 }
 
+// DeleteWithSession 在会话中删除指定 Key
+func (jmt *JellyfishMerkleTree) DeleteWithSession(sess VersionedStoreSession, key []byte, newVersion Version) ([]byte, error) {
+	jmt.mu.Lock()
+	defer jmt.mu.Unlock()
+
+	path := jmt.hasher.Path(key)
+
+	if jmt.hasher.IsPlaceholder(jmt.root) {
+		return jmt.root, nil
+	}
+
+	newRoot, err := jmt.deleteFromTree(path, jmt.root, 0, newVersion, sess)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := sess.Delete(valueKey(path), newVersion); err != nil {
+		return nil, err
+	}
+
+	jmt.rootHistory[newVersion] = newRoot
+	if err := sess.Set(rootKey(newVersion), newRoot, newVersion); err != nil {
+		return nil, err
+	}
+
+	jmt.root = newRoot
+	jmt.version = newVersion
+
+	return newRoot, nil
+}
+
 // deleteFromTree 递归删除节点
-func (jmt *JellyfishMerkleTree) deleteFromTree(path, nodeHash []byte, depth int, version Version) ([]byte, error) {
+func (jmt *JellyfishMerkleTree) deleteFromTree(path, nodeHash []byte, depth int, version Version, sess VersionedStoreSession) ([]byte, error) {
 	if jmt.hasher.IsPlaceholder(nodeHash) {
 		return nodeHash, nil // Key 不存在
 	}
 
-	nodeData, err := jmt.store.Get(nodeHash, version)
-	if err != nil {
-		nodeData, err = jmt.store.Get(nodeHash, 0)
+	var nodeData []byte
+	var err error
+	if sess != nil {
+		nodeData, err = sess.Get(nodeHash, version)
 		if err != nil {
-			return nil, err
+			nodeData, err = sess.Get(nodeHash, 0)
 		}
+	} else {
+		nodeData, err = jmt.store.Get(nodeHash, version)
+		if err != nil {
+			nodeData, err = jmt.store.Get(nodeHash, 0)
+		}
+	}
+
+	if err != nil {
+		return nil, err
 	}
 
 	nodeType := jmt.hasher.GetNodeType(nodeData)
@@ -456,7 +685,7 @@ func (jmt *JellyfishMerkleTree) deleteFromTree(path, nodeHash []byte, depth int,
 		}
 
 		// 递归删除
-		newChildHash, err := jmt.deleteFromTree(path, childHash, depth+1, version)
+		newChildHash, err := jmt.deleteFromTree(path, childHash, depth+1, version, sess)
 		if err != nil {
 			return nil, err
 		}
@@ -478,11 +707,20 @@ func (jmt *JellyfishMerkleTree) deleteFromTree(path, nodeHash []byte, depth int,
 		if newNode.ChildCount() == 1 {
 			children := newNode.GetAllChildren()
 			onlyChildHash := children[0][1].([]byte)
-			childData, err := jmt.store.Get(onlyChildHash, version)
-			if err != nil {
-				childData, err = jmt.store.Get(onlyChildHash, 0)
+			var childDataInner []byte
+			var errInner error
+			if sess != nil {
+				childDataInner, errInner = sess.Get(onlyChildHash, version)
+				if errInner != nil {
+					childDataInner, errInner = sess.Get(onlyChildHash, 0)
+				}
+			} else {
+				childDataInner, errInner = jmt.store.Get(onlyChildHash, version)
+				if errInner != nil {
+					childDataInner, errInner = jmt.store.Get(onlyChildHash, 0)
+				}
 			}
-			if err == nil && IsLeafNodeData(childData) {
+			if errInner == nil && IsLeafNodeData(childDataInner) {
 				return onlyChildHash, nil
 			}
 		}
@@ -491,11 +729,18 @@ func (jmt *JellyfishMerkleTree) deleteFromTree(path, nodeHash []byte, depth int,
 			return jmt.hasher.Placeholder(), nil
 		}
 
-		newNodeHash, newNodeData := jmt.hasher.DigestInternalNodeFromNode(newNode)
-		if err := jmt.store.Set(newNodeHash, newNodeData, version); err != nil {
-			return nil, err
+		resultHash, newNodeData := jmt.hasher.DigestInternalNodeFromNode(newNode)
+		var errSet error
+		if sess != nil {
+			errSet = sess.Set(resultHash, newNodeData, version)
+		} else {
+			errSet = jmt.store.Set(resultHash, newNodeData, version)
 		}
-		return newNodeHash, nil
+		if errSet != nil {
+			return nil, errSet
+		}
+		jmt.setCache(resultHash, newNodeData)
+		return resultHash, nil
 
 	default:
 		return nil, errors.New("corrupted tree: unknown node type")
