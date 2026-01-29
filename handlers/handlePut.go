@@ -58,10 +58,10 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 			msg := types.Message{
 				RequestID: 0, // /put 不走请求-响应，这里固定 0
 				Type:      types.MsgPut,
-				From:      types.NodeID(block.Miner),
+				From:      types.NodeID(block.Header.Miner),
 				Block:     consensusBlock,
 				BlockID:   block.BlockHash,
-				Height:    block.Height,
+				Height:    block.Header.Height,
 			}
 			if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 				if err := rt.EnqueueReceivedMessage(msg); err != nil {
@@ -71,6 +71,6 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	hm.Logger.Info("[HandlePut] Stored block %s at height %d (txs=%d)", block.BlockHash, block.Height, len(block.Body))
+	hm.Logger.Info("[HandlePut] Stored block %s at height %d (txs=%d)", block.BlockHash, block.Header.Height, len(block.Body))
 	w.WriteHeader(http.StatusOK)
 }

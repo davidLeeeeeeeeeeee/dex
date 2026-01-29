@@ -95,30 +95,33 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 
 	// 6. 构造实际的区块
 	block := &types.Block{
-		ID:           blockID,
-		Height:       height,
-		ParentID:     parentID,
-		Data:         fmt.Sprintf("Height %d, Proposer %s, Window %d, TxCount %d", height, proposer, window, len(sortedTxs)),
-		Proposer:     string(proposer),
-		Window:       window,
-		VRFProof:     vrfProof,
-		VRFOutput:    vrfOutput,
-		BLSPublicKey: blsPublicKeyBytes,
+		ID: blockID,
+		Header: types.BlockHeader{
+			Height:       height,
+			ParentID:     parentID,
+			Proposer:     string(proposer),
+			Window:       window,
+			VRFProof:     vrfProof,
+			VRFOutput:    vrfOutput,
+			BLSPublicKey: blsPublicKeyBytes,
+		},
 	}
 
 	// 7. 将区块数据保存到数据库（包含交易信息）
 	dbBlock := &pb.Block{
-		Height:        height,
-		TxsHash:       txsHash,
-		BlockHash:     blockID,
-		PrevBlockHash: parentID,
-		Miner:         fmt.Sprintf(db.KeyNode()+"%s", proposer),
-		Body:          sortedTxs,
-		ShortTxs:      shortTxs,
-		Window:        int32(window),
-		VrfProof:      vrfProof,
-		VrfOutput:     vrfOutput,
-		BlsPublicKey:  blsPublicKeyBytes,
+		BlockHash: blockID,
+		Header: &pb.BlockHeader{
+			Height:        height,
+			TxsHash:       txsHash,
+			PrevBlockHash: parentID,
+			Miner:         fmt.Sprintf(db.KeyNode()+"%s", proposer),
+			Window:        int32(window),
+			VrfProof:      vrfProof,
+			VrfOutput:     vrfOutput,
+			BlsPublicKey:  blsPublicKeyBytes,
+		},
+		Body:     sortedTxs,
+		ShortTxs: shortTxs,
 	}
 
 	// 临时存储到内存，等区块最终化后再持久化
@@ -228,7 +231,7 @@ func (p *RealBlockProposer) cacheBlock(blockID string, block *pb.Block) {
 	blockCacheMu.Lock()
 	defer blockCacheMu.Unlock()
 	blockCache[blockID] = block
-	blockCacheHeights[blockID] = block.Height
+	blockCacheHeights[blockID] = block.Header.Height
 }
 
 // GetCachedBlock 获取缓存的区块

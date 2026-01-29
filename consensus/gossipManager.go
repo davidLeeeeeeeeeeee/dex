@@ -133,7 +133,7 @@ func (gm *GossipManager) gossipBlock(block *types.Block) {
 		From:    gm.nodeID,
 		Block:   block,
 		BlockID: block.ID,
-		Height:  block.Height,
+		Height:  block.Header.Height,
 	}
 
 	gm.transport.Broadcast(msg, peers)
@@ -167,7 +167,7 @@ func (gm *GossipManager) HandleGossip(msg types.Message) {
 		// 如果是因为缺父块导致的拒绝，自动请求父块
 		if strings.Contains(err.Error(), "parent block") && strings.Contains(err.Error(), "not found") {
 			if gm.queryManager != nil {
-				gm.queryManager.RequestBlock(msg.Block.ParentID, types.NodeID(msg.From))
+				gm.queryManager.RequestBlock(msg.Block.Header.ParentID, types.NodeID(msg.From))
 			}
 		}
 		return

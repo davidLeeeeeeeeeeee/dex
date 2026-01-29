@@ -34,7 +34,7 @@ func (hm *HandlerManager) HandleGetRecentBlocks(w http.ResponseWriter, r *http.R
 
 	_, lastHeight := hm.consensusManager.GetLastAccepted()
 
-	var headers []*pb.BlockHeader
+	var summaries []*pb.BlockSummary
 
 	for i := 0; i < count; i++ {
 		if lastHeight == 0 {
@@ -76,22 +76,22 @@ func (hm *HandlerManager) HandleGetRecentBlocks(w http.ResponseWriter, r *http.R
 			continue
 		}
 
-		// Create header
-		header := &pb.BlockHeader{
-			Height:            block.Height,
+		// Create BlockSummary
+		summary := &pb.BlockSummary{
+			Height:            block.Header.Height,
 			BlockHash:         block.BlockHash,
-			TxsHash:           block.TxsHash,
-			Miner:             block.Miner,
+			TxsHash:           block.Header.TxsHash,
+			Miner:             block.Header.Miner,
 			TxCount:           int32(len(block.Body)),
 			AccumulatedReward: block.AccumulatedReward,
-			Window:            block.Window,
+			Window:            block.Header.Window,
 		}
-		headers = append(headers, header)
+		summaries = append(summaries, summary)
 		lastHeight--
 	}
 
 	resp := &pb.GetRecentBlocksResponse{
-		Blocks: headers,
+		Blocks: summaries,
 	}
 
 	respBytes, err := proto.Marshal(resp)

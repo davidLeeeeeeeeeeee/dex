@@ -30,14 +30,15 @@ func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, prop
 
 	blockID := fmt.Sprintf("block-%d-%s-w%d-%s", height, string(proposer), window, hashStr)
 	block := &types.Block{
-		ID:        blockID,
-		Height:    height,
-		ParentID:  parentID,
-		Data:      fmt.Sprintf("Height %d, Proposer %s, Window %d", height, string(proposer), window),
-		Proposer:  string(proposer),
-		Window:    window,
-		VRFProof:  nil, // 模拟模式不生成VRF
-		VRFOutput: nil,
+		ID: blockID,
+		Header: types.BlockHeader{
+			Height:    height,
+			ParentID:  parentID,
+			Proposer:  string(proposer),
+			Window:    window,
+			VRFProof:  nil, // 模拟模式不生成VRF
+			VRFOutput: nil,
+		},
 	}
 	return block, nil
 }

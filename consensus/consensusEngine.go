@@ -162,9 +162,9 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 	for _, block := range blocks {
 		// 对于 height > 0 的区块，必须验证父区块链接
 		if ctx.height > 0 && parentBlock != nil {
-			if block.ParentID != parentBlock.ID {
+			if block.Header.ParentID != parentBlock.ID {
 				logs.Debug("[Engine] Block %s rejected from candidates: parent mismatch (expected %s, got %s)",
-					block.ID, parentBlock.ID, block.ParentID)
+					block.ID, parentBlock.ID, block.Header.ParentID)
 				continue
 			}
 		}

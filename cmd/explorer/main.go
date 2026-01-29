@@ -77,8 +77,8 @@ type nodeSummary struct {
 
 type nodeDetails struct {
 	nodeSummary
-	Logs         []*pb.LogLine     `json:"logs,omitempty"`
-	RecentBlocks []*pb.BlockHeader `json:"recent_blocks,omitempty"`
+	Logs         []*pb.LogLine      `json:"logs,omitempty"`
+	RecentBlocks []*pb.BlockSummary `json:"recent_blocks,omitempty"`
 }
 
 type blockSummary struct {
@@ -759,19 +759,19 @@ func convertBlockToInfo(block *pb.Block) *blockInfo {
 		return nil
 	}
 	info := &blockInfo{
-		Height:      block.Height,
+		Height:      block.Header.Height,
 		BlockHash:   block.BlockHash,
-		PrevHash:    block.PrevBlockHash,
-		TxsHash:     block.TxsHash,
-		Miner:       block.Miner,
+		PrevHash:    block.Header.PrevBlockHash,
+		TxsHash:     block.Header.TxsHash,
+		Miner:       block.Header.Miner,
 		TxCount:     len(block.Body),
 		Accumulated: block.AccumulatedReward,
-		Window:      block.Window,
+		Window:      block.Header.Window,
 		Txs:         make([]txSummary, 0, len(block.Body)),
 	}
 	// 将 StateRoot ([]byte) 转换为十六进制字符串
-	if len(block.StateRoot) > 0 {
-		info.StateRoot = fmt.Sprintf("%x", block.StateRoot)
+	if len(block.Header.StateRoot) > 0 {
+		info.StateRoot = fmt.Sprintf("%x", block.Header.StateRoot)
 	}
 	for _, tx := range block.Body {
 		summary := convertAnyTxToSummary(tx)
@@ -1262,19 +1262,19 @@ func buildBlockSummary(block *pb.Block) *blockSummary {
 	}
 
 	summary := &blockSummary{
-		Height:        block.Height,
+		Height:        block.Header.Height,
 		BlockHash:     block.BlockHash,
-		PrevBlockHash: block.PrevBlockHash,
-		TxsHash:       block.TxsHash,
-		Miner:         block.Miner,
+		PrevBlockHash: block.Header.PrevBlockHash,
+		TxsHash:       block.Header.TxsHash,
+		Miner:         block.Header.Miner,
 		TxCount:       len(block.Body),
 		TxTypeCounts:  typeCounts,
 		Accumulated:   block.AccumulatedReward,
-		Window:        block.Window,
+		Window:        block.Header.Window,
 	}
 	// 将 StateRoot ([]byte) 转换为十六进制字符串
-	if len(block.StateRoot) > 0 {
-		summary.StateRoot = fmt.Sprintf("%x", block.StateRoot)
+	if len(block.Header.StateRoot) > 0 {
+		summary.StateRoot = fmt.Sprintf("%x", block.Header.StateRoot)
 	}
 	return summary
 }

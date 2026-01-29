@@ -163,14 +163,16 @@ func startNodeWeb(node *consensus.Node, port int) {
 
 		// 尝试从 Store 获取真实区块以提取真实的 Proposer (Miner)
 		if b, ok := node.GetBlock(blockID); ok {
-			miner = b.Proposer
+			miner = b.Header.Proposer
 		}
 
 		resProto := &pb.GetBlockResponse{
 			Block: &pb.Block{
-				Height:    height,
 				BlockHash: blockID,
-				Miner:     miner,
+				Header: &pb.BlockHeader{
+					Height: height,
+					Miner:  miner,
+				},
 			},
 		}
 		sendProto(w, resProto)
@@ -183,11 +185,11 @@ func startNodeWeb(node *consensus.Node, port int) {
 		miner := string(node.ID)
 
 		if b, ok := node.GetBlock(blockID); ok {
-			miner = b.Proposer
+			miner = b.Header.Proposer
 		}
 
 		resProto := &pb.GetRecentBlocksResponse{
-			Blocks: []*pb.BlockHeader{
+			Blocks: []*pb.BlockSummary{
 				{
 					Height:  height,
 					Miner:   miner,

@@ -155,7 +155,7 @@ func (m *ConsensusNodeManager) AddBlock(block *pb.Block) error {
 		})
 
 		logs.Debug("[ConsensusManager] Added new block %s at height %d",
-			block.BlockHash, block.Height)
+			block.BlockHash, block.Header.Height)
 	}
 
 	return nil

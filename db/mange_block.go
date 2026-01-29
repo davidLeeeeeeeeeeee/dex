@@ -16,7 +16,7 @@ import (
 //
 // Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveBlock(block *pb.Block) error {
-	mgr.Logger.Debug("Saving new block_%d with ID %s", block.Height, block.BlockHash)
+	mgr.Logger.Debug("Saving new block_%d with ID %s", block.Header.Height, block.BlockHash)
 
 	// 1. 使用 BlockID 作为主键存储完整区块
 	blockKey := KeyBlockData(block.BlockHash)
@@ -27,7 +27,7 @@ func (mgr *Manager) SaveBlock(block *pb.Block) error {
 	mgr.EnqueueSet(blockKey, string(data))
 
 	// 2. 维护高度到区块ID列表的映射
-	heightKey := KeyHeightBlocks(block.Height)
+	heightKey := KeyHeightBlocks(block.Header.Height)
 	existingIDs, _ := mgr.Read(heightKey)
 
 	var blockIDs []string
@@ -53,10 +53,10 @@ func (mgr *Manager) SaveBlock(block *pb.Block) error {
 
 	// 3. ID到高度映射
 	idKey := KeyBlockIDToHeight(block.BlockHash)
-	mgr.EnqueueSet(idKey, strconv.FormatUint(block.Height, 10))
+	mgr.EnqueueSet(idKey, strconv.FormatUint(block.Header.Height, 10))
 
 	// 4. 更新最新区块高度
-	mgr.EnqueueSet(KeyLatestHeight(), strconv.FormatUint(block.Height, 10))
+	mgr.EnqueueSet(KeyLatestHeight(), strconv.FormatUint(block.Header.Height, 10))
 
 	// 5. 更新内存缓存
 	// 5. 更新内存缓存

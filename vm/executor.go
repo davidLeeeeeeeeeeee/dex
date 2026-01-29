@@ -175,7 +175,7 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	}
 
 	if x.WitnessService != nil {
-		x.WitnessService.SetCurrentHeight(b.Height)
+		x.WitnessService.SetCurrentHeight(b.Header.Height)
 	}
 
 	// 创建新的状态视图
@@ -190,8 +190,8 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	if err != nil {
 		return &SpecResult{
 			BlockID:  b.BlockHash,
-			ParentID: b.PrevBlockHash,
-			Height:   b.Height,
+			ParentID: b.Header.PrevBlockHash,
+			Height:   b.Header.Height,
 			Valid:    false,
 			Reason:   fmt.Sprintf("failed to rebuild order books: %v", err),
 		}, nil
@@ -204,8 +204,8 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 		if err != nil {
 			return &SpecResult{
 				BlockID:  b.BlockHash,
-				ParentID: b.PrevBlockHash,
-				Height:   b.Height,
+				ParentID: b.Header.PrevBlockHash,
+				Height:   b.Header.Height,
 				Valid:    false,
 				Reason:   fmt.Sprintf("tx %d has invalid structure: %v", idx, err),
 			}, nil
@@ -213,7 +213,7 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 
 		// 统一注入当前执行高度到交易 BaseMessage 中，供 Handler 使用
 		if base := getBaseMessage(tx); base != nil {
-			base.ExecutedHeight = b.Height
+			base.ExecutedHeight = b.Header.Height
 		}
 
 		// 获取对应的Handler
@@ -221,8 +221,8 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 		if !ok {
 			return &SpecResult{
 				BlockID:  b.BlockHash,
-				ParentID: b.PrevBlockHash,
-				Height:   b.Height,
+				ParentID: b.Header.PrevBlockHash,
+				Height:   b.Header.Height,
 				Valid:    false,
 				Reason:   fmt.Sprintf("no handler for tx %d (kind: %s)", idx, kind),
 			}, nil
@@ -252,8 +252,8 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 			sv.Revert(snapshot)
 			return &SpecResult{
 				BlockID:  b.BlockHash,
-				ParentID: b.PrevBlockHash,
-				Height:   b.Height,
+				ParentID: b.Header.PrevBlockHash,
+				Height:   b.Header.Height,
 				Valid:    false,
 				Reason:   fmt.Sprintf("tx %d invalid: %v", idx, err),
 			}, nil
@@ -276,20 +276,20 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 		}
 		// 填充 Receipt 元数据
 		if rc != nil {
-			rc.BlockHeight = b.Height
-			rc.Timestamp = time.Now().Unix() // 实际应取区块时间，这里简化
+			rc.BlockHeight = b.Header.Height
+			rc.Timestamp = time.Now().Unix()
 		}
 		receipts = append(receipts, rc)
 	}
 
-	if err := x.applyWitnessFinalizedEvents(sv, b.Height); err != nil {
+	if err := x.applyWitnessFinalizedEvents(sv, b.Header.Height); err != nil {
 		return nil, err
 	}
 
 	// ========== 区块奖励与手续费分发 ==========
-	if b.Miner != "" {
+	if b.Header.Miner != "" {
 		// 1. 计算区块基础奖励（系统增发）
-		blockReward := CalculateBlockReward(b.Height, DefaultBlockRewardParams)
+		blockReward := CalculateBlockReward(b.Header.Height, DefaultBlockRewardParams)
 
 		// 2. 汇总交易手续费
 		totalFees := big.NewInt(0)
@@ -317,7 +317,7 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 			minerReward := minerRewardDec.BigInt()
 
 			// 5. 分配给矿工 (70%)
-			minerAccountKey := keys.KeyAccount(b.Miner)
+			minerAccountKey := keys.KeyAccount(b.Header.Miner)
 			minerAccountData, exists, err := sv.Get(minerAccountKey)
 			if err == nil && exists {
 				var minerAccount pb.Account
@@ -352,8 +352,8 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 
 			// 7. 保存奖励记录
 			rewardRecord := &pb.BlockReward{
-				Height:        b.Height,
-				Miner:         b.Miner,
+				Height:        b.Header.Height,
+				Miner:         b.Header.Miner,
 				MinerReward:   minerReward.String(),
 				WitnessReward: witnessReward.String(),
 				TotalFees:     totalFees.String(),
@@ -361,15 +361,15 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 				Timestamp:     time.Now().Unix(),
 			}
 			rewardData, _ := proto.Marshal(rewardRecord)
-			sv.Set(keys.KeyBlockReward(b.Height), rewardData)
+			sv.Set(keys.KeyBlockReward(b.Header.Height), rewardData)
 		}
 	}
 
 	// 创建执行结果
 	res := &SpecResult{
 		BlockID:  b.BlockHash,
-		ParentID: b.PrevBlockHash,
-		Height:   b.Height,
+		ParentID: b.Header.PrevBlockHash,
+		Height:   b.Header.Height,
 		Valid:    true,
 		Receipts: receipts,
 		Diff:     sv.Diff(),
@@ -419,14 +419,12 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	// ========== 第一步：检查幂等性 ==========
 	// 防止同一区块被重复提交
-	if committed, blockHash := x.IsBlockCommitted(b.Height); committed {
+	if committed, blockHash := x.IsBlockCommitted(b.Header.Height); committed {
 		if blockHash == b.BlockHash {
-			// 已提交过相同的区块，直接返回成功（幂等）
 			return nil
 		}
-		// 不同的区块哈希，说明有冲突
 		return fmt.Errorf("block at height %d already committed with different hash: %s vs %s",
-			b.Height, blockHash, b.BlockHash)
+			b.Header.Height, blockHash, b.BlockHash)
 	}
 
 	// ========== 第二步：应用所有状态变更 ==========
@@ -502,14 +500,11 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	// ========== 第四步：同步到 StateDB ==========
 	// 统一处理所有需要同步到 StateDB 的数据
 	if len(stateDBUpdates) > 0 {
-		stateRoot, err := sess.ApplyStateUpdate(b.Height, stateDBUpdates)
+		stateRoot, err := sess.ApplyStateUpdate(b.Header.Height, stateDBUpdates)
 		if err != nil {
-			// StateDB 同步失败，记录错误但不中断提交
-			// 因为 Badger 已经写入了，StateDB 是可选的加速层
 			fmt.Printf("[VM] Warning: StateDB sync failed via session: %v\n", err)
 		} else if stateRoot != nil {
-			// 设置区块的状态根哈希
-			b.StateRoot = stateRoot
+			b.Header.StateRoot = stateRoot
 		}
 	}
 
@@ -528,7 +523,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 		// 记录交易所在的高度
 		heightKey := keys.KeyVMTxHeight(rc.TxID)
-		x.DB.EnqueueSet(heightKey, fmt.Sprintf("%d", b.Height))
+		x.DB.EnqueueSet(heightKey, fmt.Sprintf("%d", b.Header.Height))
 	}
 
 	// ========== 第四步补充：更新区块交易状态并保存原文 ==========
@@ -550,7 +545,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		}
 
 		// 统一注入执行高度
-		base.ExecutedHeight = b.Height
+		base.ExecutedHeight = b.Header.Height
 
 		// 根据执行收据更新状态
 		if rc, ok := receiptMap[base.TxId]; ok {
@@ -583,11 +578,11 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	// ========== 第五步：写入区块提交标记 ==========
 	// 用于幂等性检查
-	commitKey := keys.KeyVMCommitHeight(b.Height)
+	commitKey := keys.KeyVMCommitHeight(b.Header.Height)
 	x.DB.EnqueueSet(commitKey, b.BlockHash)
 
 	// 区块高度索引
-	blockHeightKey := keys.KeyVMBlockHeight(b.Height)
+	blockHeightKey := keys.KeyVMBlockHeight(b.Header.Height)
 	x.DB.EnqueueSet(blockHeightKey, b.BlockHash)
 
 	// ========== 第六步：提交会话并同步 ==========
@@ -596,8 +591,8 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 
 	// 更新内存中的状态根（确保后续执行能看到最新版本）
-	if b.StateRoot != nil {
-		x.DB.CommitRoot(b.Height, b.StateRoot)
+	if b.Header.StateRoot != nil {
+		x.DB.CommitRoot(b.Header.Height, b.Header.StateRoot)
 	}
 
 	// 强制刷新到数据库（用于非状态数据的 EnqueueSet）
@@ -684,10 +679,10 @@ func ValidateBlock(b *pb.Block) error {
 	if b.BlockHash == "" {
 		return fmt.Errorf("empty block hash")
 	}
-	if b.Height == 0 && b.PrevBlockHash != "" {
+	if b.Header.Height == 0 && b.Header.PrevBlockHash != "" {
 		return fmt.Errorf("genesis block should not have parent")
 	}
-	if b.Height > 0 && b.PrevBlockHash == "" {
+	if b.Header.Height > 0 && b.Header.PrevBlockHash == "" {
 		return fmt.Errorf("non-genesis block should have parent")
 	}
 	return nil

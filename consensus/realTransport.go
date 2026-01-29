@@ -225,7 +225,7 @@ func (t *RealTransport) sendGet(targetIP string, msg types.Message) error {
 				Type:      types.MsgPut,
 				From:      t.nodeID,
 				Block:     consensusBlock,
-				Height:    consensusBlock.Height,
+				Height:    consensusBlock.Header.Height,
 				BlockID:   consensusBlock.ID,
 			}
 
@@ -323,9 +323,9 @@ func (t *RealTransport) sendSnapshotRequest(to types.NodeID, targetIP string, ms
 
 		// 包装成简单快照以满足 SyncManager.HandleSnapshotResponse
 		snapshot := &types.Snapshot{
-			Height:             block.Height,
+			Height:             block.Header.Height,
 			LastAcceptedID:     block.ID,
-			LastAcceptedHeight: block.Height,
+			LastAcceptedHeight: block.Header.Height,
 		}
 
 		t.inbox <- types.Message{
@@ -334,7 +334,7 @@ func (t *RealTransport) sendSnapshotRequest(to types.NodeID, targetIP string, ms
 			SyncID:         msg.SyncID,
 			RequestID:      msg.RequestID,
 			Snapshot:       snapshot,
-			SnapshotHeight: block.Height,
+			SnapshotHeight: block.Header.Height,
 		}
 	})
 	return nil

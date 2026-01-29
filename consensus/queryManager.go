@@ -148,21 +148,21 @@ func (qm *QueryManager) issueQuery() {
 		return
 	}
 	requestID, _ := secureRandUint32()
-	queryKey := qm.engine.RegisterQuery(qm.nodeID, requestID, blockID, block.Height)
+	queryKey := qm.engine.RegisterQuery(qm.nodeID, requestID, blockID, block.Header.Height)
 
 	poll := &Poll{
 		requestID: requestID,
 		blockID:   blockID,
 		queryKey:  queryKey,
 		startTime: time.Now(),
-		height:    block.Height,
+		height:    block.Header.Height,
 	}
 	qm.activePolls.Store(requestID, poll)
 
 	peers := qm.transport.SamplePeers(qm.nodeID, qm.config.K)
 
 	// 判断自己是否是该区块的提议者
-	isProposer := (block.Proposer == string(qm.nodeID))
+	isProposer := (block.Header.Proposer == string(qm.nodeID))
 
 	var msg types.Message
 	if isProposer {
@@ -173,7 +173,7 @@ func (qm *QueryManager) issueQuery() {
 			RequestID: requestID,
 			BlockID:   blockID,
 			Block:     block, // 携带完整区块数据
-			Height:    block.Height,
+			Height:    block.Header.Height,
 		}
 		logs.Debug("[Node %s] Sending PushQuery for block %s (I'm the proposer)",
 			qm.nodeID, blockID)
@@ -184,7 +184,7 @@ func (qm *QueryManager) issueQuery() {
 			From:      qm.nodeID,
 			RequestID: requestID,
 			BlockID:   blockID,
-			Height:    block.Height,
+			Height:    block.Header.Height,
 		}
 		logs.Debug("[Node %s] Sending PullQuery for block %s",
 			qm.nodeID, blockID)
@@ -195,7 +195,7 @@ func (qm *QueryManager) issueQuery() {
 	if qm.node != nil {
 		qm.node.Stats.Mu.Lock()
 		qm.node.Stats.QueriesSent++
-		qm.node.Stats.QueriesPerHeight[block.Height]++
+		qm.node.Stats.QueriesPerHeight[block.Header.Height]++
 		qm.node.Stats.Mu.Unlock()
 	}
 }

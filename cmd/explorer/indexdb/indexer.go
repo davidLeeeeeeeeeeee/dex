@@ -27,7 +27,7 @@ func (idb *IndexDB) IndexBlock(block *pb.Block) error {
 		return nil
 	}
 
-	height := block.Height
+	height := block.Header.Height
 	for i, tx := range block.Body {
 		if tx == nil {
 			continue

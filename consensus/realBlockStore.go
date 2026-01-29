@@ -95,11 +95,12 @@ func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots 
 
 	// 初始化创世区块
 	genesis := &types.Block{
-		ID:       "genesis",
-		Height:   0,
-		ParentID: "",
-		Data:     "Genesis Block",
-		Proposer: "-1",
+		ID: "genesis",
+		Header: types.BlockHeader{
+			Height:   0,
+			ParentID: "",
+			Proposer: "-1",
+		},
 	}
 
 	store.blockCache[genesis.ID] = genesis
@@ -140,7 +141,7 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 
 	// 提前占坑，防止并发 worker 重复执行 VM
 	s.blockCache[block.ID] = block
-	s.heightIndex[block.Height] = append(s.heightIndex[block.Height], block)
+	s.heightIndex[block.Header.Height] = append(s.heightIndex[block.Header.Height], block)
 	s.mu.Unlock()
 
 	// 获取完整的 pb.Block（包含交易）
@@ -172,9 +173,9 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 
 	// 第三步：更新高度元数据
 	s.mu.Lock()
-	if block.Height > s.maxHeight {
-		s.maxHeight = block.Height
-		s.dbManager.EnqueueSet(db.KeyLatestHeight(), strconv.FormatUint(block.Height, 10))
+	if block.Header.Height > s.maxHeight {
+		s.maxHeight = block.Header.Height
+		s.dbManager.EnqueueSet(db.KeyLatestHeight(), strconv.FormatUint(block.Header.Height, 10))
 	}
 	s.mu.Unlock()
 
@@ -184,7 +185,7 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 		s.saveBlockToDB(block)
 	}()
 
-	logs.Debug("[RealBlockStore] Added block %s at height %d", block.ID, block.Height)
+	logs.Debug("[RealBlockStore] Added block %s at height %d", block.ID, block.Header.Height)
 
 	return true, nil
 }
@@ -373,10 +374,10 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 				blockID, height, height-1)
 			return
 		}
-		if block.ParentID != parentBlock.ID {
+		if block.Header.ParentID != parentBlock.ID {
 			s.mu.Unlock()
 			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: parent mismatch (expected %s, got %s)",
-				blockID, height, parentBlock.ID, block.ParentID)
+				blockID, height, parentBlock.ID, block.Header.ParentID)
 			return
 		}
 	}
@@ -434,7 +435,7 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 		}
 	} else {
 		// 如果是创世区块或没有交易的区块，使用旧的方式
-		if block.Height > 0 {
+		if block.Header.Height > 0 {
 			logs.Debug("[RealBlockStore] No cached pb.Block for %s, using legacy finalization", block.ID)
 		}
 		s.finalizeBlockWithTxs(block)
@@ -604,43 +605,43 @@ func (s *RealBlockStore) validateBlock(block *types.Block) error {
 	if block == nil || block.ID == "" {
 		return fmt.Errorf("invalid block")
 	}
-	if block.Height == 0 && block.ID != "genesis" {
+	if block.Header.Height == 0 && block.ID != "genesis" {
 		return fmt.Errorf("invalid genesis block")
 	}
-	if block.Height > 0 && block.ParentID == "" {
+	if block.Header.Height > 0 && block.Header.ParentID == "" {
 		return fmt.Errorf("non-genesis block must have parent")
 	}
 
 	// 父区块链接验证（关键共识安全检查）
 	// 确保新区块的 ParentID 指向本地已知的父区块，且高度正确
-	if block.Height > 0 {
-		parent, exists := s.blockCache[block.ParentID]
+	if block.Header.Height > 0 {
+		parent, exists := s.blockCache[block.Header.ParentID]
 		if !exists {
 			// 尝试从数据库加载
-			if dbBlock, err := s.dbManager.GetBlockByID(block.ParentID); err == nil && dbBlock != nil {
+			if dbBlock, err := s.dbManager.GetBlockByID(block.Header.ParentID); err == nil && dbBlock != nil {
 				parent = s.convertDBBlockToTypes(dbBlock)
 				if parent != nil {
-					s.blockCache[block.ParentID] = parent
+					s.blockCache[block.Header.ParentID] = parent
 					exists = true
 				}
 			}
 		}
 
 		if !exists {
-			logs.Warn("[RealBlockStore] Block %s rejected: parent %s not found locally", block.ID, block.ParentID)
-			return fmt.Errorf("parent block %s not found", block.ParentID)
+			logs.Warn("[RealBlockStore] Block %s rejected: parent %s not found locally", block.ID, block.Header.ParentID)
+			return fmt.Errorf("parent block %s not found", block.Header.ParentID)
 		}
 
 		// 验证父区块高度正确
-		if parent.Height != block.Height-1 {
+		if parent.Header.Height != block.Header.Height-1 {
 			logs.Warn("[RealBlockStore] Block %s rejected: parent height mismatch (expected %d, got %d)",
-				block.ID, block.Height-1, parent.Height)
-			return fmt.Errorf("parent height mismatch: expected %d, got %d", block.Height-1, parent.Height)
+				block.ID, block.Header.Height-1, parent.Header.Height)
+			return fmt.Errorf("parent height mismatch: expected %d, got %d", block.Header.Height-1, parent.Header.Height)
 		}
 	}
 
 	// VRF验证（跳过创世区块）
-	if block.Height > 0 {
+	if block.Header.Height > 0 {
 		if err := s.validateVRF(block); err != nil {
 			return fmt.Errorf("VRF validation failed: %w", err)
 		}
@@ -652,19 +653,19 @@ func (s *RealBlockStore) validateBlock(block *types.Block) error {
 // 验证区块的VRF证明
 func (s *RealBlockStore) validateVRF(block *types.Block) error {
 	// 检查区块是否包含VRF证明
-	if len(block.VRFProof) == 0 || len(block.VRFOutput) == 0 {
+	if len(block.Header.VRFProof) == 0 || len(block.Header.VRFOutput) == 0 {
 		logs.Debug("[RealBlockStore] Block %s has no VRF proof, skipping validation", block.ID)
 		return nil // 旧区块可能没有VRF，跳过验证
 	}
 
 	// 检查区块是否包含BLS公钥
-	if len(block.BLSPublicKey) == 0 {
+	if len(block.Header.BLSPublicKey) == 0 {
 		logs.Warn("[RealBlockStore] Block %s has VRF proof but no BLS public key", block.ID)
 		return fmt.Errorf("missing BLS public key for VRF verification")
 	}
 
 	// 反序列化BLS公钥
-	blsPublicKey, err := utils.DeserializeBLSPublicKey(block.BLSPublicKey)
+	blsPublicKey, err := utils.DeserializeBLSPublicKey(block.Header.BLSPublicKey)
 	if err != nil {
 		logs.Warn("[RealBlockStore] Failed to deserialize BLS public key for block %s: %v", block.ID, err)
 		return fmt.Errorf("invalid BLS public key: %w", err)
@@ -674,12 +675,12 @@ func (s *RealBlockStore) validateVRF(block *types.Block) error {
 	vrfProvider := utils.NewVRFProvider()
 	err = vrfProvider.VerifyVRFWithBLSPublicKey(
 		blsPublicKey,
-		block.Height,
-		block.Window,
-		block.ParentID,
-		types.NodeID(block.Proposer),
-		block.VRFProof,
-		block.VRFOutput,
+		block.Header.Height,
+		block.Header.Window,
+		block.Header.ParentID,
+		types.NodeID(block.Header.Proposer),
+		block.Header.VRFProof,
+		block.Header.VRFOutput,
 	)
 
 	if err != nil {
@@ -703,14 +704,16 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 	} else {
 		// 创建简单的数据库区块
 		dbBlock := &pb.Block{
-			Height:        block.Height,
-			BlockHash:     block.ID,
-			PrevBlockHash: block.ParentID,
-			Miner:         fmt.Sprintf(db.KeyNode()+"%s", block.Proposer),
-			Window:        int32(block.Window),
-			VrfProof:      block.VRFProof,
-			VrfOutput:     block.VRFOutput,
-			BlsPublicKey:  block.BLSPublicKey,
+			BlockHash: block.ID,
+			Header: &pb.BlockHeader{
+				Height:        block.Header.Height,
+				PrevBlockHash: block.Header.ParentID,
+				Miner:         fmt.Sprintf(db.KeyNode()+"%s", block.Header.Proposer),
+				Window:        int32(block.Header.Window),
+				VrfProof:      block.Header.VRFProof,
+				VrfOutput:     block.Header.VRFOutput,
+				BlsPublicKey:  block.Header.BLSPublicKey,
+			},
 		}
 		if err := s.dbManager.SaveBlock(dbBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save simple block to DB: %v", err)
@@ -801,7 +804,7 @@ func (s *RealBlockStore) cleanupOldData(belowHeight uint64) {
 
 	// 清理 blockCache 中的旧区块
 	for blockID, block := range s.blockCache {
-		if block.Height < belowHeight {
+		if block.Header.Height < belowHeight {
 			delete(s.blockCache, blockID)
 			cleanedBlocks++
 		}

@@ -56,38 +56,55 @@ func (a *ConsensusAdapter) DBBlockToConsensus(dbBlock *pb.Block) (*types.Block, 
 		return nil, fmt.Errorf("nil db block")
 	}
 
+	// 获取 header（兼容新旧格式）
+	header := dbBlock.Header
+	if header == nil {
+		// 旧格式兼容：从 Block 根字段构造 Header
+		return nil, fmt.Errorf("block header is nil, old format blocks are no longer supported")
+	}
+
 	// 兼容：DB 中 Miner 字段有时会被写成带前缀的形式（例如 "v1_node_3"），
 	// 但 VRF 生成/验证的 nodeID 必须一致，否则会导致同步拉到的新块无法通过 VRF 校验。
-	proposer := dbBlock.Miner
+	proposer := header.Miner
 	if prefix := db.KeyNode(); strings.HasPrefix(proposer, prefix) {
 		proposer = strings.TrimPrefix(proposer, prefix)
 	}
+
 	return &types.Block{
-		ID:           dbBlock.BlockHash,
-		Height:       dbBlock.Height,
-		ParentID:     dbBlock.PrevBlockHash,
-		Data:         fmt.Sprintf("TxCount: %d, TxsHash: %s", len(dbBlock.Body), dbBlock.TxsHash),
-		Proposer:     proposer,
-		Window:       int(dbBlock.Window),
-		VRFProof:     dbBlock.VrfProof,
-		VRFOutput:    dbBlock.VrfOutput,
-		BLSPublicKey: dbBlock.BlsPublicKey,
+		ID: dbBlock.BlockHash,
+		Header: types.BlockHeader{
+			Height:       header.Height,
+			ParentID:     header.PrevBlockHash,
+			Timestamp:    header.Timestamp,
+			StateRoot:    string(header.StateRoot),
+			TxHash:       header.TxsHash,
+			Proposer:     proposer,
+			Window:       int(header.Window),
+			VRFProof:     header.VrfProof,
+			VRFOutput:    header.VrfOutput,
+			BLSPublicKey: header.BlsPublicKey,
+		},
+		// Transactions 字段暂不填充，需要时从 dbBlock.Body 提取
 	}, nil
 }
 
 // ConsensusBlockToDB 将共识区块转换为数据库格式
 func (a *ConsensusAdapter) ConsensusBlockToDB(block *types.Block, txs []*pb.AnyTx) *pb.Block {
 	return &pb.Block{
-		Height:        block.Height,
-		BlockHash:     block.ID,
-		PrevBlockHash: block.ParentID,
-		Miner:         block.Proposer, // 直接存地址
-		Body:          txs,
-		TxsHash:       a.extractTxsHashFromData(block.Data),
-		Window:        int32(block.Window),
-		VrfProof:      block.VRFProof,
-		VrfOutput:     block.VRFOutput,
-		BlsPublicKey:  block.BLSPublicKey,
+		BlockHash: block.ID,
+		Header: &pb.BlockHeader{
+			Height:        block.Header.Height,
+			PrevBlockHash: block.Header.ParentID,
+			Timestamp:     block.Header.Timestamp,
+			StateRoot:     []byte(block.Header.StateRoot),
+			TxsHash:       block.Header.TxHash,
+			Miner:         block.Header.Proposer,
+			Window:        int32(block.Header.Window),
+			VrfProof:      block.Header.VRFProof,
+			VrfOutput:     block.Header.VRFOutput,
+			BlsPublicKey:  block.Header.BLSPublicKey,
+		},
+		Body: txs,
 	}
 }
 
@@ -211,10 +228,12 @@ func (a *ConsensusAdapter) ProcessReceivedContainer(container []byte, isBlock bo
 	}
 
 	return &pb.Block{
-		Height:    height,
 		BlockHash: blockID,
-		Body:      txs,
-		ShortTxs:  container,
+		Header: &pb.BlockHeader{
+			Height: height,
+		},
+		Body:     txs,
+		ShortTxs: container,
 	}, nil
 }
 

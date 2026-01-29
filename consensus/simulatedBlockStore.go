@@ -45,10 +45,12 @@ func NewMemoryBlockStoreWithConfig(maxSnapshots int) interfaces.BlockStore {
 
 	// 创世区块
 	genesis := &types.Block{
-		ID:       "genesis",
-		Height:   0,
-		ParentID: "",
-		Proposer: "-1",
+		ID: "genesis",
+		Header: types.BlockHeader{
+			Height:   0,
+			ParentID: "",
+			Proposer: "-1",
+		},
 	}
 	store.blocks[genesis.ID] = genesis
 	store.heightIndex[0] = []*types.Block{genesis}
@@ -73,10 +75,10 @@ func (s *MemoryBlockStore) Add(block *types.Block) (bool, error) {
 	}
 
 	s.blocks[block.ID] = block
-	s.heightIndex[block.Height] = append(s.heightIndex[block.Height], block)
+	s.heightIndex[block.Header.Height] = append(s.heightIndex[block.Header.Height], block)
 
-	if block.Height > s.maxHeight {
-		s.maxHeight = block.Height
+	if block.Header.Height > s.maxHeight {
+		s.maxHeight = block.Header.Height
 	}
 
 	return true, nil
@@ -86,10 +88,10 @@ func (s *MemoryBlockStore) validateBlock(block *types.Block) error {
 	if block == nil || block.ID == "" {
 		return fmt.Errorf("invalid block")
 	}
-	if block.Height == 0 && block.ID != "genesis" {
+	if block.Header.Height == 0 && block.ID != "genesis" {
 		return fmt.Errorf("invalid genesis block")
 	}
-	if block.Height > 0 && block.ParentID == "" {
+	if block.Header.Height > 0 && block.Header.ParentID == "" {
 		return fmt.Errorf("non-genesis block must have parent")
 	}
 	return nil

@@ -38,7 +38,7 @@ func (hm *HandlerManager) HandlePendingBlocks(w http.ResponseWriter, r *http.Req
 	}
 
 	for _, block := range blocks {
-		state, hasState := stateMap[block.Height]
+		state, hasState := stateMap[block.Header.Height]
 		var votes int32
 		var isPreferred bool
 		if hasState {
@@ -50,10 +50,10 @@ func (hm *HandlerManager) HandlePendingBlocks(w http.ResponseWriter, r *http.Req
 
 		resp.Blocks = append(resp.Blocks, &pb.PendingBlockInfo{
 			BlockId:     block.ID,
-			Height:      block.Height,
-			ParentId:    block.ParentID,
-			Proposer:    block.Proposer,
-			Window:      int32(block.Window),
+			Height:      block.Header.Height,
+			ParentId:    block.Header.ParentID,
+			Proposer:    block.Header.Proposer,
+			Window:      int32(block.Header.Window),
 			Votes:       votes,
 			IsPreferred: isPreferred,
 		})

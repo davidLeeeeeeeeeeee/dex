@@ -315,10 +315,12 @@ func main() {
 
 	// 6. 创建pb.Block区块
 	block := &pb.Block{
-		BlockHash:     "block_001",
-		PrevBlockHash: "genesis",
-		Height:        1,
-		Body:          txs,
+		BlockHash: "block_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: txs,
 	}
 
 	// 7. 预执行区块

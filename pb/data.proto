@@ -106,22 +106,28 @@ message TokenBalance {
   string leverage_locked_balance = 6; // 杠杆交易锁定余额
 }
 
+// BlockHeader 区块头（用于轻客户端验证）
+message BlockHeader {
+  uint64 height = 1;              // 区块高度
+  string prev_block_hash = 2;     // 父区块哈希
+  int64 timestamp = 3;            // Unix 时间戳
+  bytes state_root = 4;           // JMT 状态树根哈希
+  string txs_hash = 5;            // 交易累积哈希 (PoH style)
+  string miner = 6;               // 提议者地址
+  int32 window = 7;               // 时间窗口
+  bytes vrf_proof = 8;            // VRF 证明
+  bytes vrf_output = 9;           // VRF 输出
+  bytes bls_public_key = 10;      // 提案者的 BLS 公钥
+}
+
 message Block {
-  uint64 height = 1;
-  string txs_hash = 2;
-  string block_hash = 3;
-  string prev_block_hash = 4;
-  string accumulated_reward = 5; // 区块奖励累计因子
-  bytes bit_map = 6; // 矿工在线位图
-  bytes miner_signature = 7;
-  bytes short_txs = 8;
-  string miner = 9;
-  repeated AnyTx body = 10; // 全部交易
-  int32 window = 11; // 时间窗口（替代round）
-  bytes vrf_proof = 12; // VRF证明
-  bytes vrf_output = 13; // VRF输出
-  bytes bls_public_key = 14; // 提案者的BLS公钥（用于VRF验证）
-  bytes state_root = 15; // JMT 状态树根哈希（区块提交后的状态）
+  string block_hash = 1;          // 区块 ID（从 Header 计算）
+  BlockHeader header = 2;         // 区块头（元数据）
+  repeated AnyTx body = 3;        // 交易列表（Body）
+  string accumulated_reward = 4;  // 区块奖励累计因子
+  bytes bit_map = 5;              // 矿工在线位图
+  bytes miner_signature = 6;      // 矿工签名
+  bytes short_txs = 7;            // 短交易哈希列表
 }
 // 区块奖励发放记录
 message BlockReward {
@@ -1055,8 +1061,8 @@ message LogsResponse {
   repeated LogLine logs = 1;
 }
 
-// BlockHeader 区块头简要信息 (for explorer list)
-message BlockHeader {
+// BlockSummary 区块摘要信息 (for explorer list)
+message BlockSummary {
   uint64 height = 1;
   string block_hash = 2;
   string txs_hash = 3;
@@ -1071,7 +1077,7 @@ message GetRecentBlocksRequest {
 }
 
 message GetRecentBlocksResponse {
-  repeated BlockHeader blocks = 1;
+  repeated BlockSummary blocks = 1;
 }
 
 // GetAccountRequest 获取账户信息请求

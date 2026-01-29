@@ -460,7 +460,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 		if b == nil {
 			continue
 		}
-		blocksByHeight[b.Height] = append(blocksByHeight[b.Height], b)
+		blocksByHeight[b.Header.Height] = append(blocksByHeight[b.Header.Height], b)
 	}
 
 	for {
@@ -471,7 +471,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 		}
 		chosen := cands[0]
 		for _, c := range cands {
-			if c != nil && c.ParentID == acceptedID {
+			if c != nil && c.Header.ParentID == acceptedID {
 				chosen = c
 				break
 			}

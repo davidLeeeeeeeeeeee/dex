@@ -112,7 +112,7 @@ func (pm *ProposalManager) proposeBlock() {
 	// - 但 currentBlocks 已达到上限，导致后续不再出块，最终永久卡住
 	currentBlocks := 0
 	for _, b := range pm.store.GetByHeight(targetHeight) {
-		if b != nil && b.ParentID == parentID {
+		if b != nil && b.Header.ParentID == parentID {
 			currentBlocks++
 		}
 	}
@@ -153,7 +153,7 @@ func (pm *ProposalManager) proposeBlock() {
 	}
 
 	Logf("[Node %s] Proposing %s at height %d on parent %s (window %d)\n",
-		pm.nodeID, block.ID, block.Height, parentID, currentWindow)
+		pm.nodeID, block.ID, block.Header.Height, parentID, currentWindow)
 
 	pm.events.PublishAsync(types.BaseEvent{
 		EventType: types.EventNewBlock,
@@ -237,10 +237,10 @@ func (pm *ProposalManager) CacheProposal(block *types.Block) {
 	currentWindow := pm.calculateCurrentWindow()
 
 	// 只缓存未来window的提案
-	if block.Window > currentWindow {
-		pm.cachedProposals[block.Window] = append(pm.cachedProposals[block.Window], block)
+	if block.Header.Window > currentWindow {
+		pm.cachedProposals[block.Header.Window] = append(pm.cachedProposals[block.Header.Window], block)
 		logs.Debug("[ProposalManager] Cached proposal %s for future window %d (current: %d)",
-			block.ID, block.Window, currentWindow)
+			block.ID, block.Header.Window, currentWindow)
 	}
 }
 

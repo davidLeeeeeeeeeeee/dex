@@ -59,10 +59,10 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 	msg := types.Message{
 		RequestID: payload.RequestID,
 		Type:      types.MsgGossip,
-		From:      types.NodeID(consBlock.Proposer),
+		From:      types.NodeID(consBlock.Header.Proposer),
 		Block:     consBlock,
 		BlockID:   consBlock.ID,
-		Height:    consBlock.Height,
+		Height:    consBlock.Header.Height,
 	}
 
 	// 将 dbBlock 加到共识存储（直接用 payload 里的 db.Block 即可）
@@ -93,7 +93,7 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 	}
 
 	hm.Logger.Debug("[HandleBlockGossip] Block %s at height %d proposer=%s",
-		consBlock.ID, consBlock.Height, consBlock.Proposer)
+		consBlock.ID, consBlock.Header.Height, consBlock.Header.Proposer)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))

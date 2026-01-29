@@ -128,7 +128,7 @@ func (h *MessageHandler) handlePullQuery(msg types.Message) {
 	}
 
 	// 有区块，直接发送chits投票
-	h.sendChits(types.NodeID(msg.From), msg.RequestID, block.Height)
+	h.sendChits(types.NodeID(msg.From), msg.RequestID, block.Header.Height)
 }
 
 type PendingQueryKey struct {
@@ -161,23 +161,23 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 
 	// 如果该高度本地已经最终化/接受过，直接回复偏好即可（避免把旧高度的候选块重新塞回 store）
 	_, acceptedHeight := h.store.GetLastAccepted()
-	if msg.Block.Height <= acceptedHeight {
-		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
+	if msg.Block.Header.Height <= acceptedHeight {
+		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height)
 		return
 	}
 
 	// 仅对“当前要决策的下一高度”做 window 约束；否则会导致落后节点的 PushQuery 长期收不到回应而卡住
-	if h.proposalManager != nil && msg.Block.Height == acceptedHeight+1 {
+	if h.proposalManager != nil && msg.Block.Header.Height == acceptedHeight+1 {
 		h.proposalManager.mu.Lock()
 		currentWindow := h.proposalManager.calculateCurrentWindow()
 		h.proposalManager.mu.Unlock()
 
-		if msg.Block.Window > currentWindow {
+		if msg.Block.Header.Window > currentWindow {
 			logs.Debug("[Node %s] Received block %s for future window %d (current: %d), caching",
-				h.nodeID, msg.Block.ID, msg.Block.Window, currentWindow)
+				h.nodeID, msg.Block.ID, msg.Block.Header.Window, currentWindow)
 			h.proposalManager.CacheProposal(msg.Block)
 			// 关键：即使缓存，也要回复 chits，避免对方 query 超时导致共识停滞
-			h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
+			h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height)
 			return
 		}
 	}
@@ -187,25 +187,25 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 		// 如果是因为缺父块导致的拒绝，自动请求父块
 		if strings.Contains(err.Error(), "parent block") && strings.Contains(err.Error(), "not found") {
 			if h.queryManager != nil {
-				h.queryManager.RequestBlock(msg.Block.ParentID, types.NodeID(msg.From))
+				h.queryManager.RequestBlock(msg.Block.Header.ParentID, types.NodeID(msg.From))
 			}
 		}
 
 		// 区块被拒绝也应回复，避免对方长期等待
-		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
+		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height)
 		return
 	}
 
 	if isNew {
 		logs.Debug("[Node %s] Received new block %s via PushQuery (window %d)",
-			h.nodeID, msg.Block.ID, msg.Block.Window)
+			h.nodeID, msg.Block.ID, msg.Block.Header.Window)
 		h.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventNewBlock,
 			EventData: msg.Block,
 		})
 	}
 
-	h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Height)
+	h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height)
 }
 
 func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeight uint64) {
@@ -229,7 +229,7 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 			// 验证偏好的区块是否链接到已最终化的父区块
 			if preferred != "" {
 				block, exists := h.store.Get(preferred)
-				if !exists || block.ParentID != parent.ID {
+				if !exists || block.Header.ParentID != parent.ID {
 					// 偏好的区块父链接不正确，重新选择
 					logs.Debug("[sendChits] Preferred block %s has wrong parent, reselecting", preferred)
 					preferred = ""
@@ -241,7 +241,7 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 				blocks := h.store.GetByHeight(queryHeight)
 				cand := make([]string, 0, len(blocks))
 				for _, b := range blocks {
-					if b.ParentID == parent.ID {
+					if b.Header.ParentID == parent.ID {
 						cand = append(cand, b.ID)
 					}
 				}
@@ -280,7 +280,7 @@ func (h *MessageHandler) handleGet(msg types.Message) {
 			From:      h.nodeID,
 			RequestID: msg.RequestID,
 			Block:     block,
-			Height:    block.Height,
+			Height:    block.Header.Height,
 		})
 		if err != nil {
 			return
@@ -295,7 +295,7 @@ func (h *MessageHandler) handlePut(msg types.Message) {
 			// 如果是因为缺父块导致的拒绝，自动请求父块
 			if strings.Contains(err.Error(), "parent block") && strings.Contains(err.Error(), "not found") {
 				if h.queryManager != nil {
-					h.queryManager.RequestBlock(msg.Block.ParentID, types.NodeID(msg.From))
+					h.queryManager.RequestBlock(msg.Block.Header.ParentID, types.NodeID(msg.From))
 				}
 			}
 
@@ -335,7 +335,7 @@ func (h *MessageHandler) checkPendingQueries(requestId uint32) {
 				blockID, requestId)
 			return
 		}
-		h.sendChits(types.NodeID(pendingMsg.From), pendingMsg.RequestID, block.Height)
+		h.sendChits(types.NodeID(pendingMsg.From), pendingMsg.RequestID, block.Header.Height)
 	} else {
 		h.pendingQueriesMu.Unlock()
 	}
