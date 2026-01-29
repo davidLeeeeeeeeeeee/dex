@@ -52,14 +52,8 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 		pendingTxs = pendingTxs[:p.maxTxsPerBlock]
 	}
 
-	// 2. 对交易进行排序（按FB余额排序）
-	sortedTxs, txsHash, err := txpool.SortTxsByFBBalanceAndComputeHash(p.dbManager, pendingTxs)
-	if err != nil {
-		logs.Error("[RealBlockProposer] Failed to sort txs: %v", err)
-		// 如果排序失败，使用简单的哈希
-		txsHash = p.computeSimpleTxsHash(pendingTxs)
-		sortedTxs = pendingTxs
-	}
+	// 2. 计算交易哈希（提案者决定交易顺序，不再排序）
+	txsHash := txpool.ComputeTxsHash(pendingTxs)
 
 	// 3. 生成VRF证明和BLS公钥
 	keyMgr := utils.GetKeyManager()
@@ -88,7 +82,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 	}
 
 	// 4. 生成短交易哈希列表（用于Snowman共识传输）
-	shortTxs := p.pool.ConcatFirst8Bytes(sortedTxs)
+	shortTxs := p.pool.ConcatFirst8Bytes(pendingTxs)
 
 	// 5. 生成区块ID（结合高度、提案者、window和交易哈希）
 	blockID := fmt.Sprintf("block-%d-%s-w%d-%s", height, proposer, window, txsHash[:8])
@@ -120,7 +114,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 			VrfOutput:     vrfOutput,
 			BlsPublicKey:  blsPublicKeyBytes,
 		},
-		Body:     sortedTxs,
+		Body:     pendingTxs,
 		ShortTxs: shortTxs,
 	}
 
@@ -128,7 +122,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 	p.cacheBlock(blockID, dbBlock)
 
 	logs.Info("[RealBlockProposer] Proposer:%s Proposed block %s with %d txs at height %d window %d",
-		proposer, blockID, len(sortedTxs), height, window)
+		proposer, blockID, len(pendingTxs), height, window)
 
 	return block, nil
 }
@@ -209,17 +203,6 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, curre
 	}
 
 	return shouldPropose
-}
-
-// computeSimpleTxsHash 计算简单的交易哈希（备用方案）
-func (p *RealBlockProposer) computeSimpleTxsHash(txs []*pb.AnyTx) string {
-	var allBytes []byte
-	for _, tx := range txs {
-		txID := tx.GetTxId()
-		allBytes = append(allBytes, []byte(txID)...)
-	}
-	hash := utils.Sha256Hash(allBytes)
-	return fmt.Sprintf("%x", hash)
 }
 
 // cacheBlock 临时缓存区块，等待最终化
