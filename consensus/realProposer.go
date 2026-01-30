@@ -16,24 +16,26 @@ import (
 
 // RealBlockProposer 真实的区块提案者实现，从TxPool获取交易并生成区块
 type RealBlockProposer struct {
-	maxBlocksPerHeight int
-	maxTxsPerBlock     int
-	pool               *txpool.TxPool
-	dbManager          *db.Manager
-	vrfProvider        *utils.VRFProvider
-	windowConfig       config.WindowConfig
+	maxBlocksPerHeight  int
+	maxTxsPerBlock      int // ShortTxs 切换阈值
+	maxTxsLimitPerBlock int // 区块交易总数限制 (5000)
+	pool                *txpool.TxPool
+	dbManager           *db.Manager
+	vrfProvider         *utils.VRFProvider
+	windowConfig        config.WindowConfig
 }
 
 // NewRealBlockProposer 创建真实的区块提案者
 func NewRealBlockProposer(dbManager *db.Manager, pool *txpool.TxPool) interfaces.BlockProposer {
 	cfg := config.DefaultConfig()
 	return &RealBlockProposer{
-		maxBlocksPerHeight: 3,
-		maxTxsPerBlock:     cfg.TxPool.MaxTxsPerBlock,
-		pool:               pool, // 使用注入的实例
-		dbManager:          dbManager,
-		vrfProvider:        utils.NewVRFProvider(),
-		windowConfig:       cfg.Window,
+		maxBlocksPerHeight:  3,
+		maxTxsPerBlock:      cfg.TxPool.MaxTxsPerBlock,
+		maxTxsLimitPerBlock: cfg.TxPool.MaxTxsLimitPerBlock,
+		pool:                pool, // 使用注入的实例
+		dbManager:           dbManager,
+		vrfProvider:         utils.NewVRFProvider(),
+		windowConfig:        cfg.Window,
 	}
 }
 
@@ -47,9 +49,9 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 		logs.Debug("[RealBlockProposer] Generating empty block at height %d window %d", height, window)
 	}
 
-	// 限制交易数量
-	if len(pendingTxs) > p.maxTxsPerBlock {
-		pendingTxs = pendingTxs[:p.maxTxsPerBlock]
+	// 限制交易数量，最高 5000 笔
+	if len(pendingTxs) > p.maxTxsLimitPerBlock {
+		pendingTxs = pendingTxs[:p.maxTxsLimitPerBlock]
 	}
 
 	// 2. 对交易进行排序（按FB余额排序）

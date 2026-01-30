@@ -37,8 +37,8 @@ func (s *TxSimulator) Start() {
 	go s.runRechargeScenario()    // 见证者上账请求
 	go s.runWitnessVoteWorker()   // 自动化见证者投票
 	go s.runWithdrawScenario()
-	go s.runOrderScenario()              // 订单交易模拟
-	go s.RunMassOrderScenarioAsync(3000) // 自动触发大批量订单场景测试 ShortTxs
+	go s.runOrderScenario()               // 订单交易模拟
+	go s.RunMassOrderScenarioAsync(30000) // 自动触发大批量订单场景测试 ShortTxs
 }
 
 func (s *TxSimulator) submitTx(node *NodeInstance, tx *pb.AnyTx) {
@@ -346,10 +346,10 @@ func (s *TxSimulator) runOrderScenario() {
 }
 
 // RunMassOrderScenario 生成大批量订单以测试 ShortTxs 模式
-// 调用此方法会一次性生成指定数量的订单（默认 3000 笔，超过 MaxTxsPerBlock=2500 的阈值）
+// 调用此方法会一次性生成指定数量 of orders (default 6000, which exceeds the threshold of MaxTxsPerBlock=2500 for ShortTxs and MaxTxsLimitPerBlock=5000)
 func (s *TxSimulator) RunMassOrderScenario(orderCount int) {
 	if orderCount <= 0 {
-		orderCount = 3000 // 默认 3000 笔，超过 2500 阈值
+		orderCount = 6000 // 默认 6000 笔，超过所有限制
 	}
 
 	logs.Info("SIMULATOR: Starting Mass Order Scenario with %d orders...", orderCount)

@@ -143,7 +143,7 @@ func TestShortTxsResolve(t *testing.T) {
 	_ = cfg // 使用 cfg
 }
 
-// TestBlockWithMassOrders 测试超过 2500 笔订单的区块打包
+// TestBlockWithMassOrders 测试超过 5000 笔订单的区块打包
 func TestBlockWithMassOrders(t *testing.T) {
 	cfg := config.DefaultConfig()
 

@@ -99,10 +99,11 @@ type TxPoolConfig struct {
 	MaxPendingTxs    int // 10000
 
 	// 交易处理
-	MaxTxsPerBlock    int // 2500
-	TxPerMerkleTree   int // 1000
-	ShortHashSize     int // 8
-	MinTxsForProposal int // 1
+	MaxTxsPerBlock      int // 2500 (ShortTxs 切换阈值)
+	MaxTxsLimitPerBlock int // 5000 (区块最大交易上限)
+	TxPerMerkleTree     int // 1000
+	ShortHashSize       int // 8
+	MinTxsForProposal   int // 1
 
 	// 时间配置
 	TxExpirationTime time.Duration // 24 * time.Hour
@@ -211,6 +212,7 @@ func DefaultConfig() *Config {
 			MessageQueueSize:        10000,
 			MaxPendingTxs:           10000,
 			MaxTxsPerBlock:          2500,
+			MaxTxsLimitPerBlock:     5000,
 			TxPerMerkleTree:         1000,
 			ShortHashSize:           8,
 			MinTxsForProposal:       1,
@@ -276,6 +278,9 @@ func (c *Config) Validate() error {
 	}
 	if c.TxPool.MaxTxsPerBlock <= 0 {
 		return fmt.Errorf("MaxTxsPerBlock must be positive")
+	}
+	if c.TxPool.MaxTxsLimitPerBlock <= 0 {
+		return fmt.Errorf("MaxTxsLimitPerBlock must be positive")
 	}
 	// ... 其他验证
 	return nil

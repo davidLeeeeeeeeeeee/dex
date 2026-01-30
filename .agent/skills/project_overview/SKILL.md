@@ -31,6 +31,9 @@ triggers:
 ├─────────────────────────────────────────────────────────────┤
 │  frost/             │  db/               │  stateDB/         │
 │  门限签名 + DKG     │  BadgerDB 存储     │  状态数据库       │
+├─────────────────────────────────────────────────────────────┤
+│                      jmt/ (状态根计算)                        │
+│                  16 叉版本化 Jellyfish Merkle Tree            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -41,6 +44,7 @@ triggers:
 | **vm** | `vm/` | 交易执行、订单处理、状态转换 | ⭐⭐⭐⭐⭐ |
 | **frost** | `frost/` | DKG、门限签名、运行时 | ⭐⭐⭐⭐⭐ |
 | **consensus** | `consensus/` | Snowball 共识、区块同步 | ⭐⭐⭐⭐ |
+| **jmt** | `jmt/` | 16 叉 Merkle 树、StateRoot | ⭐⭐⭐⭐ |
 | **matching** | `matching/` | 订单撮合引擎 | ⭐⭐⭐ |
 | **handlers** | `handlers/` | HTTP API 接口 | ⭐⭐⭐ |
 | **db** | `db/`, `keys/` | 数据库、Key 规范 | ⭐⭐⭐ |
@@ -60,6 +64,7 @@ triggers:
 | 订单、撮合、成交 | `vm` + `matching` |
 | DKG、签名、Vault | `frost` |
 | 共识、区块、同步 | `consensus` |
+| StateRoot、Merkle | `jmt` |
 | API、接口、查询 | `handlers` |
 | 前端、UI、显示 | `explorer` |
 | 数据库、Key、存储 | `db` |
@@ -71,6 +76,7 @@ triggers:
 - **Frontend**: Vue 3, TypeScript, Vite
 - **Protocol**: Protobuf (`pb/data.proto`)
 - **Database**: BadgerDB + StateDB
+- **State Tree**: JMT (16 叉 Jellyfish Merkle Tree)
 
 ## 常用命令
 
@@ -87,4 +93,5 @@ protoc --go_out=. pb/data.proto
 # 运行测试
 go test ./vm/... -v
 go test ./matching/... -v
+go test ./jmt/... -v
 ```

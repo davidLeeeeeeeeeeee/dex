@@ -81,12 +81,39 @@ db.ApplyUpdates(height, updates)
 db.CreateSnapshot(epochID)
 ```
 
-## 与 BadgerDB 的关系
+## 与其他模块的关系
 
-- **BadgerDB** (`db/`): 存储交易、区块、索引等
-- **StateDB** (`stateDB/`): 存储账户状态，支持历史查询
+```
+                    ┌─────────────┐
+                    │   VM 执行   │
+                    └──────┬──────┘
+                           │ WriteOps
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        ┌─────────┐  ┌──────────┐  ┌─────────┐
+        │ BadgerDB│  │  StateDB │  │   JMT   │
+        │(交易/块)│  │ (窗口缓存)│  │(状态根) │
+        └─────────┘  └──────────┘  └─────────┘
+```
 
-两者并行使用，StateDB 由 VM 的 WriteOp 通过 `SyncStateDB: true` 触发同步。
+| 模块 | 职责 |
+|:---|:---|
+| **BadgerDB** (`db/`) | 存储交易、区块、索引等 |
+| **StateDB** (`stateDB/`) | 内存窗口 + WAL，热数据快速查询 |
+| **JMT** (`jmt/`) | 16 叉 Merkle 树，计算 StateRoot |
+
+### JMT 集成
+
+StateDB 现在通过 `jmt/jmt_statedb.go` 适配 JMT：
+```go
+// 区块执行后更新 JMT
+jmtStateDB.ApplyUpdates(height, ops)
+
+// 获取状态根
+stateRoot := jmtStateDB.GetRoot()
+```
+
+VM 的 WriteOp 通过 `SyncStateDB: true` 触发同步更新。
 
 ## 开发规范
 

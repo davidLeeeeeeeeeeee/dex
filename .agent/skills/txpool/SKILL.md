@@ -7,6 +7,7 @@ triggers:
   - 待处理交易
   - txpool
   - 交易队列
+  - ShortTxs
 ---
 
 # TxPool (交易池) 模块指南
@@ -37,6 +38,28 @@ GetAll() []*pb.AnyTx            // 获取所有
 SelectForBlock(limit int) []*pb.AnyTx  // 选择打包
 ```
 
+## ShortTxs 机制 (新增)
+
+为减少区块体积，提案时仅传输交易 ID 的前 8 字节：
+
+```go
+// 生成 ShortTxs（多个 8 字节拼接）
+shortTxs := pool.ConcatFirst8Bytes(txs)
+
+// 分析提案中的 ShortTxs
+missing, exist := pool.AnalyzeProposalTxs(proposalTxs)
+
+// 根据 ShortHash 获取完整交易
+txs := pool.GetTxsByShortHashes(shortHashes, isSync)
+```
+
+### 交易排序
+
+按发送者 FB 余额排序，确保高价值交易优先：
+```go
+sortedTxs, txsHash, _ := txpool.SortTxsByFBBalanceAndComputeHash(db, txs)
+```
+
 ## 交易生命周期
 
 ```
@@ -46,9 +69,11 @@ SelectForBlock(limit int) []*pb.AnyTx  // 选择打包
     ↓
 加入 pending 池
     ↓
-Proposer 选择 → SelectForBlock()
+Proposer 选择 → ConcatFirst8Bytes()
     ↓
-打入区块
+打入区块 (ShortTxs)
+    ↓
+其他节点 → AnalyzeProposalTxs() → 请求缺失交易
     ↓
 区块确认 → TxPool.Remove()
 ```
@@ -69,7 +94,7 @@ TxPool.Add()
     ↓
 consensus/realProposer.go
     ↓ 出块时
-TxPool.SelectForBlock()
+ConcatFirst8Bytes() → Block.ShortTxs
     ↓
 vm/executor.go 执行
     ↓ 区块确认后
@@ -88,5 +113,8 @@ TxPool.Remove()
 ```bash
 # 查看 pending 交易数
 curl "https://localhost:8443/status" -k | jq .pending_count
+
+# 查看交易池长度
+pool.PendingLen()
 ```
 
