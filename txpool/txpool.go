@@ -17,7 +17,6 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
-	"github.com/shopspring/decimal"
 )
 
 // TxPool 交易池结构体
@@ -361,74 +360,24 @@ func ExtractAnyTxId(a *pb.AnyTx) string {
 	return a.GetTxId()
 }
 
-// 根据每笔Tx的发起方(FB余额)由大到小排序，
-// 并将排序后序列生成一个聚合哈希(txs_hash)。
-// 返回： (sortedTxs, txsHashHexString, error)
-func SortTxsByFBBalanceAndComputeHash(dbMgr *db.Manager, txs []*pb.AnyTx) ([]*pb.AnyTx, string, error) {
-
-	// 1. 准备一个临时结构，用来同时保存 Tx 和 对应FB余额
-	type txWithBal struct {
-		anyTx   *pb.AnyTx
-		balance decimal.Decimal
-	}
-
-	tmpList := make([]txWithBal, 0, len(txs))
+// ComputeTxsHash 计算交易列表的累积哈希 (PoH风格: h_n = H(h_{n-1} + tx_id_n))
+// 提案者有权决定交易顺序，共识层只验证给定顺序的哈希值
+// 返回： txsHashHexString
+func ComputeTxsHash(txs []*pb.AnyTx) string {
+	// 初始哈希值使用空字节的哈希
+	accumulatedHash := utils.Sha256Hash([]byte{})
 
 	for _, tx := range txs {
-		base := tx.GetBase()
-		if base == nil {
-			// 如果该笔Tx没有BaseMessage，不满足要求，跳过或做错误处理
+		txID := tx.GetTxId()
+		if txID == "" {
 			continue
 		}
-		fromAddr := base.FromAddress
-		if fromAddr == "" {
-			continue
-		}
-		// 2. 从DB中获取该 fromAddr 的账户并拿到其"FB"的可用余额
-		acc, err := dbMgr.GetAccount(fromAddr)
-		if err != nil {
-			return nil, "", fmt.Errorf("get account %s error: %v", fromAddr, err)
-		}
-		var fbBalance decimal.Decimal
-		if acc != nil {
-			if tokenBal, ok := acc.Balances["FB"]; ok && tokenBal != nil {
-				fbBalance, _ = decimal.NewFromString(tokenBal.Balance)
-			}
-		}
-		tmpList = append(tmpList, txWithBal{
-			anyTx:   tx,
-			balance: fbBalance,
-		})
+		// 累积哈希: h_n = H(h_{n-1} + tx_id_n)
+		combined := append(accumulatedHash, []byte(txID)...)
+		accumulatedHash = utils.Sha256Hash(combined)
 	}
 
-	// 3. 排序：按 FB余额 从大到小 排列
-	sort.Slice(tmpList, func(i, j int) bool {
-		return tmpList[i].balance.Cmp(tmpList[j].balance) > 0 // i>j => descending
-	})
-
-	// 4. 生成排序后的结果切片
-	sortedTxs := make([]*pb.AnyTx, len(tmpList))
-	for i, v := range tmpList {
-		sortedTxs[i] = v.anyTx
-	}
-
-	// 5. 计算聚合哈希(txs_hash)
-	var allBytes []byte
-	for _, v := range tmpList {
-		base := v.anyTx.GetBase()
-		if base == nil {
-			continue
-		}
-		fromAddr := base.FromAddress
-		balStr := v.balance.String()
-		segment := []byte(base.TxId + "|" + fromAddr + "|" + balStr + "||")
-		allBytes = append(allBytes, segment...)
-	}
-
-	finalHash := utils.Sha256Hash(allBytes)
-	txsHashHex := fmt.Sprintf("%x", finalHash)
-
-	return sortedTxs, txsHashHex, nil
+	return fmt.Sprintf("%x", accumulatedHash)
 }
 func (p *TxPool) GetTxsByShortHashes(shortHashes [][]byte, isSync bool) []*pb.AnyTx {
 	//start := time.Now()
