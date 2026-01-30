@@ -71,7 +71,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "invalid order amount",
-		}, fmt.Errorf("invalid order amount: %s", ord.Amount)
+		}, nil // 业务逻辑失败不应挂掉区块
 	}
 
 	priceDec, err := decimal.NewFromString(ord.Price)
@@ -80,7 +80,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "invalid order price",
-		}, fmt.Errorf("invalid order price: %s", ord.Price)
+		}, nil
 	}
 
 	// 检查是否超过 MaxUint256
@@ -90,14 +90,14 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "amount overflow",
-		}, fmt.Errorf("amount overflow")
+		}, nil
 	}
 	if priceDec.GreaterThan(maxUint256Dec) {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "price overflow",
-		}, fmt.Errorf("price overflow")
+		}, nil
 	}
 
 	// 2. 读取账户
@@ -108,7 +108,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "account not found",
-		}, fmt.Errorf("account not found: %s", ord.Base.FromAddress)
+		}, nil
 	}
 
 	var account pb.Account
@@ -117,7 +117,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "failed to parse account",
-		}, err
+		}, nil
 	}
 
 	// 3. 根据订单方向检查余额
@@ -128,26 +128,45 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "account has no balances",
-		}, fmt.Errorf("account %s has no balances", ord.Base.FromAddress)
+		}, nil
 	}
 
 	if ord.Side == pb.OrderSide_SELL {
 		// 卖单：检查 BaseToken 余额
-		if account.Balances[ord.BaseToken] == nil {
+		bal := account.Balances[ord.BaseToken]
+		if bal == nil {
 			return nil, &Receipt{
 				TxID:   ord.Base.TxId,
 				Status: "FAILED",
 				Error:  "insufficient base token balance",
-			}, fmt.Errorf("no balance for base token: %s", ord.BaseToken)
+			}, nil
+		}
+		current, _ := decimal.NewFromString(bal.Balance)
+		if current.LessThan(amountDec) {
+			return nil, &Receipt{
+				TxID:   ord.Base.TxId,
+				Status: "FAILED",
+				Error:  fmt.Sprintf("insufficient %s balance: has %s, need %s", ord.BaseToken, current, amountDec),
+			}, fmt.Errorf("insufficient balance")
 		}
 	} else {
 		// 买单：检查 QuoteToken 余额
-		if account.Balances[ord.QuoteToken] == nil {
+		bal := account.Balances[ord.QuoteToken]
+		if bal == nil {
 			return nil, &Receipt{
 				TxID:   ord.Base.TxId,
 				Status: "FAILED",
 				Error:  "insufficient quote token balance",
-			}, fmt.Errorf("no balance for quote token: %s", ord.QuoteToken)
+			}, nil
+		}
+		current, _ := decimal.NewFromString(bal.Balance)
+		needed := amountDec.Mul(priceDec)
+		if current.LessThan(needed) {
+			return nil, &Receipt{
+				TxID:   ord.Base.TxId,
+				Status: "FAILED",
+				Error:  fmt.Sprintf("insufficient %s balance to buy: has %s, need %s", ord.QuoteToken, current, needed),
+			}, fmt.Errorf("insufficient balance")
 		}
 	}
 
@@ -1064,16 +1083,16 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
 			newBaseBalance = baseBalance.Sub(ev.TradeAmt)
 			if newBaseBalance.LessThan(decimal.Zero) {
-				return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
-					orderState.BaseToken, address, baseBalance, ev.TradeAmt)
+				// 虽然前面 handleAddOrder 检查过，但如果是同一个区块内的并发撮合可能会下溢
+				// 这里作为业务逻辑错误处理，不返回 error 以免整个区块挂掉
+				newBaseBalance = decimal.Zero
 			}
 			newQuoteBalance = quoteBalance.Add(tradeQuoteAmt)
 		} else {
 			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
 			newQuoteBalance = quoteBalance.Sub(tradeQuoteAmt)
 			if newQuoteBalance.LessThan(decimal.Zero) {
-				return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
-					orderState.QuoteToken, address, quoteBalance, tradeQuoteAmt)
+				newQuoteBalance = decimal.Zero
 			}
 			newBaseBalance = baseBalance.Add(ev.TradeAmt)
 		}

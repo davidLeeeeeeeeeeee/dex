@@ -3579,6 +3579,7 @@ type HeightResponse struct {
 	CurrentHeight      uint64                 `protobuf:"varint,2,opt,name=CurrentHeight,proto3" json:"CurrentHeight,omitempty"`
 	Address            string                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`                                                    // 响应方地址
 	PendingBlocksCount uint32                 `protobuf:"varint,4,opt,name=pending_blocks_count,json=pendingBlocksCount,proto3" json:"pending_blocks_count,omitempty"` // 候选区块数量（未确认）
+	PendingTxCount     uint32                 `protobuf:"varint,5,opt,name=pending_tx_count,json=pendingTxCount,proto3" json:"pending_tx_count,omitempty"`             // txpool 中 pending 交易数量
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -3637,6 +3638,13 @@ func (x *HeightResponse) GetAddress() string {
 func (x *HeightResponse) GetPendingBlocksCount() uint32 {
 	if x != nil {
 		return x.PendingBlocksCount
+	}
+	return 0
+}
+
+func (x *HeightResponse) GetPendingTxCount() uint32 {
+	if x != nil {
+		return x.PendingTxCount
 	}
 	return 0
 }
@@ -9443,12 +9451,13 @@ const file_data_proto_rawDesc = "" +
 	"\x0eaccepted_block\x18\x04 \x01(\tR\racceptedBlock\x129\n" +
 	"\x19preferred_block_at_height\x18\x05 \x01(\x04R\x16preferredBlockAtHeight\x12'\n" +
 	"\x0faccepted_height\x18\x06 \x01(\x04R\x0eacceptedHeight\x12\x16\n" +
-	"\x06bitmap\x18\a \x01(\fR\x06bitmap\"\xb2\x01\n" +
+	"\x06bitmap\x18\a \x01(\fR\x06bitmap\"\xdc\x01\n" +
 	"\x0eHeightResponse\x12.\n" +
 	"\x12LastAcceptedHeight\x18\x01 \x01(\x04R\x12LastAcceptedHeight\x12$\n" +
 	"\rCurrentHeight\x18\x02 \x01(\x04R\rCurrentHeight\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x120\n" +
-	"\x14pending_blocks_count\x18\x04 \x01(\rR\x12pendingBlocksCount\"0\n" +
+	"\x14pending_blocks_count\x18\x04 \x01(\rR\x12pendingBlocksCount\x12(\n" +
+	"\x10pending_tx_count\x18\x05 \x01(\rR\x0ependingTxCount\"0\n" +
 	"\x13GetBlockByIDRequest\x12\x19\n" +
 	"\bblock_id\x18\x01 \x01(\tR\ablockId\"\xcf\x01\n" +
 	"\x10PendingBlockInfo\x12\x19\n" +

@@ -658,7 +658,19 @@ func (m *Manager) NextIndex() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return id + 1, nil // 让索引依旧从 1 开始
+	return id + 1, nil // 让索引依旧 from 1 开始
+}
+
+// GetMinerByIndex 通过节点索引获取对应的矿工账户
+func (m *Manager) GetMinerByIndex(index uint64) (*pb.Account, error) {
+	if m.IndexMgr == nil {
+		return nil, fmt.Errorf("IndexMgr not initialized")
+	}
+	addr, err := m.IndexMgr.GetAddressByIndex(index)
+	if err != nil {
+		return nil, err
+	}
+	return m.GetAccount(addr)
 }
 
 // ========== 索引重建接口 ==========

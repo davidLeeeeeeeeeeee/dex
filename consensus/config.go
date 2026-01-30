@@ -41,7 +41,10 @@ type SyncConfig struct {
 	BehindThreshold   uint64
 	BatchSize         uint64
 	Timeout           time.Duration
-	SnapshotThreshold uint64 // 新增：落后多少高度时使用快照
+	SnapshotThreshold uint64        // 落后多少高度时使用快照
+	SampleSize        int           // 采样节点数量（默认 15）
+	QuorumRatio       float64       // Quorum 比例（默认 0.67，即 67%）
+	SampleTimeout     time.Duration // 采样超时时间
 }
 
 type GossipConfig struct {
@@ -81,7 +84,10 @@ func DefaultConfig() *Config {
 			BehindThreshold:   2,
 			BatchSize:         10,
 			Timeout:           5 * time.Second,
-			SnapshotThreshold: 100, // 新增：落后100个高度时使用快照
+			SnapshotThreshold: 100,
+			SampleSize:        15,              // 采样 15 个节点
+			QuorumRatio:       0.67,            // 67% 拜占庭容错
+			SampleTimeout:     2 * time.Second, // 2 秒采样超时
 		},
 		Gossip: GossipConfig{
 			Fanout:   15,

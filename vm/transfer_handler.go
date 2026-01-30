@@ -91,16 +91,16 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		return nil, &Receipt{
 			TxID:   transfer.Base.TxId,
 			Status: "FAILED",
-			Error:  "invalid sender balance format",
-		}, fmt.Errorf("invalid balance format")
+			Error:  fmt.Sprintf("invalid sender balance format for %s: %s", transfer.TokenAddress, fromAccount.Balances[transfer.TokenAddress].Balance),
+		}, nil // 注意这里返回 nil 而不是 error，允许区块继续执行
 	}
 
 	if fromBalance.Cmp(amount) < 0 {
 		return nil, &Receipt{
 			TxID:   transfer.Base.TxId,
 			Status: "FAILED",
-			Error:  "insufficient balance",
-		}, fmt.Errorf("insufficient balance: has %s, need %s", fromBalance.String(), amount.String())
+			Error:  fmt.Sprintf("insufficient balance: has %s, need %s", fromBalance.String(), amount.String()),
+		}, fmt.Errorf("insufficient balance")
 	}
 
 	// 5. 扣除交易手续费（如果是 native token）
@@ -132,12 +132,20 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "amount+fee overflow"}, err
 		}
 		if fbBalance.Cmp(totalNeeded) < 0 {
-			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "insufficient FB balance for amount + fee"}, fmt.Errorf("insufficient FB balance")
+			return nil, &Receipt{
+				TxID:   transfer.Base.TxId,
+				Status: "FAILED",
+				Error:  fmt.Sprintf("insufficient FB balance for amount + fee: has %s, need %s", fbBalance.String(), totalNeeded.String()),
+			}, fmt.Errorf("insufficient FB balance")
 		}
 	} else {
 		// 如果转账不是 FB，独立检查 FB 余额支付 fee
 		if fbBalance.Cmp(feeAmount) < 0 {
-			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "insufficient FB balance for fee"}, fmt.Errorf("insufficient FB balance for fee")
+			return nil, &Receipt{
+				TxID:   transfer.Base.TxId,
+				Status: "FAILED",
+				Error:  fmt.Sprintf("insufficient FB balance for fee: has %s, need %s", fbBalance.String(), feeAmount.String()),
+			}, fmt.Errorf("insufficient FB balance for fee")
 		}
 	}
 

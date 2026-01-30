@@ -400,6 +400,7 @@ message HeightResponse{ // 需要在proto中定义
   uint64 CurrentHeight = 2;
   string address = 3; // 响应方地址
   uint32 pending_blocks_count = 4; // 候选区块数量（未确认）
+  uint32 pending_tx_count = 5; // txpool 中 pending 交易数量
 }
 
 message GetBlockByIDRequest { string block_id = 1; }

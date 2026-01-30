@@ -65,6 +65,9 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 	syncManager := NewSyncManager(id, transport, store, &config.Sync, &config.Snapshot, events, logger)
 	syncManager.node = node
 
+	// 注入 SyncManager 到 QueryManager，用于同步期间暂停共识
+	queryManager.SetSyncManager(syncManager)
+
 	snapshotManager := NewSnapshotManager(id, store, &config.Snapshot, events, logger) // 新增
 
 	proposalManager := NewProposalManager(id, transport, store, &config.Node, events, logger)

@@ -29,9 +29,10 @@ type MessageHandler struct {
 	queryManager    *QueryManager
 	proposalManager *ProposalManager // 用于访问window计算和缓存
 	// 存储待回复的PullQuery
-	pendingQueries   map[uint32]types.Message
-	pendingQueriesMu sync.RWMutex
-	stats            *stats.Stats
+	pendingQueries     map[uint32]types.Message
+	pendingQueriesMu   sync.RWMutex
+	stats              *stats.Stats
+	pendingBlockBuffer *PendingBlockBuffer // 待处理区块缓冲区
 }
 
 func NewMessageHandler(id types.NodeID, byzantine bool, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, events interfaces.EventBus, config *ConsensusConfig, logger logs.Logger) *MessageHandler {
@@ -58,6 +59,10 @@ func (h *MessageHandler) SetManagers(qm *QueryManager, gm *GossipManager, sm *Sy
 
 func (h *MessageHandler) SetProposalManager(pm *ProposalManager) {
 	h.proposalManager = pm
+}
+
+func (h *MessageHandler) SetPendingBlockBuffer(buffer *PendingBlockBuffer) {
+	h.pendingBlockBuffer = buffer
 }
 
 func (h *MessageHandler) HandleMsg(msg types.Message) {
@@ -166,7 +171,7 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 		return
 	}
 
-	// 仅对“当前要决策的下一高度”做 window 约束；否则会导致落后节点的 PushQuery 长期收不到回应而卡住
+	// 仅对"当前要决策的下一高度"做 window 约束；否则会导致落后节点的 PushQuery 长期收不到回应而卡住
 	if h.proposalManager != nil && msg.Block.Header.Height == acceptedHeight+1 {
 		h.proposalManager.mu.Lock()
 		currentWindow := h.proposalManager.calculateCurrentWindow()
@@ -184,6 +189,41 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 
 	isNew, err := h.store.Add(msg.Block)
 	if err != nil {
+		// 关键改动：如果是因为数据不完整导致的拒绝，放入 PendingBlockBuffer 异步补课
+		if strings.Contains(err.Error(), "block data incomplete") {
+			if h.pendingBlockBuffer != nil && msg.ShortTxs != nil {
+				// 保存原始消息上下文用于回调
+				fromNode := types.NodeID(msg.From)
+				requestID := msg.RequestID
+				block := msg.Block
+
+				// 添加到待处理缓冲区，成功后注入共识
+				h.pendingBlockBuffer.AddPendingBlockForConsensus(
+					block,
+					msg.ShortTxs,
+					fromNode,
+					requestID,
+					func(resolvedBlock *types.Block) {
+						// 数据齐全后的回调：将区块注入共识
+						if newAdded, addErr := h.store.Add(resolvedBlock); addErr == nil && newAdded {
+							logs.Info("[Node %s] Block %s resolved and added to consensus",
+								h.nodeID, resolvedBlock.ID)
+							h.events.PublishAsync(types.BaseEvent{
+								EventType: types.EventNewBlock,
+								EventData: resolvedBlock,
+							})
+						}
+						// 补发 Chits 给原始请求者
+						h.sendChits(fromNode, requestID, resolvedBlock.Header.Height)
+					},
+				)
+				logs.Debug("[Node %s] Block %s has incomplete data, queued for resolution",
+					h.nodeID, msg.Block.ID)
+				// 暂不回复 Chits（相当于弃权），等数据齐全后再回复
+				return
+			}
+		}
+
 		// 如果是因为缺父块导致的拒绝，自动请求父块
 		if strings.Contains(err.Error(), "parent block") && strings.Contains(err.Error(), "not found") {
 			if h.queryManager != nil {
@@ -236,13 +276,24 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 				}
 			}
 
+			// 关键改动：验证偏好的区块是否有完整数据
+			if preferred != "" {
+				if _, hasFullData := GetCachedBlock(preferred); !hasFullData {
+					logs.Debug("[sendChits] Preferred block %s has no full data, abstaining", preferred)
+					preferred = "" // 弃权
+				}
+			}
+
 			// 如果没有有效偏好，从符合条件的候选中选择
 			if preferred == "" {
 				blocks := h.store.GetByHeight(queryHeight)
 				cand := make([]string, 0, len(blocks))
 				for _, b := range blocks {
+					// 必须满足父链接正确 AND 有完整数据
 					if b.Header.ParentID == parent.ID {
-						cand = append(cand, b.ID)
+						if _, hasFullData := GetCachedBlock(b.ID); hasFullData {
+							cand = append(cand, b.ID)
+						}
 					}
 				}
 				if len(cand) > 0 {

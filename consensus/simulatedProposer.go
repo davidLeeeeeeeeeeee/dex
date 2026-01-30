@@ -3,6 +3,7 @@ package consensus
 import (
 	"crypto/sha256"
 	"dex/interfaces"
+	"dex/pb"
 	"dex/types"
 	"fmt"
 	"time"
@@ -40,6 +41,21 @@ func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, prop
 			VRFOutput: nil,
 		},
 	}
+
+	// 关键：同时创建对应的 pb.Block 并填充 BlockCache
+	// 这样共识内核的数据完整性检查才能通过
+	pbBlock := &pb.Block{
+		BlockHash: blockID,
+		Header: &pb.BlockHeader{
+			Height:        height,
+			PrevBlockHash: parentID,
+			Miner:         string(proposer),
+			Window:        int32(window),
+		},
+		Body: []*pb.AnyTx{}, // 模拟模式无交易
+	}
+	CacheBlock(pbBlock)
+
 	return block, nil
 }
 

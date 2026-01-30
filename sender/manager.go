@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -122,7 +123,7 @@ func (sm *SenderManager) PullTx(peerAddr, txID string, onSuccess func(*pb.AnyTx)
 		return
 	}
 
-	ip, err := sm.addressToIp(peerAddr)
+	ip, err := sm.AddressToIP(peerAddr)
 	if err != nil {
 		logs.Debug("[PullTx] get address failed: %v", err)
 		return
@@ -230,7 +231,7 @@ func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]
 		return
 	}
 
-	ip, err := sm.addressToIp(peerAddress)
+	ip, err := sm.AddressToIP(peerAddress)
 	if err != nil {
 		fmt.Printf("failed to get IP for peerAddress %s: %v\n", peerAddress, err)
 		return
@@ -284,7 +285,7 @@ func (sm *SenderManager) PushQuery(peerAddr string, pq *pb.PushQuery) {
 		return
 	}
 
-	ip, err := sm.addressToIp(peerAddr)
+	ip, err := sm.AddressToIP(peerAddr)
 	if err != nil || ip == "" {
 		logs.Debug("[PushQuery] resolve ip err: %v", err)
 		return
@@ -309,7 +310,7 @@ func (sm *SenderManager) PullQuery(peerAddr string, pq *pb.PullQuery) {
 		return
 	}
 
-	ip, err := sm.addressToIp(peerAddr)
+	ip, err := sm.AddressToIP(peerAddr)
 	if err != nil || ip == "" {
 		logs.Debug("[PullQuery] resolve ip err: %v", err)
 		return
@@ -334,22 +335,30 @@ func (sm *SenderManager) getRandomMiners(count int) ([]*pb.Account, error) {
 	return sm.dbManager.GetRandomMinersFast(count)
 }
 
-// 将地址转换为IP（确保包含端口）
-func (sm *SenderManager) addressToIp(peerAddr string) (string, error) {
-	// 检查是否已经是IP:Port格式
+// AddressToIP 将地址转换为IP（确保包含端口）
+func (sm *SenderManager) AddressToIP(peerAddr string) (string, error) {
+	// 1. 检查是否已经是IP:Port格式
 	if host, _, err := net.SplitHostPort(peerAddr); err == nil {
 		if parsedIP := net.ParseIP(host); parsedIP != nil {
 			return peerAddr, nil // 已经是IP:Port格式
 		}
 	}
 
-	// 检查是否是纯IP（需要查询默认端口）
+	// 2. 检查是否是纯IP
 	if parsedIP := net.ParseIP(peerAddr); parsedIP != nil {
-		// 这是纯IP，需要从数据库查询端口或使用默认端口
 		return peerAddr, nil
 	}
 
-	// 从数据库查询地址对应的IP（应该包含端口）
+	// 3. 检查是否是节点序号（如 "0", "1"... 用于模拟集群环境）
+	if index, err := strconv.ParseUint(peerAddr, 10, 64); err == nil && len(peerAddr) < 5 {
+		// 可能是节点序号，尝试按索引匹配矿工
+		account, err := sm.dbManager.GetMinerByIndex(index)
+		if err == nil && account != nil && account.Ip != "" {
+			return account.Ip, nil
+		}
+	}
+
+	// 4. 从数据库查询地址对应的IP（应该包含端口）
 	account, err := sm.dbManager.GetAccount(peerAddr)
 	if err != nil {
 		return "", fmt.Errorf("failed to get account for address %s: %v", peerAddr, err)
@@ -424,7 +433,7 @@ func (sm *SenderManager) SendChits(targetAddress string, chits *pb.Chits) error 
 		return err
 	}
 
-	ip, err := sm.addressToIp(targetAddress)
+	ip, err := sm.AddressToIP(targetAddress)
 	if err != nil {
 		logs.Debug("[SendChits] failed to get IP for address %s: %v", targetAddress, err)
 		return err
@@ -454,7 +463,7 @@ func (sm *SenderManager) SendBlock(targetAddress string, block *pb.Block) error 
 		return err
 	}
 
-	ip, err := sm.addressToIp(targetAddress)
+	ip, err := sm.AddressToIP(targetAddress)
 	if err != nil {
 		logs.Debug("[SendBlock] failed to get IP for address %s: %v", targetAddress, err)
 		return err
@@ -486,7 +495,7 @@ func (sm *SenderManager) SendHeightQuery(targetAddress string, onSuccess func(*p
 		return err
 	}
 
-	ip, err := sm.addressToIp(targetAddress)
+	ip, err := sm.AddressToIP(targetAddress)
 	if err != nil {
 		logs.Debug("[SendHeightQuery] failed to get IP for address %s: %v", targetAddress, err)
 		return err
@@ -520,7 +529,7 @@ func (sm *SenderManager) SendSyncRequest(targetAddress string, fromHeight, toHei
 		return err
 	}
 
-	ip, err := sm.addressToIp(targetAddress)
+	ip, err := sm.AddressToIP(targetAddress)
 	if err != nil {
 		logs.Debug("[SendSyncRequest] failed to get IP for address %s: %v", targetAddress, err)
 		return err

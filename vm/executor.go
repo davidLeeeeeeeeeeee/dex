@@ -3,6 +3,7 @@ package vm
 import (
 	iface "dex/interfaces"
 	"dex/keys"
+	"dex/logs"
 	"dex/matching"
 	"dex/pb"
 	"dex/utils"
@@ -248,14 +249,35 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 		// 执行交易
 		ws, rc, err := h.DryRun(tx, sv)
 		if err != nil {
-			// 回滚状态
+			// 如果 Handler 返回了 Receipt，说明是一个可以标记为失败的“业务错误”（如余额不足）
+			// 这种情况下不应挂掉整个区块，而是记录失败状态并继续
+			if rc != nil {
+				// 回滚状态到该交易执行前
+				sv.Revert(snapshot)
+
+				// 确保状态标识为 FAILED
+				rc.Status = "FAILED"
+				if rc.Error == "" {
+					rc.Error = err.Error()
+				}
+
+				// 填充 Receipt 元数据并收集
+				rc.BlockHeight = b.Header.Height
+				rc.Timestamp = time.Now().Unix()
+				receipts = append(receipts, rc)
+
+				logs.Info("[VM] Tx %s mark as FAILED in block %d: %v", rc.TxID, b.Header.Height, err)
+				continue
+			}
+
+			// 真正的协议/系统级错误（如无效交易格式），回滚并拒绝区块
 			sv.Revert(snapshot)
 			return &SpecResult{
 				BlockID:  b.BlockHash,
 				ParentID: b.Header.PrevBlockHash,
 				Height:   b.Header.Height,
 				Valid:    false,
-				Reason:   fmt.Sprintf("tx %d invalid: %v", idx, err),
+				Reason:   fmt.Sprintf("tx %d protocol error: %v", idx, err),
 			}, nil
 		}
 

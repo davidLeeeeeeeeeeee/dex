@@ -120,6 +120,12 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
           <span class="text-indigo-400 font-bold ml-auto">{{ formatNumber(node.frost_metrics.frost_jobs) }}</span>
         </div>
 
+        <div class="detail-row pending-tx-row" v-if="node.pending_tx_count !== undefined && node.pending_tx_count > 0">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>
+          <span class="text-cyan-400">待处理交易</span>
+          <span class="text-cyan-400 font-bold ml-auto">{{ formatNumber(node.pending_tx_count) }}</span>
+        </div>
+
         <div class="detail-row pending-row" 
              v-if="node.pending_blocks_count && node.pending_blocks_count > 0"
              @click.stop="emit('viewPending', node.address)">
@@ -127,6 +133,16 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
           <span class="text-amber-400">候选区块</span>
           <span class="text-amber-400 font-bold ml-auto">{{ node.pending_blocks_count }}</span>
           <svg class="view-arrow" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+
+        <!-- 候选区块头（只显示数量，点击查看详情）-->
+        <div class="detail-row pending-header-row" 
+             v-if="node.pending_headers && node.pending_headers.length > 0"
+             @click.stop="emit('viewPending', node.address)">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><line x1="3" x2="21" y1="9" y2="9"/></svg>
+          <span class="text-indigo-400">候选区块头</span>
+          <span class="text-indigo-400 font-bold ml-auto">{{ node.pending_headers.length }}</span>
+          <svg class="view-arrow-indigo" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
         </div>
       </div>
 
@@ -277,6 +293,16 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
 .text-emerald-300 { color: #6ee7b7; }
 .state-root-row { background: rgba(16, 185, 129, 0.03); padding: 4px 8px; border-radius: 6px; margin-top: 4px; }
 
+/* 待处理交易行样式 */
+.pending-tx-row {
+  background: rgba(34, 211, 238, 0.05);
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin-top: 4px;
+  border: 1px solid rgba(34, 211, 238, 0.15);
+}
+.text-cyan-400 { color: #22d3ee; font-size: 0.65rem; font-weight: 600; }
+
 /* 候选区块行样式 */
 .pending-row {
   background: rgba(245, 158, 11, 0.08);
@@ -298,6 +324,30 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
   transition: transform 0.2s ease;
 }
 .pending-row:hover .view-arrow {
+  transform: translateX(2px);
+}
+
+/* 候选区块头行样式 */
+.pending-header-row {
+  background: rgba(99, 102, 241, 0.08);
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-top: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+.pending-header-row:hover {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+.text-indigo-400 { color: #818cf8; font-size: 0.65rem; font-weight: 600; }
+.view-arrow-indigo { 
+  color: #818cf8; 
+  margin-left: 4px;
+  transition: transform 0.2s ease;
+}
+.pending-header-row:hover .view-arrow-indigo {
   transform: translateX(2px);
 }
 

@@ -29,6 +29,9 @@ type QueryManager struct {
 	nextReqID            uint32
 	mu                   sync.Mutex
 	missingBlockRequests sync.Map
+	lastIssueTime        time.Time     // 上次发起查询的时间
+	queryCooldown        time.Duration // 发起查询的最小冷却时间
+	syncManager          *SyncManager  // 同步管理器引用，用于检查同步状态
 }
 
 type Poll struct {
@@ -41,13 +44,14 @@ type Poll struct {
 
 func NewQueryManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, config *ConsensusConfig, events interfaces.EventBus, logger logs.Logger) *QueryManager {
 	qm := &QueryManager{
-		nodeID:    id,
-		transport: transport,
-		store:     store,
-		engine:    engine,
-		config:    config,
-		events:    events,
-		Logger:    logger,
+		nodeID:        id,
+		transport:     transport,
+		store:         store,
+		engine:        engine,
+		config:        config,
+		events:        events,
+		Logger:        logger,
+		queryCooldown: 100 * time.Millisecond, // 默认 100ms 最小间隔
 	}
 
 	events.Subscribe(types.EventQueryComplete, func(e interfaces.Event) {
@@ -73,13 +77,13 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 				qm.tryIssueQuery()
 			})
 		}
-		// "candidates_missing" 不再触发自动重发。
-		// 原因：如果是"当前高度存在块但都不符合父链"，立即重发也依然选不到合法块，只会空转。
-		// 应该等待下一次 EventBlockReceived 或其他触发源。
-		//只有timeout才需要清理
 	})
 
 	events.Subscribe(types.EventSyncComplete, func(e interfaces.Event) {
+		// 同步完成是权威信号，可以稍微跳过冷却
+		qm.mu.Lock()
+		qm.lastIssueTime = time.Time{}
+		qm.mu.Unlock()
 		qm.tryIssueQuery()
 	})
 
@@ -89,14 +93,32 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 	})
 
 	events.Subscribe(types.EventBlockReceived, func(e interfaces.Event) {
-		qm.tryIssueQuery()
+		// 只有在空闲时才由区块接收触发
+		if qm.engine.GetActiveQueryCount() == 0 {
+			qm.tryIssueQuery()
+		}
 	})
 
 	return qm
 }
 
+// SetSyncManager 设置同步管理器引用（在初始化后调用）
+func (qm *QueryManager) SetSyncManager(sm *SyncManager) {
+	qm.syncManager = sm
+}
+
 // 尝试发起查询
 func (qm *QueryManager) tryIssueQuery() {
+	// 如果正在同步，暂停共识查询
+	if qm.syncManager != nil {
+		qm.syncManager.Mu.RLock()
+		syncing := qm.syncManager.Syncing || qm.syncManager.sampling
+		qm.syncManager.Mu.RUnlock()
+		if syncing {
+			return
+		}
+	}
+
 	qm.mu.Lock()
 	defer qm.mu.Unlock()
 
@@ -108,10 +130,16 @@ func (qm *QueryManager) tryIssueQuery() {
 		return
 	}
 
+	// 1. 冷却时间检查（防抖）
+	if time.Since(qm.lastIssueTime) < qm.queryCooldown {
+		return
+	}
+
 	if qm.engine.GetActiveQueryCount() >= qm.config.MaxConcurrentQueries {
 		return
 	}
 
+	qm.lastIssueTime = time.Now()
 	qm.issueQuery()
 }
 
@@ -144,7 +172,11 @@ func (qm *QueryManager) issueQuery() {
 
 	block, exists := qm.store.Get(blockID)
 	if !exists {
-		logs.Warn("[QueryManager] Block %s not found for query at height %d", blockID, nextHeight)
+		logs.Warn("[QueryManager] Block %s not found for query at height %d (pending?), retrying after backoff", blockID, nextHeight)
+		// 数据还没补齐，延迟 500ms 后再试，避免形成高频查询风暴
+		time.AfterFunc(500*time.Millisecond, func() {
+			qm.tryIssueQuery()
+		})
 		return
 	}
 	requestID, _ := secureRandUint32()

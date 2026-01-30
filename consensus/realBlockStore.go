@@ -138,38 +138,51 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 		s.mu.Unlock()
 		return false, err
 	}
+	s.mu.Unlock()
 
-	// 提前占坑，防止并发 worker 重复执行 VM
+	// 第二步（新增）：检查是否有完整的区块数据（交易体）
+	// 这是共识安全的关键门槛：没有完整数据的块不能进入候选池
+	pbBlock, hasFullData := GetCachedBlock(block.ID)
+	if !hasFullData || pbBlock == nil {
+		// 没有完整数据，拒绝加入共识候选
+		logs.Debug("[RealBlockStore] Block %s rejected: no full data available (awaiting transaction body)", block.ID)
+		return false, fmt.Errorf("block data incomplete: awaiting transaction body")
+	}
+
+	// 第三步：占坑，防止并发 worker 重复执行 VM
+	s.mu.Lock()
+	// 再次检查（可能在释放锁期间被其他 goroutine 添加了）
+	if _, exists := s.blockCache[block.ID]; exists {
+		s.mu.Unlock()
+		return false, nil
+	}
 	s.blockCache[block.ID] = block
 	s.heightIndex[block.Header.Height] = append(s.heightIndex[block.Header.Height], block)
 	s.mu.Unlock()
 
-	// 获取完整的 pb.Block（包含交易）
-	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
-		// 调用 VM 预执行
-		result, err := s.vmExecutor.PreExecuteBlock(pbBlock)
+	// 第四步：调用 VM 预执行（已确认有完整数据）
+	result, err := s.vmExecutor.PreExecuteBlock(pbBlock)
 
-		if err != nil {
-			logs.Error("[RealBlockStore] VM PreExecuteBlock failed for block %s: %v", block.ID, err)
-			// 执行失败，需要把刚才占坑的数据撤回
-			s.mu.Lock()
-			delete(s.blockCache, block.ID)
-			// 注意：heightIndex 的清理较复杂，此处简略处理或依靠后续最终化清理
-			s.mu.Unlock()
-			return false, fmt.Errorf("VM pre-execution failed: %w", err)
-		}
-
-		// 检查预执行结果
-		if !result.Valid {
-			logs.Error("[RealBlockStore] Block %s failed VM validation: %s", block.ID, result.Reason)
-			s.mu.Lock()
-			delete(s.blockCache, block.ID)
-			s.mu.Unlock()
-			return false, fmt.Errorf("block failed VM validation: %s", result.Reason)
-		}
-
-		logs.Debug("[RealBlockStore] Block %s passed VM pre-execution", block.ID)
+	if err != nil {
+		logs.Error("[RealBlockStore] VM PreExecuteBlock failed for block %s: %v", block.ID, err)
+		// 执行失败，需要把刚才占坑的数据撤回
+		s.mu.Lock()
+		delete(s.blockCache, block.ID)
+		// 注意：heightIndex 的清理较复杂，此处简略处理或依靠后续最终化清理
+		s.mu.Unlock()
+		return false, fmt.Errorf("VM pre-execution failed: %w", err)
 	}
+
+	// 检查预执行结果
+	if !result.Valid {
+		logs.Error("[RealBlockStore] Block %s failed VM validation: %s", block.ID, result.Reason)
+		s.mu.Lock()
+		delete(s.blockCache, block.ID)
+		s.mu.Unlock()
+		return false, fmt.Errorf("block failed VM validation: %s", result.Reason)
+	}
+
+	logs.Debug("[RealBlockStore] Block %s passed VM pre-execution", block.ID)
 
 	// 第三步：更新高度元数据
 	s.mu.Lock()
@@ -839,29 +852,37 @@ func (s *RealBlockStore) GetWitnessService() *witness.Service {
 	return s.vmExecutor.GetWitnessService()
 }
 
-// GetPendingBlocksCount 获取候选区块数量（未最终化）
+// GetPendingBlocksCount 获取候选区块数量（未最终化，去重显示）
 func (s *RealBlockStore) GetPendingBlocksCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	count := 0
+	seen := make(map[string]bool)
 	for height := s.lastAcceptedHeight + 1; height <= s.maxHeight; height++ {
 		if blocks, exists := s.heightIndex[height]; exists {
-			count += len(blocks)
+			for _, b := range blocks {
+				seen[b.ID] = true
+			}
 		}
 	}
-	return count
+	return len(seen)
 }
 
-// GetPendingBlocks 获取候选区块列表
+// GetPendingBlocks 获取候选区块列表（去重返回）
 func (s *RealBlockStore) GetPendingBlocks() []*types.Block {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	result := make([]*types.Block, 0)
+	seen := make(map[string]bool)
 	for height := s.lastAcceptedHeight + 1; height <= s.maxHeight; height++ {
 		if blocks, exists := s.heightIndex[height]; exists {
-			result = append(result, blocks...)
+			for _, b := range blocks {
+				if !seen[b.ID] {
+					result = append(result, b)
+					seen[b.ID] = true
+				}
+			}
 		}
 	}
 	return result

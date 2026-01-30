@@ -37,7 +37,8 @@ func (s *TxSimulator) Start() {
 	go s.runRechargeScenario()    // 见证者上账请求
 	go s.runWitnessVoteWorker()   // 自动化见证者投票
 	go s.runWithdrawScenario()
-	go s.runOrderScenario() // 订单交易模拟
+	go s.runOrderScenario()              // 订单交易模拟
+	go s.RunMassOrderScenarioAsync(3000) // 自动触发大批量订单场景测试 ShortTxs
 }
 
 func (s *TxSimulator) submitTx(node *NodeInstance, tx *pb.AnyTx) {
@@ -282,8 +283,8 @@ func (s *TxSimulator) runOrderScenario() {
 	// 延迟启动，等待账户有足够余额
 	time.Sleep(5 * time.Second)
 
-	// 周期性生成新订单（每 2 秒生成一笔订单）
-	ticker := time.NewTicker(2 * time.Second)
+	// 周期性生成新订单（每 0.5 秒生成一批订单）
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -291,8 +292,8 @@ func (s *TxSimulator) runOrderScenario() {
 			continue
 		}
 
-		// 每次生成 5-10 笔订单
-		orderCount := 5 + mrand.Intn(6)
+		// 每次生成 10-20 笔订单
+		orderCount := 10 + mrand.Intn(11)
 		for i := 0; i < orderCount; i++ {
 			// 随机选择一个节点
 			nodeIdx := mrand.Intn(len(s.nodes))
@@ -342,4 +343,82 @@ func (s *TxSimulator) runOrderScenario() {
 			}
 		}
 	}
+}
+
+// RunMassOrderScenario 生成大批量订单以测试 ShortTxs 模式
+// 调用此方法会一次性生成指定数量的订单（默认 3000 笔，超过 MaxTxsPerBlock=2500 的阈值）
+func (s *TxSimulator) RunMassOrderScenario(orderCount int) {
+	if orderCount <= 0 {
+		orderCount = 3000 // 默认 3000 笔，超过 2500 阈值
+	}
+
+	logs.Info("SIMULATOR: Starting Mass Order Scenario with %d orders...", orderCount)
+
+	if len(s.nodes) == 0 {
+		logs.Error("SIMULATOR: No nodes available for mass order scenario")
+		return
+	}
+
+	startTime := time.Now()
+	submitted := 0
+
+	// 平滑发送配置
+	const batchSize = 100                    // 每批发送数量
+	const batchDelay = 50 * time.Millisecond // 批次间隔
+
+	for i := 0; i < orderCount; i++ {
+		// 轮流使用所有节点
+		nodeIdx := i % len(s.nodes)
+		node := s.nodes[nodeIdx]
+		if node == nil {
+			continue
+		}
+
+		nonce := s.getNextNonce(node.Address)
+
+		// 生成随机订单参数
+		basePrice := 1.0 + float64(mrand.Intn(100))*0.01
+		amount := 0.1 + float64(mrand.Intn(10))*0.1
+		isBuyOrder := mrand.Intn(2) == 0
+
+		var side pb.OrderSide
+		if isBuyOrder {
+			side = pb.OrderSide_BUY
+		} else {
+			side = pb.OrderSide_SELL
+		}
+
+		tx := generateOrderTx(
+			node.Address,
+			"FB",
+			"USDT",
+			fmt.Sprintf("%.2f", amount),
+			fmt.Sprintf("%.2f", basePrice),
+			nonce,
+			side,
+		)
+
+		s.submitTx(node, tx)
+		submitted++
+
+		// 每 batchSize 笔暂停一下，让 Gossip 有时间扩散
+		if submitted%batchSize == 0 {
+			logs.Info("SIMULATOR: Mass Order Progress: %d/%d submitted, pausing %v for gossip...",
+				submitted, orderCount, batchDelay)
+			time.Sleep(batchDelay)
+		}
+	}
+
+	elapsed := time.Since(startTime)
+	logs.Info("SIMULATOR: Mass Order Scenario completed: %d orders in %v (%.0f tx/s)",
+		submitted, elapsed, float64(submitted)/elapsed.Seconds())
+}
+
+// RunMassOrderScenarioAsync 异步版本，在后台运行大批量订单测试
+func (s *TxSimulator) RunMassOrderScenarioAsync(orderCount int) {
+	go func() {
+		// 等待系统稳定后再开始
+		time.Sleep(30 * time.Second)
+		s.RunMassOrderScenario(orderCount)
+	}()
 }

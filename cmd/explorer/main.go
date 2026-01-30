@@ -63,16 +63,18 @@ type summaryResponse struct {
 }
 
 type nodeSummary struct {
-	Address            string        `json:"address"`
-	Status             string        `json:"status,omitempty"`
-	Info               string        `json:"info,omitempty"`
-	CurrentHeight      uint64        `json:"current_height,omitempty"`
-	LastAcceptedHeight uint64        `json:"last_accepted_height,omitempty"`
-	LatencyMs          int64         `json:"latency_ms,omitempty"`
-	Error              string        `json:"error,omitempty"`
-	Block              *blockSummary `json:"block,omitempty"`
-	FrostMetrics       *frostMetrics `json:"frost_metrics,omitempty"`
-	PendingBlocksCount uint32        `json:"pending_blocks_count,omitempty"` // 候选区块数量
+	Address            string              `json:"address"`
+	Status             string              `json:"status,omitempty"`
+	Info               string              `json:"info,omitempty"`
+	CurrentHeight      uint64              `json:"current_height,omitempty"`
+	LastAcceptedHeight uint64              `json:"last_accepted_height,omitempty"`
+	LatencyMs          int64               `json:"latency_ms,omitempty"`
+	Error              string              `json:"error,omitempty"`
+	Block              *blockSummary       `json:"block,omitempty"`
+	FrostMetrics       *frostMetrics       `json:"frost_metrics,omitempty"`
+	PendingBlocksCount uint32              `json:"pending_blocks_count,omitempty"` // 候选区块数量
+	PendingTxCount     uint32              `json:"pending_tx_count,omitempty"`     // txpool 中 pending 交易数量
+	PendingHeaders     []pendingHeaderInfo `json:"pending_headers,omitempty"`      // 未最终化的区块头列表
 }
 
 type nodeDetails struct {
@@ -110,6 +112,16 @@ type channelStat struct {
 	Len    int32   `json:"len"`
 	Cap    int32   `json:"cap"`
 	Usage  float64 `json:"usage"`
+}
+
+// pendingHeaderInfo 未最终化区块头信息（用于 NodeCards 直接展示）
+type pendingHeaderInfo struct {
+	BlockID     string `json:"block_id"`
+	Height      uint64 `json:"height"`
+	Proposer    string `json:"proposer"`
+	Window      int32  `json:"window"`
+	Votes       int32  `json:"votes"`
+	IsPreferred bool   `json:"is_preferred"`
 }
 
 // Block/Tx search request/response types
@@ -1107,6 +1119,7 @@ func (s *server) collectSummary(ctx context.Context, nodes []string, includeBloc
 				summary.CurrentHeight = height.CurrentHeight
 				summary.LastAcceptedHeight = height.LastAcceptedHeight
 				summary.PendingBlocksCount = height.PendingBlocksCount
+				summary.PendingTxCount = height.PendingTxCount
 			}
 
 			if includeFrost {
@@ -1141,6 +1154,12 @@ func (s *server) collectSummary(ctx context.Context, nodes []string, includeBloc
 				if err == nil && block != nil {
 					summary.Block = buildBlockSummary(block)
 				}
+			}
+
+			// 获取未最终化的区块头（如果有 pending blocks）
+			if height != nil && height.PendingBlocksCount > 0 {
+				headers, _ := s.fetchPendingHeaders(ctx, node)
+				summary.PendingHeaders = headers
 			}
 
 			summary.LatencyMs = time.Since(start).Milliseconds()
@@ -1197,6 +1216,31 @@ func (s *server) fetchBlock(ctx context.Context, node string, height uint64) (*p
 		return nil, errors.New("empty block")
 	}
 	return resp.Block, nil
+}
+
+// fetchPendingHeaders 获取节点的未最终化区块头列表
+func (s *server) fetchPendingHeaders(ctx context.Context, node string) ([]pendingHeaderInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	var resp pb.PendingBlocksResponse
+	if err := s.fetchProto(ctx, node, "/pendingblocks", nil, &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Blocks) == 0 {
+		return nil, nil
+	}
+	headers := make([]pendingHeaderInfo, 0, len(resp.Blocks))
+	for _, b := range resp.Blocks {
+		headers = append(headers, pendingHeaderInfo{
+			BlockID:     b.BlockId,
+			Height:      b.Height,
+			Proposer:    b.Proposer,
+			Window:      b.Window,
+			Votes:       b.Votes,
+			IsPreferred: b.IsPreferred,
+		})
+	}
+	return headers, nil
 }
 
 func (s *server) fetchProto(ctx context.Context, node, path string, req proto.Message, resp proto.Message) error {

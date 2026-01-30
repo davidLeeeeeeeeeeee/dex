@@ -13,6 +13,7 @@ import (
 	"dex/utils"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -154,6 +155,11 @@ func (t *RealTransport) doSend(to types.NodeID, msg types.Message) error {
 }
 
 func (t *RealTransport) getNodeIP(nodeID types.NodeID) (string, error) {
+	// 快速跳过空 NodeID
+	if nodeID == "" {
+		return "", fmt.Errorf("empty nodeID")
+	}
+
 	// 1. 尝试从缓存读取
 	t.cacheMu.RLock()
 	ip, ok := t.nodeIPCache[nodeID]
@@ -164,16 +170,29 @@ func (t *RealTransport) getNodeIP(nodeID types.NodeID) (string, error) {
 
 	// 2. 缓存没有，查库
 	acc, err := t.dbManager.GetAccount(string(nodeID))
-	if err != nil || acc == nil || acc.Ip == "" {
-		return "", fmt.Errorf("no IP for address %s", nodeID)
+	if err == nil && acc != nil && acc.Ip != "" {
+		// 存入缓存
+		t.cacheMu.Lock()
+		t.nodeIPCache[nodeID] = acc.Ip
+		t.cacheMu.Unlock()
+		return acc.Ip, nil
 	}
 
-	// 3. 存入缓存
-	t.cacheMu.Lock()
-	t.nodeIPCache[nodeID] = acc.Ip
-	t.cacheMu.Unlock()
+	// 3. 尝试解析为矿工索引（兼容模拟环境）
+	nodeIDStr := string(nodeID)
+	if len(nodeIDStr) < 5 {
+		if index, parseErr := strconv.ParseUint(nodeIDStr, 10, 64); parseErr == nil {
+			minerAcc, minerErr := t.dbManager.GetMinerByIndex(index)
+			if minerErr == nil && minerAcc != nil && minerAcc.Ip != "" {
+				t.cacheMu.Lock()
+				t.nodeIPCache[nodeID] = minerAcc.Ip
+				t.cacheMu.Unlock()
+				return minerAcc.Ip, nil
+			}
+		}
+	}
 
-	return acc.Ip, nil
+	return "", fmt.Errorf("no IP for address %s", nodeID)
 }
 
 // sendPushQuery 使用senderManager发送

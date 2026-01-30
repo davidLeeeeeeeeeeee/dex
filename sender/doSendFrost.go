@@ -77,7 +77,7 @@ func (sm *SenderManager) SendFrost(targetIP string, envelope *pb.FrostEnvelope) 
 
 // SendFrostToAddress 发送 Frost 消息到指定地址（通过地址查询IP）
 func (sm *SenderManager) SendFrostToAddress(targetAddress string, envelope *pb.FrostEnvelope) error {
-	ip, err := sm.addressToIp(targetAddress)
+	ip, err := sm.AddressToIP(targetAddress)
 	if err != nil {
 		return fmt.Errorf("SendFrostToAddress: failed to get IP for %s: %w", targetAddress, err)
 	}

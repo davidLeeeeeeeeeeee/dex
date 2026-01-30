@@ -10,6 +10,8 @@ export interface NodeSummary {
   block?: BlockSummary
   frost_metrics?: FrostMetrics
   pending_blocks_count?: number  // 候选区块数量（未确认）
+  pending_tx_count?: number      // txpool 中 pending 交易数量
+  pending_headers?: PendingHeaderInfo[]  // 未最终化的区块头列表
 }
 
 // 节点详情（包含日志和最近区块）
@@ -48,6 +50,16 @@ export interface BlockSummary {
   accumulated_reward?: string
   window?: number
   state_root?: string  // JMT 状态树根哈希
+}
+
+// 未最终化区块头信息（在 NodeCards 上显示）
+export interface PendingHeaderInfo {
+  block_id: string
+  height: number
+  proposer: string
+  window: number
+  votes: number
+  is_preferred: boolean
 }
 
 // FROST 指标

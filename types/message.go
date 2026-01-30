@@ -48,6 +48,7 @@ type Message struct {
 	BlockID   string
 	Block     *Block
 	Height    uint64
+	ShortTxs  []byte // 短交易哈希列表（用于 ShortTxs 模式的区块传输）
 	// For Chits
 	PreferredID       string
 	PreferredIDHeight uint64

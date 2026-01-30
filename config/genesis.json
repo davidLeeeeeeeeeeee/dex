@@ -4,7 +4,7 @@
       "address": "FB",
       "symbol": "FB",
       "name": "FrostBit Native Token",
-      "total_supply": "1000000000000",
+      "total_supply": "1000000000000000000000000",
       "owner": "0x0",
       "can_mint": false
     },
@@ -12,7 +12,7 @@
       "address": "USDT",
       "symbol": "USDT",
       "name": "Tether USD",
-      "total_supply": "1000000000000",
+      "total_supply": "1000000000000000000000000",
       "owner": "0x0",
       "can_mint": true
     },
@@ -20,7 +20,7 @@
       "address": "BTC",
       "symbol": "BTC",
       "name": "Wrapped Bitcoin",
-      "total_supply": "21000000",
+      "total_supply": "2100000000000000",
       "owner": "0x0",
       "can_mint": false
     }
@@ -29,14 +29,14 @@
     "default": {
       "balances": {
         "FB": {
-          "balance": "1000000000",
-          "miner_locked_balance": "100000000"
+          "balance": "1000000000000000000",
+          "miner_locked_balance": "100000000000000000"
         },
         "USDT": {
-          "balance": "500000"
+          "balance": "500000000000000000"
         },
         "BTC": {
-          "balance": "10"
+          "balance": "10000000000"
         }
       }
     }

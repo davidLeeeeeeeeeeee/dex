@@ -92,6 +92,14 @@ func InitConsensusManagerWithSimulation(
 	proposer := NewRealBlockProposer(dbManager, txPool)
 	node.proposalManager.SetProposer(proposer)
 
+	// 创建 ConsensusAdapter（需要提前创建用于 PendingBlockBuffer）
+	adapter := NewConsensusAdapter(dbManager)
+
+	// 创建 PendingBlockBuffer 并注入到 MessageHandler
+	pendingBlockBuffer := NewPendingBlockBuffer(txPool, adapter, senderMgr, logger)
+	pendingBlockBuffer.Start()
+	node.messageHandler.SetPendingBlockBuffer(pendingBlockBuffer)
+
 	// 创建 ConsensusNodeManager
 	consensusManager := &ConsensusNodeManager{
 		Node:           node,
@@ -103,7 +111,7 @@ func InitConsensusManagerWithSimulation(
 		dbManager:      dbManager,
 		senderManager:  senderMgr,
 		txPool:         txPool,
-		adapter:        NewConsensusAdapter(dbManager),
+		adapter:        adapter,
 		Logger:         logger,
 	}
 
@@ -285,6 +293,14 @@ func (m *ConsensusNodeManager) Stop() {
 func (m *ConsensusNodeManager) GetPendingHeightsState() []*HeightState {
 	if se, ok := m.engine.(*SnowmanEngine); ok {
 		return se.GetPendingHeightsState()
+	}
+	return nil
+}
+
+// GetPendingBlockBuffer 获取待补课区块缓冲区
+func (m *ConsensusNodeManager) GetPendingBlockBuffer() *PendingBlockBuffer {
+	if m.messageHandler != nil {
+		return m.messageHandler.pendingBlockBuffer
 	}
 	return nil
 }

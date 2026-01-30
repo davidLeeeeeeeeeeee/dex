@@ -4,6 +4,7 @@ import (
 	"dex/config"
 	"dex/db"
 	"dex/pb"
+	"dex/txpool"
 	"dex/types"
 	"fmt"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 // 集中处理共识层与外部的所有数据转换
 type ConsensusAdapter struct {
 	dbManager       *db.Manager
+	txPool          *txpool.TxPool  // TxPool 用于 ShortTxs 模式的交易还原
 	contactedNodes  map[string]bool // 追踪联系过的节点
 	contactedHeight uint64          // 当前追踪的区块高度
 }
@@ -25,6 +27,20 @@ func NewConsensusAdapter(dbMgr *db.Manager) *ConsensusAdapter {
 		dbManager:      dbMgr,
 		contactedNodes: make(map[string]bool),
 	}
+}
+
+// NewConsensusAdapterWithTxPool 创建带 TxPool 的适配器（用于 ShortTxs 模式）
+func NewConsensusAdapterWithTxPool(dbMgr *db.Manager, pool *txpool.TxPool) *ConsensusAdapter {
+	return &ConsensusAdapter{
+		dbManager:      dbMgr,
+		txPool:         pool,
+		contactedNodes: make(map[string]bool),
+	}
+}
+
+// SetTxPool 设置 TxPool（用于后期注入）
+func (a *ConsensusAdapter) SetTxPool(pool *txpool.TxPool) {
+	a.txPool = pool
 }
 
 // RecordContact 记录与某节点的通信
@@ -147,6 +163,8 @@ func (a *ConsensusAdapter) PushQueryToConsensusMessage(pq *pb.PushQuery, from ty
 			return msg, err
 		}
 		msg.Block = consensusBlock
+		// 传递 ShortTxs 用于不完整区块的还原
+		msg.ShortTxs = block.ShortTxs
 	}
 
 	return msg, nil
@@ -174,6 +192,7 @@ func (a *ConsensusAdapter) ConsensusMessageToChits(msg types.Message) *pb.Chits 
 		PreferredBlockAtHeight: msg.PreferredIDHeight,
 		AcceptedHeight:         msg.AcceptedHeight,
 		Bitmap:                 a.generateBitmap(),
+		Address:                string(msg.From), // 保留发送方地址
 	}
 }
 
@@ -300,6 +319,64 @@ func (a *ConsensusAdapter) prepareContainer(msg types.Message) ([]byte, bool) {
 }
 
 func (a *ConsensusAdapter) resolveShorHashesToTxs(shortHashes []byte) ([]*pb.AnyTx, error) {
-	// TODO: 实现短哈希到交易的解析
-	return nil, nil
+	txs, missing, err := a.ResolveShorHashesToTxsWithMissing(shortHashes)
+	if err != nil {
+		return nil, err
+	}
+	if len(missing) > 0 {
+		return txs, fmt.Errorf("missing transactions: expected %d, got %d (missing %d)",
+			len(shortHashes)/8, len(txs), len(missing))
+	}
+	return txs, nil
+}
+
+// ResolveShorHashesToTxsWithMissing 解析短哈希并返回缺失列表（用于主动补课机制）
+func (a *ConsensusAdapter) ResolveShorHashesToTxsWithMissing(shortHashes []byte) (
+	txs []*pb.AnyTx,
+	missingHashes [][]byte,
+	err error,
+) {
+	// 检查 TxPool 是否已设置
+	if a.txPool == nil {
+		return nil, nil, fmt.Errorf("TxPool not set, cannot resolve short hashes")
+	}
+
+	// 将连续的 8 字节块切分为独立的短哈希
+	const shortHashSize = 8
+	if len(shortHashes)%shortHashSize != 0 {
+		return nil, nil, fmt.Errorf("invalid shortHashes length: %d (must be multiple of %d)", len(shortHashes), shortHashSize)
+	}
+
+	hashCount := len(shortHashes) / shortHashSize
+	allHashes := make([][]byte, 0, hashCount)
+	for i := 0; i+shortHashSize <= len(shortHashes); i += shortHashSize {
+		hash := make([]byte, shortHashSize)
+		copy(hash, shortHashes[i:i+shortHashSize])
+		allHashes = append(allHashes, hash)
+	}
+
+	// 调用 TxPool 解析
+	txs = a.txPool.GetTxsByShortHashes(allHashes, true)
+
+	// 如果数量不匹配，找出缺失的哈希
+	if len(txs) != len(allHashes) {
+		// 构建已找到交易的短哈希集合
+		foundSet := make(map[string]bool)
+		for _, tx := range txs {
+			txID := tx.GetTxId()
+			if len(txID) >= 18 {
+				foundSet[txID[2:18]] = true // 短哈希是 txID[2:18]
+			}
+		}
+
+		// 找出缺失的短哈希
+		for _, hash := range allHashes {
+			shortHex := fmt.Sprintf("%x", hash)
+			if !foundSet[shortHex] {
+				missingHashes = append(missingHashes, hash)
+			}
+		}
+	}
+
+	return txs, missingHashes, nil
 }

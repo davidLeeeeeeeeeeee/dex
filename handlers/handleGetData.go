@@ -106,16 +106,28 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blk, err := hm.dbManager.GetBlockByID(req.BlockId)
-	if (err != nil || blk == nil) && hm.consensusManager != nil && hm.consensusManager.Node != nil && hm.adapter != nil {
-		// 重要：/getblockbyid 被共识用来“补齐缺失块”。
-		// 在高并发/高负载下，区块可能还在内存中但尚未落盘（DB 写队列异步刷盘），
-		// 这里允许从共识 store 直接兜底返回，避免 QueryManager 长期缺块导致卡住。
-		if b, ok := hm.consensusManager.Node.GetBlock(req.BlockId); ok && b != nil {
-			blk = hm.adapter.ConsensusBlockToDB(b, nil)
+	if (err != nil || blk == nil) && hm.consensusManager != nil {
+		// 1. 尝试从共识 Store 获取（可能在内存尚未落盘）
+		if hm.consensusManager.Node != nil && hm.adapter != nil {
+			if b, ok := hm.consensusManager.Node.GetBlock(req.BlockId); ok && b != nil {
+				blk = hm.adapter.ConsensusBlockToDB(b, nil)
+			}
+		}
+
+		// 2. 尝试从补课缓冲区获取（支持“短 Hash 传染”机制）
+		if blk == nil {
+			if pbb := hm.consensusManager.GetPendingBlockBuffer(); pbb != nil {
+				if tBlk, shortTxs := pbb.GetPendingBlock(req.BlockId); tBlk != nil {
+					// 虽然没有 Body，但返回 Header + ShortTxs，允许请求者也开始补课
+					blk = hm.adapter.ConsensusBlockToDB(tBlk, nil)
+					blk.ShortTxs = shortTxs
+				}
+			}
 		}
 	}
+
 	if blk == nil {
-		http.Error(w, fmt.Sprintf("Block %s not found", req.BlockId), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("Block %s not found (pending or missing)", req.BlockId), http.StatusNotFound)
 		return
 	}
 	resp := &pb.GetBlockResponse{Block: blk}

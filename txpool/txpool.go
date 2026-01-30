@@ -183,23 +183,30 @@ func (tp *TxPool) storeAnyTx(anyTx *pb.AnyTx) error {
 	}
 
 	tp.mu.Lock()
-	defer tp.mu.Unlock()
 
 	// 如果池里已经有了就跳过
 	if _, exists := tp.pendingAnyTxCache.Get(txID); exists {
+		tp.mu.Unlock()
 		return nil
 	}
 
-	// 加入内存缓存
+	// 1. 先同步写入内存缓存（确保立即可用于区块还原）
 	tp.pendingAnyTxCache.Add(txID, anyTx)
 	tp.cacheTx.Add(txID, anyTx)
-	tp.shortPendingAnyTxCache.Add(txID[2:18], txID)
-	tp.shortTxCache.Add(txID[2:18], txID)
-
-	// 保存到DB
-	if err := tp.dbManager.SavePendingAnyTx(anyTx); err != nil {
-		return err
+	if len(txID) >= 18 {
+		tp.shortPendingAnyTxCache.Add(txID[2:18], txID)
+		tp.shortTxCache.Add(txID[2:18], txID)
 	}
+
+	tp.mu.Unlock()
+
+	// 2. 异步写入 DB（不阻塞共识流程）
+	go func() {
+		if err := tp.dbManager.SavePendingAnyTx(anyTx); err != nil {
+			tp.Logger.Debug("[TxPool] Async DB save failed for tx %s: %v", txID, err)
+		}
+	}()
+
 	return nil
 }
 
@@ -521,4 +528,12 @@ func (tp *TxPool) GetChannelStats() []stats.ChannelStat {
 		}
 	}
 	return nil
+}
+
+// PendingLen 返回 pending 交易缓存的长度
+func (tp *TxPool) PendingLen() int {
+	if tp.pendingAnyTxCache == nil {
+		return 0
+	}
+	return tp.pendingAnyTxCache.Len()
 }

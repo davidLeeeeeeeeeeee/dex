@@ -76,6 +76,28 @@ func (m *MinerIndexManager) Remove(idx uint64) {
 	m.mu.Unlock()
 }
 
+// GetAddressByIndex 通过索引查找矿工地址
+func (m *MinerIndexManager) GetAddressByIndex(index uint64) (string, error) {
+	key := []byte(KeyIndexToAccount(index))
+	var addr string
+	err := m.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(key)
+		if err != nil {
+			return err
+		}
+		val, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		addr = string(val)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return addr, nil
+}
+
 // ----------  高性能采样  ----------
 
 func (m *MinerIndexManager) SampleK(k int) ([]uint64, error) {

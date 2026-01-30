@@ -29,21 +29,26 @@ type SyncManager struct {
 	Mu             sync.RWMutex
 	PeerHeights    map[types.NodeID]uint64
 	lastPoll       time.Time
-	usingSnapshot  bool // 新增：标记是否正在使用快照同步
+	usingSnapshot  bool // 标记是否正在使用快照同步
+	// 采样验证相关字段
+	sampling        bool                    // 是否正在采样验证
+	sampleResponses map[types.NodeID]uint64 // 采样响应: nodeID -> acceptedHeight
+	sampleStartTime time.Time               // 采样开始时间
 }
 
 func NewSyncManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, snapshotConfig *SnapshotConfig, events interfaces.EventBus, logger logs.Logger) *SyncManager {
 	return &SyncManager{
-		nodeID:         id,
-		transport:      transport,
-		store:          store,
-		config:         config,
-		snapshotConfig: snapshotConfig,
-		events:         events,
-		Logger:         logger,
-		SyncRequests:   make(map[uint32]time.Time),
-		PeerHeights:    make(map[types.NodeID]uint64),
-		lastPoll:       time.Now(),
+		nodeID:          id,
+		transport:       transport,
+		store:           store,
+		config:          config,
+		snapshotConfig:  snapshotConfig,
+		events:          events,
+		Logger:          logger,
+		SyncRequests:    make(map[uint32]time.Time),
+		PeerHeights:     make(map[types.NodeID]uint64),
+		lastPoll:        time.Now(),
+		sampleResponses: make(map[types.NodeID]uint64),
 	}
 }
 
@@ -88,8 +93,22 @@ func (sm *SyncManager) pollPeerHeights() {
 	}
 	sm.Mu.RUnlock()
 
-	// 限制轮询频率，至少间隔 2 秒
-	if time.Since(sm.lastPoll) < 2*time.Second {
+	// 限制轮询频率，落后时增加探测频率
+	cooldown := 2 * time.Second
+	sm.Mu.RLock()
+	_, accepted := sm.store.GetLastAccepted()
+	maxPeer := uint64(0)
+	for _, h := range sm.PeerHeights {
+		if h > maxPeer {
+			maxPeer = h
+		}
+	}
+	if maxPeer > accepted+2 {
+		cooldown = 500 * time.Millisecond // 落后较多时，每 500ms 探测一次
+	}
+	sm.Mu.RUnlock()
+
+	if time.Since(sm.lastPoll) < cooldown {
 		return
 	}
 	sm.lastPoll = time.Now()
@@ -124,13 +143,19 @@ func (sm *SyncManager) HandleHeightResponse(msg types.Message) {
 	// 同步应该基于对方“已最终化/已接受”的高度，而不是其当前最大高度（可能包含大量未最终化块）。
 	// 否则会导致本节点不断尝试同步一些其实全网都还没最终化的高度，出现重复 sync 且 added=0 的情况。
 	sm.PeerHeights[types.NodeID(msg.From)] = msg.Height
+
+	// 如果正在采样验证，收集响应
+	if sm.sampling {
+		sm.sampleResponses[types.NodeID(msg.From)] = msg.Height
+	}
 }
 
 // 检查是否有必要启动同步程序
 func (sm *SyncManager) checkAndSync() {
 	sm.Mu.Lock()
+
+	// 1. 检查是否有同步请求超时
 	if sm.Syncing {
-		// 检查是否有同步请求超时
 		now := time.Now()
 		hasTimeout := false
 		for syncID, startTime := range sm.SyncRequests {
@@ -154,35 +179,134 @@ func (sm *SyncManager) checkAndSync() {
 		}
 	}
 
+	// 2. 检查采样验证状态
+	if sm.sampling {
+		// 检查采样是否超时
+		if time.Since(sm.sampleStartTime) > sm.config.SampleTimeout {
+			logs.Debug("[Sync] Sample verification timed out, responses=%d", len(sm.sampleResponses))
+			sm.sampling = false
+			sm.Mu.Unlock()
+			return
+		}
+
+		// 评估 Quorum
+		quorumHeight, ok := sm.evaluateSampleQuorum()
+		if !ok {
+			// 尚未达到 Quorum，等待更多响应
+			sm.Mu.Unlock()
+			return
+		}
+
+		// Quorum 达成，可以安全同步
+		sm.sampling = false
+		_, localAcceptedHeight := sm.store.GetLastAccepted()
+
+		if quorumHeight > localAcceptedHeight {
+			logs.Info("[Sync] ✅ Quorum verified: target height %d confirmed by %.0f%% nodes",
+				quorumHeight, sm.config.QuorumRatio*100)
+			sm.Mu.Unlock()
+
+			// 判断使用快照还是普通同步
+			heightDiff := quorumHeight - localAcceptedHeight
+			if sm.snapshotConfig.Enabled && heightDiff > sm.config.SnapshotThreshold {
+				sm.requestSnapshotSync(quorumHeight)
+			} else {
+				sm.requestSync(localAcceptedHeight+1, minUint64(localAcceptedHeight+sm.config.BatchSize, quorumHeight))
+			}
+			return
+		}
+
+		sm.Mu.Unlock()
+		return
+	}
+
+	// 3. 初步检查是否落后
 	maxPeerHeight := uint64(0)
 	for _, height := range sm.PeerHeights {
 		if height > maxPeerHeight {
 			maxPeerHeight = height
 		}
 	}
-	sm.Mu.Unlock()
 
 	_, localAcceptedHeight := sm.store.GetLastAccepted()
-	localCurrentHeight := sm.store.GetCurrentHeight()
-	if localCurrentHeight > localAcceptedHeight {
-		logs.Debug("[Sync] Local height gap detected (accepted=%d, current=%d)",
-			localAcceptedHeight, localCurrentHeight)
-	}
 	heightDiff := uint64(0)
 	if maxPeerHeight > localAcceptedHeight {
 		heightDiff = maxPeerHeight - localAcceptedHeight
 	}
 
-	// 判断是否需要使用快照同步
-	if sm.snapshotConfig.Enabled && heightDiff > sm.config.SnapshotThreshold {
-		// 使用快照同步
-		sm.requestSnapshotSync(maxPeerHeight)
-	} else if heightDiff > sm.config.BehindThreshold {
-		// 使用普通同步
-		logs.Debug("[Sync] Behind by %d (peer=%d, accepted=%d, current=%d)",
-			heightDiff, maxPeerHeight, localAcceptedHeight, localCurrentHeight)
-		sm.requestSync(localAcceptedHeight+1, minUint64(localAcceptedHeight+sm.config.BatchSize, maxPeerHeight))
+	// 4. 如果落后超过阈值，启动采样验证
+	if heightDiff > sm.config.BehindThreshold {
+		logs.Debug("[Sync] Detected lag of %d blocks, starting sample verification (target=%d)",
+			heightDiff, maxPeerHeight)
+		sm.startHeightSampling()
 	}
+
+	sm.Mu.Unlock()
+}
+
+// startHeightSampling 启动采样验证（必须持有写锁调用）
+func (sm *SyncManager) startHeightSampling() {
+	sm.sampling = true
+	sm.sampleResponses = make(map[types.NodeID]uint64)
+	sm.sampleStartTime = time.Now()
+
+	// 采样 K 个节点
+	peers := sm.transport.SamplePeers(sm.nodeID, sm.config.SampleSize)
+	for _, peer := range peers {
+		sm.transport.Send(peer, types.Message{
+			Type: types.MsgHeightQuery,
+			From: sm.nodeID,
+		})
+	}
+}
+
+// evaluateSampleQuorum 评估采样 Quorum（必须持有读锁调用）
+// 返回满足 Quorum 的最高已最终化高度
+func (sm *SyncManager) evaluateSampleQuorum() (uint64, bool) {
+	responseCount := len(sm.sampleResponses)
+	if responseCount == 0 {
+		return 0, false
+	}
+
+	// 计算 Quorum 阈值
+	required := int(float64(sm.config.SampleSize) * sm.config.QuorumRatio)
+	if required < 1 {
+		required = 1
+	}
+
+	// 如果响应不足，继续等待
+	if responseCount < required {
+		return 0, false
+	}
+
+	// 收集所有高度并排序
+	heights := make([]uint64, 0, responseCount)
+	for _, h := range sm.sampleResponses {
+		heights = append(heights, h)
+	}
+
+	// 从高到低找到满足 Quorum 的最高高度
+	// 对于每个候选高度，统计有多少节点的 acceptedHeight >= 该高度
+	var maxQuorumHeight uint64
+	for _, candidateHeight := range heights {
+		supportCount := 0
+		for _, h := range sm.sampleResponses {
+			if h >= candidateHeight {
+				supportCount++
+			}
+		}
+		if supportCount >= required && candidateHeight > maxQuorumHeight {
+			maxQuorumHeight = candidateHeight
+		}
+	}
+
+	if maxQuorumHeight > 0 {
+		logs.Debug("[Sync] Quorum check: %d/%d nodes support height %d (required=%d)",
+			len(sm.sampleResponses), sm.config.SampleSize, maxQuorumHeight, required)
+		return maxQuorumHeight, true
+	}
+
+	return 0, false
 }
 
 // 请求快照同步
@@ -388,12 +512,8 @@ func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
 func (sm *SyncManager) HandleSyncRequest(msg types.Message) {
 	blocks := sm.store.GetBlocksFromHeight(msg.FromHeight, msg.ToHeight)
 
-	if len(blocks) == 0 {
-		return
-	}
-
-	Logf("[Node %s] Sending %d blocks to Node %s for sync\n",
-		sm.nodeID, len(blocks), msg.From)
+	Logf("[Node %s] Received sync request from Node %s for heights %d-%d (found %d blocks)\n",
+		sm.nodeID, msg.From, msg.FromHeight, msg.ToHeight, len(blocks))
 
 	response := types.Message{
 		Type:       types.MsgSyncResponse,

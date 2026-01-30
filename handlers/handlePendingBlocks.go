@@ -37,7 +37,13 @@ func (hm *HandlerManager) HandlePendingBlocks(w http.ResponseWriter, r *http.Req
 		HeightStates: make([]*pb.HeightConsensusState, 0, len(heightStates)),
 	}
 
+	seenBlocks := make(map[string]bool)
 	for _, block := range blocks {
+		if seenBlocks[block.ID] {
+			continue
+		}
+		seenBlocks[block.ID] = true
+
 		state, hasState := stateMap[block.Header.Height]
 		var votes int32
 		var isPreferred bool

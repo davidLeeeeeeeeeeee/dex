@@ -242,6 +242,19 @@ func GetCachedBlock(blockID string) (*pb.Block, bool) {
 	return block, exists
 }
 
+// CacheBlock 缓存区块（公开方法，供其他模块使用）
+func CacheBlock(block *pb.Block) {
+	if block == nil {
+		return
+	}
+	blockCacheMu.Lock()
+	defer blockCacheMu.Unlock()
+	blockCache[block.BlockHash] = block
+	if block.Header != nil {
+		blockCacheHeights[block.BlockHash] = block.Header.Height
+	}
+}
+
 // RemoveCachedBlock 从缓存中移除区块
 func RemoveCachedBlock(blockID string) {
 	blockCacheMu.Lock()
