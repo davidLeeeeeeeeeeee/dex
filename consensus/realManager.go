@@ -304,3 +304,35 @@ func (m *ConsensusNodeManager) GetPendingBlockBuffer() *PendingBlockBuffer {
 	}
 	return nil
 }
+
+// SyncStatus 同步状态
+type SyncStatus struct {
+	IsSyncing        bool   // 是否正在同步追赶
+	SyncTargetHeight uint64 // 同步目标高度（网络最高已最终化高度）
+	IsSnapshotSync   bool   // 是否快照同步模式
+}
+
+// GetSyncStatus 获取节点同步状态
+func (m *ConsensusNodeManager) GetSyncStatus() SyncStatus {
+	if m.Node == nil || m.Node.SyncManager == nil {
+		return SyncStatus{}
+	}
+
+	sm := m.Node.SyncManager
+	sm.Mu.RLock()
+	defer sm.Mu.RUnlock()
+
+	// 计算网络最高已最终化高度
+	var maxPeerHeight uint64
+	for _, h := range sm.PeerHeights {
+		if h > maxPeerHeight {
+			maxPeerHeight = h
+		}
+	}
+
+	return SyncStatus{
+		IsSyncing:        sm.Syncing,
+		SyncTargetHeight: maxPeerHeight,
+		IsSnapshotSync:   sm.usingSnapshot,
+	}
+}

@@ -20,11 +20,17 @@ func (hm *HandlerManager) HandleHeightQuery(w http.ResponseWriter, r *http.Reque
 		pendingTxCount = uint32(hm.txPool.PendingLen())
 	}
 
+	// 获取同步状态
+	syncStatus := hm.consensusManager.GetSyncStatus()
+
 	resp := &pb.HeightResponse{ // 需要在proto中定义
 		LastAcceptedHeight: height,
 		CurrentHeight:      currentHeight,
 		PendingBlocksCount: uint32(pendingCount),
 		PendingTxCount:     pendingTxCount,
+		IsSyncing:          syncStatus.IsSyncing,
+		SyncTargetHeight:   syncStatus.SyncTargetHeight,
+		IsSnapshotSync:     syncStatus.IsSnapshotSync,
 	}
 
 	data, _ := proto.Marshal(resp)

@@ -75,6 +75,10 @@ type nodeSummary struct {
 	PendingBlocksCount uint32              `json:"pending_blocks_count,omitempty"` // 候选区块数量
 	PendingTxCount     uint32              `json:"pending_tx_count,omitempty"`     // txpool 中 pending 交易数量
 	PendingHeaders     []pendingHeaderInfo `json:"pending_headers,omitempty"`      // 未最终化的区块头列表
+	// 同步状态字段
+	IsSyncing        bool   `json:"is_syncing,omitempty"`         // 是否正在同步追赶
+	SyncTargetHeight uint64 `json:"sync_target_height,omitempty"` // 同步目标高度
+	IsSnapshotSync   bool   `json:"is_snapshot_sync,omitempty"`   // 是否快照同步模式
 }
 
 type nodeDetails struct {
@@ -1120,6 +1124,10 @@ func (s *server) collectSummary(ctx context.Context, nodes []string, includeBloc
 				summary.LastAcceptedHeight = height.LastAcceptedHeight
 				summary.PendingBlocksCount = height.PendingBlocksCount
 				summary.PendingTxCount = height.PendingTxCount
+				// 同步状态
+				summary.IsSyncing = height.IsSyncing
+				summary.SyncTargetHeight = height.SyncTargetHeight
+				summary.IsSnapshotSync = height.IsSnapshotSync
 			}
 
 			if includeFrost {

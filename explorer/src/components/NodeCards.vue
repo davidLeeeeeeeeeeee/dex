@@ -44,6 +44,14 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
     .slice(0, n)
     .map(([name, count]) => ({ name, count }))
 }
+
+function getSyncProgress(node: NodeSummary): number {
+  if (!node.sync_target_height || node.sync_target_height === 0) return 0
+  const accepted = node.last_accepted_height || 0
+  const target = node.sync_target_height
+  if (accepted >= target) return 100
+  return Math.min(100, Math.round((accepted / target) * 100))
+}
 </script>
 
 <template>
@@ -92,6 +100,23 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
         <div class="height-item highlight">
           <span class="h-label">ACCEPTED</span>
           <span class="h-value">{{ formatNumber(node.last_accepted_height) }}</span>
+        </div>
+      </div>
+
+      <!-- Sync Status -->
+      <div class="sync-status-row" v-if="node.is_syncing">
+        <div class="sync-header">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="sync-icon">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>
+          </svg>
+          <span class="sync-label">{{ node.is_snapshot_sync ? '快照同步中' : '同步中' }}</span>
+          <span class="sync-progress-text">{{ formatNumber(node.last_accepted_height) }} / {{ formatNumber(node.sync_target_height) }}</span>
+        </div>
+        <div class="sync-progress-bar">
+          <div 
+            class="sync-progress-fill" 
+            :style="{ width: getSyncProgress(node) + '%' }"
+          ></div>
         </div>
       </div>
 
@@ -479,5 +504,72 @@ function topApiCalls(node: NodeSummary, n: number = 2): Array<{ name: string, co
   color: #64748b;
   min-width: 50px;
   text-align: right;
+}
+
+/* 同步状态样式 */
+.sync-status-row {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+  animation: sync-pulse 2s infinite;
+}
+
+@keyframes sync-pulse {
+  0%, 100% { border-color: rgba(59, 130, 246, 0.2); }
+  50% { border-color: rgba(59, 130, 246, 0.5); }
+}
+
+.sync-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.7rem;
+}
+
+.sync-icon {
+  color: #3b82f6;
+  animation: sync-spin 2s linear infinite;
+}
+
+@keyframes sync-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.sync-label {
+  color: #3b82f6;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sync-progress-text {
+  margin-left: auto;
+  color: #60a5fa;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+}
+
+.sync-progress-bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.sync-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  border-radius: 3px;
+  transition: width 0.5s ease;
+  animation: progress-glow 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(59, 130, 246, 0.5); }
+  50% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.8); }
 }
 </style>

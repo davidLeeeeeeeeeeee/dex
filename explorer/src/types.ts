@@ -12,6 +12,10 @@ export interface NodeSummary {
   pending_blocks_count?: number  // 候选区块数量（未确认）
   pending_tx_count?: number      // txpool 中 pending 交易数量
   pending_headers?: PendingHeaderInfo[]  // 未最终化的区块头列表
+  // 同步状态字段
+  is_syncing?: boolean           // 是否正在同步追赶
+  sync_target_height?: number    // 同步目标高度
+  is_snapshot_sync?: boolean     // 是否快照同步模式
 }
 
 // 节点详情（包含日志和最近区块）
