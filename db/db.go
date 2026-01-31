@@ -3,12 +3,12 @@ package db
 import (
 	"dex/config"
 	"dex/interfaces"
-	smt "dex/jmt"
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"dex/stats"
 	"dex/utils"
+	"dex/verkle"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -23,7 +23,7 @@ import (
 // Manager 封装 BadgerDB 的管理器
 type Manager struct {
 	Db      *badger.DB
-	StateDB *smt.JMTStateDB // 使用 JMT 作为状态存储
+	StateDB *verkle.VerkleStateDB // 使用 Verkle Tree 作为状态存储
 	mu      sync.RWMutex
 
 	// 队列通道，批量写的 goroutine 用它来取写请求
@@ -76,17 +76,17 @@ func NewManager(path string, logger logs.Logger) (*Manager, error) {
 		return nil, fmt.Errorf("failed to create sequence: %w", err)
 	}
 
-	// 初始化 JMT StateDB，使用主 DB 的实例（共享 BadgerDB）
-	jmtCfg := smt.JMTConfig{
-		DataDir: filepath.Join(path, "jmt_state"),
-		Prefix:  []byte("jmt:"),
+	// 初始化 Verkle StateDB
+	verkleCfg := verkle.VerkleConfig{
+		DataDir: filepath.Join(path, "verkle_state"),
+		Prefix:  []byte("verkle:"),
 	}
 
-	stateDB, err := smt.NewJMTStateDB(jmtCfg)
+	stateDB, err := verkle.NewVerkleStateDB(verkleCfg)
 	if err != nil {
 		_ = seq.Release()
 		_ = db.Close()
-		return nil, fmt.Errorf("failed to create JMT StateDB: %w", err)
+		return nil, fmt.Errorf("failed to create Verkle StateDB: %w", err)
 	}
 
 	manager := &Manager{
@@ -173,13 +173,13 @@ func (manager *Manager) ForceFlush() error {
 
 // NewSession 创建一个新的数据库会话
 func (m *Manager) NewSession() (interfaces.DBSession, error) {
-	jmtSess, err := m.StateDB.NewSession()
+	verkleSess, err := m.StateDB.NewSession()
 	if err != nil {
 		return nil, err
 	}
 	return &dbSession{
-		manager: m,
-		jmtSess: jmtSess,
+		manager:    m,
+		verkleSess: verkleSess,
 	}, nil
 }
 
@@ -191,25 +191,25 @@ func (m *Manager) CommitRoot(height uint64, root []byte) {
 
 // dbSession 数据库会话实现
 type dbSession struct {
-	manager *Manager
-	jmtSess *smt.JMTStateDBSession
+	manager    *Manager
+	verkleSess *verkle.VerkleStateDBSession
 }
 
 func (s *dbSession) Get(key string) ([]byte, error) {
-	// 对于状态数据，优先尝试从 JMT 会话读取
+	// 对于状态数据，优先尝试从 Verkle 会话读取
 	if keys.IsStatefulKey(key) {
-		val, exists, err := s.jmtSess.Get(key)
+		val, exists, err := s.verkleSess.Get(key)
 		if err == nil && exists {
 			return val, nil
 		}
 	}
 
 	// 否则从会话底层事务读取（共享事务）
-	return s.jmtSess.GetKV(key)
+	return s.verkleSess.GetKV(key)
 }
 
 func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]byte, error) {
-	kvUpdates := make([]smt.KVUpdate, 0, len(updates))
+	kvUpdates := make([]verkle.KVUpdate, 0, len(updates))
 	for _, u := range updates {
 		type writeOpInterface interface {
 			GetKey() string
@@ -222,7 +222,7 @@ func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]by
 			if !keys.IsStatefulKey(key) {
 				continue
 			}
-			kvUpdates = append(kvUpdates, smt.KVUpdate{
+			kvUpdates = append(kvUpdates, verkle.KVUpdate{
 				Key:     key,
 				Value:   writeOp.GetValue(),
 				Deleted: writeOp.IsDel(),
@@ -231,24 +231,24 @@ func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]by
 	}
 
 	if len(kvUpdates) > 0 {
-		if err := s.jmtSess.ApplyUpdate(height, kvUpdates...); err != nil {
+		if err := s.verkleSess.ApplyUpdate(height, kvUpdates...); err != nil {
 			return nil, err
 		}
 	}
 
-	return s.jmtSess.Root(), nil
+	return s.verkleSess.Root(), nil
 }
 
 func (s *dbSession) Commit() error {
-	return s.jmtSess.Commit()
+	return s.verkleSess.Commit()
 }
 
 func (s *dbSession) Rollback() error {
-	return s.jmtSess.Rollback()
+	return s.verkleSess.Rollback()
 }
 
 func (s *dbSession) Close() error {
-	return s.jmtSess.Close()
+	return s.verkleSess.Close()
 }
 
 // Scan scans all keys with the given prefix and returns a map of key-value pairs
@@ -774,9 +774,9 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) ([]byte, e
 		return nil, fmt.Errorf("StateDB is not initialized")
 	}
 
-	// 将 WriteOp 转换为 JMT 的 KVUpdate
+	// 将 WriteOp 转换为 Verkle 的 KVUpdate
 	// 使用 keys.IsStatefulKey 进行二次过滤，确保只有状态数据才会同步
-	kvUpdates := make([]smt.KVUpdate, 0, len(updates))
+	kvUpdates := make([]verkle.KVUpdate, 0, len(updates))
 	for _, u := range updates {
 		// 使用接口类型断言（避免循环依赖）
 		type writeOpInterface interface {
@@ -792,7 +792,7 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) ([]byte, e
 			if !keys.IsStatefulKey(key) {
 				continue
 			}
-			kvUpdates = append(kvUpdates, smt.KVUpdate{
+			kvUpdates = append(kvUpdates, verkle.KVUpdate{
 				Key:     key,
 				Value:   writeOp.GetValue(),
 				Deleted: writeOp.IsDel(),
@@ -802,7 +802,7 @@ func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) ([]byte, e
 		}
 	}
 
-	// 调用 JMT StateDB 的 ApplyAccountUpdate
+	// 调用 Verkle StateDB 的 ApplyAccountUpdate
 	if len(kvUpdates) > 0 {
 		if err := m.StateDB.ApplyAccountUpdate(height, kvUpdates...); err != nil {
 			logs.Error("[DB] Failed to sync to StateDB: %v", err)

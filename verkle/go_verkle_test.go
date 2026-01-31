@@ -8,13 +8,13 @@ import (
 )
 
 // ============================================
-// Go-Verkle 性能测试
+// Verkle Tree 性能测试 (基于 go-verkle)
 // ============================================
 
-// TestGoVerkleBasicCRUD 基本 CRUD 测试
-func TestGoVerkleBasicCRUD(t *testing.T) {
+// TestVerkleBasicCRUD 基本 CRUD 测试
+func TestVerkleBasicCRUD(t *testing.T) {
 	store := NewSimpleVersionedMap()
-	tree := NewGoVerkleTree(store)
+	tree := NewVerkleTree(store)
 
 	// 1. 测试插入
 	keys := [][]byte{[]byte("key1")}
@@ -54,13 +54,13 @@ func TestGoVerkleBasicCRUD(t *testing.T) {
 		t.Errorf("expected 'value1_updated', got '%s'", string(val2))
 	}
 
-	t.Logf("Go-Verkle Basic CRUD test passed. Root v1: %x, Root v2: %x", root1[:8], root2[:8])
+	t.Logf("Verkle Basic CRUD test passed. Root v1: %x, Root v2: %x", root1[:8], root2[:8])
 }
 
-// TestGoVerkleMultipleKeys 多 Key 测试
-func TestGoVerkleMultipleKeys(t *testing.T) {
+// TestVerkleMultipleKeys 多 Key 测试
+func TestVerkleMultipleKeys(t *testing.T) {
 	store := NewSimpleVersionedMap()
-	tree := NewGoVerkleTree(store)
+	tree := NewVerkleTree(store)
 
 	// 插入多个 key
 	keys := [][]byte{
@@ -91,17 +91,17 @@ func TestGoVerkleMultipleKeys(t *testing.T) {
 		}
 	}
 
-	t.Logf("Go-Verkle Multiple keys test passed. Root: %x", root[:8])
+	t.Logf("Verkle Multiple keys test passed. Root: %x", root[:8])
 }
 
-// TestGoVerkleTPS2000 测试 2000 batch 的 TPS
-func TestGoVerkleTPS2000(t *testing.T) {
+// TestVerkleTPS2000 测试 2000 batch 的 TPS
+func TestVerkleTPS2000(t *testing.T) {
 	batchSize := 2000
 	iterations := 5
 
 	// 预热
 	store := NewSimpleVersionedMap()
-	tree := NewGoVerkleTree(store)
+	tree := NewVerkleTree(store)
 	warmupKeys := make([][]byte, 100)
 	warmupValues := make([][]byte, 100)
 	for i := 0; i < 100; i++ {
@@ -116,7 +116,7 @@ func TestGoVerkleTPS2000(t *testing.T) {
 	var totalDuration int64
 	for iter := 0; iter < iterations; iter++ {
 		store := NewSimpleVersionedMap()
-		tree := NewGoVerkleTree(store)
+		tree := NewVerkleTree(store)
 
 		keys := make([][]byte, batchSize)
 		values := make([][]byte, batchSize)
@@ -142,20 +142,20 @@ func TestGoVerkleTPS2000(t *testing.T) {
 
 	avgDuration := time.Duration(totalDuration / int64(iterations))
 	avgTPS := float64(batchSize) / avgDuration.Seconds()
-	t.Logf("\n=== Go-Verkle 2000 Batch TPS Result ===")
+	t.Logf("\n=== Verkle 2000 Batch TPS Result ===")
 	t.Logf("Average duration: %v", avgDuration)
 	t.Logf("Average TPS: %.0f", avgTPS)
 }
 
-// BenchmarkGoVerkleInsertBatch go-verkle 批量插入性能
-func BenchmarkGoVerkleInsertBatch(b *testing.B) {
+// BenchmarkVerkleInsertBatch 批量插入性能
+func BenchmarkVerkleInsertBatch(b *testing.B) {
 	batchSizes := []int{100, 1000, 2000}
 
 	for _, batchSize := range batchSizes {
 		b.Run(fmt.Sprintf("batch_%d", batchSize), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				store := NewSimpleVersionedMap()
-				tree := NewGoVerkleTree(store)
+				tree := NewVerkleTree(store)
 
 				keys := make([][]byte, batchSize)
 				values := make([][]byte, batchSize)
@@ -177,10 +177,10 @@ func BenchmarkGoVerkleInsertBatch(b *testing.B) {
 	}
 }
 
-// BenchmarkGoVerkleGet go-verkle 读取性能
-func BenchmarkGoVerkleGet(b *testing.B) {
+// BenchmarkVerkleGet 读取性能
+func BenchmarkVerkleGet(b *testing.B) {
 	store := NewSimpleVersionedMap()
-	tree := NewGoVerkleTree(store)
+	tree := NewVerkleTree(store)
 
 	// 预先插入数据
 	numKeys := 10000
@@ -202,50 +202,4 @@ func BenchmarkGoVerkleGet(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-}
-
-// BenchmarkComparison 对比原生实现和 go-verkle
-func BenchmarkComparison(b *testing.B) {
-	batchSize := 1000
-
-	b.Run("Native_Verkle", func(b *testing.B) {
-		NumWorkers = 32
-		for i := 0; i < b.N; i++ {
-			store := NewSimpleVersionedMap()
-			tree := NewVerkleTree(store)
-
-			keys := make([][]byte, batchSize)
-			values := make([][]byte, batchSize)
-			for j := 0; j < batchSize; j++ {
-				keys[j] = make([]byte, 32)
-				values[j] = make([]byte, 32)
-				rand.Read(keys[j])
-				rand.Read(values[j])
-			}
-
-			b.StartTimer()
-			tree.Update(keys, values, Version(1))
-			b.StopTimer()
-		}
-	})
-
-	b.Run("Go_Verkle", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			store := NewSimpleVersionedMap()
-			tree := NewGoVerkleTree(store)
-
-			keys := make([][]byte, batchSize)
-			values := make([][]byte, batchSize)
-			for j := 0; j < batchSize; j++ {
-				keys[j] = make([]byte, 32)
-				values[j] = make([]byte, 32)
-				rand.Read(keys[j])
-				rand.Read(values[j])
-			}
-
-			b.StartTimer()
-			tree.Update(keys, values, Version(1))
-			b.StopTimer()
-		}
-	})
 }

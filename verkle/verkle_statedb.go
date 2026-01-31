@@ -345,7 +345,7 @@ func (s *VerkleStateDB) Prove(key string) (*VerkleProof, error) {
 
 // VerifyProof 验证 Verkle Proof
 func (s *VerkleStateDB) VerifyProof(proof *VerkleProof, root []byte) bool {
-	return VerifyVerkleProof(proof, root, s.tree.Committer())
+	return VerifyVerkleProof(proof, root)
 }
 
 // ============================================
