@@ -73,7 +73,16 @@ func (pm *ProposalManager) Start(ctx context.Context) {
 
 // handleBlockFinalized 处理区块最终化事件
 func (pm *ProposalManager) handleBlockFinalized(event interfaces.Event) {
-	if block, ok := event.Data().(*types.Block); ok {
+	var block *types.Block
+	switch data := event.Data().(type) {
+	case *types.BlockFinalizedData:
+		if data != nil {
+			block = data.Block
+		}
+	case *types.Block:
+		block = data
+	}
+	if block != nil {
 		pm.UpdateLastBlockTime(time.Now())
 		logs.Debug("[ProposalManager] Block %s finalized, updated last block time", block.ID)
 	}

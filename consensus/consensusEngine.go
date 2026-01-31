@@ -30,7 +30,7 @@ type QueryContext struct {
 	queryKey  string
 	blockID   string
 	votes     map[string]int
-	voters    map[types.NodeID]bool
+	voters    map[types.NodeID]string // nodeID -> preferredBlockID
 	responded int
 	startTime time.Time
 	height    uint64
@@ -87,7 +87,7 @@ func (e *SnowmanEngine) RegisterQuery(nodeID types.NodeID, requestID uint32, blo
 		queryKey:  queryKey,
 		blockID:   blockID,
 		votes:     make(map[string]int),
-		voters:    make(map[types.NodeID]bool),
+		voters:    make(map[types.NodeID]string),
 		responded: 0,
 		startTime: time.Now(),
 		height:    height,
@@ -103,12 +103,15 @@ func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferr
 
 	// 检查查询是否存在，以及该节点是否已经对该查询投过票（防止重复计票）
 	ctx, exists := e.activeQueries[queryKey]
-	if !exists || ctx.voters[nodeID] {
+	if !exists {
+		return
+	}
+	if _, voted := ctx.voters[nodeID]; voted {
 		return
 	}
 
 	// 记录该节点的选票及其偏好的区块 ID
-	ctx.voters[nodeID] = true
+	ctx.voters[nodeID] = preferredID
 	ctx.votes[preferredID]++
 	ctx.responded++ // 增加已收到的响应计数
 
@@ -203,17 +206,45 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 	}
 
 	if sb.CanFinalize(e.config.Beta) && newPreference != "" {
-		e.finalizeBlock(ctx.height, newPreference)
+		// 收集最终化时的投票信息
+		chits := e.collectFinalizationChits(ctx, newPreference)
+		e.finalizeBlock(ctx.height, newPreference, chits)
 	}
 	return "success"
 }
 
-func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string) {
+// collectFinalizationChits 从 QueryContext 收集投票信息
+func (e *SnowmanEngine) collectFinalizationChits(ctx *QueryContext, blockID string) *types.FinalizationChits {
+	chits := &types.FinalizationChits{
+		BlockID:     blockID,
+		Height:      ctx.height,
+		TotalVotes:  len(ctx.voters),
+		Chits:       make([]types.FinalizationChit, 0, len(ctx.voters)),
+		FinalizedAt: time.Now().UnixMilli(),
+	}
+
+	for nodeID, preferredID := range ctx.voters {
+		chits.Chits = append(chits.Chits, types.FinalizationChit{
+			NodeID:      string(nodeID),
+			PreferredID: preferredID,
+			Timestamp:   ctx.startTime.UnixMilli(),
+		})
+	}
+
+	return chits
+}
+
+func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string, chits *types.FinalizationChits) {
 	if _, exists := e.store.Get(blockID); !exists {
 		logs.Warn("[Engine] Finalize skipped: block %s not found at height %d", blockID, height)
 		return
 	}
 	e.store.SetFinalized(height, blockID)
+
+	// 存储 chits 到 RealBlockStore（如果支持）
+	if realStore, ok := e.store.(*RealBlockStore); ok && chits != nil {
+		realStore.SetFinalizationChits(height, chits)
+	}
 
 	sb := e.snowballs[height]
 	if sb != nil {
@@ -222,9 +253,13 @@ func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string) {
 
 	if block, exists := e.store.Get(blockID); exists {
 		Logf("[Engine] 🎉 Finalized block %s at height %d\n", blockID, height)
+		// 发布包含 chits 的事件
 		e.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventBlockFinalized,
-			EventData: block,
+			EventData: &types.BlockFinalizedData{
+				Block: block,
+				Chits: chits,
+			},
 		})
 	}
 }

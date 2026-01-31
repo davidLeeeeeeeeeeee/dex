@@ -38,8 +38,19 @@ func (sm *SnapshotManager) Start(ctx context.Context) {
 
 	// 监听区块最终化事件，定期创建快照
 	sm.events.Subscribe(types.EventBlockFinalized, func(e interfaces.Event) {
-		if block, ok := e.Data().(*types.Block); ok {
-			sm.checkAndCreateSnapshot(block.Header.Height)
+		var height uint64
+		switch data := e.Data().(type) {
+		case *types.BlockFinalizedData:
+			if data != nil && data.Block != nil {
+				height = data.Block.Header.Height
+			}
+		case *types.Block:
+			if data != nil {
+				height = data.Header.Height
+			}
+		}
+		if height > 0 {
+			sm.checkAndCreateSnapshot(height)
 		}
 	})
 }

@@ -85,6 +85,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/status", hm.HandleStatus)
 	mux.HandleFunc("/tx", hm.HandleTx)
 	mux.HandleFunc("/getblock", hm.HandleGetBlock)
+	mux.HandleFunc("/getchits", hm.HandleGetChits) // 获取区块最终化投票信息
 	mux.HandleFunc("/getrecentblocks", hm.HandleGetRecentBlocks)
 	mux.HandleFunc("/getdata", hm.HandleGetData)
 	mux.HandleFunc("/gettxreceipt", hm.HandleGetTxReceipt)

@@ -45,6 +45,28 @@ type Block struct {
 	Signatures   [][]byte    // Consensus signatures on Header (future use)
 }
 
+// FinalizationChit 单个节点的投票信息
+type FinalizationChit struct {
+	NodeID      string `json:"node_id"`      // 投票节点 ID
+	PreferredID string `json:"preferred_id"` // 节点偏好的区块 ID
+	Timestamp   int64  `json:"timestamp"`    // 投票时间戳 (毫秒)
+}
+
+// FinalizationChits 区块最终化时的投票汇总
+type FinalizationChits struct {
+	BlockID     string             `json:"block_id"`     // 最终化的区块 ID
+	Height      uint64             `json:"height"`       // 区块高度
+	TotalVotes  int                `json:"total_votes"`  // 总投票数
+	Chits       []FinalizationChit `json:"chits"`        // 投票详情列表
+	FinalizedAt int64              `json:"finalized_at"` // 最终化时间戳 (毫秒)
+}
+
+// BlockFinalizedData 区块最终化事件数据包装
+type BlockFinalizedData struct {
+	Block *Block             `json:"block"`
+	Chits *FinalizationChits `json:"chits,omitempty"`
+}
+
 // Convenience methods for backward compatibility
 func (b *Block) GetHeight() uint64    { return b.Header.Height }
 func (b *Block) GetParentID() string  { return b.Header.ParentID }

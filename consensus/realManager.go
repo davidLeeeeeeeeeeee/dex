@@ -257,6 +257,22 @@ func (m *ConsensusNodeManager) GetEventBus() interfaces.EventBus {
 	return nil
 }
 
+// GetBlockStore 获取区块存储
+func (m *ConsensusNodeManager) GetBlockStore() interfaces.BlockStore {
+	return m.store
+}
+
+// GetFinalizationChits 获取指定高度的最终化投票信息
+func (m *ConsensusNodeManager) GetFinalizationChits(height uint64) *types.FinalizationChits {
+	if realStore, ok := m.store.(*RealBlockStore); ok {
+		chits, exists := realStore.GetFinalizationChits(height)
+		if exists {
+			return chits
+		}
+	}
+	return nil
+}
+
 // IsReady 检查共识是否准备就绪
 func (m *ConsensusNodeManager) IsReady() bool {
 	// 检查各组件是否就绪

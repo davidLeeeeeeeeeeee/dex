@@ -37,9 +37,20 @@ func (n *EventBusFinalityNotifier) SubscribeBlockFinalized(fn func(height uint64
 			return
 		}
 
-		// 从事件数据中提取区块高度
-		if block, ok := event.Data().(*types.Block); ok && block != nil {
-			fn(block.Header.Height)
+		// 从事件数据中提取区块高度（兼容两种数据类型）
+		var height uint64
+		switch data := event.Data().(type) {
+		case *types.BlockFinalizedData:
+			if data != nil && data.Block != nil {
+				height = data.Block.Header.Height
+			}
+		case *types.Block:
+			if data != nil {
+				height = data.Header.Height
+			}
+		}
+		if height > 0 {
+			fn(height)
 		}
 	}
 

@@ -39,6 +39,9 @@ type RealBlockStore struct {
 	snapshotHeights []uint64
 	maxSnapshots    int
 	nodeID          types.NodeID // 新增
+
+	// 最终化投票记录（用于调试）
+	finalizationChits map[uint64]*types.FinalizationChits
 }
 
 // 创建真实的区块存储
@@ -79,18 +82,19 @@ func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots 
 	vmExecutor := vm.NewExecutorWithWitnessService(dbManager, registry, cache, witnessSvc)
 
 	store := &RealBlockStore{
-		dbManager:       dbManager,
-		pool:            pool,
-		vmExecutor:      vmExecutor,
-		blockCache:      make(map[string]*types.Block),
-		heightIndex:     make(map[uint64][]*types.Block),
-		finalizedBlocks: make(map[uint64]*types.Block),
-		snapshots:       make(map[uint64]*types.Snapshot),
-		snapshotHeights: make([]uint64, 0),
-		maxSnapshots:    maxSnapshots,
-		maxHeight:       0,
-		adapter:         NewConsensusAdapter(dbManager),
-		nodeID:          nodeID, // 记录节点ID
+		dbManager:         dbManager,
+		pool:              pool,
+		vmExecutor:        vmExecutor,
+		blockCache:        make(map[string]*types.Block),
+		heightIndex:       make(map[uint64][]*types.Block),
+		finalizedBlocks:   make(map[uint64]*types.Block),
+		snapshots:         make(map[uint64]*types.Snapshot),
+		snapshotHeights:   make([]uint64, 0),
+		maxSnapshots:      maxSnapshots,
+		maxHeight:         0,
+		adapter:           NewConsensusAdapter(dbManager),
+		nodeID:            nodeID, // 记录节点ID
+		finalizationChits: make(map[uint64]*types.FinalizationChits),
 	}
 
 	// 初始化创世区块
@@ -886,4 +890,52 @@ func (s *RealBlockStore) GetPendingBlocks() []*types.Block {
 		}
 	}
 	return result
+}
+
+// SetFinalizationChits 存储指定高度的最终化投票信息
+func (s *RealBlockStore) SetFinalizationChits(height uint64, chits *types.FinalizationChits) {
+	s.mu.Lock()
+	s.finalizationChits[height] = chits
+	s.mu.Unlock()
+
+	// 异步持久化到数据库
+	go func() {
+		key := fmt.Sprintf("finalization_chits_%d", height)
+		data, err := json.Marshal(chits)
+		if err != nil {
+			logs.Warn("[RealBlockStore] Failed to marshal finalization chits for height %d: %v", height, err)
+			return
+		}
+		s.dbManager.EnqueueSet(key, string(data))
+	}()
+}
+
+// GetFinalizationChits 获取指定高度的最终化投票信息
+func (s *RealBlockStore) GetFinalizationChits(height uint64) (*types.FinalizationChits, bool) {
+	s.mu.RLock()
+	if chits, exists := s.finalizationChits[height]; exists {
+		s.mu.RUnlock()
+		return chits, true
+	}
+	s.mu.RUnlock()
+
+	// 尝试从数据库加载
+	key := fmt.Sprintf("finalization_chits_%d", height)
+	data, err := s.dbManager.Read(key)
+	if err != nil || data == "" {
+		return nil, false
+	}
+
+	var chits types.FinalizationChits
+	if err := json.Unmarshal([]byte(data), &chits); err != nil {
+		logs.Warn("[RealBlockStore] Failed to unmarshal finalization chits for height %d: %v", height, err)
+		return nil, false
+	}
+
+	// 缓存到内存
+	s.mu.Lock()
+	s.finalizationChits[height] = &chits
+	s.mu.Unlock()
+
+	return &chits, true
 }

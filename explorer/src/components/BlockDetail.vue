@@ -170,6 +170,51 @@ function handleAddressClick(e: Event, address?: string) {
         </div>
       </div>
     </section>
+
+    <!-- Finalization Votes (Debug Info) -->
+    <section v-if="block.finalization_chits" class="panel chits-panel">
+      <div class="panel-header-sub">
+        <div class="title-meta">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2 2 4-4"/><path d="M3.43 13.61a2 2 0 0 1 0-3.22l9-6A2 2 0 0 1 15 6v12a2 2 0 0 1-2.57 1.92l-9-6Z"/></svg>
+          <h3>Finalization Votes</h3>
+          <span class="count-tag highlight-green">{{ block.finalization_chits.total_votes }} Votes</span>
+        </div>
+        <span v-if="block.finalization_chits.finalized_at" class="finalized-time text-gray-500 text-xs">
+          Finalized at {{ new Date(block.finalization_chits.finalized_at).toLocaleString() }}
+        </span>
+      </div>
+
+      <div class="table-wrap">
+        <table class="premium-table">
+          <thead>
+            <tr>
+              <th class="pl-6">Voter Node</th>
+              <th>Preferred Block</th>
+              <th class="text-right pr-6">Vote Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(chit, idx) in block.finalization_chits.chits" :key="idx" class="table-row no-hover">
+              <td class="pl-6">
+                <code class="mono text-teal-400">{{ chit.node_id }}</code>
+              </td>
+              <td>
+                <code class="mono" :class="chit.preferred_id === block.block_hash ? 'text-emerald-400' : 'text-gray-500'">
+                  {{ truncateHash(chit.preferred_id, 12) }}
+                </code>
+                <span v-if="chit.preferred_id === block.block_hash" class="vote-match-tag">✓ Matched</span>
+              </td>
+              <td class="text-right pr-6 text-gray-500 text-xs">
+                {{ new Date(chit.timestamp).toLocaleTimeString() }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="!block.finalization_chits.chits || block.finalization_chits.chits.length === 0" class="empty-state-mini py-12">
+           No individual vote details available.
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -251,4 +296,18 @@ function handleAddressClick(e: Event, address?: string) {
 .animate-fade-in { animation: fadeIn 0.4s ease-out; }
 
 @media (max-width: 1024px) { .block-details-grid { grid-template-columns: 1fr; } }
+
+/* Finalization Chits Panel Styles */
+.chits-panel { margin-top: 24px; border-top: 1px solid rgba(16, 185, 129, 0.1); }
+.count-tag.highlight-green { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+.text-teal-400 { color: #2dd4bf; }
+.text-xs { font-size: 0.75rem; }
+.text-gray-500 { color: #64748b; }
+.finalized-time { font-family: 'JetBrains Mono', monospace; }
+.table-row.no-hover { cursor: default; }
+.table-row.no-hover:hover { background: transparent; }
+.vote-match-tag {
+  font-size: 0.55rem; font-weight: 700; background: rgba(16, 185, 129, 0.15);
+  color: #10b981; padding: 1px 6px; border-radius: 4px; margin-left: 8px;
+}
 </style>

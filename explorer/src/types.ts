@@ -122,6 +122,23 @@ export interface ExplorerState {
 }
 
 // 区块详情（包含交易列表）
+// 单个节点的投票信息（用于调试）
+export interface FinalizationChit {
+  node_id: string
+  preferred_id: string
+  timestamp: number
+}
+
+// 区块最终化投票详情（用于调试）
+export interface FinalizationChitsInfo {
+  block_id: string
+  height: number
+  total_votes: number
+  finalized_at: number
+  chits?: FinalizationChit[]
+}
+
+// 区块详情（包含交易列表）
 export interface BlockInfo {
   height: number
   block_hash: string
@@ -133,6 +150,7 @@ export interface BlockInfo {
   window?: number
   transactions?: TxSummary[]
   state_root?: string  // JMT 状态树根哈希
+  finalization_chits?: FinalizationChitsInfo  // 最终化投票信息（用于调试）
 }
 
 // 交易摘要（区块内的交易列表项）

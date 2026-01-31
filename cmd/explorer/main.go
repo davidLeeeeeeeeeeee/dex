@@ -141,16 +141,32 @@ type blockResponse struct {
 }
 
 type blockInfo struct {
-	Height      uint64      `json:"height"`
-	BlockHash   string      `json:"block_hash"`
-	PrevHash    string      `json:"prev_block_hash,omitempty"`
-	TxsHash     string      `json:"txs_hash,omitempty"`
-	Miner       string      `json:"miner,omitempty"`
-	TxCount     int         `json:"tx_count"`
-	Accumulated string      `json:"accumulated_reward,omitempty"`
-	Window      int32       `json:"window,omitempty"`
-	StateRoot   string      `json:"state_root,omitempty"` // JMT 状态树根哈希
-	Txs         []txSummary `json:"transactions,omitempty"`
+	Height            uint64                 `json:"height"`
+	BlockHash         string                 `json:"block_hash"`
+	PrevHash          string                 `json:"prev_block_hash,omitempty"`
+	TxsHash           string                 `json:"txs_hash,omitempty"`
+	Miner             string                 `json:"miner,omitempty"`
+	TxCount           int                    `json:"tx_count"`
+	Accumulated       string                 `json:"accumulated_reward,omitempty"`
+	Window            int32                  `json:"window,omitempty"`
+	StateRoot         string                 `json:"state_root,omitempty"` // JMT 状态树根哈希
+	Txs               []txSummary            `json:"transactions,omitempty"`
+	FinalizationChits *finalizationChitsInfo `json:"finalization_chits,omitempty"` // 最终化投票信息
+}
+
+// finalizationChitsInfo 最终化投票信息（用于调试）
+type finalizationChitsInfo struct {
+	BlockID     string     `json:"block_id"`
+	Height      uint64     `json:"height"`
+	TotalVotes  int        `json:"total_votes"`
+	FinalizedAt int64      `json:"finalized_at"`
+	Chits       []chitInfo `json:"chits,omitempty"`
+}
+
+type chitInfo struct {
+	NodeID      string `json:"node_id"`
+	PreferredID string `json:"preferred_id"`
+	Timestamp   int64  `json:"timestamp"`
 }
 
 type txSummary struct {
@@ -485,6 +501,15 @@ func (s *server) handleBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info := convertBlockToInfo(block)
+
+	// 尝试获取最终化投票信息
+	if block != nil && block.Header != nil {
+		chits := s.fetchChits(ctx, req.Node, block.Header.Height)
+		if chits != nil {
+			info.FinalizationChits = chits
+		}
+	}
+
 	writeJSON(w, blockResponse{Block: info})
 }
 
@@ -1249,6 +1274,78 @@ func (s *server) fetchPendingHeaders(ctx context.Context, node string) ([]pendin
 		})
 	}
 	return headers, nil
+}
+
+// fetchChits 从节点获取区块最终化投票信息
+func (s *server) fetchChits(ctx context.Context, node string, height uint64) *finalizationChitsInfo {
+	// 构造 protobuf 请求
+	req := &pb.GetBlockRequest{Height: height}
+	reqBytes, err := proto.Marshal(req)
+	if err != nil {
+		return nil
+	}
+
+	url := fmt.Sprintf("https://%s/getchits", node)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBytes))
+	if err != nil {
+		return nil
+	}
+	httpReq.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := s.client.Do(httpReq)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	// 解析 JSON 响应
+	var result struct {
+		Height      uint64 `json:"height"`
+		BlockID     string `json:"block_id"`
+		TotalVotes  int    `json:"total_votes"`
+		FinalizedAt int64  `json:"finalized_at"`
+		Chits       []struct {
+			NodeID      string `json:"node_id"`
+			PreferredID string `json:"preferred_id"`
+			Timestamp   int64  `json:"timestamp"`
+		} `json:"chits"`
+		Error string `json:"error"`
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return nil
+	}
+
+	if result.Error != "" {
+		return nil
+	}
+
+	info := &finalizationChitsInfo{
+		BlockID:     result.BlockID,
+		Height:      result.Height,
+		TotalVotes:  result.TotalVotes,
+		FinalizedAt: result.FinalizedAt,
+		Chits:       make([]chitInfo, 0, len(result.Chits)),
+	}
+
+	for _, c := range result.Chits {
+		info.Chits = append(info.Chits, chitInfo{
+			NodeID:      c.NodeID,
+			PreferredID: c.PreferredID,
+			Timestamp:   c.Timestamp,
+		})
+	}
+
+	return info
 }
 
 func (s *server) fetchProto(ctx context.Context, node, path string, req proto.Message, resp proto.Message) error {
