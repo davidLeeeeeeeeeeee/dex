@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -356,5 +357,58 @@ func TestSimpleVersionedMap_PruneEffect(t *testing.T) {
 	got, err = store.Get(key, 3)
 	if err != nil || !bytes.Equal(got, []byte("v3")) {
 		t.Errorf("v3 should still exist")
+	}
+}
+func TestJMT_ConcurrentHighCollisionStress(t *testing.T) {
+	store := NewSimpleVersionedMap()
+	jmt := NewJMT(store, sha256.New())
+
+	count := 10000
+	concurrency := 8
+	keys := make([][]byte, count)
+	values := make([][]byte, count)
+
+	prefix := "v1_acc_orders_very_long_prefix_to_increase_depth_"
+	for i := 0; i < count; i++ {
+		keys[i] = []byte(fmt.Sprintf("%s%08d", prefix, i))
+		values[i] = []byte(fmt.Sprintf("v_%d", i))
+	}
+
+	// 并发插入，但共享同一个逻辑版本，模拟同一个区块内的并行处理
+	// 注意：JMT.Update 是带锁的，这里主要测试大量 Key 冲突时的路径重建正确性
+	var wg sync.WaitGroup
+	batchSize := count / concurrency
+	version := Version(1)
+
+	for g := 0; g < concurrency; g++ {
+		wg.Add(1)
+		go func(gid int) {
+			defer wg.Done()
+			start := gid * batchSize
+			end := start + batchSize
+			// 在同一个版本下进行增量更新
+			_, err := jmt.Update(keys[start:end], values[start:end], version)
+			if err != nil {
+				t.Errorf("Goroutine %d failed: %v", gid, err)
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	// 再次验证：JMT 现在的 Update 逻辑应该保证最后一次写入的版本是 version
+	if jmt.Version() != version {
+		t.Errorf("Version mismatch: got %d, want %d", jmt.Version(), version)
+	}
+
+	// 验证数据完整性
+	for i := 0; i < count; i++ {
+		got, err := jmt.Get(keys[i], 0)
+		if err != nil {
+			t.Errorf("Key %d missing: %v", i, err)
+			continue
+		}
+		if string(got) != fmt.Sprintf("v_%d", i) {
+			t.Errorf("Value mismatch for key %d: got %s", i, string(got))
+		}
 	}
 }

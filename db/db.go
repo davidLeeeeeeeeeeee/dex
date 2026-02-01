@@ -322,8 +322,8 @@ func (manager *Manager) ScanOrdersByPairs(pairs []string) (map[string]map[string
 		opts := badger.DefaultIteratorOptions
 
 		for _, pair := range pairs {
-			// 生成该交易对的未成交订单索引前缀
-			prefix := keys.KeyOrderPriceIndexPrefix(pair, false)
+			// 生成该交易对的未成交订单索引通用前缀 (不分 Side)
+			prefix := keys.KeyOrderPriceIndexGeneralPrefix(pair, false)
 			p := []byte(prefix)
 
 			pairMap := make(map[string][]byte)
@@ -768,7 +768,7 @@ func RebuildOrderPriceIndexes(m *Manager) (int, error) {
 				continue
 			}
 
-			indexKey := keys.KeyOrderPriceIndex(pair, isFilled, priceKey67, order.Base.TxId)
+			indexKey := keys.KeyOrderPriceIndex(pair, order.Side, isFilled, priceKey67, order.Base.TxId)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 
 			indexes = append(indexes, indexEntry{

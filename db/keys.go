@@ -3,7 +3,10 @@
 // 新代码应该直接使用 "dex/keys" 包
 package db
 
-import "dex/keys"
+import (
+	"dex/keys"
+	"dex/pb"
+)
 
 // ===================== 版本控制 =====================
 
@@ -95,8 +98,24 @@ func KeyOrderStatePrefix() string {
 	return keys.KeyOrderStatePrefix()
 }
 
-func KeyOrderPriceIndex(pair string, isFilled bool, priceKey67 string, orderID string) string {
-	return keys.KeyOrderPriceIndex(pair, isFilled, priceKey67, orderID)
+func KeyOrderPriceIndex(pair string, side pb.OrderSide, isFilled bool, priceKey67 string, orderID string) string {
+	return keys.KeyOrderPriceIndex(pair, side, isFilled, priceKey67, orderID)
+}
+
+func KeyOrderPriceIndexPrefix(pair string, side pb.OrderSide, isFilled bool) string {
+	return keys.KeyOrderPriceIndexPrefix(pair, side, isFilled)
+}
+
+func KeyOrderPriceIndexGeneralPrefix(pair string, isFilled bool) string {
+	return keys.KeyOrderPriceIndexGeneralPrefix(pair, isFilled)
+}
+
+func KeyAccountOrderItem(addr string, orderID string) string {
+	return keys.KeyAccountOrderItem(addr, orderID)
+}
+
+func KeyAccountOrdersPrefix(addr string) string {
+	return keys.KeyAccountOrdersPrefix(addr)
 }
 
 // ===================== Token 相关 =====================

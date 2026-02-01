@@ -72,7 +72,7 @@ func (mgr *Manager) SaveOrderTx(order *pb.OrderTx) error {
 	// 3. 构造索引key
 	//    例如: "pair:BTC_USDT|price:000000000123123|order_id:..."
 	// 新版本 OrderTx 不再有 IsFilled 字段，新订单默认未成交
-	indexKey := KeyOrderPriceIndex(pairKey, false, priceKey, order.Base.TxId)
+	indexKey := KeyOrderPriceIndex(pairKey, order.Side, false, priceKey, order.Base.TxId)
 
 	// 4. 存储 (跟你现在的逻辑一样，只是把 "base_token_base_quote" 替换成 pairKey)
 	data, err := ProtoMarshal(order)

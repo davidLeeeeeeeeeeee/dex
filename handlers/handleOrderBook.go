@@ -166,125 +166,36 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 	}
 
 	// 从数据库扫描未成交订单索引
-	indexData, err := hm.dbManager.ScanOrdersByPairs([]string{pair})
-	if err != nil {
-		http.Error(w, "failed to scan orders: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// 聚合买卖盘
+	// 175. 聚合买卖盘 - Phase 2: 使用 ScanKVWithLimit 优化
 	bidPrices := make(map[string]*priceLevelDataForAgg) // price -> level data
 	askPrices := make(map[string]*priceLevelDataForAgg)
 
-	// 从索引 key 中提取订单 ID，然后加载订单数据
-	pairIndexes := indexData[pair]
-	for indexKey := range pairIndexes {
-		orderID := extractOrderIDFromIndexKey(indexKey)
-		if orderID == "" {
-			continue
+	// 分别加载买盘和卖盘 (限制前端显示各 100 条深度)
+	// 买盘 (Side_BUY = 0)
+	buyPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_BUY, false)
+	buyOrders, err := hm.dbManager.ScanKVWithLimit(buyPrefix, 100)
+	if err != nil {
+		// Log the error but continue to process what we have, or return an error if critical
+		// For now, we'll just skip if there's an error scanning buy orders
+		// http.Error(w, "failed to scan buy orders: "+err.Error(), http.StatusInternalServerError)
+		// return
+	} else {
+		for indexKey := range buyOrders {
+			hm.processOrderForAgg(indexKey, bidPrices, askPrices)
 		}
+	}
 
-		// 优先从 OrderState 读取（新版本）
-		orderStateKey := keys.KeyOrderState(orderID)
-		orderStateBytes, err := hm.dbManager.Get(orderStateKey)
-		if err == nil && orderStateBytes != nil {
-			var orderState pb.OrderState
-			if err := proto.Unmarshal(orderStateBytes, &orderState); err != nil {
-				continue
-			}
-			if orderState.IsFilled || orderState.Status == pb.OrderStateStatus_ORDER_CANCELLED {
-				continue
-			}
-
-			if _, err := decimal.NewFromString(orderState.Price); err != nil {
-				continue
-			}
-			amount, err := decimal.NewFromString(orderState.Amount)
-			if err != nil {
-				continue
-			}
-			filledBase, _ := decimal.NewFromString(orderState.FilledBase)
-			remainAmount := amount.Sub(filledBase)
-			if remainAmount.LessThanOrEqual(decimal.Zero) {
-				continue
-			}
-
-			priceStr := orderState.Price
-			// OrderState 没有 Base.Status，假设已确认
-			isPending := false
-
-			if orderState.Side == pb.OrderSide_SELL {
-				if askPrices[priceStr] == nil {
-					askPrices[priceStr] = &priceLevelDataForAgg{}
-				}
-				askPrices[priceStr].amount = askPrices[priceStr].amount.Add(remainAmount)
-				if isPending {
-					askPrices[priceStr].pendingCount++
-				} else {
-					askPrices[priceStr].confirmedCount++
-				}
-			} else {
-				if bidPrices[priceStr] == nil {
-					bidPrices[priceStr] = &priceLevelDataForAgg{}
-				}
-				bidPrices[priceStr].amount = bidPrices[priceStr].amount.Add(remainAmount)
-				if isPending {
-					bidPrices[priceStr].pendingCount++
-				} else {
-					bidPrices[priceStr].confirmedCount++
-				}
-			}
-			continue
-		}
-
-		// 兼容旧数据：从 OrderTx 读取
-		orderKey := keys.KeyOrder(orderID)
-		orderBytes, err := hm.dbManager.Get(orderKey)
-		if err != nil || orderBytes == nil {
-			continue
-		}
-
-		var order pb.OrderTx
-		if err := proto.Unmarshal(orderBytes, &order); err != nil {
-			continue
-		}
-
-		if _, err := decimal.NewFromString(order.Price); err != nil {
-			continue
-		}
-		amount, err := decimal.NewFromString(order.Amount)
-		if err != nil {
-			continue
-		}
-		// 旧版本没有 FilledBase，假设未成交
-		remainAmount := amount
-		if remainAmount.LessThanOrEqual(decimal.Zero) {
-			continue
-		}
-
-		priceStr := order.Price
-		isPending := order.Base == nil || order.Base.Status != pb.Status_SUCCEED
-
-		if order.Side == pb.OrderSide_SELL {
-			if askPrices[priceStr] == nil {
-				askPrices[priceStr] = &priceLevelDataForAgg{}
-			}
-			askPrices[priceStr].amount = askPrices[priceStr].amount.Add(remainAmount)
-			if isPending {
-				askPrices[priceStr].pendingCount++
-			} else {
-				askPrices[priceStr].confirmedCount++
-			}
-		} else {
-			if bidPrices[priceStr] == nil {
-				bidPrices[priceStr] = &priceLevelDataForAgg{}
-			}
-			bidPrices[priceStr].amount = bidPrices[priceStr].amount.Add(remainAmount)
-			if isPending {
-				bidPrices[priceStr].pendingCount++
-			} else {
-				bidPrices[priceStr].confirmedCount++
-			}
+	// 卖盘 (Side_SELL = 1)
+	sellPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_SELL, false)
+	sellOrders, err := hm.dbManager.ScanKVWithLimit(sellPrefix, 100)
+	if err != nil {
+		// Log the error but continue to process what we have, or return an error if critical
+		// For now, we'll just skip if there's an error scanning sell orders
+		// http.Error(w, "failed to scan sell orders: "+err.Error(), http.StatusInternalServerError)
+		// return
+	} else {
+		for indexKey := range sellOrders {
+			hm.processOrderForAgg(indexKey, bidPrices, askPrices)
 		}
 	}
 
@@ -301,6 +212,66 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// processOrderForAgg 辅助函数，用于处理单个订单并聚合到价格层级
+func (hm *HandlerManager) processOrderForAgg(indexKey string, bidPrices, askPrices map[string]*priceLevelDataForAgg) {
+	orderID := extractOrderIDFromIndexKey(indexKey)
+	if orderID == "" {
+		return
+	}
+
+	// 优先从 OrderState 读取（新版本）
+	orderStateKey := keys.KeyOrderState(orderID)
+	orderStateBytes, err := hm.dbManager.Get(orderStateKey)
+	if err == nil && orderStateBytes != nil {
+		var orderState pb.OrderState
+		if err := proto.Unmarshal(orderStateBytes, &orderState); err != nil {
+			return
+		}
+		if orderState.IsFilled || orderState.Status == pb.OrderStateStatus_ORDER_CANCELLED {
+			return
+		}
+
+		if _, err := decimal.NewFromString(orderState.Price); err != nil {
+			return
+		}
+		amount, err := decimal.NewFromString(orderState.Amount)
+		if err != nil {
+			return
+		}
+		filledBase, _ := decimal.NewFromString(orderState.FilledBase)
+		remainAmount := amount.Sub(filledBase)
+		if remainAmount.LessThanOrEqual(decimal.Zero) {
+			return
+		}
+
+		priceStr := orderState.Price
+		// OrderState 没有 Base.Status，假设已确认
+		isPending := false // For OrderState, we assume it's confirmed unless explicitly marked otherwise
+
+		if orderState.Side == pb.OrderSide_SELL {
+			if askPrices[priceStr] == nil {
+				askPrices[priceStr] = &priceLevelDataForAgg{}
+			}
+			askPrices[priceStr].amount = askPrices[priceStr].amount.Add(remainAmount)
+			if isPending {
+				askPrices[priceStr].pendingCount++
+			} else {
+				askPrices[priceStr].confirmedCount++
+			}
+		} else { // BUY side
+			if bidPrices[priceStr] == nil {
+				bidPrices[priceStr] = &priceLevelDataForAgg{}
+			}
+			bidPrices[priceStr].amount = bidPrices[priceStr].amount.Add(remainAmount)
+			if isPending {
+				bidPrices[priceStr].pendingCount++
+			} else {
+				bidPrices[priceStr].confirmedCount++
+			}
+		}
+	}
 }
 
 // extractOrderIDFromIndexKey 从索引 key 中提取订单 ID

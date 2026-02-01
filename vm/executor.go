@@ -753,12 +753,12 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 	for _, pair := range pairs {
 		ob := matching.NewOrderBookWithSink(nil)
 
-		// 2. 加载未成交的订单 (is_filled:false)，价格由低到高（默认顺序）
-		// 我们取当前最接近成交价格的 500 条
-		prefix := keys.KeyOrderPriceIndexPrefix(pair, false)
-		orders, err := x.DB.ScanKVWithLimit(prefix, 500)
+		// 2. 分别加载买盘和卖盘的未成交订单 (is_filled:false)
+		// 加载买盘 Top 500
+		buyPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_BUY, false)
+		buyOrders, err := x.DB.ScanKVWithLimit(buyPrefix, 500)
 		if err == nil {
-			for indexKey, data := range orders {
+			for indexKey, data := range buyOrders {
 				orderID := extractOrderIDFromIndexKey(indexKey)
 				if orderID == "" {
 					continue
@@ -766,11 +766,19 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 				x.loadOrderToBook(orderID, data, ob, sv)
 			}
 		}
-		// 由于 buy 和 sell 的前缀在目前设计中可能重合（取决于 is_filled)，
-		// 需确保 KeyOrderPriceIndexPrefix 区分了方向或者价格编码支持双向。
-		// 根据 keys.go: pair:%s|is_filled:%t|price:%s
-		// 这里目前的索引并没有区分 Side，所有 Side 都存在同一个 is_filled:false 下。
-		// 所以上面的 sellOrders 实际上包含了 BUY 和 SELL。
+
+		// 加载卖盘 Top 500
+		sellPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_SELL, false)
+		sellOrders, err := x.DB.ScanKVWithLimit(sellPrefix, 500)
+		if err == nil {
+			for indexKey, data := range sellOrders {
+				orderID := extractOrderIDFromIndexKey(indexKey)
+				if orderID == "" {
+					continue
+				}
+				x.loadOrderToBook(orderID, data, ob, sv)
+			}
+		}
 
 		pairBooks[pair] = ob
 	}

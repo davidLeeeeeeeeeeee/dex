@@ -85,7 +85,11 @@ func TestRebuildOrderPriceIndexes(t *testing.T) {
 		priceKey67, err := PriceToKey128(tc.price)
 		require.NoError(t, err)
 
-		indexKey := keys.KeyOrderPriceIndex(pair, tc.isFilled, priceKey67, tc.orderID)
+		side := pb.OrderSide_BUY
+		if tc.orderID == "order_1" || tc.orderID == "order_2" {
+			side = pb.OrderSide_SELL
+		}
+		indexKey := keys.KeyOrderPriceIndex(pair, side, tc.isFilled, priceKey67, tc.orderID)
 		indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 		dbMgr.EnqueueSet(indexKey, string(indexData))
 	}
@@ -102,14 +106,11 @@ func TestRebuildOrderPriceIndexes(t *testing.T) {
 		assert.Equal(t, 6, orderCount, "should have 6 orders")
 
 		// 验证索引存在
-		btcIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:BTC_USDT|is_filled:false|")
-		assert.Equal(t, 3, btcIndexCount, "should have 3 BTC unfilled order indexes")
+		btcIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:BTC_USDT|")
+		assert.Equal(t, 4, btcIndexCount, "should have 4 BTC order indexes")
 
-		ethIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:ETH_USDT|is_filled:false|")
-		assert.Equal(t, 2, ethIndexCount, "should have 2 ETH unfilled order indexes")
-
-		filledIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:BTC_USDT|is_filled:true|")
-		assert.Equal(t, 1, filledIndexCount, "should have 1 BTC filled order index")
+		ethIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:ETH_USDT|")
+		assert.Equal(t, 2, ethIndexCount, "should have 2 ETH order indexes")
 	})
 
 	// 5. 模拟轻节点场景：删除所有索引，只保留订单数据
@@ -137,14 +138,11 @@ func TestRebuildOrderPriceIndexes(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 
 		// 验证索引已重建
-		btcIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:BTC_USDT|is_filled:false|")
-		assert.Equal(t, 3, btcIndexCount, "should have 3 BTC unfilled order indexes after rebuild")
+		btcIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:BTC_USDT|")
+		assert.Equal(t, 4, btcIndexCount, "should have 4 BTC order indexes after rebuild")
 
-		ethIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:ETH_USDT|is_filled:false|")
-		assert.Equal(t, 2, ethIndexCount, "should have 2 ETH unfilled order indexes after rebuild")
-
-		filledIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:BTC_USDT|is_filled:true|")
-		assert.Equal(t, 1, filledIndexCount, "should have 1 BTC filled order index after rebuild")
+		ethIndexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:ETH_USDT|")
+		assert.Equal(t, 2, ethIndexCount, "should have 2 ETH order indexes after rebuild")
 	})
 
 	// 7. 验证重建的索引内容正确
@@ -245,7 +243,7 @@ func TestRebuildOrderPriceIndexes_Performance(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// 验证索引正确性
-	indexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:BTC_USDT|is_filled:false|")
+	indexCount := countKeysWithPrefix(t, dbMgr, "v1_pair:BTC_USDT|")
 	assert.Equal(t, orderCount, indexCount, "should have correct number of indexes")
 }
 

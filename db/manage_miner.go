@@ -20,9 +20,9 @@ func (mgr *Manager) GetRandomMinersFast(k int) ([]*pb.Account, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(idxs) < k {
-		logs.Trace("[GetRandomMinersFast] sampled %d indices k=%d", len(idxs), k)
-		return nil, fmt.Errorf("GetRandomMiners: k out of range")
+	if len(idxs) == 0 && k > 0 {
+		logs.Warn("[GetRandomMinersFast] no miners available, k=%d", k)
+		return nil, fmt.Errorf("GetRandomMiners: no miners available")
 	}
 
 	accounts := make([]*pb.Account, 0, len(idxs))

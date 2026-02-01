@@ -152,7 +152,7 @@ func (db *MockDB) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byt
 	defer db.mu.RUnlock()
 
 	for _, pair := range pairs {
-		prefix := keys.KeyOrderPriceIndexPrefix(pair, false)
+		prefix := keys.KeyOrderPriceIndexGeneralPrefix(pair, false)
 		pairMap := make(map[string][]byte)
 
 		for k, v := range db.data {
@@ -471,7 +471,8 @@ func TestInvalidTransaction(t *testing.T) {
 			Transaction: &pb.Transaction{
 				Base: &pb.BaseMessage{
 					TxId:        "tx_invalid_001",
-					FromAddress: "alice",
+					FromAddress: "alice_addr",
+					Nonce:       1,
 					Status:      pb.Status_PENDING,
 				},
 				To:           "bob",

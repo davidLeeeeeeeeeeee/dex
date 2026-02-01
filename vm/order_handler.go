@@ -377,29 +377,14 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Category:    "orderstate",
 	})
 
-	// 4. 从分布式的订单列表中移除
-	ordOrdersKey := keys.KeyAccountOrders(ord.Base.FromAddress)
-	ordersData, oExists, _ := sv.Get(ordOrdersKey)
-	var accOrders pb.AccountOrders
-	if oExists {
-		proto.Unmarshal(ordersData, &accOrders)
-	}
-
-	newOrders := make([]string, 0)
-	for _, orderId := range accOrders.Orders {
-		if orderId != ord.OpTargetId {
-			newOrders = append(newOrders, orderId)
-		}
-	}
-	accOrders.Orders = newOrders
-	updatedOrdersData, _ := proto.Marshal(&accOrders)
-
+	// 4. 从离散订单列表中移除 (Phase 2 重构)
+	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.OpTargetId)
 	ws = append(ws, WriteOp{
-		Key:         ordOrdersKey,
-		Value:       updatedOrdersData,
-		Del:         false,
+		Key:         accOrderItemKey,
+		Value:       nil,
+		Del:         true,
 		SyncStateDB: true,
-		Category:    "acc_orders",
+		Category:    "acc_orders_item",
 	})
 
 	// 保存更新后的账户（仅更新 Nonce 等，不再包含订单列表）
@@ -430,7 +415,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 			Error:  "failed to convert price to key",
 		}, err
 	}
-	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetState.IsFilled, priceKey67, ord.OpTargetId)
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetState.Side, targetState.IsFilled, priceKey67, ord.OpTargetId)
 
 	ws = append(ws, WriteOp{
 		Key:         priceIndexKey,
@@ -480,29 +465,14 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 		Category:    "order",
 	})
 
-	// 4. 从独立存储的订单列表中移除
-	ordOrdersKey := keys.KeyAccountOrders(ord.Base.FromAddress)
-	ordersData, oExists, _ := sv.Get(ordOrdersKey)
-	var accOrders pb.AccountOrders
-	if oExists {
-		proto.Unmarshal(ordersData, &accOrders)
-	}
-
-	newOrders := make([]string, 0)
-	for _, orderId := range accOrders.Orders {
-		if orderId != ord.OpTargetId {
-			newOrders = append(newOrders, orderId)
-		}
-	}
-	accOrders.Orders = newOrders
-	updatedOrdersData, _ := proto.Marshal(&accOrders)
-
+	// 4. 从离散订单列表中移除 (Phase 2 重构)
+	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.OpTargetId)
 	ws = append(ws, WriteOp{
-		Key:         ordOrdersKey,
-		Value:       updatedOrdersData,
-		Del:         false,
+		Key:         accOrderItemKey,
+		Value:       nil,
+		Del:         true,
 		SyncStateDB: true,
-		Category:    "acc_orders",
+		Category:    "acc_orders_item",
 	})
 
 	updatedAccountData, err := proto.Marshal(&account)
@@ -532,7 +502,7 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 			Error:  "failed to convert price to key",
 		}, err
 	}
-	priceIndexKey := keys.KeyOrderPriceIndex(pair, false, priceKey67, ord.OpTargetId)
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetOrder.Side, false, priceKey67, ord.OpTargetId)
 
 	ws = append(ws, WriteOp{
 		Key:         priceIndexKey,
@@ -689,7 +659,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		}
 
 		// 删除旧的未成交索引
-		oldIndexKey := keys.KeyOrderPriceIndex(pair, false, priceKey67, orderID)
+		oldIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, false, priceKey67, orderID)
 		ws = append(ws, WriteOp{
 			Key:         oldIndexKey,
 			Value:       nil,
@@ -700,7 +670,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 
 		// 如果订单已完全成交，创建新的已成交索引
 		if orderState.IsFilled {
-			newIndexKey := keys.KeyOrderPriceIndex(pair, true, priceKey67, orderID)
+			newIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, true, priceKey67, orderID)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 			ws = append(ws, WriteOp{
 				Key:         newIndexKey,
@@ -710,7 +680,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 				Category:    "index",
 			})
 		} else {
-			// 如果未完全成交，保留未成交索引
+			// 如果未完全成交，保留未成交索引 (使用新的 Key 格式补全 Side)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 			ws = append(ws, WriteOp{
 				Key:         oldIndexKey,
@@ -806,32 +776,18 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		Category:    "order",
 	})
 
-	// 4. 读取独立存储的订单列表并添加新订单
-	ordOrdersKey := keys.KeyAccountOrders(ord.Base.FromAddress)
-	ordersData, oExists, _ := sv.Get(ordOrdersKey)
-	var accOrders pb.AccountOrders
-	if oExists {
-		proto.Unmarshal(ordersData, &accOrders)
-	}
-	if accOrders.Orders == nil {
-		accOrders.Orders = make([]string, 0)
-	}
-	accOrders.Orders = append(accOrders.Orders, ord.Base.TxId)
-	updatedOrdersData, _ := proto.Marshal(&accOrders)
-
+	// 4. 读取独立存储的订单列表并添加新订单 (Phase 2 重构：改为离散存储)
+	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.Base.TxId)
 	ws = append(ws, WriteOp{
-		Key:         ordOrdersKey,
-		Value:       updatedOrdersData,
+		Key:         accOrderItemKey,
+		Value:       []byte{1}, // 仅作为标记存在
 		Del:         false,
 		SyncStateDB: true,
-		Category:    "acc_orders",
+		Category:    "acc_orders_item",
 	})
 
 	// 5. 保存账户更新（如果有需要，比如 Nonce 或余额已在外部更新）
 	// 注意：在下单逻辑中，账户由于冻结余额，已经在 handleAddNewOrder 中被 Marshal 过了。
-	// 这里我们只需要确保独立存储的订单列表被保存。
-	// 如果这里还需要保存账户，我们需要传入 account 对象。
-	// 为了修复报错，我们移除这里的冗余保存，因为调用方 handleAddNewOrder 已经负责保存了 account。
 
 	// 创建价格索引（基于 OrderState.IsFilled）
 	priceKey67, err := db.PriceToKey128(ord.Price)
@@ -839,7 +795,8 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		return nil, fmt.Errorf("failed to convert price to key: %w", err)
 	}
 
-	priceIndexKey := keys.KeyOrderPriceIndex(pair, orderState.IsFilled, priceKey67, ord.Base.TxId)
+	// Phase 2: 增加 side 参数区分买卖
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, ord.Side, orderState.IsFilled, priceKey67, ord.Base.TxId)
 	indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 	ws = append(ws, WriteOp{
 		Key:         priceIndexKey,

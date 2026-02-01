@@ -240,9 +240,17 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 		return nil, err
 	}
 
-	// 深度感知持久化：执行裁剪并刷新到 DB
+	// 4. 深度感知持久化：执行完整递归保存并将深层节点从内存裁剪
 	if err := t.flushNodes(sess, newVersion); err != nil {
 		return nil, err
+	}
+
+	// 5. 特别补丁：根节点本身也需要被序列化保存，否则重启后 resolveNode(rootHash) 会失败
+	rootData, err := t.root.Serialize()
+	if err == nil {
+		if err := sess.Set(nodeKey(rootCommitment[:]), rootData, newVersion); err != nil {
+			return nil, err
+		}
 	}
 
 	// 清理过旧的历史版本缓存
@@ -278,44 +286,36 @@ func (t *VerkleTree) flushNodeRecursive(node gverkle.VerkleNode, depth int, sess
 		return nil
 	}
 
-	// 只处理内部节点
+	// 1. 获取当前节点数据并保存 (所有深度的节点都需要持久化)
+	data, err := node.Serialize()
+	if err != nil {
+		return nil // 忽略无法序列化的节点（通常是由于尚未 Commit，但在 Update 后已 Commit）
+	}
+	commitment := node.Commitment().Bytes()
+	if err := sess.Set(nodeKey(commitment[:]), data, version); err != nil {
+		return err
+	}
+
+	// 2. 递归处理子节点
 	inner, ok := node.(*gverkle.InternalNode)
 	if !ok {
-		return nil
+		return nil // 叶子节点，已保存
 	}
 
-	// 如果到达裁剪深度
-	if depth == MaxMemoryDepth {
-		for i := 0; i < 256; i++ {
-			child := inner.Children()[i]
-			if child == nil {
-				continue
-			}
-
-			// 序列化子节点
-			data, err := child.Serialize()
-			if err != nil {
-				continue
-			}
-			commitment := child.Commitment().Bytes()
-
-			// 存入 DB (NodeKey 规则: node:hash)
-			if err := sess.Set(nodeKey(commitment[:]), data, version); err != nil {
-				return err
-			}
-
-			// 关键：从内存中释放子节点
-			// v0.2.2 中 Children() 返回切片，可以直接操作
-			inner.Children()[i] = nil
-		}
-		return nil
-	}
-
-	// 否则继续向下递归
 	for i := 0; i < 256; i++ {
 		child := inner.Children()[i]
+		if child == nil {
+			continue
+		}
+
+		// 递归保存子节点树
 		if err := t.flushNodeRecursive(child, depth+1, sess, version); err != nil {
 			return err
+		}
+
+		// 3. 内存管理：如果深度超过阈值，在子树保存后，将子节点从内存中裁剪
+		if depth >= MaxMemoryDepth {
+			inner.Children()[i] = nil
 		}
 	}
 

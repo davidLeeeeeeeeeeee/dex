@@ -183,7 +183,7 @@ func DecodeInternalNode(data []byte, hashSize int) (*InternalNode, error) {
 		return nil, errors.New("internal node data too short")
 	}
 	if data[0] != byte(NodeTypeInternal) {
-		return nil, fmt.Errorf("expected internal node type, got %d", data[0])
+		return nil, fmt.Errorf("expected internal node type 1, got %d (hex: %x, len: %d)", data[0], data[0], len(data))
 	}
 
 	bitmap := binary.BigEndian.Uint16(data[1:3])
@@ -226,7 +226,7 @@ func DecodeLeafNode(data []byte, hashSize int) (*LeafNode, error) {
 		return nil, fmt.Errorf("leaf node data too short: expected %d, got %d", expectedLen, len(data))
 	}
 	if data[0] != byte(NodeTypeLeaf) {
-		return nil, fmt.Errorf("expected leaf node type, got %d", data[0])
+		return nil, fmt.Errorf("expected leaf node type 2, got %d (hex: %x, len: %d)", data[0], data[0], len(data))
 	}
 
 	keyHash := make([]byte, hashSize)

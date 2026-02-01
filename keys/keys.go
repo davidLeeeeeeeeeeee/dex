@@ -3,6 +3,7 @@
 package keys
 
 import (
+	"dex/pb"
 	"fmt"
 	"strings"
 )
@@ -109,10 +110,16 @@ func KeyAccount(addr string) string {
 	return withVer("account_" + addr)
 }
 
-// KeyAccountOrders 账户关联的订单 ID 列表
-// 例：v1_acc_orders_<address>
-func KeyAccountOrders(addr string) string {
-	return withVer("acc_orders_" + addr)
+// KeyAccountOrderItem 账户关联的单个订单标记 (离散化存储)
+// 例：v1_acc_order_{address}_{orderID}
+func KeyAccountOrderItem(addr string, orderID string) string {
+	return withVer(fmt.Sprintf("acc_order_%s_%s", addr, orderID))
+}
+
+// KeyAccountOrdersPrefix 账户关联订单的前缀
+// 例：v1_acc_order_{address}_
+func KeyAccountOrdersPrefix(addr string) string {
+	return withVer(fmt.Sprintf("acc_order_%s_", addr))
 }
 
 // KeyIndexToAccount 索引到账户的映射
@@ -161,15 +168,20 @@ func KeyOrderStatePrefix() string {
 }
 
 // KeyOrderPriceIndex 订单价格索引
-// 例：v1_pair:<pair>|is_filled:<true|false>|price:<67位十进制>|order_id:<txID>
-func KeyOrderPriceIndex(pair string, isFilled bool, priceKey67 string, orderID string) string {
-	return withVer(fmt.Sprintf("pair:%s|is_filled:%t|price:%s|order_id:%s", pair, isFilled, priceKey67, orderID))
+// 例：v1_pair:<pair>|side:<side>|is_filled:<true|false>|price:<67位十进制>|order_id:<txID>
+func KeyOrderPriceIndex(pair string, side pb.OrderSide, isFilled bool, priceKey67 string, orderID string) string {
+	return withVer(fmt.Sprintf("pair:%s|side:%d|is_filled:%t|price:%s|order_id:%s", pair, side, isFilled, priceKey67, orderID))
 }
 
-// KeyOrderPriceIndexPrefix 返回给定交易对和是否已成交状态下的价格索引前缀
-// 例：v1_pair:<pair>|is_filled:<true|false>|
-func KeyOrderPriceIndexPrefix(pair string, isFilled bool) string {
-	return withVer(fmt.Sprintf("pair:%s|is_filled:%t|", pair, isFilled))
+// KeyOrderPriceIndexPrefix 返回给定交易对、方向和是否已成交状态下的价格索引前缀
+// 例：v1_pair:<pair>|side:<side>|is_filled:<true|false>|
+func KeyOrderPriceIndexPrefix(pair string, side pb.OrderSide, isFilled bool) string {
+	return withVer(fmt.Sprintf("pair:%s|side:%d|is_filled:%t|", pair, side, isFilled))
+}
+
+// KeyOrderPriceIndexGeneralPrefix 返回给定交易对和是否已成交状态下的通用前缀 (不分方向)
+func KeyOrderPriceIndexGeneralPrefix(pair string, isFilled bool) string {
+	return withVer(fmt.Sprintf("pair:%s|", pair))
 }
 
 // ===================== 成交记录相关 =====================

@@ -453,7 +453,7 @@ func saveOrderToDB(t *testing.T, db *MockDB, order *pb.OrderTx, pair string) {
 		}
 	}
 
-	indexKey := keys.KeyOrderPriceIndex(pair, false, priceKey67, order.Base.TxId)
+	indexKey := keys.KeyOrderPriceIndex(pair, order.Side, false, priceKey67, order.Base.TxId)
 	indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 	db.mu.Lock()
 	db.data[indexKey] = indexData

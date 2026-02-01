@@ -292,7 +292,7 @@ func (jmt *JellyfishMerkleTree) Update(keys [][]byte, values [][]byte, newVersio
 
 	currentRoot := jmt.root
 
-	// 逐个更新
+	// 1. 逐个更新（保持在内存中累推新根）
 	for i := 0; i < len(keys); i++ {
 		var err error
 		currentRoot, err = jmt.updateSingle(keys[i], values[i], currentRoot, newVersion, nil)
@@ -301,13 +301,15 @@ func (jmt *JellyfishMerkleTree) Update(keys [][]byte, values [][]byte, newVersio
 		}
 	}
 
-	// 保存历史根哈希
+	// 2. 更新全局状态历史
 	jmt.rootHistory[newVersion] = currentRoot
-	// 也存到持久化存储
+
+	// 3. 将新根哈希持久化（使用 rootKey 规则）
 	if err := jmt.store.Set(rootKey(newVersion), currentRoot, newVersion); err != nil {
 		return nil, err
 	}
 
+	// 4. 原子更新当前内存根和版本号
 	jmt.root = currentRoot
 	jmt.version = newVersion
 
