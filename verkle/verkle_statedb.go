@@ -138,6 +138,11 @@ func recoverLatestVersion(db *badger.DB, prefix []byte, tree *VerkleTree) error 
 	}
 
 	tree.CommitRoot(latestVersion, latestRoot)
+
+	// 恢复前 2 层内存结构
+	if err := tree.RestoreMemoryLayers(latestRoot); err != nil {
+		return fmt.Errorf("failed to restore memory layers: %w", err)
+	}
 	return nil
 }
 

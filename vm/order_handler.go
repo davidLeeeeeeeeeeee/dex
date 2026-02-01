@@ -132,7 +132,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	}
 
 	if ord.Side == pb.OrderSide_SELL {
-		// 卖单：检查 BaseToken 余额
+		// 卖单：检查并冻结 BaseToken 余额
 		bal := account.Balances[ord.BaseToken]
 		if bal == nil {
 			return nil, &Receipt{
@@ -149,8 +149,12 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 				Error:  fmt.Sprintf("insufficient %s balance: has %s, need %s", ord.BaseToken, current, amountDec),
 			}, fmt.Errorf("insufficient balance")
 		}
+		// 1) 扣除余额，增加订单锁定余额
+		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
+		bal.Balance = current.Sub(amountDec).String()
+		bal.OrderFrozenBalance = frozen.Add(amountDec).String()
 	} else {
-		// 买单：检查 QuoteToken 余额
+		// 买单：检查并冻结 QuoteToken 余额
 		bal := account.Balances[ord.QuoteToken]
 		if bal == nil {
 			return nil, &Receipt{
@@ -168,6 +172,30 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 				Error:  fmt.Sprintf("insufficient %s balance to buy: has %s, need %s", ord.QuoteToken, current, needed),
 			}, fmt.Errorf("insufficient balance")
 		}
+		// 1) 扣除余额，增加订单锁定余额
+		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
+		bal.Balance = current.Sub(needed).String()
+		bal.OrderFrozenBalance = frozen.Add(needed).String()
+	}
+
+	// 3.5 保存账户更新（因为冻结了余额）
+	updatedAccountData, err := proto.Marshal(&account)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   ord.Base.TxId,
+			Status: "FAILED",
+			Error:  "failed to marshal account",
+		}, err
+	}
+	// 注意：这里的 WriteOp 会在后面对接，需要先收集
+	initialWs := []WriteOp{
+		{
+			Key:         accountKey,
+			Value:       updatedAccountData,
+			Del:         false,
+			SyncStateDB: true,
+			Category:    "account",
+		},
 	}
 
 	// 4. 生成交易对key（使用utils.GeneratePairKey确保一致性）
@@ -218,6 +246,9 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 			Error:  fmt.Sprintf("failed to generate write ops: %v", err),
 		}, err
 	}
+
+	// 合并初始的余额冻结操作
+	ws = append(initialWs, ws...)
 
 	return ws, &Receipt{
 		TxID:       ord.Base.TxId,
@@ -310,6 +341,33 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 			Status: "FAILED",
 			Error:  "failed to parse account",
 		}, err
+	}
+
+	// 1) 返还剩余锁定余额
+	remainingBase, _ := decimal.NewFromString(targetState.Amount)
+	filledBase, _ := decimal.NewFromString(targetState.FilledBase)
+	toRefundBase := remainingBase.Sub(filledBase)
+
+	if targetState.Side == pb.OrderSide_SELL {
+		// 卖单退回 BaseToken
+		bal := account.Balances[targetState.BaseToken]
+		if bal != nil {
+			current, _ := decimal.NewFromString(bal.Balance)
+			frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
+			bal.Balance = current.Add(toRefundBase).String()
+			bal.OrderFrozenBalance = frozen.Sub(toRefundBase).String()
+		}
+	} else {
+		// 买单退回 QuoteToken
+		price, _ := decimal.NewFromString(targetState.Price)
+		toRefundQuote := toRefundBase.Mul(price)
+		bal := account.Balances[targetState.QuoteToken]
+		if bal != nil {
+			current, _ := decimal.NewFromString(bal.Balance)
+			frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
+			bal.Balance = current.Add(toRefundQuote).String()
+			bal.OrderFrozenBalance = frozen.Sub(toRefundQuote).String()
+		}
 	}
 
 	ws := make([]WriteOp, 0)
@@ -651,149 +709,8 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 	return ws, nil
 }
 
-// updateAccountBalances 根据撮合事件更新账户余额
-//
-// 撮合逻辑：
-// - 对于订单 A (base_token=X, quote_token=Y, amount=a, price=p)
-//   - 成交量 tradeAmt（base_token 数量）
-//   - 成交金额 tradeAmt * price（quote_token 数量）
-//   - 订单持有者：减少 base_token，增加 quote_token
-//
-// 例如：
-// - Alice 卖单：base_token=BTC, quote_token=USDT, amount=1, price=50000
-//   - 成交 0.5 BTC
-//   - Alice: BTC -= 0.5, USDT += 0.5 * 50000 = 25000
-//
-// - Bob 买单：base_token=USDT, quote_token=BTC, amount=25000, price=50000
-//   - 成交 25000 USDT
-//   - Bob: USDT -= 25000, BTC += 25000 / 50000 = 0.5
-func (h *OrderTxHandler) updateAccountBalances(
-	tradeEvents []matching.TradeUpdate,
-	orderUpdates map[string]*pb.OrderTx,
-	sv StateView,
-) ([]WriteOp, error) {
-	ws := make([]WriteOp, 0)
-	accountCache := make(map[string]*pb.Account) // address -> Account
-
-	for _, ev := range tradeEvents {
-		// 1. 获取订单信息
-		orderTx, ok := orderUpdates[ev.OrderID]
-		if !ok {
-			continue
-		}
-
-		// 2. 加载或获取缓存的账户
-		address := orderTx.Base.FromAddress
-		account, ok := accountCache[address]
-		if !ok {
-			accountKey := keys.KeyAccount(address)
-			accountData, exists, err := sv.Get(accountKey)
-			if err != nil || !exists {
-				return nil, fmt.Errorf("account not found: %s", address)
-			}
-
-			account = &pb.Account{}
-			if err := proto.Unmarshal(accountData, account); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal account %s: %w", address, err)
-			}
-			accountCache[address] = account
-		}
-
-		// 3. 初始化余额（如果不存在）
-		if account.Balances == nil {
-			account.Balances = make(map[string]*pb.TokenBalance)
-		}
-		if account.Balances[orderTx.BaseToken] == nil {
-			account.Balances[orderTx.BaseToken] = &pb.TokenBalance{
-				Balance:            "0",
-				MinerLockedBalance: "0",
-			}
-		}
-		if account.Balances[orderTx.QuoteToken] == nil {
-			account.Balances[orderTx.QuoteToken] = &pb.TokenBalance{
-				Balance:            "0",
-				MinerLockedBalance: "0",
-			}
-		}
-
-		// 4. 计算余额变化
-		// TradeAmt 是撮合引擎返回的成交量，单位是交易对的基础币种（按字母排序后的第一个币种）
-		// 例如对于 BTC_USDT 交易对，TradeAmt 的单位是 BTC
-		//
-		// 对于卖单（base_token=BTC, quote_token=USDT）：
-		//   - 减少 BTC：TradeAmt
-		//   - 增加 USDT：TradeAmt * TradePrice
-		//
-		// 对于买单（base_token=USDT, quote_token=BTC）：
-		//   - 减少 USDT：TradeAmt * TradePrice
-		//   - 增加 BTC：TradeAmt
-		baseBalance, err := decimal.NewFromString(account.Balances[orderTx.BaseToken].Balance)
-		if err != nil {
-			baseBalance = decimal.Zero
-		}
-		quoteBalance, err := decimal.NewFromString(account.Balances[orderTx.QuoteToken].Balance)
-		if err != nil {
-			quoteBalance = decimal.Zero
-		}
-
-		var newBaseBalance, newQuoteBalance decimal.Decimal
-
-		// 根据订单的 Side 字段判断买卖方向（而不是用 BaseToken/QuoteToken 字符串比较）
-		// ev.TradeAmt 是成交的 base currency 数量（如 FB_USDT 中的 FB 数量）
-		// ev.TradePrice 是成交价格（quote/base，如 USDT/FB）
-		if orderTx.Side == pb.OrderSide_SELL {
-			// 卖单：减少 BaseToken，增加 QuoteToken
-			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
-			newBaseBalance = baseBalance.Sub(ev.TradeAmt)
-			if newBaseBalance.LessThan(decimal.Zero) {
-				return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
-					orderTx.BaseToken, address, baseBalance, ev.TradeAmt)
-			}
-			newQuoteBalance = quoteBalance.Add(tradeQuoteAmt)
-		} else {
-			// 买单：增加 BaseToken，减少 QuoteToken
-			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
-			newQuoteBalance = quoteBalance.Sub(tradeQuoteAmt)
-			if newQuoteBalance.LessThan(decimal.Zero) {
-				return nil, fmt.Errorf("insufficient %s balance for account %s (current=%s, need=%s)",
-					orderTx.QuoteToken, address, quoteBalance, tradeQuoteAmt)
-			}
-			newBaseBalance = baseBalance.Add(ev.TradeAmt)
-		}
-
-		// 检查是否超过 MaxUint256（两个余额都检查，确保完整性）
-		maxUint256Dec := decimal.NewFromBigInt(MaxUint256, 0)
-		if newBaseBalance.GreaterThan(maxUint256Dec) {
-			return nil, fmt.Errorf("balance overflow for %s", orderTx.BaseToken)
-		}
-		if newQuoteBalance.GreaterThan(maxUint256Dec) {
-			return nil, fmt.Errorf("balance overflow for %s", orderTx.QuoteToken)
-		}
-
-		// 更新余额
-		account.Balances[orderTx.BaseToken].Balance = newBaseBalance.String()
-		account.Balances[orderTx.QuoteToken].Balance = newQuoteBalance.String()
-	}
-
-	// 5. 保存所有更新的账户
-	for address, account := range accountCache {
-		accountKey := keys.KeyAccount(address)
-		accountData, err := proto.Marshal(account)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal account %s: %w", address, err)
-		}
-
-		ws = append(ws, WriteOp{
-			Key:         accountKey,
-			Value:       accountData,
-			Del:         false,
-			SyncStateDB: true,
-			Category:    "account",
-		})
-	}
-
-	return ws, nil
-}
+// generateWriteOpsFromTrades ... (此处省略，保持前面的更新)
+// 注意：updateAccountBalances 函数已被弃用，此处直接将其内容清空或删除
 
 // saveNewOrder 保存新订单（未成交的情况）
 // 现在保存 OrderState 而不是 OrderTx（OrderTx 作为交易原文由 applyResult 统一保存到 v1_txraw_<txid>）
@@ -1077,36 +994,36 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 			quoteBalance = decimal.Zero
 		}
 
-		var newBaseBalance, newQuoteBalance decimal.Decimal
-
 		if orderState.Side == pb.OrderSide_SELL {
+			// 卖单：
+			// 1. 扣除 OrderFrozenBalance 中的成交部分（这是下单时预扣的）
+			frozen, _ := decimal.NewFromString(account.Balances[orderState.BaseToken].OrderFrozenBalance)
+			account.Balances[orderState.BaseToken].OrderFrozenBalance = frozen.Sub(ev.TradeAmt).String()
+
+			// 2. 增加 QuoteToken 余额（成交得到的）
 			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
-			newBaseBalance = baseBalance.Sub(ev.TradeAmt)
-			if newBaseBalance.LessThan(decimal.Zero) {
-				// 虽然前面 handleAddOrder 检查过，但如果是同一个区块内的并发撮合可能会下溢
-				// 这里作为业务逻辑错误处理，不返回 error 以免整个区块挂掉
-				newBaseBalance = decimal.Zero
-			}
-			newQuoteBalance = quoteBalance.Add(tradeQuoteAmt)
+			newQuoteBalance := quoteBalance.Add(tradeQuoteAmt)
+			account.Balances[orderState.QuoteToken].Balance = newQuoteBalance.String()
 		} else {
+			// 买单：
+			// 1. 扣除 OrderFrozenBalance 中的成交部分（这是下单时预扣的 QuoteToken）
 			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
-			newQuoteBalance = quoteBalance.Sub(tradeQuoteAmt)
-			if newQuoteBalance.LessThan(decimal.Zero) {
-				newQuoteBalance = decimal.Zero
-			}
-			newBaseBalance = baseBalance.Add(ev.TradeAmt)
+			frozen, _ := decimal.NewFromString(account.Balances[orderState.QuoteToken].OrderFrozenBalance)
+			account.Balances[orderState.QuoteToken].OrderFrozenBalance = frozen.Sub(tradeQuoteAmt).String()
+
+			// 2. 增加 BaseToken 余额（买到的币）
+			newBaseBalance := baseBalance.Add(ev.TradeAmt)
+			account.Balances[orderState.BaseToken].Balance = newBaseBalance.String()
 		}
 
+		// 检查是否超过 MaxUint256（恢复原有检查 logic）
 		maxUint256Dec := decimal.NewFromBigInt(MaxUint256, 0)
-		if newBaseBalance.GreaterThan(maxUint256Dec) {
-			return nil, fmt.Errorf("balance overflow for %s", orderState.BaseToken)
+		for _, bal := range account.Balances {
+			b, _ := decimal.NewFromString(bal.Balance)
+			if b.GreaterThan(maxUint256Dec) {
+				return nil, fmt.Errorf("balance overflow")
+			}
 		}
-		if newQuoteBalance.GreaterThan(maxUint256Dec) {
-			return nil, fmt.Errorf("balance overflow for %s", orderState.QuoteToken)
-		}
-
-		account.Balances[orderState.BaseToken].Balance = newBaseBalance.String()
-		account.Balances[orderState.QuoteToken].Balance = newQuoteBalance.String()
 	}
 
 	for address, account := range accountCache {

@@ -228,6 +228,32 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 		}
 	}()
 
+	// 新增：启动一个纯 HTTP 端口专门用于 pprof，避开证书验证问题
+	pprofPort := 0
+	if p, err := strconv.Atoi(node.Port); err == nil {
+		pprofPort = p + 1000 // 例如 6001 -> 7001
+	}
+	if pprofPort > 0 {
+		pprofMux := http.NewServeMux()
+		pprofMux.HandleFunc("/debug/pprof/", pprof.Index)
+		pprofMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		pprofMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		pprofMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		pprofMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		pprofMux.HandleFunc("/debug/pprof/heap", pprof.Handler("heap").ServeHTTP)
+
+		pprofServer := &http.Server{
+			Addr:    fmt.Sprintf(":%d", pprofPort),
+			Handler: pprofMux,
+		}
+		go func() {
+			logs.Info("Node %d: Starting pprof HTTP server on port %d", node.ID, pprofPort)
+			if err := pprofServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logs.Error("Node %d: pprof HTTP Server error: %v", node.ID, err)
+			}
+		}()
+	}
+
 	// 启动服务器（这是阻塞调用）
 	if err := server.ServeListener(listener); err != nil {
 		logs.Error("Node %d: HTTP/3 Server error: %v", node.ID, err)

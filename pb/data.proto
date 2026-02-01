@@ -104,6 +104,7 @@ message TokenBalance {
   string liquid_locked_balance = 4; // 流动性挖矿锁定余额
   string witness_locked_balance = 5; // 见证者挖矿锁定余额
   string leverage_locked_balance = 6; // 杠杆交易锁定余额
+  string order_frozen_balance = 7; // 订单锁定余额
 }
 
 // BlockHeader 区块头（用于轻客户端验证）

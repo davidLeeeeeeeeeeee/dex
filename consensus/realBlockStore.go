@@ -77,7 +77,10 @@ func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots 
 		logs.Error("Failed to register VM handlers: %v", err)
 		// 继续执行，但VM功能可能不完整
 	}
-	cache := vm.NewSpecExecLRU(1024)
+	// 内存优化：将 SpecExecLRU 缓存容量从 1024 减小到 32
+	// 每个区块可能有 2000 笔交易，1个 SpecResult 包含 2000 个 Receipt
+	// 1024 个缓存会消耗巨量内存且在高并发下产生大量小对象碎片
+	cache := vm.NewSpecExecLRU(32)
 
 	vmExecutor := vm.NewExecutorWithWitnessService(dbManager, registry, cache, witnessSvc)
 
@@ -461,8 +464,8 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 	logs.Info("[RealBlockStore] Finalized block %s at height %d", blockID, height)
 
 	// 第三步：清理旧的缓存数据（避免内存泄漏）
-	// 保留最近 100 个高度的数据
-	const keepRecentHeights = 100
+	// 保留最近 20 个高度的数据
+	const keepRecentHeights = 20
 	if height > keepRecentHeights {
 		cleanupHeight := height - keepRecentHeights
 
@@ -510,8 +513,16 @@ func (s *RealBlockStore) CreateSnapshot(height uint64) (*types.Snapshot, error) 
 		BlockHashes:        make(map[string]bool),
 	}
 
-	// 复制所有已最终化的区块
-	for h := uint64(0); h <= height; h++ {
+	// 内存优化：不再复制所有历史最终化区块
+	// 快照只需要关键元数据，具体的历史区块可以通过 db 加载
+	// 之前这里线性增长（高度 1000 时，每个快照存 1000 个 block 索引）
+	const keepInSnapshot = 100
+	startH := uint64(0)
+	if height > keepInSnapshot {
+		startH = height - keepInSnapshot
+	}
+
+	for h := startH; h <= height; h++ {
 		if block, exists := s.finalizedBlocks[h]; exists {
 			snapshot.FinalizedBlocks[h] = block
 			snapshot.BlockHashes[block.ID] = true
@@ -758,6 +769,7 @@ func (s *RealBlockStore) loadFromDB() {
 				if block != nil {
 					s.blockCache[block.ID] = block
 					s.heightIndex[h] = []*types.Block{block}
+					s.finalizedBlocks[h] = block // 修复：恢复内存中的最终化映射
 					if h == height {
 						s.lastAccepted = block
 						s.lastAcceptedHeight = h
@@ -840,6 +852,13 @@ func (s *RealBlockStore) cleanupOldData(belowHeight uint64) {
 		if height < belowHeight {
 			delete(s.finalizedBlocks, height)
 			cleanedFinalized++
+		}
+	}
+
+	// 清理 finalizationChits 中的旧高度
+	for height := range s.finalizationChits {
+		if height < belowHeight {
+			delete(s.finalizationChits, height)
 		}
 	}
 

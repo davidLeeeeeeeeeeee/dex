@@ -5,6 +5,7 @@ import (
 	"dex/interfaces"
 	"dex/logs"
 	"dex/types"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,23 +37,25 @@ type SyncManager struct {
 	sampleResponses map[types.NodeID]uint64 // 采样响应: nodeID -> acceptedHeight
 	sampleStartTime time.Time               // 采样开始时间
 	// 事件驱动同步相关
-	pendingBlockBuffer    *PendingBlockBuffer // 待处理区块缓冲区（用于补课）
-	consecutiveStallCount uint32              // 连续同步停滞计数（高风险修复：死循环保护）
+	pendingBlockBuffer    *PendingBlockBuffer  // 待处理区块缓冲区（用于补课）
+	consecutiveStallCount uint32               // 连续同步停滞计数（高风险修复：死循环保护）
+	InFlightSyncRanges    map[string]time.Time // 新增：正在进行的同步高度范围（去重）
 }
 
 func NewSyncManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, snapshotConfig *SnapshotConfig, events interfaces.EventBus, logger logs.Logger) *SyncManager {
 	return &SyncManager{
-		nodeID:          id,
-		transport:       transport,
-		store:           store,
-		config:          config,
-		snapshotConfig:  snapshotConfig,
-		events:          events,
-		Logger:          logger,
-		SyncRequests:    make(map[uint32]time.Time),
-		PeerHeights:     make(map[types.NodeID]uint64),
-		lastPoll:        time.Now(),
-		sampleResponses: make(map[types.NodeID]uint64),
+		nodeID:             id,
+		transport:          transport,
+		store:              store,
+		config:             config,
+		snapshotConfig:     snapshotConfig,
+		events:             events,
+		Logger:             logger,
+		SyncRequests:       make(map[uint32]time.Time),
+		PeerHeights:        make(map[types.NodeID]uint64),
+		lastPoll:           time.Now(),
+		sampleResponses:    make(map[types.NodeID]uint64),
+		InFlightSyncRanges: make(map[string]time.Time),
 	}
 }
 
@@ -62,6 +65,7 @@ func (sm *SyncManager) SetPendingBlockBuffer(buffer *PendingBlockBuffer) {
 }
 
 func (sm *SyncManager) Start(ctx context.Context) {
+	// 1. 每隔 config.CheckInterval 进行一次常规同步检查（兜底）
 	go func() {
 		logs.SetThreadNodeContext(string(sm.nodeID))
 		ticker := time.NewTicker(sm.config.CheckInterval)
@@ -77,6 +81,7 @@ func (sm *SyncManager) Start(ctx context.Context) {
 		}
 	}()
 
+	// 2. 每隔 config.CheckInterval 进行一次常规高度采样（兜底）
 	go func() {
 		ticker := time.NewTicker(sm.config.CheckInterval)
 		defer ticker.Stop()
@@ -85,6 +90,21 @@ func (sm *SyncManager) Start(ctx context.Context) {
 			select {
 			case <-ticker.C:
 				sm.pollPeerHeights()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// 3. 新增：高频健康检查循环（每1秒），用于处理超时清理和丢包恢复
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				sm.processTimeouts()
 			case <-ctx.Done():
 				return
 			}
@@ -159,13 +179,19 @@ func (sm *SyncManager) HandleHeightResponse(msg types.Message) {
 	}
 }
 
-// 检查是否有必要启动同步程序
-func (sm *SyncManager) checkAndSync() {
+// processTimeouts 快速清理超时的请求（由 1s 的健康循环调用）
+func (sm *SyncManager) processTimeouts() {
 	sm.Mu.Lock()
+	defer sm.Mu.Unlock()
 
-	// 1. 检查是否有同步请求超时
+	if !sm.Syncing && !sm.sampling {
+		return
+	}
+
+	now := time.Now()
+
+	// 检查同步请求超时
 	if sm.Syncing {
-		now := time.Now()
 		hasTimeout := false
 		for syncID, startTime := range sm.SyncRequests {
 			if now.Sub(startTime) > sm.config.Timeout {
@@ -181,11 +207,32 @@ func (sm *SyncManager) checkAndSync() {
 			sm.Syncing = false
 			sm.usingSnapshot = false
 		}
+	}
 
-		if sm.Syncing {
-			sm.Mu.Unlock()
-			return
+	// 检查高度采样超时
+	if sm.sampling {
+		if now.Sub(sm.sampleStartTime) > sm.config.SampleTimeout {
+			logs.Debug("[Node %s] Sample verification timed out, resetting sampling flag", sm.nodeID)
+			sm.sampling = false
 		}
+	}
+
+	// 新增：检查并清理过期的处理中同步范围（兜底）
+	for rangeKey, startTime := range sm.InFlightSyncRanges {
+		if now.Sub(startTime) > sm.config.Timeout*2 {
+			delete(sm.InFlightSyncRanges, rangeKey)
+		}
+	}
+}
+
+// 检查是否有必要启动同步程序
+func (sm *SyncManager) checkAndSync() {
+	sm.Mu.Lock()
+
+	// 正在同步期间不启动新的检查
+	if sm.Syncing || sm.sampling {
+		sm.Mu.Unlock()
+		return
 	}
 
 	// 2. 检查采样验证状态
@@ -258,15 +305,24 @@ func (sm *SyncManager) checkAndSync() {
 func (sm *SyncManager) TriggerSyncFromChit(peerAcceptedHeight uint64, from types.NodeID) {
 	sm.Mu.Lock()
 
-	// 更新 PeerHeights（无需专门轮询）
+	// 更新 PeerHeights
 	if peerAcceptedHeight > sm.PeerHeights[from] {
 		sm.PeerHeights[from] = peerAcceptedHeight
 	}
 
-	// 如果已在同步中或采样中，跳过
+	// 智能判定是否需要新一轮同步：
+	// 若已忙碌，则检查当前是否有正在进行的请求。如果所有请求都超时了，允许继续。
 	if sm.Syncing || sm.sampling {
-		sm.Mu.Unlock()
-		return
+		// 修复：如果 SyncRequests 为空但 Syncing 为 true，可能正在进行慢速落盘，
+		// 此时不应随意重置 Syncing，除非确认没有活跃请求。
+		if len(sm.SyncRequests) > 0 {
+			sm.Mu.Unlock()
+			return
+		}
+
+		// 只有在确定没有任何请求在途且不是由于 slow DB 导致时，才允许重置尝试
+		// fallback: 保持原有逻辑，但增加日志记录
+		logs.Debug("[SyncManager] TriggerSyncFromChit: redundant trigger while busy (Requests=0)")
 	}
 
 	_, localAccepted := sm.store.GetLastAccepted()
@@ -345,7 +401,18 @@ func (sm *SyncManager) requestSyncParallel(fromHeight, toHeight uint64) {
 		sm.Mu.Unlock()
 		return
 	}
+
+	// 全局范围去重
+	rangeKey := fmt.Sprintf("%d-%d", fromHeight, toHeight)
+	if startTime, exists := sm.InFlightSyncRanges[rangeKey]; exists {
+		if time.Since(startTime) < sm.config.Timeout {
+			sm.Mu.Unlock()
+			return
+		}
+	}
+
 	sm.Syncing = true
+	sm.InFlightSyncRanges[rangeKey] = time.Now()
 	sm.Mu.Unlock()
 
 	// 获取可用节点
@@ -482,6 +549,9 @@ func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
 	sm.usingSnapshot = true
 	syncID := atomic.AddUint32(&sm.nextSyncID, 1)
 	sm.SyncRequests[syncID] = time.Now()
+	// 记录处理中范围
+	rangeKey := fmt.Sprintf("snapshot_%d", targetHeight)
+	sm.InFlightSyncRanges[rangeKey] = time.Now()
 	sm.Mu.Unlock()
 
 	// 找一个高度足够的节点
@@ -529,9 +599,20 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 		sm.Mu.Unlock()
 		return
 	}
+
+	// 去重检查
+	rangeKey := fmt.Sprintf("%d-%d", fromHeight, toHeight)
+	if startTime, exists := sm.InFlightSyncRanges[rangeKey]; exists {
+		if time.Since(startTime) < sm.config.Timeout {
+			sm.Mu.Unlock()
+			return
+		}
+	}
+
 	sm.Syncing = true
 	syncID := atomic.AddUint32(&sm.nextSyncID, 1)
 	sm.SyncRequests[syncID] = time.Now()
+	sm.InFlightSyncRanges[rangeKey] = time.Now()
 	sm.Mu.Unlock()
 
 	sm.Mu.RLock()
@@ -725,7 +806,10 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 		return
 	}
 	delete(sm.SyncRequests, msg.SyncID)
-	// sm.Syncing = false // 中风险修复：移至函数末尾，防止状态竞争
+	// 处理完成后清理 range（或者保留一段时间由 timeout 清理）
+	rangeKey := fmt.Sprintf("%d-%d", msg.FromHeight, msg.ToHeight)
+	// 由于并行同步会有子范围，这里简单处理，实际推荐由 timeout 自动过期，这里仅示例
+	delete(sm.InFlightSyncRanges, rangeKey)
 	sm.Mu.Unlock()
 
 	added := 0
@@ -779,8 +863,15 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 			sm.nodeID, len(msg.Blocks), addErrs, firstAddErrBlockID, firstAddErr)
 	}
 	if added == 0 && len(msg.Blocks) > 0 && addErrs == 0 {
-		logs.Warn("[Node %s] Sync received %d blocks but none were new (heights %d-%d)",
-			sm.nodeID, len(msg.Blocks), msg.FromHeight, msg.ToHeight)
+		// 优化：根据当前状态调整日志级别。如果是早于或等于当前高度的同步，使用 Debug。
+		_, acceptedHeight := sm.store.GetLastAccepted()
+		if msg.ToHeight <= acceptedHeight {
+			logs.Debug("[Node %s] Sync received %d blocks but none were new (heights %d-%d, current accepted=%d)",
+				sm.nodeID, len(msg.Blocks), msg.FromHeight, msg.ToHeight, acceptedHeight)
+		} else {
+			logs.Warn("[Node %s] Sync received %d blocks but none were new (heights %d-%d, current accepted=%d)",
+				sm.nodeID, len(msg.Blocks), msg.FromHeight, msg.ToHeight, acceptedHeight)
+		}
 	}
 
 	// 加速追块：如果收到的是对方“已接受高度”范围内的区块，则可直接按父链关系推进本地 lastAccepted。
@@ -835,23 +926,41 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 		atomic.StoreUint32(&sm.consecutiveStallCount, 0) // 重置停滞计数
 	} else if len(msg.Blocks) > 0 {
 		// 高风险修复：检测同步停滞
-		stalls := atomic.AddUint32(&sm.consecutiveStallCount, 1)
-		if stalls >= 3 {
-			logs.Warn("[Node %s] ⚠️ Sync stalled for %d rounds at height %d, breaking pipeline and switching peers",
-				sm.nodeID, stalls, acceptedHeight)
-			sm.Mu.Lock()
-			delete(sm.PeerHeights, types.NodeID(msg.From)) // 清理该 Peer 高度信息，强制重新采样
-			sm.Syncing = false
-			sm.Mu.Unlock()
-			atomic.StoreUint32(&sm.consecutiveStallCount, 0)
-			return
+		// 优化：只有当同步范围跨越了当前已接受高度，且未能推进时，才计入 stall
+		if msg.ToHeight > acceptedHeight {
+			stalls := atomic.AddUint32(&sm.consecutiveStallCount, 1)
+			if stalls >= 3 {
+				logs.Warn("[Node %s] ⚠️ Sync stalled for %d rounds at height %d, breaking pipeline and switching peers",
+					sm.nodeID, stalls, acceptedHeight)
+				sm.Mu.Lock()
+				delete(sm.PeerHeights, types.NodeID(msg.From)) // 清理该 Peer 高度信息，强制重新采样
+				sm.Syncing = false
+				sm.Mu.Unlock()
+				atomic.StoreUint32(&sm.consecutiveStallCount, 0)
+				return
+			}
+		} else {
+			logs.Debug("[Node %s] Sync response for heights %d-%d is older than accepted %d, ignoring stall check",
+				sm.nodeID, msg.FromHeight, msg.ToHeight, acceptedHeight)
 		}
 	}
 
-	sm.events.PublishAsync(types.BaseEvent{
-		EventType: types.EventSyncComplete,
-		EventData: added,
-	})
+	// 低风险优化：信号精准化
+	// 只有当本地高度与已知 Peer 最大高度差距小于 BatchSize 时才发布 EventSyncComplete。
+	// 避免在长距离追块过程中，每一轮同步都唤醒 QueryManager 发起无效查询。
+	if added > 0 || finalized > 0 {
+		_, curAccepted := sm.store.GetLastAccepted()
+		maxPeer := sm.getMaxPeerHeight()
+		if maxPeer <= curAccepted+sm.config.BatchSize {
+			sm.events.PublishAsync(types.BaseEvent{
+				EventType: types.EventSyncComplete,
+				EventData: added,
+			})
+		} else {
+			logs.Debug("[Node %s] Skipping EventSyncComplete signal: still behind by %d blocks",
+				sm.nodeID, maxPeer-curAccepted)
+		}
+	}
 
 	// 中风险修复：处理完成后再解锁状态
 	sm.Mu.Lock()

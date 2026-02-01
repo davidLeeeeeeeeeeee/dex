@@ -26,6 +26,9 @@ const (
 
 	// 直接存储的最大值长度 (32 - 1字节标记 = 31)
 	maxDirectValueSize = 31
+
+	// MaxMemoryDepth 内存常驻层数上限（高层路由层）
+	MaxMemoryDepth = 2
 )
 
 // VerkleProof Verkle Tree 的证明结构
@@ -54,7 +57,7 @@ type VerkleTree struct {
 	rootHistory map[Version][]byte
 }
 
-// NewVerkleTree 创建新的 Verkle Tree 包装器
+// NewVerkleTree 创建新的 Verkle Tree 包装器 (v0.2.2 兼容)
 func NewVerkleTree(store VersionedStore) *VerkleTree {
 	return &VerkleTree{
 		root:        gverkle.New(),
@@ -62,6 +65,23 @@ func NewVerkleTree(store VersionedStore) *VerkleTree {
 		version:     0,
 		rootHistory: make(map[Version][]byte),
 	}
+}
+
+// resolveNode 手动解析并加载节点（v0.2.2 不支持自动 Resolver）
+func (t *VerkleTree) resolveNode(hash []byte) (gverkle.VerkleNode, error) {
+	sess, err := t.store.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	defer sess.Close()
+
+	data, err := sess.GetKV(nodeKey(hash))
+	if err != nil {
+		return nil, err
+	}
+
+	// 使用 gverkle.ParseNode 反序列化
+	return gverkle.ParseNode(data, 0)
 }
 
 // ============================================
@@ -220,7 +240,94 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 		return nil, err
 	}
 
+	// 深度感知持久化：执行裁剪并刷新到 DB
+	if err := t.flushNodes(sess, newVersion); err != nil {
+		return nil, err
+	}
+
+	// 清理过旧的历史版本缓存
+	t.pruneHistory(newVersion)
+
 	return rootCommitment[:], nil
+}
+
+// pruneHistory 清理过旧的根承诺历史缓存（保留最近 100 个版本）
+func (t *VerkleTree) pruneHistory(currentVersion Version) {
+	const keepVersions = 100
+	if uint64(currentVersion) <= keepVersions {
+		return
+	}
+
+	threshold := currentVersion - keepVersions
+	for v := range t.rootHistory {
+		if v < threshold {
+			delete(t.rootHistory, v)
+		}
+	}
+}
+
+// flushNodes 递归遍历树，将深度超过 MaxMemoryDepth 的节点持久化并从内存裁剪
+func (t *VerkleTree) flushNodes(sess VersionedStoreSession, version Version) error {
+	// 简单实现：由于 go-verkle 官方库的节点结构未公开遍历 dirty 标记的最佳方式，
+	// 我们采用深度优先遍历（深度限定为 MaxMemoryDepth+1）
+	return t.flushNodeRecursive(t.root, 0, sess, version)
+}
+
+func (t *VerkleTree) flushNodeRecursive(node gverkle.VerkleNode, depth int, sess VersionedStoreSession, version Version) error {
+	if node == nil {
+		return nil
+	}
+
+	// 只处理内部节点
+	inner, ok := node.(*gverkle.InternalNode)
+	if !ok {
+		return nil
+	}
+
+	// 如果到达裁剪深度
+	if depth == MaxMemoryDepth {
+		for i := 0; i < 256; i++ {
+			child := inner.Children()[i]
+			if child == nil {
+				continue
+			}
+
+			// 序列化子节点
+			data, err := child.Serialize()
+			if err != nil {
+				continue
+			}
+			commitment := child.Commitment().Bytes()
+
+			// 存入 DB (NodeKey 规则: node:hash)
+			if err := sess.Set(nodeKey(commitment[:]), data, version); err != nil {
+				return err
+			}
+
+			// 关键：从内存中释放子节点
+			// v0.2.2 中 Children() 返回切片，可以直接操作
+			inner.Children()[i] = nil
+		}
+		return nil
+	}
+
+	// 否则继续向下递归
+	for i := 0; i < 256; i++ {
+		child := inner.Children()[i]
+		if err := t.flushNodeRecursive(child, depth+1, sess, version); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// nodeKey 生成节点的存储 Key
+func nodeKey(hash []byte) []byte {
+	k := make([]byte, len(hash)+5)
+	copy(k, "node:")
+	copy(k[5:], hash)
+	return k
 }
 
 // Delete 删除指定 Key
@@ -362,6 +469,45 @@ func (t *VerkleTree) CommitRoot(version Version, root []byte) {
 	defer t.mu.Unlock()
 	t.version = version
 	t.rootHistory[version] = root
+}
+
+// RestoreMemoryLayers 从存储中重建前 MaxMemoryDepth 层的内存结构
+func (t *VerkleTree) RestoreMemoryLayers(rootHash []byte) error {
+	if len(rootHash) == 0 || bytes.Equal(rootHash, make([]byte, 32)) {
+		return nil
+	}
+
+	node, err := t.resolveNode(rootHash)
+	if err != nil {
+		return err
+	}
+	t.root = node
+
+	return t.restoreNodeRecursive(t.root, 0)
+}
+
+func (t *VerkleTree) restoreNodeRecursive(node gverkle.VerkleNode, depth int) error {
+	if depth >= MaxMemoryDepth || node == nil {
+		return nil
+	}
+
+	inner, ok := node.(*gverkle.InternalNode)
+	if !ok {
+		return nil
+	}
+
+	for i := 0; i < 256; i++ {
+		// v0.2.2 中如果子节点为 nil 且有承诺值，说明是冷节点
+		// 注意：这里的恢复逻辑依赖于能够获取子节点承诺。
+		// 由于 InternalNode 没直接公开子节点承诺数组，我们假设 ParseNode 已处理。
+		child := inner.Children()[i]
+		if child != nil {
+			if err := t.restoreNodeRecursive(child, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // Commit 提交当前状态

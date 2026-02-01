@@ -34,7 +34,7 @@ type DB struct {
 
 func New(cfg Config) (*DB, error) {
 	if cfg.EpochSize == 0 {
-		cfg.EpochSize = 40000
+		cfg.EpochSize = 1000
 	}
 	if cfg.ShardHexWidth != 1 && cfg.ShardHexWidth != 2 {
 		cfg.ShardHexWidth = 1

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	mrand "math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type TxSimulator struct {
 	nodes  []*NodeInstance
 	nonces map[string]uint64
 	mu     sync.Mutex
+	paused atomic.Bool
 }
 
 func NewTxSimulator(nodes []*NodeInstance) *TxSimulator {
@@ -32,13 +34,40 @@ func (s *TxSimulator) getNextNonce(addr string) uint64 {
 }
 
 func (s *TxSimulator) Start() {
+	go s.monitorTxPool() // 监控交易池压力
 	go s.runRandomTransfers()
 	go s.runWitnessRegistration() // 见证者质押注册
 	go s.runRechargeScenario()    // 见证者上账请求
 	go s.runWitnessVoteWorker()   // 自动化见证者投票
 	go s.runWithdrawScenario()
-	go s.runOrderScenario()               // 订单交易模拟
+	go s.runOrderScenario()              // 订单交易模拟
 	go s.RunMassOrderScenarioAsync(3000) // 自动触发大批量订单场景测试 ShortTxs
+}
+
+func (s *TxSimulator) monitorTxPool() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if len(s.nodes) == 0 {
+			continue
+		}
+
+		// 检查第一个节点的交易池作为参考（或计算平均值）
+		pending := s.nodes[0].TxPool.PendingLen()
+
+		if pending > 5000 {
+			if !s.paused.Load() {
+				logs.Warn("SIMULATOR: TxPool overload detected (%d pending), PAUSING tx generation", pending)
+				s.paused.Store(true)
+			}
+		} else if pending < 2000 {
+			if s.paused.Load() {
+				logs.Info("SIMULATOR: TxPool pressure relieved (%d pending), RESUMING tx generation", pending)
+				s.paused.Store(false)
+			}
+		}
+	}
 }
 
 func (s *TxSimulator) submitTx(node *NodeInstance, tx *pb.AnyTx) {
@@ -61,6 +90,9 @@ func (s *TxSimulator) runRandomTransfers() {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		if s.paused.Load() {
+			continue
+		}
 		// 随机选择一个发送方和接收方
 		fromIdx := mrand.Intn(len(s.nodes))
 		toIdx := mrand.Intn(len(s.nodes))
@@ -288,6 +320,9 @@ func (s *TxSimulator) runOrderScenario() {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		if s.paused.Load() {
+			continue
+		}
 		if len(s.nodes) == 0 {
 			continue
 		}
@@ -367,6 +402,11 @@ func (s *TxSimulator) RunMassOrderScenario(orderCount int) {
 	const batchDelay = 50 * time.Millisecond // 批次间隔
 
 	for i := 0; i < orderCount; i++ {
+		// 压力测试下也要尊重暂停标志
+		for s.paused.Load() {
+			time.Sleep(1 * time.Second)
+		}
+
 		// 轮流使用所有节点
 		nodeIdx := i % len(s.nodes)
 		node := s.nodes[nodeIdx]
