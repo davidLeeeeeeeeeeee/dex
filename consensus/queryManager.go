@@ -280,6 +280,14 @@ func (qm *QueryManager) HandleChit(msg types.Message) {
 		}
 		qm.engine.SubmitChit(types.NodeID(msg.From), p.queryKey, msg.PreferredID)
 	}
+
+	// 事件驱动同步：检测是否需要触发同步
+	if qm.syncManager != nil && msg.AcceptedHeight > 0 {
+		_, localAccepted := qm.store.GetLastAccepted()
+		if msg.AcceptedHeight > localAccepted+qm.syncManager.config.BehindThreshold {
+			qm.syncManager.TriggerSyncFromChit(msg.AcceptedHeight, types.NodeID(msg.From))
+		}
+	}
 }
 
 func (qm *QueryManager) cleanupPollsByQueryKeys(keys []string, reason string) {

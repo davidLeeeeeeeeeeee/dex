@@ -55,10 +55,12 @@ type Message struct {
 	AcceptedID        string
 	AcceptedHeight    uint64
 	// For Sync
-	FromHeight uint64
-	ToHeight   uint64
-	Blocks     []*Block
-	SyncID     uint32
+	FromHeight     uint64
+	ToHeight       uint64
+	Blocks         []*Block
+	SyncID         uint32
+	SyncShortMode  bool              // true=短期落后用ShortTxs, false=长期落后用完整区块
+	BlocksShortTxs map[string][]byte // blockID -> ShortTxs 数据（仅SyncShortMode=true时有效）
 	// For Height Query
 	CurrentHeight uint64
 	// For Snapshot

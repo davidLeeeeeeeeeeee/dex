@@ -95,10 +95,11 @@ func InitConsensusManagerWithSimulation(
 	// 创建 ConsensusAdapter（需要提前创建用于 PendingBlockBuffer）
 	adapter := NewConsensusAdapter(dbManager)
 
-	// 创建 PendingBlockBuffer 并注入到 MessageHandler
+	// 创建 PendingBlockBuffer 并注入到 MessageHandler 和 SyncManager
 	pendingBlockBuffer := NewPendingBlockBuffer(txPool, adapter, senderMgr, logger)
 	pendingBlockBuffer.Start()
 	node.messageHandler.SetPendingBlockBuffer(pendingBlockBuffer)
+	node.SyncManager.SetPendingBlockBuffer(pendingBlockBuffer)
 
 	// 创建 ConsensusNodeManager
 	consensusManager := &ConsensusNodeManager{

@@ -5,6 +5,7 @@ import (
 	"dex/interfaces"
 	"dex/logs"
 	"dex/types"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,9 @@ type SyncManager struct {
 	sampling        bool                    // 是否正在采样验证
 	sampleResponses map[types.NodeID]uint64 // 采样响应: nodeID -> acceptedHeight
 	sampleStartTime time.Time               // 采样开始时间
+	// 事件驱动同步相关
+	pendingBlockBuffer    *PendingBlockBuffer // 待处理区块缓冲区（用于补课）
+	consecutiveStallCount uint32              // 连续同步停滞计数（高风险修复：死循环保护）
 }
 
 func NewSyncManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, snapshotConfig *SnapshotConfig, events interfaces.EventBus, logger logs.Logger) *SyncManager {
@@ -50,6 +54,11 @@ func NewSyncManager(id types.NodeID, transport interfaces.Transport, store inter
 		lastPoll:        time.Now(),
 		sampleResponses: make(map[types.NodeID]uint64),
 	}
+}
+
+// SetPendingBlockBuffer 设置 PendingBlockBuffer（在初始化后注入）
+func (sm *SyncManager) SetPendingBlockBuffer(buffer *PendingBlockBuffer) {
+	sm.pendingBlockBuffer = buffer
 }
 
 func (sm *SyncManager) Start(ctx context.Context) {
@@ -242,6 +251,159 @@ func (sm *SyncManager) checkAndSync() {
 	}
 
 	sm.Mu.Unlock()
+}
+
+// TriggerSyncFromChit 由 Chits 消息驱动的同步触发入口（事件驱动模式）
+// 无需复杂的采样验证，因为 Chits 本身就是共识采样的一部分
+func (sm *SyncManager) TriggerSyncFromChit(peerAcceptedHeight uint64, from types.NodeID) {
+	sm.Mu.Lock()
+
+	// 更新 PeerHeights（无需专门轮询）
+	if peerAcceptedHeight > sm.PeerHeights[from] {
+		sm.PeerHeights[from] = peerAcceptedHeight
+	}
+
+	// 如果已在同步中或采样中，跳过
+	if sm.Syncing || sm.sampling {
+		sm.Mu.Unlock()
+		return
+	}
+
+	_, localAccepted := sm.store.GetLastAccepted()
+	if peerAcceptedHeight <= localAccepted {
+		sm.Mu.Unlock()
+		return
+	}
+
+	heightDiff := peerAcceptedHeight - localAccepted
+	sm.Mu.Unlock()
+
+	logs.Debug("[SyncManager] TriggerSyncFromChit: peer=%s peerHeight=%d localAccepted=%d diff=%d",
+		from, peerAcceptedHeight, localAccepted, heightDiff)
+
+	// 中风险修复：轻量级高度采样验证
+	// 采样 2 个随机节点（不包括发送者）来交叉确认高度。
+	// 这能防止被单个恶意或故障节点拉入错误的同步轨道。
+	go func() {
+		logs.Debug("[SyncManager] Starting lightweight safety sampling for TriggerSyncFromChit (target=%d)", peerAcceptedHeight)
+
+		peers := sm.transport.SamplePeers(sm.nodeID, 2)
+		// 如果网络太小没法采样，则信任该 Chit（此时共识安全性由 BFT 保证）
+		if len(peers) <= 1 {
+			sm.performTriggeredSync(peerAcceptedHeight, localAccepted, heightDiff)
+			return
+		}
+
+		// 发起高度查询
+		for _, p := range peers {
+			if p == from {
+				continue
+			}
+			sm.transport.Send(p, types.Message{
+				Type: types.MsgHeightQuery,
+				From: sm.nodeID,
+			})
+		}
+
+		// 等待 300ms 观察响应（通过 HandleHeightResponse 更新 PeerHeights）
+		time.Sleep(300 * time.Millisecond)
+
+		// 检查是否有其他节点也达到了该高度附近
+		sm.Mu.RLock()
+		maxOtherPeerHeight := uint64(0)
+		for pID, h := range sm.PeerHeights {
+			if pID != from && h > maxOtherPeerHeight {
+				maxOtherPeerHeight = h
+			}
+		}
+		sm.Mu.RUnlock()
+
+		// 安全阈值：只要有任何一个其他节点也处于类似高度（或更高），即认为安全
+		if maxOtherPeerHeight >= peerAcceptedHeight-1 {
+			sm.performTriggeredSync(peerAcceptedHeight, localAccepted, heightDiff)
+		} else {
+			logs.Warn("[SyncManager] 🛡️ Lightweight sampling failed: no other peer confirmed height %d (maxOther=%d). Sync cancelled.",
+				peerAcceptedHeight, maxOtherPeerHeight)
+		}
+	}()
+}
+
+// performTriggeredSync 执行被触发的同步动作
+func (sm *SyncManager) performTriggeredSync(peerAcceptedHeight, localAccepted, heightDiff uint64) {
+	if sm.snapshotConfig.Enabled && heightDiff > sm.config.SnapshotThreshold {
+		sm.requestSnapshotSync(peerAcceptedHeight)
+	} else {
+		// 使用分片并行同步
+		sm.requestSyncParallel(localAccepted+1, minUint64(localAccepted+sm.config.BatchSize, peerAcceptedHeight))
+	}
+}
+
+// requestSyncParallel 分片并行同步：将高度范围分配给多个节点同时请求
+func (sm *SyncManager) requestSyncParallel(fromHeight, toHeight uint64) {
+	sm.Mu.Lock()
+	if sm.Syncing {
+		sm.Mu.Unlock()
+		return
+	}
+	sm.Syncing = true
+	sm.Mu.Unlock()
+
+	// 获取可用节点
+	peers := sm.transport.SamplePeers(sm.nodeID, sm.config.ParallelPeers)
+	if len(peers) == 0 {
+		sm.Mu.Lock()
+		sm.Syncing = false
+		sm.Mu.Unlock()
+		return
+	}
+
+	totalBlocks := toHeight - fromHeight + 1
+
+	// 如果请求范围小或只有1个节点，退化到普通同步
+	if totalBlocks <= 5 || len(peers) == 1 {
+		sm.Mu.Lock()
+		sm.Syncing = false
+		sm.Mu.Unlock()
+		sm.requestSync(fromHeight, toHeight)
+		return
+	}
+
+	// 计算每个节点负责的高度范围
+	rangePerPeer := totalBlocks / uint64(len(peers))
+
+	logs.Info("[SyncManager] Starting parallel sync: heights %d-%d across %d peers",
+		fromHeight, toHeight, len(peers))
+
+	for i, peer := range peers {
+		start := fromHeight + uint64(i)*rangePerPeer
+		end := start + rangePerPeer - 1
+		if i == len(peers)-1 {
+			end = toHeight // 最后一个节点负责剩余
+		}
+
+		// 为每个分片创建独立的 SyncID
+		syncID := atomic.AddUint32(&sm.nextSyncID, 1)
+		sm.Mu.Lock()
+		sm.SyncRequests[syncID] = time.Now()
+		sm.Mu.Unlock()
+
+		// 判断是否使用 ShortTxs 模式（基于总落后量而非分片大小）
+		useShortMode := totalBlocks <= sm.config.ShortSyncThreshold
+
+		go func(p types.NodeID, s, e uint64, id uint32, shortMode bool) {
+			logs.Debug("[SyncManager] Parallel shard: peer=%s heights=%d-%d shortMode=%v", p, s, e, shortMode)
+
+			msg := types.Message{
+				Type:          types.MsgSyncRequest,
+				From:          sm.nodeID,
+				SyncID:        id,
+				FromHeight:    s,
+				ToHeight:      e,
+				SyncShortMode: shortMode,
+			}
+			sm.transport.Send(p, msg)
+		}(peer, start, end, syncID, useShortMode)
+	}
 }
 
 // startHeightSampling 启动采样验证（必须持有写锁调用）
@@ -512,16 +674,45 @@ func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
 func (sm *SyncManager) HandleSyncRequest(msg types.Message) {
 	blocks := sm.store.GetBlocksFromHeight(msg.FromHeight, msg.ToHeight)
 
-	Logf("[Node %s] Received sync request from Node %s for heights %d-%d (found %d blocks)\n",
-		sm.nodeID, msg.From, msg.FromHeight, msg.ToHeight, len(blocks))
+	Logf("[Node %s] Received sync request from Node %s for heights %d-%d (found %d blocks, shortMode=%v)\n",
+		sm.nodeID, msg.From, msg.FromHeight, msg.ToHeight, len(blocks), msg.SyncShortMode)
 
 	response := types.Message{
-		Type:       types.MsgSyncResponse,
-		From:       sm.nodeID,
-		SyncID:     msg.SyncID,
-		Blocks:     blocks,
-		FromHeight: msg.FromHeight,
-		ToHeight:   msg.ToHeight,
+		Type:          types.MsgSyncResponse,
+		From:          sm.nodeID,
+		SyncID:        msg.SyncID,
+		Blocks:        blocks,
+		FromHeight:    msg.FromHeight,
+		ToHeight:      msg.ToHeight,
+		SyncShortMode: msg.SyncShortMode,
+	}
+
+	// 自适应传输模式
+	if msg.SyncShortMode {
+		// 短期落后模式：附带 ShortTxs 用于快速还原
+		response.BlocksShortTxs = make(map[string][]byte)
+		for _, block := range blocks {
+			if block == nil {
+				continue
+			}
+			if cachedBlock, exists := GetCachedBlock(block.ID); exists && cachedBlock != nil {
+				response.BlocksShortTxs[block.ID] = cachedBlock.ShortTxs
+			}
+		}
+	} else {
+		// 长期落后模式：直接将完整区块数据放入 blockCache（接收方可直接使用）
+		// 注意：这里的策略是在发送前把完整数据缓存通知出去
+		// 实际上需要在接收端处理，这里只确保响应中包含必要信息
+		for _, block := range blocks {
+			if block == nil {
+				continue
+			}
+			if cachedBlock, exists := GetCachedBlock(block.ID); exists && cachedBlock != nil {
+				// 已有缓存数据，接收方会通过其他机制获取
+				// 可以考虑在消息中直接包含序列化的 pb.Block，但会增大消息体积
+				// 当前策略：在响应后由接收方通过 MsgGet 拉取完整数据
+			}
+		}
 	}
 
 	sm.transport.Send(types.NodeID(msg.From), response)
@@ -534,7 +725,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 		return
 	}
 	delete(sm.SyncRequests, msg.SyncID)
-	sm.Syncing = false
+	// sm.Syncing = false // 中风险修复：移至函数末尾，防止状态竞争
 	sm.Mu.Unlock()
 
 	added := 0
@@ -542,14 +733,35 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 	var firstAddErr error
 	var firstAddErrBlockID string
 	for _, block := range msg.Blocks {
+		if block == nil {
+			continue
+		}
+
+		// 如果是 ShortMode 且有 ShortTxs 数据，提前交给 PendingBlockBuffer 处理
+		if msg.SyncShortMode && len(msg.BlocksShortTxs) > 0 {
+			shortTxs := msg.BlocksShortTxs[block.ID]
+			if len(shortTxs) > 0 && sm.pendingBlockBuffer != nil {
+				// 使用 ShortTxs 尝试还原区块
+				sm.pendingBlockBuffer.AddPendingBlockForConsensus(block, shortTxs, types.NodeID(msg.From), 0, nil)
+				added++ // 乐观计数，实际还原由 buffer 异步完成
+				continue
+			}
+		}
+
+		// 尝试直接添加
 		isNew, err := sm.store.Add(block)
 		if err != nil {
 			addErrs++
 			if firstAddErr == nil {
 				firstAddErr = err
-				if block != nil {
-					firstAddErrBlockID = block.ID
-				}
+				firstAddErrBlockID = block.ID
+			}
+			// 接入补课机制：如果是数据不完整导致的失败，加入 PendingBlockBuffer
+			if strings.Contains(err.Error(), "block data incomplete") && sm.pendingBlockBuffer != nil {
+				logs.Debug("[SyncManager] Block %s incomplete, queueing for async resolution", block.ID)
+				// 尝试使用响应中的 ShortTxs（如果有）
+				shortTxs := msg.BlocksShortTxs[block.ID]
+				sm.pendingBlockBuffer.AddPendingBlockForConsensus(block, shortTxs, types.NodeID(msg.From), 0, nil)
 			}
 			continue
 		}
@@ -620,10 +832,55 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 	if finalized > 0 {
 		logs.Info("[Node %s] ✅ Fast-finalized %d block(s) via sync (accepted=%d)",
 			sm.nodeID, finalized, acceptedHeight)
+		atomic.StoreUint32(&sm.consecutiveStallCount, 0) // 重置停滞计数
+	} else if len(msg.Blocks) > 0 {
+		// 高风险修复：检测同步停滞
+		stalls := atomic.AddUint32(&sm.consecutiveStallCount, 1)
+		if stalls >= 3 {
+			logs.Warn("[Node %s] ⚠️ Sync stalled for %d rounds at height %d, breaking pipeline and switching peers",
+				sm.nodeID, stalls, acceptedHeight)
+			sm.Mu.Lock()
+			delete(sm.PeerHeights, types.NodeID(msg.From)) // 清理该 Peer 高度信息，强制重新采样
+			sm.Syncing = false
+			sm.Mu.Unlock()
+			atomic.StoreUint32(&sm.consecutiveStallCount, 0)
+			return
+		}
 	}
 
 	sm.events.PublishAsync(types.BaseEvent{
 		EventType: types.EventSyncComplete,
 		EventData: added,
 	})
+
+	// 中风险修复：处理完成后再解锁状态
+	sm.Mu.Lock()
+	sm.Syncing = false
+	sm.Mu.Unlock()
+
+	// 流水线续传：如果仍落后，立即发起下一轮同步
+	if added > 0 || finalized > 0 {
+		_, localAccepted := sm.store.GetLastAccepted()
+		maxPeer := sm.getMaxPeerHeight()
+		if maxPeer > localAccepted+1 {
+			go func() {
+				time.Sleep(50 * time.Millisecond) // 短暂延迟避免太激进
+				sm.requestSync(localAccepted+1, minUint64(localAccepted+sm.config.BatchSize, maxPeer))
+			}()
+		}
+	}
+}
+
+// getMaxPeerHeight 返回已知的最大对端高度
+func (sm *SyncManager) getMaxPeerHeight() uint64 {
+	sm.Mu.RLock()
+	defer sm.Mu.RUnlock()
+
+	maxHeight := uint64(0)
+	for _, h := range sm.PeerHeights {
+		if h > maxHeight {
+			maxHeight = h
+		}
+	}
+	return maxHeight
 }

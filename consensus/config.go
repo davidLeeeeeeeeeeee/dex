@@ -37,14 +37,16 @@ type NodeConfig struct {
 }
 
 type SyncConfig struct {
-	CheckInterval     time.Duration
-	BehindThreshold   uint64
-	BatchSize         uint64
-	Timeout           time.Duration
-	SnapshotThreshold uint64        // 落后多少高度时使用快照
-	SampleSize        int           // 采样节点数量（默认 15）
-	QuorumRatio       float64       // Quorum 比例（默认 0.67，即 67%）
-	SampleTimeout     time.Duration // 采样超时时间
+	CheckInterval      time.Duration
+	BehindThreshold    uint64
+	BatchSize          uint64
+	Timeout            time.Duration
+	SnapshotThreshold  uint64        // 落后多少高度时使用快照
+	ShortSyncThreshold uint64        // 短期落后阈值（低于此值用ShortTxs，高于此值用完整区块）
+	ParallelPeers      int           // 分片并行请求的节点数（默认 3）
+	SampleSize         int           // 采样节点数量（默认 15）
+	QuorumRatio        float64       // Quorum 比例（默认 0.67，即 67%）
+	SampleTimeout      time.Duration // 采样超时时间
 }
 
 type GossipConfig struct {
@@ -80,14 +82,16 @@ func DefaultConfig() *Config {
 			ProposalInterval: 3000 * time.Millisecond,
 		},
 		Sync: SyncConfig{
-			CheckInterval:     5 * time.Second,
-			BehindThreshold:   2,
-			BatchSize:         10,
-			Timeout:           5 * time.Second,
-			SnapshotThreshold: 100,
-			SampleSize:        15,              // 采样 15 个节点
-			QuorumRatio:       0.67,            // 67% 拜占庭容错
-			SampleTimeout:     2 * time.Second, // 2 秒采样超时
+			CheckInterval:      30 * time.Second, // 降频作为兜底（事件驱动为主）
+			BehindThreshold:    2,
+			BatchSize:          50,              // 增大批量以加速追赶
+			Timeout:            3 * time.Second, // 缩短超时减少等待
+			SnapshotThreshold:  100,
+			ShortSyncThreshold: 20,              // 落后<=20块用ShortTxs，>20块用完整区块
+			ParallelPeers:      3,               // 并行向3个节点请求不同高度范围
+			SampleSize:         15,              // 采样 15 个节点
+			QuorumRatio:        0.67,            // 67% 拜占庭容错
+			SampleTimeout:      2 * time.Second, // 2 秒采样超时
 		},
 		Gossip: GossipConfig{
 			Fanout:   15,
