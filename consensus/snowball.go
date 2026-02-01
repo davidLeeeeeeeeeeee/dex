@@ -87,6 +87,12 @@ func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha 
 		} else {
 			sb.confidence++
 		}
+	} else {
+		// 票数不足 alpha，或者是没有任何候选块满足 alpha。
+		// 在 Snowball 算法中，一旦本轮采样失败，置信度（即连续成功的计数）必须重置，以确保共识的安全性。
+		if sb.confidence > 0 {
+			sb.confidence = 0
+		}
 	}
 	// 移除票数不足时切换偏好的逻辑 - 这是导致不一致的根源
 	// 票数不足 alpha 时，保持当前偏好不变，等待下一轮投票
