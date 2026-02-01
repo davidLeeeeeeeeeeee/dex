@@ -29,9 +29,11 @@ func TestBatchOrderBookRebuild_SinglePair(t *testing.T) {
 
 	// 创建包含 1 个订单交易的区块
 	block := &pb.Block{
-		BlockHash:     "block1",
-		PrevBlockHash: "",
-		Height:        1,
+		BlockHash: "block1",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "",
+			Height:        1,
+		},
 		Body: []*pb.AnyTx{
 			createOrderAnyTx("new_order_1", "BTC", "USDT", "50000", "1.0"),
 		},
@@ -90,9 +92,11 @@ func TestBatchOrderBookRebuild_MultiplePairs(t *testing.T) {
 
 	// 创建包含 3 个不同交易对订单的区块
 	block := &pb.Block{
-		BlockHash:     "block1",
-		PrevBlockHash: "",
-		Height:        1,
+		BlockHash: "block1",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "",
+			Height:        1,
+		},
 		Body: []*pb.AnyTx{
 			createOrderAnyTx("new_btc_1", "BTC", "USDT", "50000", "0.5"),
 			createOrderAnyTx("new_eth_1", "ETH", "USDT", "3000", "2.0"),
@@ -143,10 +147,12 @@ func TestBatchOrderBookRebuild_Performance(t *testing.T) {
 
 	// 创建包含多个订单的区块
 	block := &pb.Block{
-		BlockHash:     "block1",
-		PrevBlockHash: "",
-		Height:        1,
-		Body:          make([]*pb.AnyTx, 0, 50),
+		BlockHash: "block1",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "",
+			Height:        1,
+		},
+		Body: make([]*pb.AnyTx, 0, 50),
 	}
 
 	// 为每个交易对添加 10 个新订单
@@ -199,9 +205,11 @@ func TestBatchOrderBookRebuild_EmptyOrderBook(t *testing.T) {
 
 	// 创建区块，但 DB 中没有任何订单
 	block := &pb.Block{
-		BlockHash:     "block1",
-		PrevBlockHash: "",
-		Height:        1,
+		BlockHash: "block1",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "",
+			Height:        1,
+		},
 		Body: []*pb.AnyTx{
 			createOrderAnyTx("new_order_1", "BTC", "USDT", "50000", "1.0"),
 		},
@@ -249,9 +257,11 @@ func TestBatchOrderBookRebuild_Matching(t *testing.T) {
 
 	// 创建一个匹配的买单
 	block := &pb.Block{
-		BlockHash:     "block1",
-		PrevBlockHash: "",
-		Height:        1,
+		BlockHash: "block1",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "",
+			Height:        1,
+		},
 		Body: []*pb.AnyTx{
 			createBuyOrderAnyTx("buy_order_1", "BTC", "USDT", "50000", "0.5"),
 		},
@@ -297,9 +307,11 @@ func TestBatchOrderBookRebuild_MixedOperations(t *testing.T) {
 
 	// 创建包含 ADD 和 CANCEL 操作的区块
 	block := &pb.Block{
-		BlockHash:     "block1",
-		PrevBlockHash: "",
-		Height:        1,
+		BlockHash: "block1",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "",
+			Height:        1,
+		},
 		Body: []*pb.AnyTx{
 			createOrderAnyTx("new_order_1", "BTC", "USDT", "50000", "1.0"),
 			// REMOVE 操作不应该触发订单簿重建
@@ -597,9 +609,11 @@ func TestBatchRebuild_Correctness(t *testing.T) {
 
 	// 创建一个新订单，价格在中间
 	block := &pb.Block{
-		BlockHash:     "block1",
-		PrevBlockHash: "",
-		Height:        1,
+		BlockHash: "block1",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "",
+			Height:        1,
+		},
 		Body: []*pb.AnyTx{
 			createOrderAnyTx("new_order", "BTC", "USDT", "50000", "0.5"),
 		},
@@ -633,7 +647,9 @@ func TestBatchRebuild_EdgeCases(t *testing.T) {
 			},
 			block: &pb.Block{
 				BlockHash: "block1",
-				Height:    1,
+				Header: &pb.BlockHeader{
+					Height: 1,
+				},
 				Body: []*pb.AnyTx{
 					createOrderAnyTx("order1", "BTC", "USDT", "50000", "1.0"),
 				},
@@ -662,8 +678,10 @@ func TestBatchRebuild_EdgeCases(t *testing.T) {
 			},
 			block: &pb.Block{
 				BlockHash: "block1",
-				Height:    1,
-				Body:      []*pb.AnyTx{},
+				Header: &pb.BlockHeader{
+					Height: 1,
+				},
+				Body: []*pb.AnyTx{},
 			},
 			expectValid: true,
 		},
@@ -690,7 +708,9 @@ func TestBatchRebuild_EdgeCases(t *testing.T) {
 			},
 			block: &pb.Block{
 				BlockHash: "block1",
-				Height:    1,
+				Header: &pb.BlockHeader{
+					Height: 1,
+				},
 				Body: []*pb.AnyTx{
 					{
 						Content: &pb.AnyTx_OrderTx{

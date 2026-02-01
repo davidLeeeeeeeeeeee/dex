@@ -66,10 +66,12 @@ func TestWitnessStakeTxHandler(t *testing.T) {
 
 	// 创建区块
 	block := &pb.Block{
-		BlockHash:     "block_001",
-		PrevBlockHash: "genesis",
-		Height:        100,
-		Body:          []*pb.AnyTx{stakeTx},
+		BlockHash: "block_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        100,
+		},
+		Body: []*pb.AnyTx{stakeTx},
 	}
 
 	// 预执行区块
@@ -153,10 +155,12 @@ func TestWitnessRequestTxHandler(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_002",
-		PrevBlockHash: "block_001",
-		Height:        101,
-		Body:          []*pb.AnyTx{requestTx},
+		BlockHash: "block_002",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "block_001",
+			Height:        101,
+		},
+		Body: []*pb.AnyTx{requestTx},
 	}
 
 	result, err := executor.PreExecuteBlock(block)
@@ -222,10 +226,12 @@ func TestWitnessVoteTxHandler(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_003",
-		PrevBlockHash: "block_002",
-		Height:        101,
-		Body:          []*pb.AnyTx{voteTx},
+		BlockHash: "block_003",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "block_002",
+			Height:        101,
+		},
+		Body: []*pb.AnyTx{voteTx},
 	}
 
 	result, err := executor.PreExecuteBlock(block)
@@ -330,10 +336,12 @@ func TestWitnessChallengeTxHandler(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_004",
-		PrevBlockHash: "block_003",
-		Height:        102,
-		Body:          []*pb.AnyTx{challengeTx},
+		BlockHash: "block_004",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "block_003",
+			Height:        102,
+		},
+		Body: []*pb.AnyTx{challengeTx},
 	}
 
 	result, err := executor.PreExecuteBlock(block)
@@ -397,10 +405,12 @@ func TestArbitrationVoteTxHandler(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_005",
-		PrevBlockHash: "block_004",
-		Height:        105,
-		Body:          []*pb.AnyTx{arbVoteTx},
+		BlockHash: "block_005",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "block_004",
+			Height:        105,
+		},
+		Body: []*pb.AnyTx{arbVoteTx},
 	}
 
 	result, err := executor.PreExecuteBlock(block)
@@ -465,10 +475,12 @@ func TestWitnessClaimRewardTxHandler(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_006",
-		PrevBlockHash: "block_005",
-		Height:        110,
-		Body:          []*pb.AnyTx{claimTx},
+		BlockHash: "block_006",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "block_005",
+			Height:        110,
+		},
+		Body: []*pb.AnyTx{claimTx},
 	}
 
 	result, err := executor.PreExecuteBlock(block)
@@ -534,10 +546,12 @@ func TestWitnessUnstakeTxHandler(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_007",
-		PrevBlockHash: "block_006",
-		Height:        100,
-		Body:          []*pb.AnyTx{unstakeTx},
+		BlockHash: "block_007",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "block_006",
+			Height:        100,
+		},
+		Body: []*pb.AnyTx{unstakeTx},
 	}
 
 	result, err := executor.PreExecuteBlock(block)

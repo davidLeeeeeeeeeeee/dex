@@ -88,7 +88,7 @@ message Account {
   string address = 1; // 账户地址
   PublicKeys public_keys = 2; // 公钥集合（所有链的公钥）
   uint64 nonce = 3; // 账户的操作序号
-  repeated string orders = 4; // 未执行完的 order 状态的 hash 列表
+  reserved 4; // 原为 repeated string orders，已分离到独立存储 v1_acc_orders_
   map<string, TokenBalance> balances = 5; // key为token地址
   string unclaimed_reward = 8; // 累计但尚未领取的奖励
   string last_acc_reward = 9; // 上次更新时的累积因子
@@ -96,6 +96,11 @@ message Account {
   string ip = 11;
   uint64 index = 12; // 每个矿工都有唯一的index，用于bitmap
   string code = 13; // 为后续合约功能保留字段
+}
+
+// AccountOrders 独立存储的账户订单列表
+message AccountOrders {
+  repeated string orders = 1;
 }
 
 message TokenBalance {

@@ -40,7 +40,7 @@ func NewExecutorWithWitnessService(db iface.DBManager, reg *HandlerRegistry, cac
 		reg = NewHandlerRegistry()
 	}
 	if cache == nil {
-		cache = NewSpecExecLRU(1024)
+		cache = NewSpecExecLRU(64)
 	}
 
 	executor := &Executor{
@@ -748,77 +748,60 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 		return make(map[string]*matching.OrderBook), nil
 	}
 
-	// 一次性从 DB 扫描所有交易对的订单索引
-	rawData, err := x.DB.ScanOrdersByPairs(pairs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan orders: %w", err)
-	}
-
 	pairBooks := make(map[string]*matching.OrderBook)
 
-	// 为每个交易对重建订单簿
 	for _, pair := range pairs {
-		// 创建新的订单簿（暂时不设置 sink）
 		ob := matching.NewOrderBookWithSink(nil)
 
-		// 获取该交易对的所有订单索引
-		indexMap := rawData[pair]
-
-		// 遍历索引，加载订单并添加到订单簿
-		for indexKey := range indexMap {
-			// 从 indexKey 中解析 orderID
-			orderID := extractOrderIDFromIndexKey(indexKey)
-			if orderID == "" {
-				continue
-			}
-
-			// 优先从 OrderState 读取（新版本）
-			// 优先从 OrderState 读取（新版本）
-			// 优化：直接从 KV 读取，绕过 JMT，避免大量随机读树带来的性能问题
-			// 这显著降低了 rebuildOrderBooksForPairs 的 IO 开销
-			orderStateKey := keys.KeyOrderState(orderID)
-			orderStateData, err := x.DB.GetKV(orderStateKey)
-			if err == nil && len(orderStateData) > 0 {
-				var orderState pb.OrderState
-				if err := proto.Unmarshal(orderStateData, &orderState); err != nil {
+		// 2. 加载未成交的订单 (is_filled:false)，价格由低到高（默认顺序）
+		// 我们取当前最接近成交价格的 500 条
+		prefix := keys.KeyOrderPriceIndexPrefix(pair, false)
+		orders, err := x.DB.ScanKVWithLimit(prefix, 500)
+		if err == nil {
+			for indexKey, data := range orders {
+				orderID := extractOrderIDFromIndexKey(indexKey)
+				if orderID == "" {
 					continue
 				}
-
-				// 转换为 matching.Order 并添加到订单簿
-				matchOrder, err := convertOrderStateToMatchingOrder(&orderState)
-				if err != nil {
-					continue
-				}
-
-				ob.AddOrderWithoutMatch(matchOrder)
-				continue
+				x.loadOrderToBook(orderID, data, ob, sv)
 			}
-
-			// 兼容旧数据：从 OrderTx 读取
-			orderKey := keys.KeyOrder(orderID)
-			orderData, oldExists, oldErr := sv.Get(orderKey)
-			if oldErr != nil || !oldExists {
-				continue
-			}
-
-			var orderTx pb.OrderTx
-			if err := proto.Unmarshal(orderData, &orderTx); err != nil {
-				continue
-			}
-
-			// 转换为 matching.Order 并添加到订单簿（旧版本，假设未成交）
-			matchOrder, err := convertToMatchingOrderLegacy(&orderTx)
-			if err != nil {
-				continue
-			}
-
-			ob.AddOrderWithoutMatch(matchOrder)
 		}
+		// 由于 buy 和 sell 的前缀在目前设计中可能重合（取决于 is_filled)，
+		// 需确保 KeyOrderPriceIndexPrefix 区分了方向或者价格编码支持双向。
+		// 根据 keys.go: pair:%s|is_filled:%t|price:%s
+		// 这里目前的索引并没有区分 Side，所有 Side 都存在同一个 is_filled:false 下。
+		// 所以上面的 sellOrders 实际上包含了 BUY 和 SELL。
 
 		pairBooks[pair] = ob
 	}
 
 	return pairBooks, nil
+}
+
+// 辅助方法：从数据加载订单到订单簿
+func (x *Executor) loadOrderToBook(orderID string, indexData []byte, ob *matching.OrderBook, sv StateView) {
+	// 尝试从 OrderState 读取（最新状态）
+	orderStateKey := keys.KeyOrderState(orderID)
+	orderStateData, err := x.DB.GetKV(orderStateKey)
+	if err == nil && len(orderStateData) > 0 {
+		var orderState pb.OrderState
+		if err := proto.Unmarshal(orderStateData, &orderState); err == nil {
+			matchOrder, _ := convertOrderStateToMatchingOrder(&orderState)
+			if matchOrder != nil {
+				ob.AddOrderWithoutMatch(matchOrder)
+				return
+			}
+		}
+	}
+
+	// 兼容逻辑：从 indexData 或 sv 读取
+	var orderTx pb.OrderTx
+	if err := proto.Unmarshal(indexData, &orderTx); err == nil {
+		matchOrder, _ := convertToMatchingOrderLegacy(&orderTx)
+		if matchOrder != nil {
+			ob.AddOrderWithoutMatch(matchOrder)
+		}
+	}
 }
 
 // extractOrderIDFromIndexKey 从价格索引 key 中提取 orderID

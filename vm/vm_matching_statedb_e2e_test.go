@@ -89,10 +89,12 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 	}
 
 	block1 := &pb.Block{
-		BlockHash:     "block_001",
-		PrevBlockHash: "genesis",
-		Height:        1,
-		Body:          []*pb.AnyTx{sellOrderTx},
+		BlockHash: "block_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: []*pb.AnyTx{sellOrderTx},
 	}
 
 	t.Log("📦 Executing Block 1: Alice places sell order (1 BTC @ 50000 USDT)")
@@ -140,10 +142,12 @@ func TestE2E_OrderMatching_VM_StateDB_Integration(t *testing.T) {
 	}
 
 	block2 := &pb.Block{
-		BlockHash:     "block_002",
-		PrevBlockHash: "block_001",
-		Height:        2,
-		Body:          []*pb.AnyTx{buyOrderTx},
+		BlockHash: "block_002",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "block_001",
+			Height:        2,
+		},
+		Body: []*pb.AnyTx{buyOrderTx},
 	}
 
 	t.Log("📦 Executing Block 2: Bob places buy order (0.5 BTC @ 50000 USDT) - Should trigger matching")
@@ -351,9 +355,11 @@ func TestE2E_MultiBlock_OrderMatching(t *testing.T) {
 
 	// ========== Block 1: Alice 挂 3 个卖单 ==========
 	block1 := &pb.Block{
-		BlockHash:     "multi_block_001",
-		PrevBlockHash: "genesis",
-		Height:        1,
+		BlockHash: "multi_block_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
 		Body: []*pb.AnyTx{
 			createSellOrder("sell_1", aliceAddr, "BTC", "USDT", "49000", "1.0"),
 			createSellOrder("sell_2", aliceAddr, "BTC", "USDT", "50000", "2.0"),
@@ -379,9 +385,11 @@ func TestE2E_MultiBlock_OrderMatching(t *testing.T) {
 	// - 再匹配 sell_2: 0.5 BTC @ 50000 = 25000 USDT
 	// - 总计：1.5 BTC，花费 74000 USDT
 	block2 := &pb.Block{
-		BlockHash:     "multi_block_002",
-		PrevBlockHash: "multi_block_001",
-		Height:        2,
+		BlockHash: "multi_block_002",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "multi_block_001",
+			Height:        2,
+		},
 		Body: []*pb.AnyTx{
 			createBuyOrder("buy_1", bobAddr, "USDT", "BTC", "51000", "76500"),
 		},
@@ -435,9 +443,11 @@ func TestE2E_MultiBlock_OrderMatching(t *testing.T) {
 	// - sell_3 剩余 0.5 BTC @ 51000 = 25500 USDT
 	// 总计：100500 USDT
 	block3 := &pb.Block{
-		BlockHash:     "multi_block_003",
-		PrevBlockHash: "multi_block_002",
-		Height:        3,
+		BlockHash: "multi_block_003",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "multi_block_002",
+			Height:        3,
+		},
 		Body: []*pb.AnyTx{
 			createBuyOrder("buy_2", charlieAddr, "USDT", "BTC", "51000", "102000"),
 		},
@@ -605,9 +615,11 @@ func TestE2E_TransactionOrderDeterminism(t *testing.T) {
 	// - 匹配顺序：sell_2 (49000) -> sell_3 (50000) -> sell_1 (51000)
 	// - Bob 买入 1 BTC @ 49000 + 0.5 BTC @ 50000 = 74000 USDT
 	block := &pb.Block{
-		BlockHash:     "order_test_block",
-		PrevBlockHash: "genesis",
-		Height:        1,
+		BlockHash: "order_test_block",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
 		Body: []*pb.AnyTx{
 			createSellOrder("sell_order_1", aliceAddr, "BTC", "USDT", "51000", "1.0"),
 			createSellOrder("sell_order_2", aliceAddr, "BTC", "USDT", "49000", "1.0"),
@@ -727,9 +739,11 @@ func TestE2E_SameAccountMultipleBalanceChanges(t *testing.T) {
 	// - Bob: 1000 + 1500 + 3000 = 5500 USDT
 	// - Charlie: 2000 + 500 = 2500 USDT
 	block := &pb.Block{
-		BlockHash:     "multi_change_block",
-		PrevBlockHash: "genesis",
-		Height:        1,
+		BlockHash: "multi_change_block",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
 		Body: []*pb.AnyTx{
 			createTransferTx("tx_1", aliceAddr, bobAddr, "USDT", "1000"),
 			createTransferTx("tx_2", aliceAddr, charlieAddr, "USDT", "2000"),

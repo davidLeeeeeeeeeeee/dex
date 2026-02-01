@@ -125,6 +125,26 @@ func (db *MockDB) Scan(prefix string) (map[string][]byte, error) {
 	return result, nil
 }
 
+func (db *MockDB) ScanKVWithLimit(prefix string, limit int) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	count := 0
+	for k, v := range db.data {
+		if strings.HasPrefix(k, prefix) {
+			if limit > 0 && count >= limit {
+				break
+			}
+			valCopy := make([]byte, len(v))
+			copy(valCopy, v)
+			result[k] = valCopy
+			count++
+		}
+	}
+	return result, nil
+}
+
 func (db *MockDB) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {
 	result := make(map[string]map[string][]byte)
 
@@ -308,10 +328,12 @@ func TestBasicExecution(t *testing.T) {
 
 	// 创建pb.Block区块
 	block := &pb.Block{
-		BlockHash:     "block_001",
-		PrevBlockHash: "genesis",
-		Height:        1,
-		Body:          []*pb.AnyTx{transferTx},
+		BlockHash: "block_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: []*pb.AnyTx{transferTx},
 	}
 
 	// 预执行区块
@@ -407,10 +429,12 @@ func TestCacheEffectiveness(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_cache_test",
-		PrevBlockHash: "genesis",
-		Height:        1,
-		Body:          []*pb.AnyTx{transferTx},
+		BlockHash: "block_cache_test",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: []*pb.AnyTx{transferTx},
 	}
 
 	// 第一次执行
@@ -458,10 +482,12 @@ func TestInvalidTransaction(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_invalid",
-		PrevBlockHash: "genesis",
-		Height:        2,
-		Body:          []*pb.AnyTx{transferTx},
+		BlockHash: "block_invalid",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        2,
+		},
+		Body: []*pb.AnyTx{transferTx},
 	}
 
 	// 预执行
@@ -527,10 +553,12 @@ func TestConcurrentExecution(t *testing.T) {
 			}
 
 			block := &pb.Block{
-				BlockHash:     fmt.Sprintf("block_%d", blockNum),
-				PrevBlockHash: "genesis",
-				Height:        uint64(blockNum + 1),
-				Body:          txs,
+				BlockHash: fmt.Sprintf("block_%d", blockNum),
+				Header: &pb.BlockHeader{
+					PrevBlockHash: "genesis",
+					Height:        uint64(blockNum + 1),
+				},
+				Body: txs,
 			}
 
 			// 预执行
@@ -686,10 +714,12 @@ func BenchmarkPreExecute(b *testing.B) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "bench_block",
-		PrevBlockHash: "genesis",
-		Height:        1,
-		Body:          txs,
+		BlockHash: "bench_block",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: txs,
 	}
 
 	b.ResetTimer()

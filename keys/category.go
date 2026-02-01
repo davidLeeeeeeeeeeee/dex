@@ -16,6 +16,8 @@ const (
 // 这些数据需要版本管理、参与 Merkle 树、支持历史回溯
 var statePrefixes = []string{
 	"v1_account_",            // 账户状态（余额、Nonce、矿工标记）
+	"v1_acc_orders_",         // 账户关联的订单 ID 列表（独立存储）
+	"v1_order_",              // 订单实体数据
 	"v1_orderstate_",         // 订单实时状态（成交量、是否完成）
 	"v1_token_",              // Token 信息（包括 token_registry）
 	"v1_freeze_",             // 冻结标记（但排除 freeze_history）

@@ -69,8 +69,12 @@ func (db *EnhancedMockDB) NewSession() (iface.DBSession, error) {
 	return db.MockDB.NewSession()
 }
 
-func (db *EnhancedMockDB) CommitRoot(height uint64, root []byte) {
-	// 简单实现
+func (db *EnhancedMockDB) ScanKVWithLimit(prefix string, limit int) (map[string][]byte, error) {
+	return db.MockDB.ScanKVWithLimit(prefix, limit)
+}
+
+func (db *EnhancedMockDB) ApplyAccountUpdate(height uint64, update interface{}) error {
+	return db.stateDB.ApplyAccountUpdate(height, update)
 }
 
 // ========== 测试用例 ==========
@@ -121,10 +125,12 @@ func TestWriteOpSyncStateDB(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_sync_001",
-		PrevBlockHash: "genesis",
-		Height:        1,
-		Body:          []*pb.AnyTx{transferTx},
+		BlockHash: "block_sync_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: []*pb.AnyTx{transferTx},
 	}
 
 	// 提交区块
@@ -214,10 +220,12 @@ func TestWriteOpNoSyncStateDB(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_issue_001",
-		PrevBlockHash: "genesis",
-		Height:        1,
-		Body:          []*pb.AnyTx{issueTx},
+		BlockHash: "block_issue_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: []*pb.AnyTx{issueTx},
 	}
 
 	// 提交区块
@@ -288,10 +296,12 @@ func TestIdempotency(t *testing.T) {
 	}
 
 	block := &pb.Block{
-		BlockHash:     "block_idem_001",
-		PrevBlockHash: "genesis",
-		Height:        1,
-		Body:          []*pb.AnyTx{transferTx},
+		BlockHash: "block_idem_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: []*pb.AnyTx{transferTx},
 	}
 
 	// 第一次提交

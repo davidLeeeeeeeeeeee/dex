@@ -5,6 +5,7 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,10 +100,12 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 		}
 
 		block := &pb.Block{
-			BlockHash:     "block_" + string(rune('0'+i)),
-			PrevBlockHash: "prev_" + string(rune('0'+i)),
-			Height:        uint64(i + 1),
-			Body:          []*pb.AnyTx{orderTx},
+			BlockHash: "block_" + string(rune('0'+i)),
+			Header: &pb.BlockHeader{
+				PrevBlockHash: "prev_" + string(rune('0'+i)),
+				Height:        uint64(i + 1),
+			},
+			Body: []*pb.AnyTx{orderTx},
 		}
 
 		// 执行区块
@@ -144,17 +147,32 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 	lightNodeDB.InitWriteQueue(10000, 200*time.Millisecond)
 
 	// 从全节点的 StateDB 同步订单数据（不包含索引）
-	// StateDB 只同步了 v1_order_* 数据，不包含 v1_order_price_index_*
+	// 为了模拟轻节点同步，我们直接从全节点数据库扫描出这些状态并注入到轻节点
 	syncedCount := 0
-	err = fullNodeDB.StateDB.IterateLatestSnapshot(func(key string, value []byte) error {
-		// 只同步订单数据
-		if len(key) > len("v1_order_") && key[:9] == "v1_order_" {
-			lightNodeDB.EnqueueSet(key, string(value))
+
+	// 1. 同步订单实体 (v1_order_)
+	orders, _ := fullNodeDB.Scan("v1_order_")
+	for k, v := range orders {
+		if !strings.HasPrefix(k, "v1_orderstate_") {
+			lightNodeDB.EnqueueSet(k, string(v))
 			syncedCount++
 		}
-		return nil
-	})
-	require.NoError(t, err)
+	}
+
+	// 2. 同步订单状态 (v1_orderstate_)
+	orderStates, _ := fullNodeDB.Scan("v1_orderstate_")
+	for k, v := range orderStates {
+		lightNodeDB.EnqueueSet(k, string(v))
+	}
+
+	// 3. 同步账户订单列表 (v1_acc_orders_)
+	accOrders, _ := fullNodeDB.Scan("v1_acc_orders_")
+	for k, v := range accOrders {
+		lightNodeDB.EnqueueSet(k, string(v))
+	}
+
+	// 强制刷盘，确保重建时能读到
+	require.NoError(t, lightNodeDB.ForceFlush())
 
 	require.NoError(t, lightNodeDB.ForceFlush())
 	time.Sleep(300 * time.Millisecond)

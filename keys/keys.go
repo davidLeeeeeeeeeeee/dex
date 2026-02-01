@@ -109,6 +109,12 @@ func KeyAccount(addr string) string {
 	return withVer("account_" + addr)
 }
 
+// KeyAccountOrders 账户关联的订单 ID 列表
+// 例：v1_acc_orders_<address>
+func KeyAccountOrders(addr string) string {
+	return withVer("acc_orders_" + addr)
+}
+
 // KeyIndexToAccount 索引到账户的映射
 // 例：v1_indexToAccount_<idx>
 func KeyIndexToAccount(idx uint64) string {

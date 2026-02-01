@@ -106,6 +106,23 @@ func (db *SimpleDB) ScanOrdersByPairs(pairs []string) (map[string]map[string][]b
 	return result, nil
 }
 
+func (db *SimpleDB) ScanKVWithLimit(prefix string, limit int) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+	count := 0
+	for k, v := range db.data {
+		if strings.HasPrefix(k, prefix) {
+			if limit > 0 && count >= limit {
+				break
+			}
+			valCopy := make([]byte, len(v))
+			copy(valCopy, v)
+			result[k] = valCopy
+			count++
+		}
+	}
+	return result, nil
+}
+
 // ========== Frost 相关方法 ==========
 
 func (db *SimpleDB) GetFrostVaultTransition(key string) (*pb.VaultTransitionState, error) {

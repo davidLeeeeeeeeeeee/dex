@@ -84,7 +84,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	}
 
 	// 假设使用原生代币进行挖矿质押
-	nativeTokenAddr := "native_token"
+	nativeTokenAddr := "FB"
 
 	// 检查余额
 	if account.Balances == nil || account.Balances[nativeTokenAddr] == nil {
@@ -202,9 +202,9 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 		}, fmt.Errorf("account is not a miner")
 	}
 
-	nativeTokenAddr := "native_token"
+	nativeTokenAddr := "FB"
 
-	// 检查是否有锁定余额
+	// 检查锁定余额
 	if account.Balances == nil || account.Balances[nativeTokenAddr] == nil {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,

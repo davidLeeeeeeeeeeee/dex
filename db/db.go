@@ -278,6 +278,40 @@ func (manager *Manager) Scan(prefix string) (map[string][]byte, error) {
 	return result, nil
 }
 
+// ScanKVWithLimit 扫描指定前缀的所有键值对，最多返回 limit 条记录
+// 返回 map[key]value，由 vm.DBManager 接口调用
+func (manager *Manager) ScanKVWithLimit(prefix string, limit int) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+
+	err := manager.Db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		p := []byte(prefix)
+		count := 0
+		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
+			if limit > 0 && count >= limit {
+				break
+			}
+			item := it.Item()
+			k := item.KeyCopy(nil)
+			v, err := item.ValueCopy(nil)
+			if err != nil {
+				continue
+			}
+			result[string(k)] = v
+			count++
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // ScanOrdersByPairs 一次性扫描多个交易对的未成交订单
 // 返回：map[pair]map[indexKey][]byte
 func (manager *Manager) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {
