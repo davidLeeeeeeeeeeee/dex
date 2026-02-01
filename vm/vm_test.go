@@ -124,10 +124,8 @@ func (db *MockDB) Scan(prefix string) (map[string][]byte, error) {
 	}
 	return result, nil
 }
-
 func (db *MockDB) ScanKVWithLimit(prefix string, limit int) (map[string][]byte, error) {
 	result := make(map[string][]byte)
-
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	count := 0
@@ -143,6 +141,10 @@ func (db *MockDB) ScanKVWithLimit(prefix string, limit int) (map[string][]byte, 
 		}
 	}
 	return result, nil
+}
+
+func (db *MockDB) ScanKVWithLimitReverse(prefix string, limit int) (map[string][]byte, error) {
+	return db.ScanKVWithLimit(prefix, limit)
 }
 
 func (db *MockDB) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {

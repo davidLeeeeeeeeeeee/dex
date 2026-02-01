@@ -137,6 +137,7 @@ type DBManager interface {
 	Get(key string) ([]byte, error)
 	Scan(prefix string) (map[string][]byte, error)
 	ScanKVWithLimit(prefix string, limit int) (map[string][]byte, error)
+	ScanKVWithLimitReverse(prefix string, limit int) (map[string][]byte, error)
 	ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error)
 	GetKV(key string) ([]byte, error)
 	NewSession() (DBSession, error)

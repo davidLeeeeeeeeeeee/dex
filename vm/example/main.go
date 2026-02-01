@@ -123,6 +123,10 @@ func (db *SimpleDB) ScanKVWithLimit(prefix string, limit int) (map[string][]byte
 	return result, nil
 }
 
+func (db *SimpleDB) ScanKVWithLimitReverse(prefix string, limit int) (map[string][]byte, error) {
+	return db.ScanKVWithLimit(prefix, limit)
+}
+
 // ========== Frost 相关方法 ==========
 
 func (db *SimpleDB) GetFrostVaultTransition(key string) (*pb.VaultTransitionState, error) {

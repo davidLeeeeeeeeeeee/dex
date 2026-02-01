@@ -73,6 +73,10 @@ func (db *EnhancedMockDB) ScanKVWithLimit(prefix string, limit int) (map[string]
 	return db.MockDB.ScanKVWithLimit(prefix, limit)
 }
 
+func (db *EnhancedMockDB) ScanKVWithLimitReverse(prefix string, limit int) (map[string][]byte, error) {
+	return db.MockDB.ScanKVWithLimitReverse(prefix, limit)
+}
+
 func (db *EnhancedMockDB) ApplyAccountUpdate(height uint64, update interface{}) error {
 	return db.stateDB.ApplyAccountUpdate(height, update)
 }

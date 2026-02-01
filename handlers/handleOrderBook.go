@@ -173,7 +173,7 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 	// 分别加载买盘和卖盘 (限制前端显示各 100 条深度)
 	// 买盘 (Side_BUY = 0)
 	buyPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_BUY, false)
-	buyOrders, err := hm.dbManager.ScanKVWithLimit(buyPrefix, 100)
+	buyOrders, err := hm.dbManager.ScanKVWithLimitReverse(buyPrefix, 500)
 	if err != nil {
 		// Log the error but continue to process what we have, or return an error if critical
 		// For now, we'll just skip if there's an error scanning buy orders
@@ -187,7 +187,7 @@ func (hm *HandlerManager) HandleOrderBook(w http.ResponseWriter, r *http.Request
 
 	// 卖盘 (Side_SELL = 1)
 	sellPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_SELL, false)
-	sellOrders, err := hm.dbManager.ScanKVWithLimit(sellPrefix, 100)
+	sellOrders, err := hm.dbManager.ScanKVWithLimit(sellPrefix, 500)
 	if err != nil {
 		// Log the error but continue to process what we have, or return an error if critical
 		// For now, we'll just skip if there's an error scanning sell orders

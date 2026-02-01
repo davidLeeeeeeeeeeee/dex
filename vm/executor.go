@@ -756,7 +756,7 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 		// 2. 分别加载买盘和卖盘的未成交订单 (is_filled:false)
 		// 加载买盘 Top 500
 		buyPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_BUY, false)
-		buyOrders, err := x.DB.ScanKVWithLimit(buyPrefix, 500)
+		buyOrders, err := x.DB.ScanKVWithLimitReverse(buyPrefix, 500)
 		if err == nil {
 			for indexKey, data := range buyOrders {
 				orderID := extractOrderIDFromIndexKey(indexKey)

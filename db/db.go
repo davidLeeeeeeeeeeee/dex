@@ -312,6 +312,47 @@ func (manager *Manager) ScanKVWithLimit(prefix string, limit int) (map[string][]
 	return result, nil
 }
 
+// ScanKVWithLimitReverse 反向扫描指定前缀的所有键值对，最多返回 limit 条记录
+// 适用于买盘索引（最高价排在最后，需要反向扫描以获取市场前沿）
+func (manager *Manager) ScanKVWithLimitReverse(prefix string, limit int) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+
+	err := manager.Db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Reverse = true
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		p := []byte(prefix)
+		// 对于反向扫描，Seek 需要指向前缀范围的最末端
+		// 在 Badger 中，反向迭代器 Seek(k) 会找到 <= k 的第一个键
+		pEnd := make([]byte, len(p)+1)
+		copy(pEnd, p)
+		pEnd[len(p)] = 0xFF
+
+		count := 0
+		for it.Seek(pEnd); it.ValidForPrefix(p); it.Next() {
+			if limit > 0 && count >= limit {
+				break
+			}
+			item := it.Item()
+			k := item.KeyCopy(nil)
+			v, err := item.ValueCopy(nil)
+			if err != nil {
+				continue
+			}
+			result[string(k)] = v
+			count++
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // ScanOrdersByPairs 一次性扫描多个交易对的未成交订单
 // 返回：map[pair]map[indexKey][]byte
 func (manager *Manager) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {
