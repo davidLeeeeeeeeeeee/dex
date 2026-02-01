@@ -177,8 +177,8 @@ func DefaultConfig() *Config {
 		},
 		Database: DatabaseConfig{
 			ValueLogFileSize:    64 << 20,
-			BaseTableSize:       64 << 20, // 64MB
-			MemTableSize:        64 << 20, // 64MB
+			BaseTableSize:       16 << 20, // 16MB
+			MemTableSize:        16 << 20, // 16MB
 			MaxBatchSize:        100,
 			FlushInterval:       200 * time.Millisecond,
 			WriteQueueSize:      100000,

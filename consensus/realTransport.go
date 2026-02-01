@@ -69,8 +69,8 @@ func NewRealTransportWithSimulation(nodeID types.NodeID, dbMgr *db.Manager, send
 	rt := &RealTransport{
 		nodeID:         nodeID,
 		address:        keyMgr.GetAddress(),
-		inbox:          make(chan types.Message, 100000),
-		receiveQueue:   make(chan types.Message, 100000),
+		inbox:          make(chan types.Message, 1000),
+		receiveQueue:   make(chan types.Message, 1000),
 		receiveWorkers: 64, // 1000 个 worker 太重了，降为 64 核心数相关的水平
 		dbManager:      dbMgr,
 		senderManager:  senderMgr,
