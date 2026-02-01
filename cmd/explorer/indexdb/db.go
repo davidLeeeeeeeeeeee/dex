@@ -17,7 +17,10 @@ type IndexDB struct {
 // New 创建新的索引数据库
 func New(path string) (*IndexDB, error) {
 	opts := badger.DefaultOptions(path)
-	opts.Logger = nil // 禁用 badger 日志
+	opts.Logger = nil              // 禁用 badger 日志
+	opts.IndexCacheSize = 32 << 20 // 32MB 索引缓存
+	opts.BlockCacheSize = 64 << 20 // 64MB 块缓存
+	opts.NumCompactors = 2         // 设为最小支持值 2
 
 	db, err := badger.Open(opts)
 	if err != nil {

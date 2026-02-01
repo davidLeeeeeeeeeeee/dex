@@ -58,6 +58,7 @@ func NewManager(path string, logger logs.Logger) (*Manager, error) {
 	opts.IndexCacheSize = cfg.Database.IndexCacheSize
 	opts.BlockCacheSize = cfg.Database.BlockCacheSizeDB
 	opts.NumMemtables = cfg.Database.NumMemtables
+	opts.NumCompactors = cfg.Database.NumCompactors
 	// 如果依然想用 mmap，可以保持默认 (MemoryMap) 或自己设 WithValueLogLoadingMode(options.MemoryMap)
 	// .WithValueLogLoadingMode(options.MemoryMap)
 	//

@@ -56,6 +56,7 @@ func NewVerkleStateDB(cfg VerkleConfig) (*VerkleStateDB, error) {
 	opts.IndexCacheSize = cfgDefault.Database.IndexCacheSize
 	opts.BlockCacheSize = cfgDefault.Database.BlockCacheSizeDB
 	opts.NumMemtables = cfgDefault.Database.NumMemtables
+	opts.NumCompactors = cfgDefault.Database.NumCompactors
 
 	db, err := badger.Open(opts)
 	if err != nil {
