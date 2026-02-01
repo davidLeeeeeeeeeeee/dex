@@ -28,5 +28,8 @@ func doSendTx(t *SendTask, client *http.Client) error {
 		return fmt.Errorf("doSendTx: status %d, body %s", resp.StatusCode, string(respData))
 	}
 
+	// 完全读取 response body，确保连接可复用
+	_, _ = io.Copy(io.Discard, resp.Body)
+
 	return nil
 }

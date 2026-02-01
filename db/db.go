@@ -54,6 +54,10 @@ func NewManager(path string, logger logs.Logger) (*Manager, error) {
 	opts.ValueLogFileSize = cfg.Database.ValueLogFileSize
 	opts.BaseTableSize = cfg.Database.BaseTableSize
 	opts.MemTableSize = cfg.Database.MemTableSize
+	// 应用内存限制配置（新增）
+	opts.IndexCacheSize = cfg.Database.IndexCacheSize
+	opts.BlockCacheSize = cfg.Database.BlockCacheSizeDB
+	opts.NumMemtables = cfg.Database.NumMemtables
 	// 如果依然想用 mmap，可以保持默认 (MemoryMap) 或自己设 WithValueLogLoadingMode(options.MemoryMap)
 	// .WithValueLogLoadingMode(options.MemoryMap)
 	//

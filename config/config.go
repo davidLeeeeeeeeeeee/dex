@@ -59,6 +59,11 @@ type DatabaseConfig struct {
 	// 缓存配置
 	BlockCacheSize    int    // 10
 	SequenceBandwidth uint64 // 1000
+
+	// 内存限制配置（新增）
+	IndexCacheSize   int64 // 索引缓存大小（字节），限制 Ristretto 缓存
+	BlockCacheSizeDB int64 // 块缓存大小（字节），限制数据块缓存
+	NumMemtables     int   // MemTable 数量，减少内存占用
 }
 
 // NetworkConfig 网络配置
@@ -187,6 +192,10 @@ func DefaultConfig() *Config {
 			PerEntryOverhead:    32,
 			BlockCacheSize:      10,
 			SequenceBandwidth:   1000,
+			// 内存限制配置
+			IndexCacheSize:   256 << 20, // 256MB 索引缓存
+			BlockCacheSizeDB: 512 << 20, // 512MB 块缓存
+			NumMemtables:     3,         // 减少 MemTable 数量
 		},
 		Network: NetworkConfig{
 			BasePort:           6000,

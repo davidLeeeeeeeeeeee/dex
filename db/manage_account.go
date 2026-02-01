@@ -114,54 +114,37 @@ func buildStakeIndexKey(stake decimal.Decimal, address string) string {
 }
 
 func (mgr *Manager) getAccountByIndex(idx uint64) (*pb.Account, error) {
-	//----------------------------------------
-	// ① 取出地址字符串
-	//----------------------------------------
-	var addr string
 	indexKey := []byte(KeyIndexToAccount(idx))
 
+	var acc pb.Account
 	err := mgr.Db.View(func(txn *badger.Txn) error {
+		// ① 取出地址字符串
 		item, err := txn.Get(indexKey)
 		if err != nil {
 			return err // badger.ErrKeyNotFound 等
 		}
-		val, err := item.ValueCopy(nil)
+		addrBytes, err := item.ValueCopy(nil)
 		if err != nil {
 			return err
 		}
-		addr = string(val) // value 就是一段地址字符串
-		return nil
+
+		// ② 取出 Account 对象（在同一事务中）
+		item2, err := txn.Get(addrBytes)
+		if err != nil {
+			return err
+		}
+		accBytes, err := item2.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+
+		// ③ 反序列化
+		return proto.Unmarshal(accBytes, &acc)
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	//----------------------------------------
-	// ② 取出 Account 对象
-	//----------------------------------------
-	var accBytes []byte
-	accountKey := []byte(addr)
-
-	err = mgr.Db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(accountKey)
-		if err != nil {
-			return err
-		}
-		accBytes, err = item.ValueCopy(nil)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	//----------------------------------------
-	// ③ 反序列化并返回
-	//----------------------------------------
-	acc := &pb.Account{}
-	if err := proto.Unmarshal(accBytes, acc); err != nil {
-		return nil, err
-	}
-	return acc, nil
+	return &acc, nil
 }
 
 // GetToken 获取 Token 信息

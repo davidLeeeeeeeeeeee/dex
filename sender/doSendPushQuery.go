@@ -29,6 +29,8 @@ func doSendPushQuery(t *SendTask, client *http.Client) error {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("pushquery status=%d: %s", resp.StatusCode, string(b))
 	}
+	// 完全读取 response body，确保连接可复用
+	_, _ = io.Copy(io.Discard, resp.Body)
 	// 不需要读取/反序列化 chits，等待对端异步POST /chits 过来，因为是异步的
 	return nil
 }

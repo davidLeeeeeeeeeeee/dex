@@ -67,7 +67,19 @@ func NewVerkleTree(store VersionedStore) *VerkleTree {
 	}
 }
 
-// resolveNode 手动解析并加载节点（v0.2.2 不支持自动 Resolver）
+// nodeResolver 创建一个 NodeResolverFn 用于按需加载被 flush 的节点
+func (t *VerkleTree) nodeResolver() gverkle.NodeResolverFn {
+	return func(path []byte) ([]byte, error) {
+		sess, err := t.store.NewSession()
+		if err != nil {
+			return nil, err
+		}
+		defer sess.Close()
+		return sess.GetKV(nodeKey(path))
+	}
+}
+
+// resolveNode 手动解析并加载节点（用于恢复根节点）
 func (t *VerkleTree) resolveNode(hash []byte) (gverkle.VerkleNode, error) {
 	sess, err := t.store.NewSession()
 	if err != nil {
@@ -98,7 +110,7 @@ func (t *VerkleTree) Get(key []byte, version Version) ([]byte, error) {
 	}
 
 	verkleKey := ToVerkleKey(key)
-	data, err := t.root.Get(verkleKey[:], nil)
+	data, err := t.root.Get(verkleKey[:], t.nodeResolver())
 	if err != nil || data == nil || len(data) == 0 {
 		return nil, ErrNotFound
 	}
@@ -133,7 +145,7 @@ func (t *VerkleTree) GetWithSession(sess VersionedStoreSession, key []byte, vers
 	}
 
 	verkleKey := ToVerkleKey(key)
-	data, err := t.root.Get(verkleKey[:], nil)
+	data, err := t.root.Get(verkleKey[:], t.nodeResolver())
 	if err != nil || data == nil || len(data) == 0 {
 		return nil, ErrNotFound
 	}
@@ -169,7 +181,7 @@ func (t *VerkleTree) Update(keys [][]byte, values [][]byte, newVersion Version) 
 
 	for i := 0; i < len(keys); i++ {
 		verkleKey := ToVerkleKey(keys[i])
-		if err := t.root.Insert(verkleKey[:], values[i], nil); err != nil {
+		if err := t.root.Insert(verkleKey[:], values[i], t.nodeResolver()); err != nil {
 			return nil, err
 		}
 	}
@@ -223,7 +235,7 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 			copy(treeVal[1:], hashPart)
 		}
 
-		if err := t.root.Insert(verkleKey[:], treeVal, nil); err != nil {
+		if err := t.root.Insert(verkleKey[:], treeVal, t.nodeResolver()); err != nil {
 			return nil, err
 		}
 	}
@@ -274,50 +286,24 @@ func (t *VerkleTree) pruneHistory(currentVersion Version) {
 	}
 }
 
-// flushNodes 递归遍历树，将深度超过 MaxMemoryDepth 的节点持久化并从内存裁剪
+// flushNodes 使用 go-verkle 官方的 FlushAtDepth 将深层节点持久化并从内存释放
 func (t *VerkleTree) flushNodes(sess VersionedStoreSession, version Version) error {
-	// 简单实现：由于 go-verkle 官方库的节点结构未公开遍历 dirty 标记的最佳方式，
-	// 我们采用深度优先遍历（深度限定为 MaxMemoryDepth+1）
-	return t.flushNodeRecursive(t.root, 0, sess, version)
-}
-
-func (t *VerkleTree) flushNodeRecursive(node gverkle.VerkleNode, depth int, sess VersionedStoreSession, version Version) error {
-	if node == nil {
-		return nil
-	}
-
-	// 1. 获取当前节点数据并保存 (所有深度的节点都需要持久化)
-	data, err := node.Serialize()
-	if err != nil {
-		return nil // 忽略无法序列化的节点（通常是由于尚未 Commit，但在 Update 后已 Commit）
-	}
-	commitment := node.Commitment().Bytes()
-	if err := sess.Set(nodeKey(commitment[:]), data, version); err != nil {
-		return err
-	}
-
-	// 2. 递归处理子节点
-	inner, ok := node.(*gverkle.InternalNode)
+	// 获取根节点的 InternalNode 引用
+	inner, ok := t.root.(*gverkle.InternalNode)
 	if !ok {
-		return nil // 叶子节点，已保存
+		return nil // 非 InternalNode，跳过
 	}
 
-	for i := 0; i < 256; i++ {
-		child := inner.Children()[i]
-		if child == nil {
-			continue
+	// 使用官方 FlushAtDepth：将深度 >= MaxMemoryDepth 的节点 flush 并替换为 HashedNode
+	inner.FlushAtDepth(uint8(MaxMemoryDepth), func(path []byte, node gverkle.VerkleNode) {
+		// 持久化节点
+		data, err := node.Serialize()
+		if err != nil {
+			return // 忽略序列化失败的节点
 		}
-
-		// 递归保存子节点树
-		if err := t.flushNodeRecursive(child, depth+1, sess, version); err != nil {
-			return err
-		}
-
-		// 3. 内存管理：如果深度超过阈值，在子树保存后，将子节点从内存中裁剪
-		if depth >= MaxMemoryDepth {
-			inner.Children()[i] = nil
-		}
-	}
+		commitment := node.Commitment().Bytes()
+		_ = sess.Set(nodeKey(commitment[:]), data, version)
+	})
 
 	return nil
 }

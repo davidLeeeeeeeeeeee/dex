@@ -20,6 +20,8 @@ type MinerIndexManager struct {
 	bitmap *roaring.Bitmap
 	db     *badger.DB
 	Logger logs.Logger
+	rng    *rand.Rand // 共享随机数生成器，避免每次分配
+	rngMu  sync.Mutex // 保护 rng 的互斥锁
 }
 
 // ----------  初始化 / 恢复  ----------
@@ -29,6 +31,7 @@ func NewMinerIndexManager(db *badger.DB, logger logs.Logger) (*MinerIndexManager
 		db:     db,
 		bitmap: roaring.New(),
 		Logger: logger,
+		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	if err := m.RebuildBitmapFromDB(); err != nil {
 		return nil, err
@@ -113,12 +116,14 @@ func (m *MinerIndexManager) SampleK(k int) ([]uint64, error) {
 	}
 
 	res := make([]uint64, 0, k)
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	seen := make(map[uint32]struct{}, k)
 
+	m.rngMu.Lock()
+	defer m.rngMu.Unlock()
+
 	for len(res) < k {
-		r := uint32(rng.Intn(card)) // [0, card)
-		v, _ := m.bitmap.Select(r)  // O(log64 N)
+		r := uint32(m.rng.Intn(card)) // 使用共享 rng
+		v, _ := m.bitmap.Select(r)    // O(log64 N)
 		if _, dup := seen[v]; dup {
 			continue
 		}
