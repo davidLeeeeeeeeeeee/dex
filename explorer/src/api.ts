@@ -82,6 +82,7 @@ export interface BlockHeaderInfo {
   tx_count: number
   accumulated_reward?: string
   window?: number
+  state_root?: string
 }
 
 export interface RecentBlocksResponse {

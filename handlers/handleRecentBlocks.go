@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"dex/logs"
 	"dex/pb"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -85,6 +86,7 @@ func (hm *HandlerManager) HandleGetRecentBlocks(w http.ResponseWriter, r *http.R
 			TxCount:           int32(len(block.Body)),
 			AccumulatedReward: block.AccumulatedReward,
 			Window:            block.Header.Window,
+			StateRoot:         fmt.Sprintf("%x", block.Header.StateRoot),
 		}
 		summaries = append(summaries, summary)
 		lastHeight--

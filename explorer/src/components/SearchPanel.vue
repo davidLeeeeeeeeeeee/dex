@@ -253,6 +253,7 @@ function getPlaceholder(): string {
             <tr>
               <th class="pl-6 w-32">Height</th>
               <th>Block Hash</th>
+              <th>State Root</th>
               <th>Miner</th>
               <th class="text-right">Tx Count</th>
               <th class="text-right pr-6">Reward</th>
@@ -270,6 +271,9 @@ function getPlaceholder(): string {
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
                   </button>
                 </div>
+              </td>
+              <td class="hash-cell">
+                 <code class="mono text-emerald-400/70" :title="block.state_root">{{ block.state_root ? block.state_root.substring(0, 16) + '...' : '-' }}</code>
               </td>
               <td class="miner-cell">
                 <div class="proposer">

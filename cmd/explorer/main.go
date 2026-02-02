@@ -529,6 +529,7 @@ type blockHeaderInfo struct {
 	TxCount     int    `json:"tx_count"`
 	Accumulated string `json:"accumulated_reward,omitempty"`
 	Window      int32  `json:"window,omitempty"`
+	StateRoot   string `json:"state_root,omitempty"`
 }
 
 // recentBlocksRequest 最近区块请求
@@ -590,6 +591,7 @@ func (s *server) handleRecentBlocks(w http.ResponseWriter, r *http.Request) {
 			TxCount:     int(h.TxCount),
 			Accumulated: h.AccumulatedReward,
 			Window:      h.Window,
+			StateRoot:   h.StateRoot,
 		})
 	}
 

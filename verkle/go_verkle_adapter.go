@@ -91,6 +91,9 @@ func (t *VerkleTree) resolveNode(hash []byte) (gverkle.VerkleNode, error) {
 	if err != nil {
 		return nil, err
 	}
+	if data == nil {
+		return nil, ErrNotFound
+	}
 
 	// 使用 gverkle.ParseNode 反序列化
 	return gverkle.ParseNode(data, 0)

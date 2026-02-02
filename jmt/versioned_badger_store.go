@@ -347,20 +347,14 @@ func (b *BadgerSession) Delete(key []byte, version Version) error {
 }
 
 func (b *BadgerSession) GetKV(key []byte) ([]byte, error) {
-	fullKey := b.s.encodeKey(key)
-	item, err := b.txn.Get(fullKey)
+	val, err := b.s.getInternal(b.txn, key, 0)
 	if err != nil {
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			return nil, nil // 保持接口一致，没找到返回 nil, nil
+		if errors.Is(err, ErrNotFound) || errors.Is(err, badger.ErrKeyNotFound) {
+			return nil, nil
 		}
 		return nil, err
 	}
-	var val []byte
-	err = item.Value(func(v []byte) error {
-		val = append([]byte(nil), v...)
-		return nil
-	})
-	return val, err
+	return val, nil
 }
 
 func (b *BadgerSession) Commit() error {

@@ -521,13 +521,12 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	// ========== 第四步：同步到 StateDB ==========
 	// 统一处理所有需要同步到 StateDB 的数据
-	if len(stateDBUpdates) > 0 {
-		stateRoot, err := sess.ApplyStateUpdate(b.Header.Height, stateDBUpdates)
-		if err != nil {
-			fmt.Printf("[VM] Warning: StateDB sync failed via session: %v\n", err)
-		} else if stateRoot != nil {
-			b.Header.StateRoot = stateRoot
-		}
+	// 即使没有更新，也调用 ApplyStateUpdate 以确认当前高度的状态根
+	stateRoot, err := sess.ApplyStateUpdate(b.Header.Height, stateDBUpdates)
+	if err != nil {
+		fmt.Printf("[VM] Warning: StateDB sync failed via session: %v\n", err)
+	} else if stateRoot != nil {
+		b.Header.StateRoot = stateRoot
 	}
 
 	// ========== 第四步：写入交易处理状态 ==========

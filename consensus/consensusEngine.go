@@ -15,16 +15,15 @@ import (
 // ============================================
 
 type SnowmanEngine struct {
-	mu                 sync.RWMutex
-	nodeID             types.NodeID
-	store              interfaces.BlockStore
-	config             *ConsensusConfig
-	events             interfaces.EventBus
-	snowballs          map[uint64]*Snowball
-	activeQueries      map[string]*QueryContext
-	preferences        map[uint64]string
-	heightChitsHistory map[uint64][]types.RoundChits // 每高度的投票历史
-	Logger             logs.Logger
+	mu            sync.RWMutex
+	nodeID        types.NodeID
+	store         interfaces.BlockStore
+	config        *ConsensusConfig
+	events        interfaces.EventBus
+	snowballs     map[uint64]*Snowball
+	activeQueries map[string]*QueryContext
+	preferences   map[uint64]string
+	Logger        logs.Logger
 }
 
 type QueryContext struct {
@@ -39,15 +38,14 @@ type QueryContext struct {
 
 func NewSnowmanEngine(nodeID types.NodeID, store interfaces.BlockStore, config *ConsensusConfig, events interfaces.EventBus, logger logs.Logger) interfaces.ConsensusEngine {
 	return &SnowmanEngine{
-		nodeID:             nodeID,
-		store:              store,
-		config:             config,
-		events:             events,
-		snowballs:          make(map[uint64]*Snowball),
-		activeQueries:      make(map[string]*QueryContext),
-		preferences:        make(map[uint64]string),
-		heightChitsHistory: make(map[uint64][]types.RoundChits),
-		Logger:             logger,
+		nodeID:        nodeID,
+		store:         store,
+		config:        config,
+		events:        events,
+		snowballs:     make(map[uint64]*Snowball),
+		activeQueries: make(map[string]*QueryContext),
+		preferences:   make(map[uint64]string),
+		Logger:        logger,
 	}
 }
 
@@ -200,23 +198,16 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 		logs.Debug("[Engine] Dropped %d vote(s) for non-candidate blocks at height %d (query=%s)",
 			droppedVotes, ctx.height, ctx.queryKey)
 	}
-	sb.RecordVote(candidates, filteredVotes, e.config.Alpha)
-
-	// 记录本轮投票到历史
-	roundNum := len(e.heightChitsHistory[ctx.height]) + 1
-	roundChits := types.RoundChits{
-		Round:     roundNum,
-		Timestamp: ctx.startTime.UnixMilli(),
-		Votes:     make([]types.FinalizationChit, 0, len(ctx.voters)),
-	}
+	// 构建投票详情
+	voteDetails := make([]types.FinalizationChit, 0, len(ctx.voters))
 	for nodeID, preferredID := range ctx.voters {
-		roundChits.Votes = append(roundChits.Votes, types.FinalizationChit{
+		voteDetails = append(voteDetails, types.FinalizationChit{
 			NodeID:      string(nodeID),
 			PreferredID: preferredID,
 			Timestamp:   ctx.startTime.UnixMilli(),
 		})
 	}
-	e.heightChitsHistory[ctx.height] = append(e.heightChitsHistory[ctx.height], roundChits)
+	sb.RecordVoteWithDetails(candidates, filteredVotes, e.config.Alpha, voteDetails)
 
 	newPreference := sb.GetPreference()
 	if newPreference != "" {
@@ -231,27 +222,37 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 	return "success"
 }
 
-// collectFinalizationChits 汇总所有轮次的投票信息
+// collectFinalizationChits 从 Snowball 获取有效轮次的投票历史
 func (e *SnowmanEngine) collectFinalizationChits(height uint64, blockID string) *types.FinalizationChits {
-	history := e.heightChitsHistory[height]
+	sb := e.snowballs[height]
+	if sb == nil {
+		return nil
+	}
 
-	chits := &types.FinalizationChits{
+	successHistory := sb.GetSuccessHistory()
+
+	// 转换为 types.RoundChits 格式
+	rounds := make([]types.RoundChits, 0, len(successHistory))
+	allChits := make([]types.FinalizationChit, 0)
+	for _, sr := range successHistory {
+		rc := types.RoundChits{
+			Round:     sr.Round,
+			Timestamp: sr.Timestamp,
+			Votes:     sr.Votes,
+		}
+		rounds = append(rounds, rc)
+		allChits = append(allChits, sr.Votes...)
+	}
+
+	return &types.FinalizationChits{
 		BlockID:     blockID,
 		Height:      height,
-		TotalRounds: len(history),
-		Rounds:      history,
+		TotalRounds: len(rounds),
+		Rounds:      rounds,
+		TotalVotes:  len(allChits),
+		Chits:       allChits,
 		FinalizedAt: time.Now().UnixMilli(),
 	}
-
-	// 计算总投票数并构建兼容的 Chits 列表
-	allChits := make([]types.FinalizationChit, 0)
-	for _, round := range history {
-		allChits = append(allChits, round.Votes...)
-	}
-	chits.TotalVotes = len(allChits)
-	chits.Chits = allChits
-
-	return chits
 }
 
 func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string, chits *types.FinalizationChits) {
@@ -283,8 +284,6 @@ func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string, chits *type
 		})
 	}
 
-	// 清理该高度的投票历史（释放内存）
-	delete(e.heightChitsHistory, height)
 }
 
 type QueryCompleteData struct {

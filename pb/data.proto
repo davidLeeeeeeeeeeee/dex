@@ -1081,6 +1081,7 @@ message BlockSummary {
   int32 tx_count = 5;
   string accumulated_reward = 6;
   int32 window = 7;
+  string state_root = 8;
 }
 
 message GetRecentBlocksRequest {
