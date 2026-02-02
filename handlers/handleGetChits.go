@@ -10,14 +10,23 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// RoundChitsEntry 单轮投票汇总
+type RoundChitsEntry struct {
+	Round     int         `json:"round"`
+	Timestamp int64       `json:"timestamp"`
+	Votes     []ChitEntry `json:"votes"`
+}
+
 // GetChitsResponse chits 查询响应
 type GetChitsResponse struct {
-	Height      uint64      `json:"height"`
-	BlockID     string      `json:"block_id,omitempty"`
-	TotalVotes  int         `json:"total_votes"`
-	FinalizedAt int64       `json:"finalized_at,omitempty"`
-	Chits       []ChitEntry `json:"chits,omitempty"`
-	Error       string      `json:"error,omitempty"`
+	Height      uint64            `json:"height"`
+	BlockID     string            `json:"block_id,omitempty"`
+	TotalVotes  int               `json:"total_votes"`
+	TotalRounds int               `json:"total_rounds"`
+	Rounds      []RoundChitsEntry `json:"rounds,omitempty"`
+	FinalizedAt int64             `json:"finalized_at,omitempty"`
+	Chits       []ChitEntry       `json:"chits,omitempty"`
+	Error       string            `json:"error,omitempty"`
 }
 
 // ChitEntry 单个投票信息
@@ -60,15 +69,35 @@ func (hm *HandlerManager) HandleGetChits(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// 构建响应
+	// 构建响应（包含多轮数据）
 	resp := GetChitsResponse{
 		Height:      chits.Height,
 		BlockID:     chits.BlockID,
 		TotalVotes:  chits.TotalVotes,
+		TotalRounds: chits.TotalRounds,
 		FinalizedAt: chits.FinalizedAt,
+		Rounds:      make([]RoundChitsEntry, 0, len(chits.Rounds)),
 		Chits:       make([]ChitEntry, 0, len(chits.Chits)),
 	}
 
+	// 填充多轮数据
+	for _, round := range chits.Rounds {
+		roundEntry := RoundChitsEntry{
+			Round:     round.Round,
+			Timestamp: round.Timestamp,
+			Votes:     make([]ChitEntry, 0, len(round.Votes)),
+		}
+		for _, v := range round.Votes {
+			roundEntry.Votes = append(roundEntry.Votes, ChitEntry{
+				NodeID:      v.NodeID,
+				PreferredID: v.PreferredID,
+				Timestamp:   v.Timestamp,
+			})
+		}
+		resp.Rounds = append(resp.Rounds, roundEntry)
+	}
+
+	// 兼容旧版：填充扁平化的 Chits 列表
 	for _, c := range chits.Chits {
 		resp.Chits = append(resp.Chits, ChitEntry{
 			NodeID:      c.NodeID,

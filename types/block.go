@@ -52,13 +52,22 @@ type FinalizationChit struct {
 	Timestamp   int64  `json:"timestamp"`    // 投票时间戳 (毫秒)
 }
 
+// RoundChits 单轮投票汇总
+type RoundChits struct {
+	Round     int                `json:"round"`     // 轮次编号（从 1 开始）
+	Timestamp int64              `json:"timestamp"` // 本轮开始时间 (毫秒)
+	Votes     []FinalizationChit `json:"votes"`     // 本轮投票列表
+}
+
 // FinalizationChits 区块最终化时的投票汇总
 type FinalizationChits struct {
-	BlockID     string             `json:"block_id"`     // 最终化的区块 ID
-	Height      uint64             `json:"height"`       // 区块高度
-	TotalVotes  int                `json:"total_votes"`  // 总投票数
-	Chits       []FinalizationChit `json:"chits"`        // 投票详情列表
-	FinalizedAt int64              `json:"finalized_at"` // 最终化时间戳 (毫秒)
+	BlockID     string             `json:"block_id"`         // 最终化的区块 ID
+	Height      uint64             `json:"height"`           // 区块高度
+	TotalVotes  int                `json:"total_votes"`      // 所有轮次的总投票数
+	TotalRounds int                `json:"total_rounds"`     // 总轮次数
+	Rounds      []RoundChits       `json:"rounds,omitempty"` // 按轮次组织的投票
+	Chits       []FinalizationChit `json:"chits,omitempty"`  // 保留兼容（聚合所有投票）
+	FinalizedAt int64              `json:"finalized_at"`     // 最终化时间戳 (毫秒)
 }
 
 // BlockFinalizedData 区块最终化事件数据包装

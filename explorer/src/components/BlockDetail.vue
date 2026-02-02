@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { BlockInfo } from '../types'
 
 const props = defineProps<{
@@ -34,6 +35,13 @@ function statusInfo(status?: string) {
 function handleAddressClick(e: Event, address?: string) {
   e.stopPropagation()
   if (address) emit('addressClick', address)
+}
+
+// 轮次折叠状态
+const expandedRounds = ref<Record<number, boolean>>({})
+
+function toggleRound(index: number) {
+  expandedRounds.value[index] = !expandedRounds.value[index]
 }
 </script>
 
@@ -178,13 +186,54 @@ function handleAddressClick(e: Event, address?: string) {
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m7 11 2 2 4-4"/><path d="M3.43 13.61a2 2 0 0 1 0-3.22l9-6A2 2 0 0 1 15 6v12a2 2 0 0 1-2.57 1.92l-9-6Z"/></svg>
           <h3>Finalization Votes</h3>
           <span class="count-tag highlight-green">{{ block.finalization_chits.total_votes }} Votes</span>
+          <span v-if="block.finalization_chits.total_rounds" class="count-tag highlight-blue">{{ block.finalization_chits.total_rounds }} Rounds</span>
         </div>
         <span v-if="block.finalization_chits.finalized_at" class="finalized-time text-gray-500 text-xs">
           Finalized at {{ new Date(block.finalization_chits.finalized_at).toLocaleString() }}
         </span>
       </div>
 
-      <div class="table-wrap">
+      <!-- 多轮数据展示 -->
+      <div v-if="block.finalization_chits.rounds && block.finalization_chits.rounds.length > 0" class="rounds-container">
+        <div v-for="(round, ridx) in block.finalization_chits.rounds" :key="ridx" class="round-section">
+          <div class="round-header" @click="toggleRound(ridx)">
+            <span class="round-toggle">{{ expandedRounds[ridx] ? '▼' : '▶' }}</span>
+            <span class="round-label">Round {{ round.round }}</span>
+            <span class="round-votes">{{ round.votes?.length || 0 }} votes</span>
+            <span class="round-time text-gray-500 text-xs">{{ new Date(round.timestamp).toLocaleTimeString() }}</span>
+          </div>
+          <div v-if="expandedRounds[ridx]" class="round-votes-list">
+            <table class="premium-table">
+              <thead>
+                <tr>
+                  <th class="pl-6">Voter Node</th>
+                  <th>Preferred Block</th>
+                  <th class="text-right pr-6">Vote Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(vote, vidx) in round.votes" :key="vidx" class="table-row no-hover">
+                  <td class="pl-6">
+                    <code class="mono text-teal-400">{{ vote.node_id }}</code>
+                  </td>
+                  <td>
+                    <code class="mono" :class="vote.preferred_id === block.block_hash ? 'text-emerald-400' : 'text-gray-500'">
+                      {{ truncateHash(vote.preferred_id, 12) }}
+                    </code>
+                    <span v-if="vote.preferred_id === block.block_hash" class="vote-match-tag">✓ Matched</span>
+                  </td>
+                  <td class="text-right pr-6 text-gray-500 text-xs">
+                    {{ new Date(vote.timestamp).toLocaleTimeString() }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 兼容旧版单列表数据 -->
+      <div v-else-if="block.finalization_chits.chits && block.finalization_chits.chits.length > 0" class="table-wrap">
         <table class="premium-table">
           <thead>
             <tr>
@@ -210,9 +259,10 @@ function handleAddressClick(e: Event, address?: string) {
             </tr>
           </tbody>
         </table>
-        <div v-if="!block.finalization_chits.chits || block.finalization_chits.chits.length === 0" class="empty-state-mini py-12">
-           No individual vote details available.
-        </div>
+      </div>
+
+      <div v-else class="empty-state-mini py-12">
+         No individual vote details available.
       </div>
     </section>
   </div>
@@ -310,4 +360,19 @@ function handleAddressClick(e: Event, address?: string) {
   font-size: 0.55rem; font-weight: 700; background: rgba(16, 185, 129, 0.15);
   color: #10b981; padding: 1px 6px; border-radius: 4px; margin-left: 8px;
 }
+
+/* Multi-round voting styles */
+.count-tag.highlight-blue { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+.rounds-container { display: flex; flex-direction: column; gap: 12px; }
+.round-section { border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; overflow: hidden; }
+.round-header {
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+  background: rgba(0,0,0,0.2); cursor: pointer; transition: background 0.2s;
+}
+.round-header:hover { background: rgba(99, 102, 241, 0.05); }
+.round-toggle { color: #64748b; font-size: 0.75rem; }
+.round-label { font-weight: 700; color: #fff; font-size: 0.9rem; }
+.round-votes { font-size: 0.7rem; color: #10b981; background: rgba(16, 185, 129, 0.1); padding: 2px 8px; border-radius: 4px; }
+.round-time { margin-left: auto; }
+.round-votes-list { border-top: 1px solid rgba(255,255,255,0.03); }
 </style>

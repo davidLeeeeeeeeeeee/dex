@@ -40,8 +40,8 @@ func (s *TxSimulator) Start() {
 	go s.runRechargeScenario()    // 见证者上账请求
 	go s.runWitnessVoteWorker()   // 自动化见证者投票
 	go s.runWithdrawScenario()
-	go s.runOrderScenario()              // 订单交易模拟
-	go s.RunMassOrderScenarioAsync(3000) // 自动触发大批量订单场景测试 ShortTxs
+	go s.runOrderScenario()             // 订单交易模拟
+	go s.RunMassOrderScenarioAsync(300) // 自动触发大批量订单场景测试 ShortTxs
 }
 
 func (s *TxSimulator) monitorTxPool() {
@@ -328,7 +328,7 @@ func (s *TxSimulator) runOrderScenario() {
 		}
 
 		// 每次生成 10-20 笔订单
-		orderCount := 10 + mrand.Intn(500)
+		orderCount := 10 + mrand.Intn(10)
 		for i := 0; i < orderCount; i++ {
 			// 随机选择一个节点
 			nodeIdx := mrand.Intn(len(s.nodes))

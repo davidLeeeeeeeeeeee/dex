@@ -129,11 +129,20 @@ export interface FinalizationChit {
   timestamp: number
 }
 
+// 单轮投票汇总
+export interface RoundChits {
+  round: number
+  timestamp: number
+  votes: FinalizationChit[]
+}
+
 // 区块最终化投票详情（用于调试）
 export interface FinalizationChitsInfo {
   block_id: string
   height: number
   total_votes: number
+  total_rounds: number
+  rounds?: RoundChits[]
   finalized_at: number
   chits?: FinalizationChit[]
 }

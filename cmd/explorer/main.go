@@ -156,11 +156,19 @@ type blockInfo struct {
 
 // finalizationChitsInfo 最终化投票信息（用于调试）
 type finalizationChitsInfo struct {
-	BlockID     string     `json:"block_id"`
-	Height      uint64     `json:"height"`
-	TotalVotes  int        `json:"total_votes"`
-	FinalizedAt int64      `json:"finalized_at"`
-	Chits       []chitInfo `json:"chits,omitempty"`
+	BlockID     string           `json:"block_id"`
+	Height      uint64           `json:"height"`
+	TotalVotes  int              `json:"total_votes"`
+	TotalRounds int              `json:"total_rounds"`
+	Rounds      []roundChitsInfo `json:"rounds,omitempty"`
+	FinalizedAt int64            `json:"finalized_at"`
+	Chits       []chitInfo       `json:"chits,omitempty"`
+}
+
+type roundChitsInfo struct {
+	Round     int        `json:"round"`
+	Timestamp int64      `json:"timestamp"`
+	Votes     []chitInfo `json:"votes"`
 }
 
 type chitInfo struct {
@@ -1302,13 +1310,23 @@ func (s *server) fetchChits(ctx context.Context, node string, height uint64) *fi
 		return nil
 	}
 
-	// 解析 JSON 响应
+	// 解析 JSON 响应（支持多轮数据）
 	var result struct {
 		Height      uint64 `json:"height"`
 		BlockID     string `json:"block_id"`
 		TotalVotes  int    `json:"total_votes"`
+		TotalRounds int    `json:"total_rounds"`
 		FinalizedAt int64  `json:"finalized_at"`
-		Chits       []struct {
+		Rounds      []struct {
+			Round     int   `json:"round"`
+			Timestamp int64 `json:"timestamp"`
+			Votes     []struct {
+				NodeID      string `json:"node_id"`
+				PreferredID string `json:"preferred_id"`
+				Timestamp   int64  `json:"timestamp"`
+			} `json:"votes"`
+		} `json:"rounds"`
+		Chits []struct {
 			NodeID      string `json:"node_id"`
 			PreferredID string `json:"preferred_id"`
 			Timestamp   int64  `json:"timestamp"`
@@ -1333,10 +1351,30 @@ func (s *server) fetchChits(ctx context.Context, node string, height uint64) *fi
 		BlockID:     result.BlockID,
 		Height:      result.Height,
 		TotalVotes:  result.TotalVotes,
+		TotalRounds: result.TotalRounds,
 		FinalizedAt: result.FinalizedAt,
+		Rounds:      make([]roundChitsInfo, 0, len(result.Rounds)),
 		Chits:       make([]chitInfo, 0, len(result.Chits)),
 	}
 
+	// 解析多轮数据
+	for _, r := range result.Rounds {
+		roundInfo := roundChitsInfo{
+			Round:     r.Round,
+			Timestamp: r.Timestamp,
+			Votes:     make([]chitInfo, 0, len(r.Votes)),
+		}
+		for _, v := range r.Votes {
+			roundInfo.Votes = append(roundInfo.Votes, chitInfo{
+				NodeID:      v.NodeID,
+				PreferredID: v.PreferredID,
+				Timestamp:   v.Timestamp,
+			})
+		}
+		info.Rounds = append(info.Rounds, roundInfo)
+	}
+
+	// 兼容旧版单列表数据
 	for _, c := range result.Chits {
 		info.Chits = append(info.Chits, chitInfo{
 			NodeID:      c.NodeID,
