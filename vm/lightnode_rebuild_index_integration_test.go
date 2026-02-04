@@ -259,26 +259,33 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 
 // ========== 辅助函数 ==========
 
-// createTestAccount 创建测试账户
+// createTestAccount 创建测试账户（使用分离存储）
 func createTestAccount(t *testing.T, dbMgr *db.Manager, address string, balances map[string]string) {
+	// 创建账户（不含余额）
 	account := &pb.Account{
-		Address:  address,
-		Balances: make(map[string]*pb.TokenBalance),
+		Address: address,
 	}
 
-	for token, amount := range balances {
-		account.Balances[token] = &pb.TokenBalance{
-			Balance:            amount,
-			MinerLockedBalance: "0",
-		}
-	}
-
-	// 使用 proto 序列化（与生产代码保持一致）
+	// 使用 proto 序列化账户
 	accountData, err := proto.Marshal(account)
 	require.NoError(t, err)
 
 	accountKey := keys.KeyAccount(address)
 	dbMgr.EnqueueSet(accountKey, string(accountData))
+
+	// 使用 KeyBalance 分离存储余额
+	for token, amount := range balances {
+		bal := &pb.TokenBalanceRecord{
+			Balance: &pb.TokenBalance{
+				Balance:            amount,
+				MinerLockedBalance: "0",
+			},
+		}
+		balData, err := proto.Marshal(bal)
+		require.NoError(t, err)
+		balKey := keys.KeyBalance(address, token)
+		dbMgr.EnqueueSet(balKey, string(balData))
+	}
 }
 
 // getOrder 获取订单数据

@@ -165,7 +165,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		setWithMeta(sv, seqKey, []byte(strconv.FormatUint(seq, 10)), true, "frost_funds")
 	}
 
-	// 增加用户余额
+	// 增加用户余额（使用分离存储）
 	userAddr := stored.ReceiverAddress
 	if userAddr != "" {
 		userKey := keys.KeyAccount(userAddr)
@@ -178,23 +178,14 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 			}
 		} else {
 			userAccount = pb.Account{
-				Address:  userAddr,
-				Balances: make(map[string]*pb.TokenBalance),
+				Address: userAddr,
 			}
 		}
 
-		if userAccount.Balances == nil {
-			userAccount.Balances = make(map[string]*pb.TokenBalance)
-		}
+		// 使用分离存储读取余额
+		tokenBal := GetBalance(sv, userAddr, stored.TokenAddress)
 
-		if userAccount.Balances[stored.TokenAddress] == nil {
-			userAccount.Balances[stored.TokenAddress] = &pb.TokenBalance{
-				Balance: "0",
-			}
-		}
-
-		balanceStr := userAccount.Balances[stored.TokenAddress].Balance
-		currentBalance, _ := new(big.Int).SetString(balanceStr, 10)
+		currentBalance, _ := new(big.Int).SetString(tokenBal.Balance, 10)
 		if currentBalance == nil {
 			currentBalance = big.NewInt(0)
 		}
@@ -209,13 +200,20 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 			return fmt.Errorf("balance overflow: %w", err)
 		}
 
-		userAccount.Balances[stored.TokenAddress].Balance = newBalance.String()
+		tokenBal.Balance = newBalance.String()
+		SetBalance(sv, userAddr, stored.TokenAddress, tokenBal)
 
+		// 保存账户（不含余额）
 		updatedUserData, err := proto.Marshal(&userAccount)
 		if err != nil {
 			return fmt.Errorf("failed to marshal updated user account: %w", err)
 		}
 		setWithMeta(sv, userKey, updatedUserData, true, "account")
+
+		// 保存余额数据
+		balKey := keys.KeyBalance(userAddr, stored.TokenAddress)
+		balData, _, _ := sv.Get(balKey)
+		setWithMeta(sv, balKey, balData, true, "balance")
 	}
 
 	return nil

@@ -1,13 +1,10 @@
 package db
 
 import (
-	"dex/logs"
 	"dex/pb"
 	"dex/utils"
 	"fmt"
 	"strings"
-
-	"github.com/shopspring/decimal"
 )
 
 // ------------- 基础交易 -------------
@@ -120,9 +117,13 @@ func (mgr *Manager) GetOrderTx(txID string) (*pb.OrderTx, error) {
 // This method is used internally by db package for legacy compatibility.
 // New code should use VM's unified write path (applyResult) instead.
 //
+// ⚠️ 重要变更：余额已迁移到分离存储 (v1_balance_)，此函数不再处理余额逻辑。
+// 账户余额和质押操作现在由 VM 层的 miner_handler.go 统一处理。
+//
 // Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveMinerTx(tx *pb.MinerTx) error {
-	// 0) 先把 MinerTx 本身排入写队列（保持你原来的逻辑）
+	// 只做基本的交易存储，不再处理余额逻辑
+	// 真正的业务逻辑（质押、解质押、余额变更）由 VM 层处理
 	mainKey := KeyMinerTx(tx.Base.TxId)
 	data, err := ProtoMarshal(tx)
 	if err != nil {
@@ -130,103 +131,6 @@ func (mgr *Manager) SaveMinerTx(tx *pb.MinerTx) error {
 	}
 	mgr.EnqueueSet(mainKey, string(data))
 	mgr.EnqueueSet(KeyAnyTx(tx.Base.TxId), mainKey)
-
-	// 1) 读取 / 初始化账户
-	addr := tx.Base.FromAddress
-	acc, err := mgr.GetAccount(addr)
-	if err != nil {
-		return err
-	}
-	//logs.Trace("acc.FB=%s", acc.Balances["FB"])
-	// 确保 FB 余额存在
-	fb, ok := acc.Balances["FB"]
-	if !ok {
-		fb = NewZeroTokenBalance()
-		acc.Balances["FB"] = fb
-	}
-
-	// 2) 金额解析（tx.Amount 可能为空，REMOVE 时可忽略）
-	amt := decimal.Zero
-	if tx.Amount != "" {
-		amt, err = decimal.NewFromString(tx.Amount)
-		if err != nil {
-			return fmt.Errorf("invalid MinerTx amount=%q: %v", tx.Amount, err)
-		}
-	}
-
-	// 计算旧的 stake（在修改账户之前）
-	oldStake, _ := CalcStake(acc)
-
-	switch tx.Op {
-	case pb.OrderOp_ADD:
-		// (ADD) 2-a 判断是否已是矿工
-		if acc.IsMiner {
-			// 已是矿工 → 只增加质押
-			prevLocked, _ := decimal.NewFromString(fb.MinerLockedBalance)
-			fb.MinerLockedBalance = prevLocked.Add(amt).String()
-		} else {
-			// 不是矿工 → 分配 index & 置 is_miner=true
-			idx, tasks, err := getNewIndex(mgr)
-			if err != nil {
-				return err
-			}
-			// 把 getNewIndex 生成的元数据写任务排进队列
-			for _, w := range tasks {
-				mgr.writeQueueChan <- w
-			}
-			acc.Index = idx
-			acc.IsMiner = true
-
-			prevLocked, _ := decimal.NewFromString(fb.MinerLockedBalance)
-			fb.MinerLockedBalance = prevLocked.Add(amt).String()
-			// 存入indexToAccount
-			indexToAccount := KeyAccount(acc.Address)
-			mgr.EnqueueSet(KeyIndexToAccount(idx), indexToAccount)
-			mgr.IndexMgr.Add(idx) //内存维护在线矿工索引
-		}
-
-		// 从可用余额扣除
-		prevBal, _ := decimal.NewFromString(fb.Balance)
-		fb.Balance = prevBal.Sub(amt).String()
-		//logs.Trace("fb.Balance =%s amt=%s idx=%s", fb.Balance, amt, acc.Index)
-
-	case pb.OrderOp_REMOVE:
-		// (REMOVE) 回退锁仓 + 取消矿工标记 + 释放 index
-		// 1) 回退余额
-		prevLocked, _ := decimal.NewFromString(fb.MinerLockedBalance)
-		prevBal, _ := decimal.NewFromString(fb.Balance)
-		fb.Balance = prevBal.Add(prevLocked).String()
-		fb.MinerLockedBalance = "0"
-
-		// 2) 取消矿工身份
-		acc.IsMiner = false
-
-		// 3) 回收 index (tx.Index 必须在上层填好)
-		mgr.writeQueueChan <- removeIndex(acc.Index)
-		// 4) 回收indexToAccount_
-		mgr.EnqueueDelete(KeyIndexToAccount(acc.Index))
-		mgr.IndexMgr.Remove(acc.Index)
-
-	default:
-		return fmt.Errorf("unknown MinerTx op=%v", tx.Op)
-	}
-
-	// 计算新的 stake（在修改账户之后）
-	newStake, _ := CalcStake(acc)
-
-	// 3) 把更新后的账户写回
-	if err := mgr.SaveAccount(acc); err != nil {
-		return err
-	}
-
-	// 4) 更新 stake index（如果 stake 发生变化）
-	if !oldStake.Equal(newStake) {
-		if err := mgr.UpdateStakeIndex(oldStake, newStake, acc.Address); err != nil {
-			// 记录错误但不中断处理
-			logs.Error("[DB] failed to update stake index for %s: %v", acc.Address, err)
-		}
-	}
-
 	return nil
 }
 

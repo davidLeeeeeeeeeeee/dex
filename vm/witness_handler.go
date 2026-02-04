@@ -148,14 +148,8 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "invalid amount"}, fmt.Errorf("invalid amount")
 	}
 
-	fbBalance := account.Balances["FB"]
-	if fbBalance == nil {
-		fbBalance = &pb.TokenBalance{Balance: "0", WitnessLockedBalance: "0"}
-		if account.Balances == nil {
-			account.Balances = make(map[string]*pb.TokenBalance)
-		}
-		account.Balances["FB"] = fbBalance
-	}
+	// 使用分离存储读取余额
+	fbBalance := GetBalance(sv, address, "FB")
 
 	if stake.Op == pb.OrderOp_ADD {
 		// 使用 WitnessService 进行验证（如果可用）
@@ -222,6 +216,12 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		witnessInfo.Status = pb.WitnessStatus_WITNESS_UNSTAKING
 		witnessInfo.UnstakeHeight = stake.Base.ExecutedHeight
 	}
+
+	// 保存余额更新
+	SetBalance(sv, address, "FB", fbBalance)
+	balanceKey := keys.KeyBalance(address, "FB")
+	balanceData, _, _ := sv.Get(balanceKey)
+	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, SyncStateDB: true, Category: "balance"})
 
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
@@ -536,10 +536,8 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "invalid stake amount"}, fmt.Errorf("invalid stake amount")
 	}
 
-	fbBalance := account.Balances["FB"]
-	if fbBalance == nil {
-		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "insufficient balance"}, fmt.Errorf("insufficient balance")
-	}
+	// 使用分离存储读取余额
+	fbBalance := GetBalance(sv, challengerAddr, "FB")
 
 	balance, _ := new(big.Int).SetString(fbBalance.Balance, 10)
 	if balance == nil || balance.Cmp(stakeAmount) < 0 {
@@ -552,6 +550,12 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "balance underflow"}, fmt.Errorf("balance underflow: %w", err)
 	}
 	fbBalance.Balance = newBalance.String()
+	SetBalance(sv, challengerAddr, "FB", fbBalance)
+
+	// 保存余额更新
+	balanceKey := keys.KeyBalance(challengerAddr, "FB")
+	balanceData, _, _ := sv.Get(balanceKey)
+	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, SyncStateDB: true, Category: "balance"})
 
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
@@ -723,14 +727,11 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 			return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "failed to parse account"}, err
 		}
 	} else {
-		account = pb.Account{Address: witnessAddr, Balances: make(map[string]*pb.TokenBalance)}
+		account = pb.Account{Address: witnessAddr}
 	}
 
-	fbBalance := account.Balances["FB"]
-	if fbBalance == nil {
-		fbBalance = &pb.TokenBalance{Balance: "0"}
-		account.Balances["FB"] = fbBalance
-	}
+	// 使用分离存储读取余额
+	fbBalance := GetBalance(sv, witnessAddr, "FB")
 
 	currentBalance, _ := new(big.Int).SetString(fbBalance.Balance, 10)
 	if currentBalance == nil {
@@ -741,6 +742,7 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "balance overflow"}, fmt.Errorf("balance overflow: %w", err)
 	}
 	fbBalance.Balance = newBalance.String()
+	SetBalance(sv, witnessAddr, "FB", fbBalance)
 
 	totalReward, _ := new(big.Int).SetString(witnessInfo.TotalReward, 10)
 	if totalReward == nil {
@@ -752,6 +754,11 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	}
 	witnessInfo.TotalReward = newTotalReward.String()
 	witnessInfo.PendingReward = "0"
+
+	// 保存余额更新
+	balanceKey := keys.KeyBalance(witnessAddr, "FB")
+	balanceData, _, _ := sv.Get(balanceKey)
+	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, SyncStateDB: true, Category: "balance"})
 
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {

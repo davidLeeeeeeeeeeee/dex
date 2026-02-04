@@ -120,27 +120,17 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		}, nil
 	}
 
-	// 3. 根据订单方向检查余额
+	// 3. 根据订单方向检查余额（使用分离存储）
 	// - 卖单：需要有 BaseToken 余额（要卖出的币）
 	// - 买单：需要有 QuoteToken 余额（要支付的币）
-	if account.Balances == nil {
-		return nil, &Receipt{
-			TxID:   ord.Base.TxId,
-			Status: "FAILED",
-			Error:  "account has no balances",
-		}, nil
+	var balanceUpdates []struct {
+		addr, token string
+		bal         *pb.TokenBalance
 	}
 
 	if ord.Side == pb.OrderSide_SELL {
 		// 卖单：检查并冻结 BaseToken 余额
-		bal := account.Balances[ord.BaseToken]
-		if bal == nil {
-			return nil, &Receipt{
-				TxID:   ord.Base.TxId,
-				Status: "FAILED",
-				Error:  "insufficient base token balance",
-			}, nil
-		}
+		bal := GetBalance(sv, ord.Base.FromAddress, ord.BaseToken)
 		current, _ := decimal.NewFromString(bal.Balance)
 		if current.LessThan(amountDec) {
 			return nil, &Receipt{
@@ -153,16 +143,13 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
 		bal.Balance = current.Sub(amountDec).String()
 		bal.OrderFrozenBalance = frozen.Add(amountDec).String()
+		balanceUpdates = append(balanceUpdates, struct {
+			addr, token string
+			bal         *pb.TokenBalance
+		}{ord.Base.FromAddress, ord.BaseToken, bal})
 	} else {
 		// 买单：检查并冻结 QuoteToken 余额
-		bal := account.Balances[ord.QuoteToken]
-		if bal == nil {
-			return nil, &Receipt{
-				TxID:   ord.Base.TxId,
-				Status: "FAILED",
-				Error:  "insufficient quote token balance",
-			}, nil
-		}
+		bal := GetBalance(sv, ord.Base.FromAddress, ord.QuoteToken)
 		current, _ := decimal.NewFromString(bal.Balance)
 		needed := amountDec.Mul(priceDec)
 		if current.LessThan(needed) {
@@ -176,6 +163,10 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
 		bal.Balance = current.Sub(needed).String()
 		bal.OrderFrozenBalance = frozen.Add(needed).String()
+		balanceUpdates = append(balanceUpdates, struct {
+			addr, token string
+			bal         *pb.TokenBalance
+		}{ord.Base.FromAddress, ord.QuoteToken, bal})
 	}
 
 	// 4. 生成交易对key（使用utils.GeneratePairKey确保一致性）
@@ -330,33 +321,42 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	toRefundBase := remainingBase.Sub(filledBase)
 
 	if targetState.Side == pb.OrderSide_SELL {
-		// 卖单退回 BaseToken
-		bal := account.Balances[targetState.BaseToken]
-		if bal != nil {
-			current, _ := decimal.NewFromString(bal.Balance)
-			frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
-			// 原子更新：可用 += 待退回，冻结 -= 待退回
-			bal.Balance = current.Add(toRefundBase).String()
-			bal.OrderFrozenBalance = frozen.Sub(toRefundBase).String()
-		}
+		// 卖单退回 BaseToken（使用分离存储）
+		bal := GetBalance(sv, ord.Base.FromAddress, targetState.BaseToken)
+		current, _ := decimal.NewFromString(bal.Balance)
+		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
+		// 原子更新：可用 += 待退回，冻结 -= 待退回
+		bal.Balance = current.Add(toRefundBase).String()
+		bal.OrderFrozenBalance = frozen.Sub(toRefundBase).String()
+		SetBalance(sv, ord.Base.FromAddress, targetState.BaseToken, bal)
 	} else {
-		// 买单退回 QuoteToken
+		// 买单退回 QuoteToken（使用分离存储）
 		// 注意：下单时冻结的是 Amount * LimitPrice
 		// 已经成交的部分，冻结额度已在 updateAccountBalancesFromStates 中扣除
 		// 剩余未成交部分，冻结额度应为 (Amount - FilledBase) * LimitPrice
 		limitPrice, _ := decimal.NewFromString(targetState.Price)
 		toRefundQuote := toRefundBase.Mul(limitPrice)
 
-		bal := account.Balances[targetState.QuoteToken]
-		if bal != nil {
-			current, _ := decimal.NewFromString(bal.Balance)
-			frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
-			bal.Balance = current.Add(toRefundQuote).String()
-			bal.OrderFrozenBalance = frozen.Sub(toRefundQuote).String()
-		}
+		bal := GetBalance(sv, ord.Base.FromAddress, targetState.QuoteToken)
+		current, _ := decimal.NewFromString(bal.Balance)
+		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
+		bal.Balance = current.Add(toRefundQuote).String()
+		bal.OrderFrozenBalance = frozen.Sub(toRefundQuote).String()
+		SetBalance(sv, ord.Base.FromAddress, targetState.QuoteToken, bal)
 	}
 
 	ws := make([]WriteOp, 0)
+
+	// 添加余额更新的 WriteOp
+	if targetState.Side == pb.OrderSide_SELL {
+		balKey := keys.KeyBalance(ord.Base.FromAddress, targetState.BaseToken)
+		balData, _, _ := sv.Get(balKey)
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
+	} else {
+		balKey := keys.KeyBalance(ord.Base.FromAddress, targetState.QuoteToken)
+		balData, _, _ := sv.Get(balKey)
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
+	}
 
 	// 更新订单状态为已撤单（而不是删除）
 	targetState.Status = pb.OrderStateStatus_ORDER_CANCELLED
@@ -387,7 +387,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Category:    "acc_orders_item",
 	})
 
-	// 保存更新后的账户（仅更新 Nonce 等，不再包含订单列表）
+	// 保存更新后的账户（不含余额）
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
@@ -957,7 +957,7 @@ func (h *OrderTxHandler) generateTradeRecordsFromStates(
 	return ws, nil
 }
 
-// updateAccountBalancesFromStates 使用 OrderState 更新账户余额
+// updateAccountBalancesFromStates 使用 OrderState 更新账户余额（使用分离存储）
 func (h *OrderTxHandler) updateAccountBalancesFromStates(
 	tradeEvents []matching.TradeUpdate,
 	stateUpdates map[string]*pb.OrderState,
@@ -969,6 +969,24 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 		accountCache = make(map[string]*pb.Account)
 	}
 
+	// 使用余额缓存替代账户缓存
+	// key 格式: "address:token"
+	type balanceCacheKey struct {
+		addr, token string
+	}
+	balanceCache := make(map[balanceCacheKey]*pb.TokenBalance)
+
+	// 辅助函数：获取或加载余额
+	getOrLoadBalance := func(addr, token string) *pb.TokenBalance {
+		key := balanceCacheKey{addr, token}
+		if bal, ok := balanceCache[key]; ok {
+			return bal
+		}
+		bal := GetBalance(sv, addr, token)
+		balanceCache[key] = bal
+		return bal
+	}
+
 	for _, ev := range tradeEvents {
 		orderState, ok := stateUpdates[ev.OrderID]
 		if !ok {
@@ -976,42 +994,16 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 		}
 
 		address := orderState.Owner
-		account, ok := accountCache[address]
-		if !ok {
-			accountKey := keys.KeyAccount(address)
-			accountData, exists, err := sv.Get(accountKey)
-			if err != nil || !exists {
-				return nil, fmt.Errorf("account not found: %s", address)
-			}
 
-			account = &pb.Account{}
-			if err := proto.Unmarshal(accountData, account); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal account %s: %w", address, err)
-			}
-			accountCache[address] = account
-		}
+		// 加载相关余额
+		baseBal := getOrLoadBalance(address, orderState.BaseToken)
+		quoteBal := getOrLoadBalance(address, orderState.QuoteToken)
 
-		if account.Balances == nil {
-			account.Balances = make(map[string]*pb.TokenBalance)
-		}
-		if account.Balances[orderState.BaseToken] == nil {
-			account.Balances[orderState.BaseToken] = &pb.TokenBalance{
-				Balance:            "0",
-				MinerLockedBalance: "0",
-			}
-		}
-		if account.Balances[orderState.QuoteToken] == nil {
-			account.Balances[orderState.QuoteToken] = &pb.TokenBalance{
-				Balance:            "0",
-				MinerLockedBalance: "0",
-			}
-		}
-
-		baseBalance, err := decimal.NewFromString(account.Balances[orderState.BaseToken].Balance)
+		baseBalance, err := decimal.NewFromString(baseBal.Balance)
 		if err != nil {
 			baseBalance = decimal.Zero
 		}
-		quoteBalance, err := decimal.NewFromString(account.Balances[orderState.QuoteToken].Balance)
+		quoteBalance, err := decimal.NewFromString(quoteBal.Balance)
 		if err != nil {
 			quoteBalance = decimal.Zero
 		}
@@ -1019,29 +1011,29 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 		if orderState.Side == pb.OrderSide_SELL {
 			// 卖单：
 			// 1. 扣除 OrderFrozenBalance 中的成交部分（这是下单时预扣的）
-			frozen, _ := decimal.NewFromString(account.Balances[orderState.BaseToken].OrderFrozenBalance)
-			account.Balances[orderState.BaseToken].OrderFrozenBalance = frozen.Sub(ev.TradeAmt).String()
+			frozen, _ := decimal.NewFromString(baseBal.OrderFrozenBalance)
+			baseBal.OrderFrozenBalance = frozen.Sub(ev.TradeAmt).String()
 
 			// 2. 增加 QuoteToken 余额（成交得到的）
 			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
 			newQuoteBalance := quoteBalance.Add(tradeQuoteAmt)
-			account.Balances[orderState.QuoteToken].Balance = newQuoteBalance.String()
+			quoteBal.Balance = newQuoteBalance.String()
 		} else {
 			// 买单：
 			// 1. 扣除 OrderFrozenBalance 中的成交部分（这是下单时预扣的 QuoteToken）
-			// 注意：这里需要考虑“价格优化”退款。
+			// 注意：这里需要考虑"价格优化"退款。
 			// 下单时冻结的是：amount * LimitPrice
 			// 实际消耗的是：tradeAmt * MatchPrice
 			// 冻结额度消耗应按照 LimitPrice 计算，以确保最后能完全释放
 			limitPrice, _ := decimal.NewFromString(orderState.Price)
 			frozenToDeduct := ev.TradeAmt.Mul(limitPrice)
 
-			frozen, _ := decimal.NewFromString(account.Balances[orderState.QuoteToken].OrderFrozenBalance)
-			account.Balances[orderState.QuoteToken].OrderFrozenBalance = frozen.Sub(frozenToDeduct).String()
+			frozen, _ := decimal.NewFromString(quoteBal.OrderFrozenBalance)
+			quoteBal.OrderFrozenBalance = frozen.Sub(frozenToDeduct).String()
 
 			// 2. 增加 BaseToken 余额（买到的币）
 			newBaseBalance := baseBalance.Add(ev.TradeAmt)
-			account.Balances[orderState.BaseToken].Balance = newBaseBalance.String()
+			baseBal.Balance = newBaseBalance.String()
 
 			// 3. 处理价格优化退款：如果 MatchPrice < LimitPrice，将差额退回 liquid balance
 			if ev.TradePrice.LessThan(limitPrice) {
@@ -1051,14 +1043,14 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 				// 这里的 refundQuote 其实已经在上面从 OrderFrozenBalance 中扣除了（因为按 LimitPrice 扣的）
 				// 而用户实际只需要付 ev.TradeAmt * ev.TradePrice。
 				// 所以差额补回到 Balance。
-				currentQuoteBal, _ := decimal.NewFromString(account.Balances[orderState.QuoteToken].Balance)
-				account.Balances[orderState.QuoteToken].Balance = currentQuoteBal.Add(refundQuote).String()
+				currentQuoteBal, _ := decimal.NewFromString(quoteBal.Balance)
+				quoteBal.Balance = currentQuoteBal.Add(refundQuote).String()
 			}
 		}
 
-		// 检查是否超过 MaxUint256（恢复原有检查 logic）
+		// 检查余额是否超过 MaxUint256 或为负数
 		maxUint256Dec := decimal.NewFromBigInt(MaxUint256, 0)
-		for _, bal := range account.Balances {
+		for _, bal := range []*pb.TokenBalance{baseBal, quoteBal} {
 			b, _ := decimal.NewFromString(bal.Balance)
 			if b.GreaterThan(maxUint256Dec) {
 				return nil, fmt.Errorf("balance overflow")
@@ -1071,19 +1063,16 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 		}
 	}
 
-	for address, account := range accountCache {
-		accountKey := keys.KeyAccount(address)
-		accountData, err := proto.Marshal(account)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal account %s: %w", address, err)
-		}
-
+	// 将所有修改的余额写回 StateView 并生成 WriteOps
+	for key, bal := range balanceCache {
+		SetBalance(sv, key.addr, key.token, bal)
+		balKey := keys.KeyBalance(key.addr, key.token)
+		balData, _, _ := sv.Get(balKey)
 		ws = append(ws, WriteOp{
-			Key:         accountKey,
-			Value:       accountData,
-			Del:         false,
+			Key:         balKey,
+			Value:       balData,
 			SyncStateDB: true,
-			Category:    "account",
+			Category:    "balance",
 		})
 	}
 

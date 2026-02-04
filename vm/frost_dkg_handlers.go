@@ -935,33 +935,14 @@ func slashBond(sv StateView, address string, bondAmount *big.Int, reason string)
 		return nil, fmt.Errorf("invalid bond amount")
 	}
 
-	// 读取账户
-	accountKey := keys.KeyAccount(address)
-	accountData, exists, err := sv.Get(accountKey)
-	if err != nil || !exists {
-		return nil, fmt.Errorf("account not found: %s", address)
-	}
-
-	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil {
-		return nil, fmt.Errorf("failed to parse account: %w", err)
-	}
-
-	// 初始化余额（如果不存在）
-	if account.Balances == nil {
-		account.Balances = make(map[string]*pb.TokenBalance)
-	}
 	// 使用 FB 作为原生代币
 	tokenAddr := "FB"
-	if account.Balances[tokenAddr] == nil {
-		account.Balances[tokenAddr] = &pb.TokenBalance{
-			Balance:            "0",
-			MinerLockedBalance: "0",
-		}
-	}
+
+	// 从分离存储读取余额
+	fbBal := GetBalance(sv, address, tokenAddr)
 
 	// 从可用余额中扣除 bond（如果余额不足，则扣除全部可用余额）
-	balance, _ := new(big.Int).SetString(account.Balances[tokenAddr].Balance, 10)
+	balance, _ := new(big.Int).SetString(fbBal.Balance, 10)
 	if balance == nil {
 		balance = big.NewInt(0)
 	}
@@ -978,74 +959,53 @@ func slashBond(sv StateView, address string, bondAmount *big.Int, reason string)
 		return nil, fmt.Errorf("failed to subtract bond: %w", err)
 	}
 
-	account.Balances[tokenAddr].Balance = newBalance.String()
-
-	// 序列化并返回 WriteOp
-	updatedData, err := proto.Marshal(&account)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal account: %w", err)
-	}
+	fbBal.Balance = newBalance.String()
+	SetBalance(sv, address, tokenAddr, fbBal)
 
 	logs.Info("[slashBond] slashed bond %s from %s (reason: %s), remaining balance: %s", slashAmount.String(), address, reason, newBalance.String())
 
+	// 余额已通过 SetBalance 保存，需要返回对应的 WriteOp
+	balanceKey := keys.KeyBalance(address, tokenAddr)
+	balData, _, _ := sv.Get(balanceKey)
+
 	return []WriteOp{{
-		Key:         accountKey,
-		Value:       updatedData,
+		Key:         balanceKey,
+		Value:       balData,
 		SyncStateDB: true,
-		Category:    "account",
+		Category:    "balance",
 	}}, nil
 }
 
 // slashMinerStake 罚没矿工的质押金（100% 比例，从 MinerLockedBalance 中扣除）
 // 返回 WriteOp 列表用于更新账户余额
 func slashMinerStake(sv StateView, address string, reason string) ([]WriteOp, error) {
-	// 读取账户
-	accountKey := keys.KeyAccount(address)
-	accountData, exists, err := sv.Get(accountKey)
-	if err != nil || !exists {
-		return nil, fmt.Errorf("account not found: %s", address)
-	}
-
-	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil {
-		return nil, fmt.Errorf("failed to parse account: %w", err)
-	}
-
-	// 初始化余额（如果不存在）
-	if account.Balances == nil {
-		account.Balances = make(map[string]*pb.TokenBalance)
-	}
 	// 使用 FB 作为原生代币
 	tokenAddr := "FB"
-	if account.Balances[tokenAddr] == nil {
-		account.Balances[tokenAddr] = &pb.TokenBalance{
-			Balance:            "0",
-			MinerLockedBalance: "0",
-		}
-	}
+
+	// 从分离存储读取余额
+	fbBal := GetBalance(sv, address, tokenAddr)
 
 	// 获取当前质押金（100% 罚没）
-	lockedBalance, _ := new(big.Int).SetString(account.Balances[tokenAddr].MinerLockedBalance, 10)
+	lockedBalance, _ := new(big.Int).SetString(fbBal.MinerLockedBalance, 10)
 	if lockedBalance == nil || lockedBalance.Sign() <= 0 {
 		logs.Warn("[slashMinerStake] no locked balance to slash for %s", address)
 		return nil, nil // 没有质押金可罚没，返回空操作
 	}
 
 	// 100% 罚没：将 MinerLockedBalance 清零
-	account.Balances[tokenAddr].MinerLockedBalance = "0"
-
-	// 序列化并返回 WriteOp
-	updatedData, err := proto.Marshal(&account)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal account: %w", err)
-	}
+	fbBal.MinerLockedBalance = "0"
+	SetBalance(sv, address, tokenAddr, fbBal)
 
 	logs.Info("[slashMinerStake] slashed 100%% stake %s from %s (reason: %s)", lockedBalance.String(), address, reason)
 
+	// 余额已通过 SetBalance 保存，需要返回对应的 WriteOp
+	balanceKey := keys.KeyBalance(address, tokenAddr)
+	balData, _, _ := sv.Get(balanceKey)
+
 	return []WriteOp{{
-		Key:         accountKey,
-		Value:       updatedData,
+		Key:         balanceKey,
+		Value:       balData,
 		SyncStateDB: true,
-		Category:    "account",
+		Category:    "balance",
 	}}, nil
 }

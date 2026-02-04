@@ -2,8 +2,11 @@ package verkle
 
 import (
 	"dex/config"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 
@@ -30,12 +33,13 @@ type VerkleConfig struct {
 
 // VerkleStateDB 提供与 JMT StateDB 兼容的接口
 type VerkleStateDB struct {
-	tree   *VerkleTree
-	store  *VersionedBadgerStore
-	db     *badger.DB
-	ownsDB bool // 是否由本实例管理 DB 生命周期
-	prefix []byte
-	mu     sync.RWMutex
+	tree    *VerkleTree
+	store   *VersionedBadgerStore
+	db      *badger.DB
+	ownsDB  bool // 是否由本实例管理 DB 生命周期
+	prefix  []byte
+	dataDir string // 数据目录，用于存储 KV 日志
+	mu      sync.RWMutex
 }
 
 // NewVerkleStateDB 创建 Verkle 状态存储（自己管理 BadgerDB）
@@ -89,11 +93,12 @@ func NewVerkleStateDBWithDB(db *badger.DB, cfg VerkleConfig) (*VerkleStateDB, er
 	}
 
 	return &VerkleStateDB{
-		tree:   tree,
-		store:  store,
-		db:     db,
-		ownsDB: false,
-		prefix: prefix,
+		tree:    tree,
+		store:   store,
+		db:      db,
+		ownsDB:  false,
+		prefix:  prefix,
+		dataDir: cfg.DataDir,
 	}, nil
 }
 
@@ -247,11 +252,15 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 		}
 	}
 
+	// 收集所有删除操作的 keys（用于日志）
+	deletedKeys := make([]string, 0)
+
 	keys := make([][]byte, 0, len(kvs))
 	vals := make([][]byte, 0, len(kvs))
 
 	for _, kv := range kvs {
 		if kv.Deleted {
+			deletedKeys = append(deletedKeys, kv.Key)
 			_, err := s.db.tree.DeleteWithSession(s.sess, []byte(kv.Key), Version(height))
 			if err != nil && !errors.Is(err, ErrNotFound) {
 				return err
@@ -261,6 +270,9 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 		keys = append(keys, []byte(kv.Key))
 		vals = append(vals, kv.Value)
 	}
+
+	var sortedKeys [][]byte
+	var sortedVals [][]byte
 
 	if len(keys) > 0 {
 		// 对 keys 排序以确保确定性顺序
@@ -276,8 +288,8 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 			return string(pairs[i].key) < string(pairs[j].key)
 		})
 
-		sortedKeys := make([][]byte, len(pairs))
-		sortedVals := make([][]byte, len(pairs))
+		sortedKeys = make([][]byte, len(pairs))
+		sortedVals = make([][]byte, len(pairs))
 		for i, p := range pairs {
 			sortedKeys[i] = p.key
 			sortedVals[i] = p.val
@@ -290,6 +302,12 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 		s.lastRoot = newRoot
 	} else {
 		s.lastRoot = s.db.tree.Root()
+	}
+
+	// ========== KV 日志记录 ==========
+	// 将每个高度提交的完整 KV list 存储为 txt 文件，用于排查多节点状态不一致
+	if s.db.dataDir != "" {
+		s.writeKVLog(height, sortedKeys, sortedVals, deletedKeys)
 	}
 
 	// 保存根承诺到 BadgerDB
@@ -455,4 +473,57 @@ func (s *VerkleStateDB) IterateLatestSnapshot(fn func(key string, value []byte) 
 // FlushAndRotate 兼容接口
 func (s *VerkleStateDB) FlushAndRotate(epochEnd uint64) error {
 	return nil
+}
+
+// writeKVLog 将每个高度提交的完整 KV list 写入 txt 文件
+// 文件格式：data/<node>/verkle_kv_logs/height_<height>.txt
+func (s *VerkleStateDBSession) writeKVLog(height uint64, keys [][]byte, vals [][]byte, deletedKeys []string) {
+	if s.db.dataDir == "" {
+		return
+	}
+
+	// 创建日志目录
+	logDir := filepath.Join(s.db.dataDir, "verkle_kv_logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		fmt.Printf("[VerkleKVLog] Failed to create log dir: %v\n", err)
+		return
+	}
+
+	// 创建日志文件
+	logFile := filepath.Join(logDir, fmt.Sprintf("height_%d.txt", height))
+	f, err := os.Create(logFile)
+	if err != nil {
+		fmt.Printf("[VerkleKVLog] Failed to create log file: %v\n", err)
+		return
+	}
+	defer f.Close()
+
+	// 写入头部信息
+	fmt.Fprintf(f, "# Verkle KV Log - Height %d\n", height)
+	fmt.Fprintf(f, "# Root: %x\n", s.lastRoot)
+	fmt.Fprintf(f, "# Total Keys: %d\n", len(keys))
+	fmt.Fprintf(f, "# Deleted Keys: %d\n", len(deletedKeys))
+	fmt.Fprintf(f, "# ==========================================\n\n")
+
+	// 写入所有更新的 KV
+	if len(keys) > 0 {
+		fmt.Fprintf(f, "## UPDATES (%d entries)\n", len(keys))
+		for i := 0; i < len(keys); i++ {
+			// Key 直接输出字符串形式
+			keyStr := string(keys[i])
+			// Value 输出十六进制（因为可能是二进制数据）
+			valHex := hex.EncodeToString(vals[i])
+			fmt.Fprintf(f, "[%d] KEY: %s\n    VAL_HEX: %s\n    VAL_LEN: %d\n\n", i+1, keyStr, valHex, len(vals[i]))
+		}
+	}
+
+	// 写入所有删除的 Key
+	if len(deletedKeys) > 0 {
+		fmt.Fprintf(f, "\n## DELETES (%d entries)\n", len(deletedKeys))
+		for i, k := range deletedKeys {
+			fmt.Fprintf(f, "[%d] DEL_KEY: %s\n", i+1, k)
+		}
+	}
+
+	fmt.Printf("[VerkleKVLog] Height %d logged to %s (keys=%d, deletes=%d)\n", height, logFile, len(keys), len(deletedKeys))
 }

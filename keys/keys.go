@@ -122,6 +122,18 @@ func KeyAccountOrdersPrefix(addr string) string {
 	return withVer(fmt.Sprintf("acc_order_%s_", addr))
 }
 
+// KeyBalance 账户单个代币余额（分离存储）
+// 例：v1_balance_{address}_{token}
+func KeyBalance(addr, token string) string {
+	return withVer(fmt.Sprintf("balance_%s_%s", addr, token))
+}
+
+// KeyBalancePrefix 账户余额前缀（用于扫描某账户所有余额）
+// 例：v1_balance_{address}_
+func KeyBalancePrefix(addr string) string {
+	return withVer(fmt.Sprintf("balance_%s_", addr))
+}
+
 // KeyIndexToAccount 索引到账户的映射
 // 例：v1_indexToAccount_<idx>
 func KeyIndexToAccount(idx uint64) string {

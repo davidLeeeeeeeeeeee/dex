@@ -349,25 +349,22 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 			if err == nil && exists {
 				_ = proto.Unmarshal(minerAccountData, &minerAccount)
 			} else {
-				// 矿工账户不存在，创建新账户
+				// 矿工账户不存在，创建新账户（不再包含 Balances 字段）
 				minerAccount = pb.Account{
-					Address:  b.Header.Miner,
-					Balances: make(map[string]*pb.TokenBalance),
+					Address: b.Header.Miner,
 				}
 			}
-			if minerAccount.Balances == nil {
-				minerAccount.Balances = make(map[string]*pb.TokenBalance)
-			}
-			const RewardToken = "FB"
-			if minerAccount.Balances[RewardToken] == nil {
-				minerAccount.Balances[RewardToken] = &pb.TokenBalance{Balance: "0"}
-			}
-			currentBal, _ := ParseBalance(minerAccount.Balances[RewardToken].Balance)
-			newBal, _ := SafeAdd(currentBal, minerReward)
-			minerAccount.Balances[RewardToken].Balance = newBal.String()
+			// 保存矿工账户（不包含余额）
+			rewardedAccountData, _ := proto.Marshal(&minerAccount)
+			sv.Set(minerAccountKey, rewardedAccountData)
 
-			rewardedData, _ := proto.Marshal(&minerAccount)
-			sv.Set(minerAccountKey, rewardedData)
+			// 使用分离存储更新矿工余额
+			const RewardToken = "FB"
+			minerFBBal := GetBalance(sv, b.Header.Miner, RewardToken)
+			currentBal, _ := ParseBalance(minerFBBal.Balance)
+			newBal, _ := SafeAdd(currentBal, minerReward)
+			minerFBBal.Balance = newBal.String()
+			SetBalance(sv, b.Header.Miner, RewardToken, minerFBBal)
 
 			// 6. 分配给见证者奖励池 (30%)
 			if witnessReward.Sign() > 0 {
@@ -461,8 +458,8 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	// ========== 第二步：应用所有状态变更 ==========
 	// 遍历 Diff 中的所有写操作
-	stateDBUpdates := make([]interface{}, 0) // 用于收集需要同步到 StateDB 的更新
-	accountUpdates := make([]*WriteOp, 0)    // 用于收集账户更新，用于更新 stake index
+	stateDBUpdates := make([]*WriteOp, 0) // 用于收集需要同步到 StateDB 的更新
+	accountUpdates := make([]*WriteOp, 0) // 用于收集账户更新，用于更新 stake index
 
 	for i := range res.Diff {
 		w := &res.Diff[i] // 使用指针，因为 WriteOp 的方法是指针接收器
@@ -500,23 +497,31 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 					continue
 				}
 
-				// 读取旧的账户数据（在应用 WriteOp 之前）
-				// 优化：从会话中读取，利用会话内的缓存或单一事务
-				oldAccountData, err := sess.Get(w.Key)
-				var oldAccount pb.Account
-				var oldStake decimal.Decimal
-				if err == nil && oldAccountData != nil {
-					if err := proto.Unmarshal(oldAccountData, &oldAccount); err == nil {
-						oldStake, _ = calcStake(&oldAccount)
+				// 使用分离存储的余额计算 stake
+				// 注意：这里需要从 StateDB 或 WriteOps 中读取 FB 余额
+				// 由于余额已分离存储，我们直接从 stateDBUpdates 中查找对应的余额更新
+
+				// 计算旧 stake（从 StateDB session 读取）
+				oldStake := decimal.Zero
+				if fbBalData, err := sess.Get(keys.KeyBalance(address, "FB")); err == nil && fbBalData != nil {
+					var balRecord pb.TokenBalanceRecord
+					if err := proto.Unmarshal(fbBalData, &balRecord); err == nil && balRecord.Balance != nil {
+						oldStake, _ = decimal.NewFromString(balRecord.Balance.MinerLockedBalance)
 					}
 				}
 
-				// 从新的 WriteOp.Value 中解析新的账户数据
-				var newAccount pb.Account
-				if err := proto.Unmarshal(w.Value, &newAccount); err != nil {
-					continue
+				// 计算新 stake（从当前 WriteOps 中查找对应的余额更新）
+				newStake := oldStake // 默认不变
+				balanceKey := keys.KeyBalance(address, "FB")
+				for _, wop := range stateDBUpdates {
+					if wop.Key == balanceKey && !wop.Del {
+						var balRecord pb.TokenBalanceRecord
+						if err := proto.Unmarshal(wop.Value, &balRecord); err == nil && balRecord.Balance != nil {
+							newStake, _ = decimal.NewFromString(balRecord.Balance.MinerLockedBalance)
+						}
+						break
+					}
 				}
-				newStake, _ := calcStake(&newAccount)
 
 				// 如果 stake 发生变化，更新 stake index
 				if !oldStake.Equal(newStake) {
@@ -532,7 +537,12 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	// ========== 第四步：同步到 StateDB ==========
 	// 统一处理所有需要同步到 StateDB 的数据
 	// 即使没有更新，也调用 ApplyStateUpdate 以确认当前高度的状态根
-	stateRoot, err := sess.ApplyStateUpdate(b.Header.Height, stateDBUpdates)
+	// 转换为 []interface{} 以满足接口要求
+	stateDBUpdatesIface := make([]interface{}, len(stateDBUpdates))
+	for i, w := range stateDBUpdates {
+		stateDBUpdatesIface[i] = w
+	}
+	stateRoot, err := sess.ApplyStateUpdate(b.Header.Height, stateDBUpdatesIface)
 	if err != nil {
 		fmt.Printf("[VM] Warning: StateDB sync failed via session: %v\n", err)
 	} else if stateRoot != nil {
@@ -653,14 +663,10 @@ func extractAddressFromAccountKey(key string) string {
 	return ""
 }
 
-// calcStake 计算账户的 stake（与 db.CalcStake 逻辑一致）
+// calcStake 计算账户的 stake（使用分离存储）
 // CalcStake = FB.miner_locked_balance
-func calcStake(acc *pb.Account) (decimal.Decimal, error) {
-	fbBal, ok := acc.Balances["FB"]
-	if !ok {
-		// 说明没有任何FB余额，锁定余额也为0
-		return decimal.Zero, nil
-	}
+func calcStake(sv StateView, addr string) (decimal.Decimal, error) {
+	fbBal := GetBalance(sv, addr, "FB")
 	ml, err := decimal.NewFromString(fbBal.MinerLockedBalance)
 	if err != nil {
 		ml = decimal.Zero

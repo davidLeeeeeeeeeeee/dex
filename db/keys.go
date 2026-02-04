@@ -84,6 +84,14 @@ func KeyStakeIndex(invertedPadded32, addr string) string {
 	return keys.KeyStakeIndex(invertedPadded32, addr)
 }
 
+func KeyBalance(addr, token string) string {
+	return keys.KeyBalance(addr, token)
+}
+
+func KeyBalancePrefix(addr string) string {
+	return keys.KeyBalancePrefix(addr)
+}
+
 // ===================== 订单相关 =====================
 
 func KeyOrder(orderID string) string {

@@ -75,7 +75,7 @@ func registerAllNodes(nodes []*NodeInstance, frostCfg config.FrostConfig) {
 				continue
 			}
 
-			// 保存其他节点的账户信息
+			// 保存其他节点的账户信息（不含余额）
 			account := &pb.Account{
 				Address: otherNode.Address,
 				PublicKeys: &pb.PublicKeys{
@@ -83,14 +83,13 @@ func registerAllNodes(nodes []*NodeInstance, frostCfg config.FrostConfig) {
 						int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256): []byte(utils.GetKeyManager().GetPublicKey()),
 					},
 				},
-				Ip:       fmt.Sprintf("127.0.0.1:%s", otherNode.Port),
-				Index:    uint64(j),
-				IsMiner:  true,
-				Balances: make(map[string]*pb.TokenBalance),
+				Ip:      fmt.Sprintf("127.0.0.1:%s", otherNode.Port),
+				Index:   uint64(j),
+				IsMiner: true,
 			}
 
-			// 从创世配置初始化余额
-			applyGenesisBalances(account)
+			// 从创世配置初始化余额（使用分离存储）
+			applyGenesisBalances(account.Address, node.DBManager)
 
 			node.DBManager.SaveAccount(account)
 
@@ -122,12 +121,11 @@ func registerAllNodes(nodes []*NodeInstance, frostCfg config.FrostConfig) {
 						int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256): []byte(utils.GetKeyManager().GetPublicKey()),
 					},
 				},
-				Ip:       fmt.Sprintf("127.0.0.1:%s", node.Port),
-				Index:    uint64(i),
-				IsMiner:  true,
-				Balances: make(map[string]*pb.TokenBalance),
+				Ip:      fmt.Sprintf("127.0.0.1:%s", node.Port),
+				Index:   uint64(i),
+				IsMiner: true,
 			}
-			applyGenesisBalances(account)
+			applyGenesisBalances(account.Address, node.DBManager)
 			node.DBManager.SaveAccount(account)
 		}
 
@@ -250,9 +248,8 @@ func initGenesisTokens(dbManager *db.Manager) error {
 		return nil
 	}
 
-	registry := &pb.TokenRegistry{
-		Tokens: make(map[string]*pb.Token),
-	}
+	// 创建空的 TokenRegistry（不再包含 Tokens map）
+	registry := &pb.TokenRegistry{}
 
 	for _, t := range genesisConfig.Tokens {
 		token := &pb.Token{
@@ -263,50 +260,46 @@ func initGenesisTokens(dbManager *db.Manager) error {
 			TotalSupply: t.TotalSupply,
 			CanMint:     true,
 		}
-		registry.Tokens[t.Address] = token
 
-		// 存入单个 Token 详情
+		// 存入单个 Token 详情（KeyToken 独立存储）
 		tokenData, _ := proto.Marshal(token)
 		tokenKey := keys.KeyToken(t.Address)
 		dbManager.EnqueueSet(tokenKey, string(tokenData))
 	}
 
-	// 存入 Registry
+	// 存入空 Registry（保留兼容性）
 	registryData, _ := proto.Marshal(registry)
 	dbManager.EnqueueSet(keys.KeyTokenRegistry(), string(registryData))
 
 	return nil
 }
 
-// applyGenesisBalances 从创世配置应用余额到账户
-func applyGenesisBalances(account *pb.Account) {
-	if genesisConfig == nil || account == nil {
+// applyGenesisBalances 从创世配置应用余额到账户（使用分离存储）
+func applyGenesisBalances(address string, dbManager *db.Manager) {
+	if genesisConfig == nil || dbManager == nil {
 		return
 	}
 
 	// 检查该地址是否有创世分配
-	alloc, exists := genesisConfig.Alloc[account.Address]
+	alloc, exists := genesisConfig.Alloc[address]
 	if !exists {
-		// 如果没有具体地址分配，尝试使用 "default" 模板 (确保测试节点都有钱)
+		// 如果没有具体地址分配，尝试使用 "default" 模板
 		alloc, exists = genesisConfig.Alloc["default"]
 		if !exists {
 			return
 		}
 	}
 
-	if account.Balances == nil {
-		account.Balances = make(map[string]*pb.TokenBalance)
-	}
-
-	// 应用各项代币余额
+	// 使用 KeyBalance 分离存储余额
 	for tokenAddr, gb := range alloc.Balances {
-		bal, exists := account.Balances[tokenAddr]
-		if !exists {
-			bal = &pb.TokenBalance{Balance: "0"}
-			account.Balances[tokenAddr] = bal
+		bal := &pb.TokenBalanceRecord{
+			Balance: &pb.TokenBalance{
+				Balance:            gb.Balance,
+				MinerLockedBalance: gb.MinerLockedBalance,
+			},
 		}
-		// 简单覆盖或累加（创世通常是覆盖）
-		bal.Balance = gb.Balance
-		bal.MinerLockedBalance = gb.MinerLockedBalance
+		balData, _ := proto.Marshal(bal)
+		balKey := keys.KeyBalance(address, tokenAddr)
+		dbManager.EnqueueSet(balKey, string(balData))
 	}
 }

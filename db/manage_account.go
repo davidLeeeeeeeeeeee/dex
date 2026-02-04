@@ -58,14 +58,38 @@ func (mgr *Manager) GetAccount(address string) (*pb.Account, error) {
 	return account, nil
 }
 
-// CalcStake = FB.miner_locked_balance
-func CalcStake(acc *pb.Account) (decimal.Decimal, error) {
-	fbBal, ok := acc.Balances["FB"]
-	if !ok {
-		// 说明没有任何FB余额，锁定余额也为0
+// CalcStake 计算账户质押金额（从分离存储读取 FB.miner_locked_balance）
+// Deprecated: 此函数为遗留兼容代码，新代码应使用 vm.calcStake
+func (mgr *Manager) CalcStake(addr string) (decimal.Decimal, error) {
+	// 从分离存储读取 FB 余额
+	balKey := KeyBalance(addr, "FB")
+
+	// 优先从 StateDB 读取
+	if mgr.StateDB != nil {
+		if val, exists, err := mgr.StateDB.Get(balKey); err == nil && exists && len(val) > 0 {
+			var record pb.TokenBalanceRecord
+			if err := ProtoUnmarshal(val, &record); err == nil && record.Balance != nil {
+				ml, err := decimal.NewFromString(record.Balance.MinerLockedBalance)
+				if err != nil {
+					ml = decimal.Zero
+				}
+				return ml, nil
+			}
+		}
+	}
+
+	// 回退到 KV 读取
+	val, err := mgr.Read(balKey)
+	if err != nil || val == "" {
 		return decimal.Zero, nil
 	}
-	ml, err := decimal.NewFromString(fbBal.MinerLockedBalance)
+
+	var record pb.TokenBalanceRecord
+	if err := ProtoUnmarshal([]byte(val), &record); err != nil || record.Balance == nil {
+		return decimal.Zero, nil
+	}
+
+	ml, err := decimal.NewFromString(record.Balance.MinerLockedBalance)
 	if err != nil {
 		ml = decimal.Zero
 	}

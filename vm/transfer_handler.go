@@ -77,22 +77,11 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, err
 	}
 
-	// 4. 检查发送方余额
-	if fromAccount.Balances == nil || fromAccount.Balances[transfer.TokenAddress] == nil {
-		return nil, &Receipt{
-			TxID:   transfer.Base.TxId,
-			Status: "FAILED",
-			Error:  "insufficient balance",
-		}, fmt.Errorf("sender has no balance for token: %s", transfer.TokenAddress)
-	}
-
-	fromBalance, ok := new(big.Int).SetString(fromAccount.Balances[transfer.TokenAddress].Balance, 10)
-	if !ok {
-		return nil, &Receipt{
-			TxID:   transfer.Base.TxId,
-			Status: "FAILED",
-			Error:  fmt.Sprintf("invalid sender balance format for %s: %s", transfer.TokenAddress, fromAccount.Balances[transfer.TokenAddress].Balance),
-		}, nil // 注意这里返回 nil 而不是 error，允许区块继续执行
+	// 4. 使用分离存储检查发送方余额
+	fromTokenBal := GetBalance(sv, transfer.Base.FromAddress, transfer.TokenAddress)
+	fromBalance, ok := new(big.Int).SetString(fromTokenBal.Balance, 10)
+	if !ok || fromBalance == nil {
+		fromBalance = big.NewInt(0)
 	}
 
 	if fromBalance.Cmp(amount) < 0 {
@@ -111,16 +100,17 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		feeAmount = big.NewInt(0)
 	}
 
-	// 读取 FB 余额用于扣费
+	// 读取 FB 余额用于扣费（使用分离存储）
 	var fbBalance *big.Int
+	var fromFBBal *pb.TokenBalance
 	if transfer.TokenAddress == FeeToken {
 		fbBalance = fromBalance
+		fromFBBal = fromTokenBal
 	} else {
-		fbBal := fromAccount.Balances[FeeToken]
-		if fbBal == nil {
+		fromFBBal = GetBalance(sv, transfer.Base.FromAddress, FeeToken)
+		fbBalance, _ = ParseBalance(fromFBBal.Balance)
+		if fbBalance == nil {
 			fbBalance = big.NewInt(0)
-		} else {
-			fbBalance, _ = ParseBalance(fbBal.Balance)
 		}
 	}
 
@@ -149,7 +139,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}
 	}
 
-	// 6. 读取接收方账户（如果不存在则创建）
+	// 6. 读取接收方账户（用于确保账户存在，后续余额使用分离存储）
 	toAccountKey := keys.KeyAccount(transfer.To)
 	toAccountData, toExists, _ := sv.Get(toAccountKey)
 
@@ -163,15 +153,14 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 			}, err
 		}
 	} else {
-		// 创建新账户
+		// 创建新账户（不含余额字段）
 		toAccount = pb.Account{
-			Address:  transfer.To,
-			Balances: make(map[string]*pb.TokenBalance),
+			Address: transfer.To,
 		}
 	}
 
-	// 7. 执行转账与扣费
-	// 减少发送方余额（使用安全减法）
+	// 7. 执行转账与扣费（使用分离存储）
+	// 减少发送方余额
 	if transfer.TokenAddress == FeeToken {
 		// FB 转账：一次性扣除 total (amount + fee)
 		totalDeduct, err := SafeAdd(amount, feeAmount)
@@ -182,23 +171,19 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		if err != nil {
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
 		}
-		fromAccount.Balances[FeeToken].Balance = newFromBalance.String()
+		fromFBBal.Balance = newFromBalance.String()
+		SetBalance(sv, transfer.Base.FromAddress, FeeToken, fromFBBal)
 	} else {
 		// 非 FB 转账：分别扣除 amount 和 fee
 		newFromBalance, err := SafeSub(fromBalance, amount)
 		if err != nil {
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
 		}
-		fromAccount.Balances[transfer.TokenAddress].Balance = newFromBalance.String()
+		fromTokenBal.Balance = newFromBalance.String()
+		SetBalance(sv, transfer.Base.FromAddress, transfer.TokenAddress, fromTokenBal)
 
 		// 扣除 FB Fee
-		fbBalRecord := fromAccount.Balances[FeeToken]
-		if fbBalRecord == nil {
-			// 理论上前面检查过，这里做个保险
-			fbBalRecord = &pb.TokenBalance{Balance: "0"}
-			fromAccount.Balances[FeeToken] = fbBalRecord
-		}
-		currentFB, err := ParseBalance(fbBalRecord.Balance)
+		currentFB, err := ParseBalance(fromFBBal.Balance)
 		if err != nil {
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "invalid FB balance"}, err
 		}
@@ -206,24 +191,13 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		if err != nil {
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "FB fee underflow"}, err
 		}
-		fbBalRecord.Balance = newFB.String()
+		fromFBBal.Balance = newFB.String()
+		SetBalance(sv, transfer.Base.FromAddress, FeeToken, fromFBBal)
 	}
 
-	// 增加接收方余额
-	if toAccount.Balances == nil {
-		toAccount.Balances = make(map[string]*pb.TokenBalance)
-	}
-	if toAccount.Balances[transfer.TokenAddress] == nil {
-		toAccount.Balances[transfer.TokenAddress] = &pb.TokenBalance{
-			Balance:               "0",
-			MinerLockedBalance:    "0",
-			LiquidLockedBalance:   "0",
-			WitnessLockedBalance:  "0",
-			LeverageLockedBalance: "0",
-		}
-	}
-
-	toBalance, _ := new(big.Int).SetString(toAccount.Balances[transfer.TokenAddress].Balance, 10)
+	// 增加接收方余额（使用分离存储）
+	toTokenBal := GetBalance(sv, transfer.To, transfer.TokenAddress)
+	toBalance, _ := new(big.Int).SetString(toTokenBal.Balance, 10)
 	if toBalance == nil {
 		toBalance = big.NewInt(0)
 	}
@@ -236,11 +210,13 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 			Error:  "balance overflow",
 		}, fmt.Errorf("receiver balance overflow: %w", err)
 	}
-	toAccount.Balances[transfer.TokenAddress].Balance = newToBalance.String()
+	toTokenBal.Balance = newToBalance.String()
+	SetBalance(sv, transfer.To, transfer.TokenAddress, toTokenBal)
 
-	// 7. 保存更新后的账户
+	// 7. 保存更新后的账户和余额
 	ws := make([]WriteOp, 0)
 
+	// 保存发送方账户（不含余额）
 	updatedFromData, err := proto.Marshal(&fromAccount)
 	if err != nil {
 		return nil, &Receipt{
@@ -258,6 +234,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Category:    "account",
 	})
 
+	// 保存接收方账户（不含余额）
 	updatedToData, err := proto.Marshal(&toAccount)
 	if err != nil {
 		return nil, &Receipt{
@@ -274,6 +251,22 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		SyncStateDB: true,
 		Category:    "account",
 	})
+
+	// 添加余额 WriteOps（发送方）
+	fromTokenBalKey := keys.KeyBalance(transfer.Base.FromAddress, transfer.TokenAddress)
+	fromTokenBalData, _, _ := sv.Get(fromTokenBalKey)
+	ws = append(ws, WriteOp{Key: fromTokenBalKey, Value: fromTokenBalData, SyncStateDB: true, Category: "balance"})
+
+	if transfer.TokenAddress != FeeToken {
+		fromFBBalKey := keys.KeyBalance(transfer.Base.FromAddress, FeeToken)
+		fromFBBalData, _, _ := sv.Get(fromFBBalKey)
+		ws = append(ws, WriteOp{Key: fromFBBalKey, Value: fromFBBalData, SyncStateDB: true, Category: "balance"})
+	}
+
+	// 添加余额 WriteOps（接收方）
+	toTokenBalKey := keys.KeyBalance(transfer.To, transfer.TokenAddress)
+	toTokenBalData, _, _ := sv.Get(toTokenBalKey)
+	ws = append(ws, WriteOp{Key: toTokenBalKey, Value: toTokenBalData, SyncStateDB: true, Category: "balance"})
 
 	// 8. 记录转账历史
 	historyKey := keys.KeyTransferHistory(transfer.Base.TxId)

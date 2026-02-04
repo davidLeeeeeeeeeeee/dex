@@ -86,22 +86,16 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	// 假设使用原生代币进行挖矿质押
 	nativeTokenAddr := "FB"
 
-	// 检查余额
-	if account.Balances == nil || account.Balances[nativeTokenAddr] == nil {
-		return nil, &Receipt{
-			TxID:   minerTx.Base.TxId,
-			Status: "FAILED",
-			Error:  "insufficient balance for mining",
-		}, fmt.Errorf("no balance for native token")
-	}
+	// 使用分离存储读取余额
+	fbBal := GetBalance(sv, minerTx.Base.FromAddress, nativeTokenAddr)
 
-	balance, _ := new(big.Int).SetString(account.Balances[nativeTokenAddr].Balance, 10)
+	balance, _ := new(big.Int).SetString(fbBal.Balance, 10)
 	if balance == nil || balance.Cmp(amount) < 0 {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
 			Status: "FAILED",
 			Error:  "insufficient balance for mining",
-		}, fmt.Errorf("insufficient balance: has %s, need %s", balance.String(), amount.String())
+		}, fmt.Errorf("insufficient balance: has %v, need %s", balance, amount.String())
 	}
 
 	ws := make([]WriteOp, 0)
@@ -115,9 +109,9 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 			Error:  "balance underflow",
 		}, fmt.Errorf("balance underflow: %w", err)
 	}
-	account.Balances[nativeTokenAddr].Balance = newBalance.String()
+	fbBal.Balance = newBalance.String()
 
-	currentLockedBalance, _ := new(big.Int).SetString(account.Balances[nativeTokenAddr].MinerLockedBalance, 10)
+	currentLockedBalance, _ := new(big.Int).SetString(fbBal.MinerLockedBalance, 10)
 	if currentLockedBalance == nil {
 		currentLockedBalance = big.NewInt(0)
 	}
@@ -130,12 +124,25 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 			Error:  "locked balance overflow",
 		}, fmt.Errorf("locked balance overflow: %w", err)
 	}
-	account.Balances[nativeTokenAddr].MinerLockedBalance = newLockedBalance.String()
+	fbBal.MinerLockedBalance = newLockedBalance.String()
+
+	// 保存更新后的余额
+	SetBalance(sv, minerTx.Base.FromAddress, nativeTokenAddr, fbBal)
+	balanceKey := keys.KeyBalance(minerTx.Base.FromAddress, nativeTokenAddr)
+	balanceData, _, _ := sv.Get(balanceKey)
+
+	ws = append(ws, WriteOp{
+		Key:         balanceKey,
+		Value:       balanceData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "balance",
+	})
 
 	// 设置为矿工状态
 	account.IsMiner = true
 
-	// 保存更新后的账户
+	// 保存更新后的账户（不含余额）
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
@@ -204,16 +211,10 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 
 	nativeTokenAddr := "FB"
 
-	// 检查锁定余额
-	if account.Balances == nil || account.Balances[nativeTokenAddr] == nil {
-		return nil, &Receipt{
-			TxID:   minerTx.Base.TxId,
-			Status: "FAILED",
-			Error:  "no locked balance found",
-		}, fmt.Errorf("no locked balance")
-	}
+	// 使用分离存储读取余额
+	fbBal := GetBalance(sv, minerTx.Base.FromAddress, nativeTokenAddr)
 
-	lockedBalance, _ := new(big.Int).SetString(account.Balances[nativeTokenAddr].MinerLockedBalance, 10)
+	lockedBalance, _ := new(big.Int).SetString(fbBal.MinerLockedBalance, 10)
 	if lockedBalance == nil || lockedBalance.Sign() <= 0 {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
@@ -225,9 +226,9 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 	ws := make([]WriteOp, 0)
 
 	// 将锁定余额转回可用余额（使用安全加法）
-	account.Balances[nativeTokenAddr].MinerLockedBalance = "0"
+	fbBal.MinerLockedBalance = "0"
 
-	currentBalance, _ := new(big.Int).SetString(account.Balances[nativeTokenAddr].Balance, 10)
+	currentBalance, _ := new(big.Int).SetString(fbBal.Balance, 10)
 	if currentBalance == nil {
 		currentBalance = big.NewInt(0)
 	}
@@ -239,12 +240,25 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 			Error:  "balance overflow",
 		}, fmt.Errorf("balance overflow: %w", err)
 	}
-	account.Balances[nativeTokenAddr].Balance = newBalance.String()
+	fbBal.Balance = newBalance.String()
+
+	// 保存更新后的余额
+	SetBalance(sv, minerTx.Base.FromAddress, nativeTokenAddr, fbBal)
+	balanceKey := keys.KeyBalance(minerTx.Base.FromAddress, nativeTokenAddr)
+	balanceData, _, _ := sv.Get(balanceKey)
+
+	ws = append(ws, WriteOp{
+		Key:         balanceKey,
+		Value:       balanceData,
+		Del:         false,
+		SyncStateDB: true,
+		Category:    "balance",
+	})
 
 	// 取消矿工状态
 	account.IsMiner = false
 
-	// 保存更新后的账户
+	// 保存更新后的账户（不含余额）
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{

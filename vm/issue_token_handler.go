@@ -109,7 +109,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 
 	ws := make([]WriteOp, 0)
 
-	// 保存Token记录
+	// 保存Token记录（独立存储，不再使用 TokenRegistry.Tokens）
 	ws = append(ws, WriteOp{
 		Key:         tokenKey,
 		Value:       tokenData,
@@ -118,75 +118,25 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 		Category:    "token",
 	})
 
-	// 5. 将总供应量分配给发行者
-	// 初始化或更新发行者的token余额
-	if account.Balances == nil {
-		account.Balances = make(map[string]*pb.TokenBalance)
-	}
+	// 5. 将总供应量分配给发行者（使用分离存储）
+	issuerBal := GetBalance(sv, issueTx.Base.FromAddress, tokenAddress)
+	issuerBal.Balance = totalSupply.String()
+	SetBalance(sv, issueTx.Base.FromAddress, tokenAddress, issuerBal)
 
-	if account.Balances[tokenAddress] == nil {
-		account.Balances[tokenAddress] = &pb.TokenBalance{
-			Balance:               totalSupply.String(),
-			MinerLockedBalance:    "0",
-			LiquidLockedBalance:   "0",
-			WitnessLockedBalance:  "0",
-			LeverageLockedBalance: "0",
-		}
-	} else {
-		// 如果已存在余额（理论上不应该发生），累加
-		account.Balances[tokenAddress].Balance = totalSupply.String()
-	}
-
-	// 保存更新后的账户
-	updatedAccountData, err := proto.Marshal(&account)
-	if err != nil {
-		return nil, &Receipt{
-			TxID:   issueTx.Base.TxId,
-			Status: "FAILED",
-			Error:  "failed to marshal account",
-		}, err
-	}
+	// 读取更新后的余额数据用于 WriteOp
+	balanceKey := keys.KeyBalance(issueTx.Base.FromAddress, tokenAddress)
+	balanceData, _, _ := sv.Get(balanceKey)
 
 	ws = append(ws, WriteOp{
-		Key:         accountKey,
-		Value:       updatedAccountData,
+		Key:         balanceKey,
+		Value:       balanceData,
 		Del:         false,
 		SyncStateDB: true,
-		Category:    "account",
+		Category:    "balance",
 	})
 
-	// 6. 更新TokenRegistry
-	registryKey := keys.KeyTokenRegistry()
-	registryData, _, _ := sv.Get(registryKey)
-
-	var registry pb.TokenRegistry
-	if registryData != nil {
-		if err := proto.Unmarshal(registryData, &registry); err != nil {
-			// 如果解析失败，创建新的registry
-			registry.Tokens = make(map[string]*pb.Token)
-		}
-	} else {
-		registry.Tokens = make(map[string]*pb.Token)
-	}
-
-	registry.Tokens[tokenAddress] = token
-
-	updatedRegistryData, err := proto.Marshal(&registry)
-	if err != nil {
-		return nil, &Receipt{
-			TxID:   issueTx.Base.TxId,
-			Status: "FAILED",
-			Error:  "failed to marshal token registry",
-		}, err
-	}
-
-	ws = append(ws, WriteOp{
-		Key:         registryKey,
-		Value:       updatedRegistryData,
-		Del:         false,
-		SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
-		Category:    "registry",
-	})
+	// 6. Token 已经通过 tokenKey (KeyToken) 存储
+	// 不再需要 TokenRegistry.Tokens map，每个 token 独立存储
 
 	// 7. 返回执行结果
 	rc := &Receipt{

@@ -789,18 +789,9 @@ func convertAccountToInfo(account *pb.Account) *accountInfo {
 		UnclaimedReward: account.UnclaimedReward,
 		IsMiner:         account.IsMiner,
 		Index:           account.Index,
-	}
-	if len(account.Balances) > 0 {
-		info.Balances = make(map[string]*tokenBalance)
-		for k, v := range account.Balances {
-			info.Balances[k] = &tokenBalance{
-				Balance:               v.Balance,
-				MinerLockedBalance:    v.MinerLockedBalance,
-				LiquidLockedBalance:   v.LiquidLockedBalance,
-				WitnessLockedBalance:  v.WitnessLockedBalance,
-				LeverageLockedBalance: v.LeverageLockedBalance,
-			}
-		}
+		// TODO: 余额已分离存储，需添加独立 API 获取余额
+		// 参考 keys.KeyBalance(address, tokenAddress) 和 pb.TokenBalanceRecord
+		Balances: make(map[string]*tokenBalance),
 	}
 	return info
 }

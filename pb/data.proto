@@ -15,7 +15,14 @@ message Token {
 }
 
 message TokenRegistry {
-  map<string, Token> tokens = 1;
+  reserved 1; // 原为 map<string, Token> tokens，已分离到独立存储 v1_token_
+  uint64 token_count = 2; // 代币总数（可选，用于统计）
+}
+
+// TokenRecord 独立存储的单个代币信息
+// Key: v1_token_<token_address>
+message TokenRecord {
+  Token token = 1;
 }
 
 // --------------------- 签名算法 & 公钥类型定义 ---------------------
@@ -89,7 +96,7 @@ message Account {
   PublicKeys public_keys = 2; // 公钥集合（所有链的公钥）
   uint64 nonce = 3; // 账户的操作序号
   reserved 4; // 原为 repeated string orders，已分离到独立存储 v1_acc_orders_
-  map<string, TokenBalance> balances = 5; // key为token地址
+  reserved 5; // 原为 map<string, TokenBalance> balances，已分离到独立存储 v1_balance_
   string unclaimed_reward = 8; // 累计但尚未领取的奖励
   string last_acc_reward = 9; // 上次更新时的累积因子
   bool is_miner = 10; // 是否正在参与共识挖矿
@@ -101,6 +108,14 @@ message Account {
 // AccountOrders 独立存储的账户订单列表
 message AccountOrders {
   repeated string orders = 1;
+}
+
+// TokenBalanceRecord 独立存储的单个代币余额
+// Key: v1_balance_<address>_<token>
+message TokenBalanceRecord {
+  string address = 1;     // 账户地址
+  string token = 2;       // 代币地址
+  TokenBalance balance = 3; // 余额信息
 }
 
 message TokenBalance {
