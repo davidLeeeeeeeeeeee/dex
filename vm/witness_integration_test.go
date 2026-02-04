@@ -38,16 +38,21 @@ func TestWitnessStakeTxHandler(t *testing.T) {
 
 	executor := vm.NewExecutorWithWitness(db, reg, nil, nil)
 
-	// 准备测试账户
+	// 准备测试账户（使用分离存储）
 	address := "0xTestWitness001"
-	account := &pb.Account{
-		Address: address,
-		Balances: map[string]*pb.TokenBalance{
-			"FB": {Balance: "10000000000000000000000", WitnessLockedBalance: "0"}, // 10000 FB
-		},
-	}
+	account := &pb.Account{Address: address}
 	accountData, _ := proto.Marshal(account)
 	db.data[keys.KeyAccount(address)] = accountData
+
+	// 分离存储余额
+	bal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:              "10000000000000000000000", // 10000 FB
+			WitnessLockedBalance: "0",
+		},
+	}
+	balData, _ := proto.Marshal(bal)
+	db.data[keys.KeyBalance(address, "FB")] = balData
 
 	// 创建质押交易
 	stakeTx := &pb.AnyTx{
@@ -309,15 +314,16 @@ func TestWitnessChallengeTxHandler(t *testing.T) {
 	requestData, _ := proto.Marshal(request)
 	db.data[keys.KeyRechargeRequest("request_002")] = requestData
 
-	// 准备挑战者账户
-	challenger := &pb.Account{
-		Address: "0xChallenger001",
-		Balances: map[string]*pb.TokenBalance{
-			"FB": {Balance: "10000000000000000000000"}, // 10000 FB
-		},
-	}
+	// 准备挑战者账户（使用分离存储）
+	challenger := &pb.Account{Address: "0xChallenger001"}
 	challengerData, _ := proto.Marshal(challenger)
 	db.data[keys.KeyAccount("0xChallenger001")] = challengerData
+
+	challengerBal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{Balance: "10000000000000000000000"}, // 10000 FB
+	}
+	challengerBalData, _ := proto.Marshal(challengerBal)
+	db.data[keys.KeyBalance("0xChallenger001", "FB")] = challengerBalData
 
 	// 创建挑战交易
 	challengeTx := &pb.AnyTx{
@@ -437,16 +443,17 @@ func TestWitnessClaimRewardTxHandler(t *testing.T) {
 
 	executor := vm.NewExecutorWithWitness(db, reg, nil, nil)
 
-	// 准备见证者账户（有未领取奖励）
+	// 准备见证者账户（使用分离存储）
 	witnessAddr := "0xWitness001"
-	witnessAccount := &pb.Account{
-		Address: witnessAddr,
-		Balances: map[string]*pb.TokenBalance{
-			"FB": {Balance: "1000000000000000000000"}, // 1000 FB
-		},
-	}
+	witnessAccount := &pb.Account{Address: witnessAddr}
 	witnessAccountData, _ := proto.Marshal(witnessAccount)
 	db.data[keys.KeyAccount(witnessAddr)] = witnessAccountData
+
+	witnessBal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{Balance: "1000000000000000000000"}, // 1000 FB
+	}
+	witnessBalData, _ := proto.Marshal(witnessBal)
+	db.data[keys.KeyBalance(witnessAddr, "FB")] = witnessBalData
 
 	// 准备见证者信息（有未领取奖励）
 	witnessInfo := &pb.WitnessInfo{
@@ -507,16 +514,21 @@ func TestWitnessUnstakeTxHandler(t *testing.T) {
 
 	executor := vm.NewExecutorWithWitness(db, reg, nil, nil)
 
-	// 准备测试账户（已质押）
+	// 准备测试账户（已质押，使用分离存储）
 	address := "0xTestWitness002"
-	account := &pb.Account{
-		Address: address,
-		Balances: map[string]*pb.TokenBalance{
-			"FB": {Balance: "5000000000000000000000", WitnessLockedBalance: "1000000000000000000000"}, // 5000 FB + 1000 FB locked
-		},
-	}
+	account := &pb.Account{Address: address}
 	accountData, _ := proto.Marshal(account)
 	db.data[keys.KeyAccount(address)] = accountData
+
+	// 分离存储余额
+	bal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:              "5000000000000000000000", // 5000 FB
+			WitnessLockedBalance: "1000000000000000000000", // 1000 FB locked
+		},
+	}
+	balData, _ := proto.Marshal(bal)
+	db.data[keys.KeyBalance(address, "FB")] = balData
 
 	// 准备见证者信息
 	witnessInfo := &pb.WitnessInfo{

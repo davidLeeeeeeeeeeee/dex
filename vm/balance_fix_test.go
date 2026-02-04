@@ -56,10 +56,11 @@ func TestOrderBalance_TakerAtomic(t *testing.T) {
 	require.NoError(t, executor.CommitFinalizedBlock(block2))
 	require.NoError(t, dbMgr.ForceFlush())
 
-	bobAcc := getE2EAccount(t, dbMgr, bobAddr)
-	assert.Equal(t, "75000", bobAcc.Balances["USDT"].Balance)
-	assert.Equal(t, "0", bobAcc.Balances["USDT"].OrderFrozenBalance)
-	assert.Equal(t, "0.5", bobAcc.Balances["BTC"].Balance)
+	bobUSDT := getE2EBalance(t, dbMgr, bobAddr, "USDT")
+	bobBTC := getE2EBalance(t, dbMgr, bobAddr, "BTC")
+	assert.Equal(t, "75000", bobUSDT.Balance)
+	assert.Equal(t, "0", bobUSDT.OrderFrozenBalance)
+	assert.Equal(t, "0.5", bobBTC.Balance)
 }
 
 // TestOrderBalance_BuyRefund 验证买单以低价成交时的退款逻辑
@@ -109,11 +110,12 @@ func TestOrderBalance_BuyRefund(t *testing.T) {
 	require.NoError(t, executor.CommitFinalizedBlock(block2))
 	require.NoError(t, dbMgr.ForceFlush())
 
-	bobAcc := getE2EAccount(t, dbMgr, bobAddr)
-	t.Logf("Bob USDT Balance: %s, Frozen: %s", bobAcc.Balances["USDT"].Balance, bobAcc.Balances["USDT"].OrderFrozenBalance)
-	assert.Equal(t, "60000", bobAcc.Balances["USDT"].Balance, "Bob should get 20000 USDT refund for price improvement")
-	assert.Equal(t, "0", bobAcc.Balances["USDT"].OrderFrozenBalance)
-	assert.Equal(t, "1", bobAcc.Balances["BTC"].Balance)
+	bobUSDT := getE2EBalance(t, dbMgr, bobAddr, "USDT")
+	bobBTC := getE2EBalance(t, dbMgr, bobAddr, "BTC")
+	t.Logf("Bob USDT Balance: %s, Frozen: %s", bobUSDT.Balance, bobUSDT.OrderFrozenBalance)
+	assert.Equal(t, "60000", bobUSDT.Balance, "Bob should get 20000 USDT refund for price improvement")
+	assert.Equal(t, "0", bobUSDT.OrderFrozenBalance)
+	assert.Equal(t, "1", bobBTC.Balance)
 }
 
 // TestOrderBalance_RemoveOrder 验证撤单时的余额解冻精度
@@ -164,7 +166,7 @@ func TestOrderBalance_RemoveOrder(t *testing.T) {
 	require.NoError(t, executor.CommitFinalizedBlock(block2))
 	require.NoError(t, dbMgr.ForceFlush())
 
-	aliceAcc := getE2EAccount(t, dbMgr, aliceAddr)
-	assert.Equal(t, "100000", aliceAcc.Balances["USDT"].Balance)
-	assert.Equal(t, "0", aliceAcc.Balances["USDT"].OrderFrozenBalance)
+	aliceUSDT := getE2EBalance(t, dbMgr, aliceAddr, "USDT")
+	assert.Equal(t, "100000", aliceUSDT.Balance)
+	assert.Equal(t, "0", aliceUSDT.OrderFrozenBalance)
 }

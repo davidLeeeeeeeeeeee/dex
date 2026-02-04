@@ -1,7 +1,6 @@
 package vm_test
 
 import (
-	"encoding/json"
 	"sync"
 	"testing"
 
@@ -9,6 +8,8 @@ import (
 	"dex/keys"
 	"dex/pb"
 	"dex/vm"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // ========== Mock StateDB ==========
@@ -87,21 +88,26 @@ func (db *EnhancedMockDB) ApplyAccountUpdate(height uint64, update interface{}) 
 func TestWriteOpSyncStateDB(t *testing.T) {
 	db := NewEnhancedMockDB()
 
-	// 初始化账户数据
+	// 初始化账户数据（使用分离存储）
 	aliceAddr := "alice"
 	accountKey := keys.KeyAccount(aliceAddr)
 
 	account := &pb.Account{
 		Address: aliceAddr,
-		Balances: map[string]*pb.TokenBalance{
-			"FB": {
-				Balance:            "1000",
-				MinerLockedBalance: "0",
-			},
+	}
+	accountData, _ := proto.Marshal(account)
+	db.data[accountKey] = accountData
+
+	// 分离存储余额
+	bal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            "1000",
+			MinerLockedBalance: "0",
 		},
 	}
-	accountData, _ := json.Marshal(account)
-	db.data[accountKey] = accountData
+	balData, _ := proto.Marshal(bal)
+	balKey := keys.KeyBalance(aliceAddr, "FB")
+	db.data[balKey] = balData
 
 	// 创建执行器
 	registry := vm.NewHandlerRegistry()
@@ -143,60 +149,64 @@ func TestWriteOpSyncStateDB(t *testing.T) {
 		t.Fatal("Commit failed:", err)
 	}
 
-	// 验证 Badger 中的数据已更新
-	badgerData, err := db.Get(accountKey)
+	// 验证 Badger 中的余额数据已更新
+	badgerBalData, err := db.Get(balKey)
 	if err != nil {
-		t.Fatal("Failed to get account from Badger:", err)
+		t.Fatal("Failed to get balance from Badger:", err)
 	}
-	if badgerData == nil {
-		t.Fatal("Account should exist in Badger")
-	}
-
-	var badgerAccount pb.Account
-	if err := json.Unmarshal(badgerData, &badgerAccount); err != nil {
-		t.Fatal("Failed to unmarshal Badger account:", err)
+	if badgerBalData == nil {
+		t.Fatal("Balance should exist in Badger")
 	}
 
-	// 验证 StateDB 中的数据已同步（因为账户数据的 SyncStateDB=true）
-	stateDBData, exists := db.stateDB.Get(accountKey)
+	var badgerBal pb.TokenBalanceRecord
+	if err := proto.Unmarshal(badgerBalData, &badgerBal); err != nil {
+		t.Fatal("Failed to unmarshal Badger balance:", err)
+	}
+
+	// 验证 StateDB 中的数据已同步
+	stateDBBalData, exists := db.stateDB.Get(balKey)
 	if !exists {
-		t.Fatalf("Account should be synced to StateDB (key=%s)", accountKey)
+		t.Fatalf("Balance should be synced to StateDB (key=%s)", balKey)
 	}
 
-	var stateDBAccount pb.Account
-	if err := json.Unmarshal(stateDBData, &stateDBAccount); err != nil {
-		t.Fatal("Failed to unmarshal StateDB account:", err)
+	var stateDBBal pb.TokenBalanceRecord
+	if err := proto.Unmarshal(stateDBBalData, &stateDBBal); err != nil {
+		t.Fatal("Failed to unmarshal StateDB balance:", err)
 	}
 
 	// 验证 Badger 和 StateDB 的数据一致
-	if badgerAccount.Balances["FB"].Balance != stateDBAccount.Balances["FB"].Balance {
+	if badgerBal.Balance.Balance != stateDBBal.Balance.Balance {
 		t.Fatalf("Badger and StateDB data mismatch: Badger=%s, StateDB=%s",
-			badgerAccount.Balances["FB"].Balance,
-			stateDBAccount.Balances["FB"].Balance)
+			badgerBal.Balance.Balance,
+			stateDBBal.Balance.Balance)
 	}
 
-	t.Logf("✅ Account data synced correctly: Balance=%s", badgerAccount.Balances["FB"].Balance)
+	t.Logf("✅ Account data synced correctly: Balance=%s", badgerBal.Balance.Balance)
 }
 
 // TestWriteOpNoSyncStateDB 测试非账户数据不同步到 StateDB
 func TestWriteOpNoSyncStateDB(t *testing.T) {
 	db := NewEnhancedMockDB()
 
-	// 初始化账户数据
+	// 初始化账户数据（使用分离存储）
 	issuerAddr := "issuer"
 	accountKey := keys.KeyAccount(issuerAddr)
 
 	account := &pb.Account{
 		Address: issuerAddr,
-		Balances: map[string]*pb.TokenBalance{
-			"FB": {
-				Balance:            "10000",
-				MinerLockedBalance: "0",
-			},
+	}
+	accountData, _ := proto.Marshal(account)
+	db.data[accountKey] = accountData
+
+	// 分离存储余额
+	bal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            "10000",
+			MinerLockedBalance: "0",
 		},
 	}
-	accountData, _ := json.Marshal(account)
-	db.data[accountKey] = accountData
+	balData, _ := proto.Marshal(bal)
+	db.data[keys.KeyBalance(issuerAddr, "FB")] = balData
 
 	// 创建执行器
 	registry := vm.NewHandlerRegistry()
@@ -258,21 +268,25 @@ func TestWriteOpNoSyncStateDB(t *testing.T) {
 func TestIdempotency(t *testing.T) {
 	db := NewEnhancedMockDB()
 
-	// 初始化账户数据
+	// 初始化账户数据（使用分离存储）
 	aliceAddr := "alice"
 	accountKey := keys.KeyAccount(aliceAddr)
 
 	account := &pb.Account{
 		Address: aliceAddr,
-		Balances: map[string]*pb.TokenBalance{
-			"FB": {
-				Balance:            "1000",
-				MinerLockedBalance: "0",
-			},
+	}
+	accountData, _ := proto.Marshal(account)
+	db.data[accountKey] = accountData
+
+	// 分离存储余额
+	bal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            "1000",
+			MinerLockedBalance: "0",
 		},
 	}
-	accountData, _ := json.Marshal(account)
-	db.data[accountKey] = accountData
+	balData, _ := proto.Marshal(bal)
+	db.data[keys.KeyBalance(aliceAddr, "FB")] = balData
 
 	// 创建执行器
 	registry := vm.NewHandlerRegistry()

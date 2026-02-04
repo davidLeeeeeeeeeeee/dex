@@ -352,7 +352,7 @@ func createTestExecutor(db *MockDB) *vm.Executor {
 	return vm.NewExecutor(db, reg, cache)
 }
 
-// createTestAccount 创建测试账户（使用 JSON 序列化，与现有测试保持一致）
+// createTestAccount 创建测试账户（使用分离存储）
 func createTestAccount(t *testing.T, db *MockDB, address, tokenAddress, balance string) {
 	accountKey := keys.KeyAccount(address)
 
@@ -367,25 +367,17 @@ func createTestAccount(t *testing.T, db *MockDB, address, tokenAddress, balance 
 		account = &pb.Account{}
 		if err := proto.Unmarshal(existingData, account); err != nil {
 			account = &pb.Account{
-				Address:  address,
-				Balances: make(map[string]*pb.TokenBalance),
+				Address: address,
 			}
 		}
 	} else {
-		// 创建新账户
+		// 创建新账户（不含余额）
 		account = &pb.Account{
-			Address:  address,
-			Balances: make(map[string]*pb.TokenBalance),
+			Address: address,
 		}
 	}
 
-	// 添加或更新 token 余额
-	account.Balances[tokenAddress] = &pb.TokenBalance{
-		Balance:            balance,
-		MinerLockedBalance: "0",
-	}
-
-	// 序列化并保存（使用 Proto）
+	// 序列化并保存账户（使用 Proto）
 	accountData, err := proto.Marshal(account)
 	if err != nil {
 		if t != nil {
@@ -397,6 +389,26 @@ func createTestAccount(t *testing.T, db *MockDB, address, tokenAddress, balance 
 
 	db.mu.Lock()
 	db.data[accountKey] = accountData
+	db.mu.Unlock()
+
+	// 使用 KeyBalance 分离存储余额
+	bal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            balance,
+			MinerLockedBalance: "0",
+		},
+	}
+	balData, err := proto.Marshal(bal)
+	if err != nil {
+		if t != nil {
+			require.NoError(t, err)
+		} else {
+			panic(err)
+		}
+	}
+	balKey := keys.KeyBalance(address, tokenAddress)
+	db.mu.Lock()
+	db.data[balKey] = balData
 	db.mu.Unlock()
 }
 

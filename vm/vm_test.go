@@ -278,30 +278,33 @@ func TestBasicExecution(t *testing.T) {
 	// 创建数据库和组件
 	db := NewMockDB()
 
-	// 初始化账户数据（使用新的 key 格式）
-	aliceAccount := &pb.Account{
-		Address: "alice",
-		Balances: map[string]*pb.TokenBalance{
-			"token123": {
-				Balance:            "1000",
-				MinerLockedBalance: "0",
-			},
-		},
-	}
+	// 初始化账户数据（使用分离存储）
+	aliceAccount := &pb.Account{Address: "alice"}
 	aliceData, _ := proto.Marshal(aliceAccount)
 	db.data[keys.KeyAccount("alice")] = aliceData
 
-	bobAccount := &pb.Account{
-		Address: "bob",
-		Balances: map[string]*pb.TokenBalance{
-			"token123": {
-				Balance:            "500",
-				MinerLockedBalance: "0",
-			},
+	// 分离存储余额
+	aliceBal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            "1000",
+			MinerLockedBalance: "0",
 		},
 	}
+	aliceBalData, _ := proto.Marshal(aliceBal)
+	db.data[keys.KeyBalance("alice", "token123")] = aliceBalData
+
+	bobAccount := &pb.Account{Address: "bob"}
 	bobData, _ := proto.Marshal(bobAccount)
 	db.data[keys.KeyAccount("bob")] = bobData
+
+	bobBal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            "500",
+			MinerLockedBalance: "0",
+		},
+	}
+	bobBalData, _ := proto.Marshal(bobBal)
+	db.data[keys.KeyBalance("bob", "token123")] = bobBalData
 
 	// 创建执行器
 	registry := vm.NewHandlerRegistry()
@@ -352,12 +355,12 @@ func TestBasicExecution(t *testing.T) {
 		t.Fatal("Should have 1 receipt")
 	}
 
-	// 检查数据库没有变化（预执行不应改变数据库）
-	aliceKey := keys.KeyAccount("alice")
-	val, _ := db.Get(aliceKey)
-	var checkAccount pb.Account
-	proto.Unmarshal(val, &checkAccount)
-	if checkAccount.Balances["token123"].Balance != "1000" {
+	// 检查余额数据没有变化（预执行不应改变数据库）
+	aliceBalKey := keys.KeyBalance("alice", "token123")
+	balVal, _ := db.Get(aliceBalKey)
+	var checkBal pb.TokenBalanceRecord
+	proto.Unmarshal(balVal, &checkBal)
+	if checkBal.Balance.Balance != "1000" {
 		t.Fatal("Database should not change during PreExecute")
 	}
 
@@ -383,30 +386,32 @@ func TestBasicExecution(t *testing.T) {
 func TestCacheEffectiveness(t *testing.T) {
 	db := NewMockDB()
 
-	// 初始化账户数据（使用新的 key 格式）
-	aliceAccount := &pb.Account{
-		Address: "alice",
-		Balances: map[string]*pb.TokenBalance{
-			"token123": {
-				Balance:            "1000",
-				MinerLockedBalance: "0",
-			},
-		},
-	}
+	// 初始化账户数据（使用分离存储）
+	aliceAccount := &pb.Account{Address: "alice"}
 	aliceData, _ := proto.Marshal(aliceAccount)
 	db.data[keys.KeyAccount("alice")] = aliceData
 
-	bobAccount := &pb.Account{
-		Address: "bob",
-		Balances: map[string]*pb.TokenBalance{
-			"token123": {
-				Balance:            "0",
-				MinerLockedBalance: "0",
-			},
+	aliceBal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            "1000",
+			MinerLockedBalance: "0",
 		},
 	}
+	aliceBalData, _ := proto.Marshal(aliceBal)
+	db.data[keys.KeyBalance("alice", "token123")] = aliceBalData
+
+	bobAccount := &pb.Account{Address: "bob"}
 	bobData, _ := proto.Marshal(bobAccount)
 	db.data[keys.KeyAccount("bob")] = bobData
+
+	bobBal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            "0",
+			MinerLockedBalance: "0",
+		},
+	}
+	bobBalData, _ := proto.Marshal(bobBal)
+	db.data[keys.KeyBalance("bob", "token123")] = bobBalData
 
 	registry := vm.NewHandlerRegistry()
 	vm.RegisterDefaultHandlers(registry)
@@ -509,20 +514,21 @@ func TestConcurrentExecution(t *testing.T) {
 	cache := vm.NewSpecExecLRU(100)
 	executor := vm.NewExecutor(db, registry, cache)
 
-	// 初始化多个账户（使用新的 key 格式）
+	// 初始化多个账户（使用分离存储）
 	for i := 0; i < 10; i++ {
 		userAddr := fmt.Sprintf("user%d", i)
-		account := &pb.Account{
-			Address: userAddr,
-			Balances: map[string]*pb.TokenBalance{
-				"token123": {
-					Balance:            "1000",
-					MinerLockedBalance: "0",
-				},
-			},
-		}
+		account := &pb.Account{Address: userAddr}
 		accountData, _ := proto.Marshal(account)
 		db.data[keys.KeyAccount(userAddr)] = accountData
+
+		bal := &pb.TokenBalanceRecord{
+			Balance: &pb.TokenBalance{
+				Balance:            "1000",
+				MinerLockedBalance: "0",
+			},
+		}
+		balData, _ := proto.Marshal(bal)
+		db.data[keys.KeyBalance(userAddr, "token123")] = balData
 	}
 
 	// 并发执行多个区块
@@ -681,20 +687,21 @@ func BenchmarkPreExecute(b *testing.B) {
 	cache := vm.NewSpecExecLRU(1000)
 	executor := vm.NewExecutor(db, registry, cache)
 
-	// 准备数据（使用新的 key 格式）
+	// 准备数据（使用分离存储）
 	for i := 0; i < 100; i++ {
 		userAddr := fmt.Sprintf("user%d", i)
-		account := &pb.Account{
-			Address: userAddr,
-			Balances: map[string]*pb.TokenBalance{
-				"token123": {
-					Balance:            "10000",
-					MinerLockedBalance: "0",
-				},
-			},
-		}
+		account := &pb.Account{Address: userAddr}
 		accountData, _ := proto.Marshal(account)
 		db.data[keys.KeyAccount(userAddr)] = accountData
+
+		bal := &pb.TokenBalanceRecord{
+			Balance: &pb.TokenBalance{
+				Balance:            "10000",
+				MinerLockedBalance: "0",
+			},
+		}
+		balData, _ := proto.Marshal(bal)
+		db.data[keys.KeyBalance(userAddr, "token123")] = balData
 	}
 
 	// 创建测试区块
