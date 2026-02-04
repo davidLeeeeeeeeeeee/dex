@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"sort"
 	"strings"
 	"sync"
 )
@@ -170,8 +171,16 @@ func (s *overlayStateView) Diff() []WriteOp {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// 收集所有 keys 并排序，确保确定性遍历顺序
+	keys := make([]string, 0, len(s.overlay))
+	for k := range s.overlay {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	diff := make([]WriteOp, 0, len(s.overlay))
-	for k, v := range s.overlay {
+	for _, k := range keys {
+		v := s.overlay[k]
 		valCopy := make([]byte, len(v.val))
 		copy(valCopy, v.val)
 		diff = append(diff, WriteOp{

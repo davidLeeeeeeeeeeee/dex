@@ -4,6 +4,7 @@ import (
 	"dex/config"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
@@ -228,6 +229,24 @@ func (s *VerkleStateDBSession) GetKV(key string) ([]byte, error) {
 }
 
 func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error {
+	// ========== 关键修复：多节点状态同步 ==========
+	// 在执行更新前，先确保当前Verkle树的内存状态与父区块一致
+	// 否则，当不同节点执行同一区块时，可能因内存树结构不同而导致节点解析失败
+	if height > 1 {
+		parentVersion := Version(height - 1)
+		// 尝试从存储加载父区块的状态根
+		parentRootKey := s.db.rootKey(parentVersion)
+		parentRoot, err := s.sess.GetKV(parentRootKey)
+		if err == nil && len(parentRoot) == 32 {
+			// 尝试同步到父区块状态根（使用当前 Session 避免数据隔离问题）
+			if syncErr := s.db.tree.SyncFromStateRootWithSession(s.sess, parentRoot); syncErr != nil {
+				// 同步失败只打印警告，不阻塞执行
+				// 因为对于第一个区块或某些边界情况，父状态根可能不存在
+				fmt.Printf("[VM] Warning: StateDB sync failed via session: %v\n", syncErr)
+			}
+		}
+	}
+
 	keys := make([][]byte, 0, len(kvs))
 	vals := make([][]byte, 0, len(kvs))
 
@@ -244,7 +263,27 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 	}
 
 	if len(keys) > 0 {
-		newRoot, err := s.db.tree.UpdateWithSession(s.sess, keys, vals, Version(height))
+		// 对 keys 排序以确保确定性顺序
+		type kvPair struct {
+			key []byte
+			val []byte
+		}
+		pairs := make([]kvPair, len(keys))
+		for i := range keys {
+			pairs[i] = kvPair{key: keys[i], val: vals[i]}
+		}
+		sort.Slice(pairs, func(i, j int) bool {
+			return string(pairs[i].key) < string(pairs[j].key)
+		})
+
+		sortedKeys := make([][]byte, len(pairs))
+		sortedVals := make([][]byte, len(pairs))
+		for i, p := range pairs {
+			sortedKeys[i] = p.key
+			sortedVals[i] = p.val
+		}
+
+		newRoot, err := s.db.tree.UpdateWithSession(s.sess, sortedKeys, sortedVals, Version(height))
 		if err != nil {
 			return err
 		}
@@ -260,6 +299,7 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 	}
 
 	return nil
+
 }
 
 func (s *VerkleStateDBSession) Commit() error {

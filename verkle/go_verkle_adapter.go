@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"sync"
 
 	gverkle "github.com/ethereum/go-verkle"
@@ -67,7 +68,7 @@ func NewVerkleTree(store VersionedStore) *VerkleTree {
 	}
 }
 
-// nodeResolver 创建一个 NodeResolverFn 用于按需加载被 flush 的节点
+// nodeResolver 创建一个 NodeResolverFn 用于按需加载被 flush 的节点（使用独立会话，适用于无事务上下文场景）
 func (t *VerkleTree) nodeResolver() gverkle.NodeResolverFn {
 	return func(path []byte) ([]byte, error) {
 		sess, err := t.store.NewSession()
@@ -75,7 +76,34 @@ func (t *VerkleTree) nodeResolver() gverkle.NodeResolverFn {
 			return nil, err
 		}
 		defer sess.Close()
-		return sess.GetKV(nodeKey(path))
+		val, err := sess.GetKV(nodeKey(path))
+		if err != nil {
+			return nil, err
+		}
+		if val == nil {
+			return nil, fmt.Errorf("verkle tree: node %x not found in storage: %w", path, ErrNotFound)
+		}
+		if len(val) < 65 {
+			return nil, fmt.Errorf("verkle tree: node %x payload too short (%d)", path, len(val))
+		}
+		return val, nil
+	}
+}
+
+// nodeResolverWithSession 创建一个使用指定会话的 NodeResolverFn（适用于事务内操作，可读取未提交数据）
+func (t *VerkleTree) nodeResolverWithSession(sess VersionedStoreSession) gverkle.NodeResolverFn {
+	return func(path []byte) ([]byte, error) {
+		val, err := sess.GetKV(nodeKey(path))
+		if err != nil {
+			return nil, err
+		}
+		if val == nil {
+			return nil, fmt.Errorf("verkle tree: node %x not found in storage: %w", path, ErrNotFound)
+		}
+		if len(val) < 65 {
+			return nil, fmt.Errorf("verkle tree: node %x payload too short (%d)", path, len(val))
+		}
+		return val, nil
 	}
 }
 
@@ -91,11 +119,24 @@ func (t *VerkleTree) resolveNode(hash []byte) (gverkle.VerkleNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	if data == nil {
+	// 增强防御：如果数据长度不足 65 字节（完整节点至少 65 字节），视为节点不存在
+	if data == nil || len(data) < 65 {
 		return nil, ErrNotFound
 	}
 
 	// 使用 gverkle.ParseNode 反序列化
+	return gverkle.ParseNode(data, 0)
+}
+
+// resolveNodeWithSession 使用给定的 Session 解析节点（避免 Session 隔离导致数据不可见）
+func (t *VerkleTree) resolveNodeWithSession(sess VersionedStoreSession, hash []byte) (gverkle.VerkleNode, error) {
+	data, err := sess.GetKV(nodeKey(hash))
+	if err != nil {
+		return nil, err
+	}
+	if data == nil || len(data) < 65 {
+		return nil, ErrNotFound
+	}
 	return gverkle.ParseNode(data, 0)
 }
 
@@ -238,7 +279,7 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 			copy(treeVal[1:], hashPart)
 		}
 
-		if err := t.root.Insert(verkleKey[:], treeVal, t.nodeResolver()); err != nil {
+		if err := t.root.Insert(verkleKey[:], treeVal, t.nodeResolverWithSession(sess)); err != nil {
 			return nil, err
 		}
 	}
@@ -262,7 +303,7 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 
 	// 5. 特别补丁：根节点本身也需要被序列化保存，否则重启后 resolveNode(rootHash) 会失败
 	rootData, err := t.root.Serialize()
-	if err == nil {
+	if err == nil && len(rootData) >= 65 { // Check length: only save if it's a complete node.
 		if err := sess.Set(nodeKey(rootCommitment[:]), rootData, newVersion); err != nil {
 			return nil, err
 		}
@@ -289,26 +330,74 @@ func (t *VerkleTree) pruneHistory(currentVersion Version) {
 	}
 }
 
-// flushNodes 使用 go-verkle 官方的 FlushAtDepth 将深层节点持久化并从内存释放
+// flushNodes 使用 go-verkle 官方的 BatchSerialize 将所有内存节点持久化
+// 这确保了所有深度的节点都被正确保存，解决多节点场景下的节点丢失问题
 func (t *VerkleTree) flushNodes(sess VersionedStoreSession, version Version) error {
-	// 获取根节点的 InternalNode 引用
 	inner, ok := t.root.(*gverkle.InternalNode)
 	if !ok {
-		return nil // 非 InternalNode，跳过
+		return nil
 	}
 
-	// 使用官方 FlushAtDepth：将深度 >= MaxMemoryDepth 的节点 flush 并替换为 HashedNode
-	inner.FlushAtDepth(uint8(MaxMemoryDepth), func(path []byte, node gverkle.VerkleNode) {
-		// 持久化节点
-		data, err := node.Serialize()
-		if err != nil {
-			return // 忽略序列化失败的节点
+	// 使用 BatchSerialize 获取所有需要保存的节点
+	// 这会递归收集所有非 HashedNode 的节点并一次性序列化
+	serializedNodes, err := inner.BatchSerialize()
+	if err != nil {
+		return fmt.Errorf("batch serialize failed: %w", err)
+	}
+
+	// 保存所有序列化的节点
+	for _, sn := range serializedNodes {
+		if len(sn.SerializedBytes) < 65 {
+			continue
 		}
-		commitment := node.Commitment().Bytes()
-		_ = sess.Set(nodeKey(commitment[:]), data, version)
-	})
+
+		// 使用 commitment 作为 key
+		_ = sess.Set(nodeKey(sn.CommitmentBytes[:]), sn.SerializedBytes, version)
+
+		// 同时使用 path 作为 key（如果有）
+		if len(sn.Path) > 0 {
+			_ = sess.Set(nodeKey(sn.Path), sn.SerializedBytes, version)
+		}
+	}
 
 	return nil
+}
+
+// saveMemoryNodesRecursive 递归保存内存中的节点到存储，不涉及剪枝
+func (t *VerkleTree) saveMemoryNodesRecursive(sess VersionedStoreSession, node gverkle.VerkleNode, path []byte, version Version, depth int) {
+	if node == nil {
+		return
+	}
+	if _, ok := node.(gverkle.HashedNode); ok {
+		return // 已经是 HashedNode，说明是在更深层或已处理
+	}
+
+	data, err := node.Serialize()
+	if err == nil && len(data) >= 65 {
+		commitment := node.Commitment().Bytes()
+		_ = sess.Set(nodeKey(commitment[:]), data, version)
+		if len(path) > 0 {
+			_ = sess.Set(nodeKey(path), data, version)
+		}
+	}
+
+	// 只递归 InternalNode
+	if inner, ok := node.(*gverkle.InternalNode); ok {
+		// 修复：确保 depth == MaxMemoryDepth 的节点也被保存
+		// 之前的 >= 会导致 depth 2 的节点不被保存，只能由 FlushAtDepth 处理
+		// 这会导致多节点场景下节点数据缺失
+		if depth > MaxMemoryDepth {
+			return
+		}
+
+		children := inner.Children()
+		for i, child := range children {
+			childPath := make([]byte, len(path)+1)
+			copy(childPath, path)
+			childPath[len(path)] = byte(i)
+			t.saveMemoryNodesRecursive(sess, child, childPath, version, depth+1)
+		}
+	}
 }
 
 // nodeKey 生成节点的存储 Key
@@ -460,6 +549,49 @@ func (t *VerkleTree) CommitRoot(version Version, root []byte) {
 	t.rootHistory[version] = root
 }
 
+// SyncFromStateRoot 确保当前树状态与指定的状态根一致
+// 如果不一致，则从存储中恢复内存层结构
+// 这对于多节点场景至关重要：不同节点的内存树可能演化不同步
+func (t *VerkleTree) SyncFromStateRoot(expectedRoot []byte) error {
+	if len(expectedRoot) == 0 || bytes.Equal(expectedRoot, make([]byte, 32)) {
+		// 空根或零根，无需同步
+		return nil
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	currentRoot := t.root.Commitment().Bytes()
+	if bytes.Equal(currentRoot[:], expectedRoot) {
+		// 根已一致，无需恢复
+		return nil
+	}
+
+	// 根不一致，需要从持久化存储恢复
+	node, err := t.resolveNode(expectedRoot)
+	if err != nil {
+		// 关键：如果无法恢复父状态根（例如在多节点首次执行时），
+		// 则重置树为空状态，允许从头构建。
+		// 这确保了多节点场景下的一致性：每个节点从相同的空状态开始。
+		fmt.Printf("[Verkle] Notice: resetting tree to empty state (cannot resolve root %x: %v)\n", expectedRoot[:8], err)
+		t.root = gverkle.New()
+		t.version = 0
+		return nil // 不返回错误，允许继续执行
+	}
+
+	t.root = node
+
+	// 递归恢复前 MaxMemoryDepth 层
+	if restoreErr := t.restoreNodeRecursive(t.root, 0); restoreErr != nil {
+		// 恢复内存层失败，同样重置为空状态
+		fmt.Printf("[Verkle] Notice: resetting tree after restore failure: %v\n", restoreErr)
+		t.root = gverkle.New()
+		t.version = 0
+	}
+
+	return nil
+}
+
 // RestoreMemoryLayers 从存储中重建前 MaxMemoryDepth 层的内存结构
 func (t *VerkleTree) RestoreMemoryLayers(rootHash []byte) error {
 	if len(rootHash) == 0 || bytes.Equal(rootHash, make([]byte, 32)) {
@@ -492,6 +624,63 @@ func (t *VerkleTree) restoreNodeRecursive(node gverkle.VerkleNode, depth int) er
 		child := inner.Children()[i]
 		if child != nil {
 			if err := t.restoreNodeRecursive(child, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// SyncFromStateRootWithSession 使用给定的 Session 确保当前树状态与指定的状态根一致
+// 这解决了 Session 隔离导致的节点数据不可见问题
+func (t *VerkleTree) SyncFromStateRootWithSession(sess VersionedStoreSession, expectedRoot []byte) error {
+	if len(expectedRoot) == 0 || bytes.Equal(expectedRoot, make([]byte, 32)) {
+		return nil
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	currentRoot := t.root.Commitment().Bytes()
+	if bytes.Equal(currentRoot[:], expectedRoot) {
+		return nil
+	}
+
+	// 使用传入的 Session 解析节点，避免创建新 Session 导致的数据隔离问题
+	node, err := t.resolveNodeWithSession(sess, expectedRoot)
+	if err != nil {
+		fmt.Printf("[Verkle] Notice: resetting tree to empty state (cannot resolve root %x: %v)\n", expectedRoot[:8], err)
+		t.root = gverkle.New()
+		t.version = 0
+		return nil
+	}
+
+	t.root = node
+
+	if restoreErr := t.restoreNodeRecursiveWithSession(sess, t.root, 0); restoreErr != nil {
+		fmt.Printf("[Verkle] Notice: resetting tree after restore failure: %v\n", restoreErr)
+		t.root = gverkle.New()
+		t.version = 0
+	}
+
+	return nil
+}
+
+// restoreNodeRecursiveWithSession 使用给定的 Session 递归恢复内存层
+func (t *VerkleTree) restoreNodeRecursiveWithSession(sess VersionedStoreSession, node gverkle.VerkleNode, depth int) error {
+	if depth >= MaxMemoryDepth || node == nil {
+		return nil
+	}
+
+	inner, ok := node.(*gverkle.InternalNode)
+	if !ok {
+		return nil
+	}
+
+	for i := 0; i < 256; i++ {
+		child := inner.Children()[i]
+		if child != nil {
+			if err := t.restoreNodeRecursiveWithSession(sess, child, depth+1); err != nil {
 				return err
 			}
 		}

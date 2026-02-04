@@ -10,9 +10,9 @@ import (
 	"dex/witness"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
@@ -262,8 +262,9 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 				}
 
 				// 填充 Receipt 元数据并收集
+				// 使用区块时间戳而非本地时间，确保多节点确定性
 				rc.BlockHeight = b.Header.Height
-				rc.Timestamp = time.Now().Unix()
+				rc.Timestamp = b.Header.Timestamp
 				receipts = append(receipts, rc)
 
 				logs.Info("[VM] Tx %s mark as FAILED in block %d: %v", rc.TxID, b.Header.Height, err)
@@ -297,9 +298,10 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 			}
 		}
 		// 填充 Receipt 元数据
+		// 使用区块时间戳而非本地时间，确保多节点确定性
 		if rc != nil {
 			rc.BlockHeight = b.Header.Height
-			rc.Timestamp = time.Now().Unix()
+			rc.Timestamp = b.Header.Timestamp
 		}
 		receipts = append(receipts, rc)
 	}
@@ -339,26 +341,33 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 			minerReward := minerRewardDec.BigInt()
 
 			// 5. 分配给矿工 (70%)
+			// 确定性改进：如果矿工账户不存在，自动创建新账户
+			// 这确保所有节点在执行奖励时产生相同的 WriteOp
 			minerAccountKey := keys.KeyAccount(b.Header.Miner)
 			minerAccountData, exists, err := sv.Get(minerAccountKey)
+			var minerAccount pb.Account
 			if err == nil && exists {
-				var minerAccount pb.Account
-				if err := proto.Unmarshal(minerAccountData, &minerAccount); err == nil {
-					if minerAccount.Balances == nil {
-						minerAccount.Balances = make(map[string]*pb.TokenBalance)
-					}
-					const RewardToken = "FB"
-					if minerAccount.Balances[RewardToken] == nil {
-						minerAccount.Balances[RewardToken] = &pb.TokenBalance{Balance: "0"}
-					}
-					currentBal, _ := ParseBalance(minerAccount.Balances[RewardToken].Balance)
-					newBal, _ := SafeAdd(currentBal, minerReward)
-					minerAccount.Balances[RewardToken].Balance = newBal.String()
-
-					rewardedData, _ := proto.Marshal(&minerAccount)
-					sv.Set(minerAccountKey, rewardedData)
+				_ = proto.Unmarshal(minerAccountData, &minerAccount)
+			} else {
+				// 矿工账户不存在，创建新账户
+				minerAccount = pb.Account{
+					Address:  b.Header.Miner,
+					Balances: make(map[string]*pb.TokenBalance),
 				}
 			}
+			if minerAccount.Balances == nil {
+				minerAccount.Balances = make(map[string]*pb.TokenBalance)
+			}
+			const RewardToken = "FB"
+			if minerAccount.Balances[RewardToken] == nil {
+				minerAccount.Balances[RewardToken] = &pb.TokenBalance{Balance: "0"}
+			}
+			currentBal, _ := ParseBalance(minerAccount.Balances[RewardToken].Balance)
+			newBal, _ := SafeAdd(currentBal, minerReward)
+			minerAccount.Balances[RewardToken].Balance = newBal.String()
+
+			rewardedData, _ := proto.Marshal(&minerAccount)
+			sv.Set(minerAccountKey, rewardedData)
 
 			// 6. 分配给见证者奖励池 (30%)
 			if witnessReward.Sign() > 0 {
@@ -373,6 +382,7 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 			}
 
 			// 7. 保存奖励记录
+			// 使用区块时间戳而非本地时间，确保多节点确定性
 			rewardRecord := &pb.BlockReward{
 				Height:        b.Header.Height,
 				Miner:         b.Header.Miner,
@@ -380,7 +390,7 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 				WitnessReward: witnessReward.String(),
 				TotalFees:     totalFees.String(),
 				BlockReward:   blockReward.String(),
-				Timestamp:     time.Now().Unix(),
+				Timestamp:     b.Header.Timestamp,
 			}
 			rewardData, _ := proto.Marshal(rewardRecord)
 			sv.Set(keys.KeyBlockReward(b.Header.Height), rewardData)
@@ -710,6 +720,7 @@ func ValidateBlock(b *pb.Block) error {
 }
 
 // collectPairsFromBlock 预扫描区块，收集所有需要撮合的交易对
+// 确定性改进：返回排序后的交易对列表，确保多节点处理顺序一致
 func collectPairsFromBlock(b *pb.Block) []string {
 	pairSet := make(map[string]struct{})
 
@@ -730,11 +741,12 @@ func collectPairsFromBlock(b *pb.Block) []string {
 		pairSet[pair] = struct{}{}
 	}
 
-	// 转换为 slice
+	// 转换为 slice 并排序，确保确定性遍历顺序
 	pairs := make([]string, 0, len(pairSet))
 	for pair := range pairSet {
 		pairs = append(pairs, pair)
 	}
+	sort.Strings(pairs)
 
 	return pairs
 }
@@ -757,7 +769,14 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 		buyPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_BUY, false)
 		buyOrders, err := x.DB.ScanKVWithLimitReverse(buyPrefix, 500)
 		if err == nil {
-			for indexKey, data := range buyOrders {
+			// 对 keys 排序以确保确定性遍历顺序
+			buyKeys := make([]string, 0, len(buyOrders))
+			for k := range buyOrders {
+				buyKeys = append(buyKeys, k)
+			}
+			sort.Strings(buyKeys)
+			for _, indexKey := range buyKeys {
+				data := buyOrders[indexKey]
 				orderID := extractOrderIDFromIndexKey(indexKey)
 				if orderID == "" {
 					continue
@@ -770,7 +789,14 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 		sellPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_SELL, false)
 		sellOrders, err := x.DB.ScanKVWithLimit(sellPrefix, 500)
 		if err == nil {
-			for indexKey, data := range sellOrders {
+			// 对 keys 排序以确保确定性遍历顺序
+			sellKeys := make([]string, 0, len(sellOrders))
+			for k := range sellOrders {
+				sellKeys = append(sellKeys, k)
+			}
+			sort.Strings(sellKeys)
+			for _, indexKey := range sellKeys {
+				data := sellOrders[indexKey]
 				orderID := extractOrderIDFromIndexKey(indexKey)
 				if orderID == "" {
 					continue

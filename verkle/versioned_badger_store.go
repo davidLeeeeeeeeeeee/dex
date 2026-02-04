@@ -1,6 +1,7 @@
 package verkle
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 
@@ -228,7 +229,7 @@ func (s *VersionedBadgerStore) getLatestVersionInternal(txn *badger.Txn, key []b
 	return ver, err
 }
 
-// Prune 删除指定版本之前的所有旧版本
+// Prune 删除指定版本之前的所有旧版本，但始终保留每个 Key 的最新版本
 func (s *VersionedBadgerStore) Prune(version Version) error {
 	var keysToDelete [][]byte
 
@@ -239,21 +240,41 @@ func (s *VersionedBadgerStore) Prune(version Version) error {
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
+		var lastVersionedKey []byte
+		var lastOriginalKey []byte
+
 		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 			key := item.Key()
 
-			if len(key) < 8 {
+			// 检查前缀，排除 Metadata Key (L 前缀)
+			if len(key) > len(s.prefix) && key[len(s.prefix)] == 'L' {
 				continue
 			}
 
-			keyVersion := Version(binary.BigEndian.Uint64(key[len(key)-8:]))
-			if keyVersion < version {
-				keyCopy := make([]byte, len(key))
-				copy(keyCopy, key)
-				keysToDelete = append(keysToDelete, keyCopy)
+			// 仅处理带有 8 字节版本后缀的 Key
+			if len(key) < len(s.prefix)+8 {
+				continue
 			}
+
+			currOriginalKey := key[:len(key)-8]
+
+			if lastVersionedKey != nil {
+				// 如果当前 key 属于同一个原始 key，说明上一个 key 不是该 key 的最新版本
+				if bytes.Equal(currOriginalKey, lastOriginalKey) {
+					keyVersion := Version(binary.BigEndian.Uint64(lastVersionedKey[len(lastVersionedKey)-8:]))
+					if keyVersion < version {
+						keysToDelete = append(keysToDelete, lastVersionedKey)
+					}
+				}
+				// 如果当前 key 是新前缀，说明 lastVersionedKey 是上一个前缀的最新版本，跳过不删
+			}
+
+			lastVersionedKey = item.KeyCopy(nil)
+			lastOriginalKey = lastVersionedKey[:len(lastVersionedKey)-8]
 		}
+
+		// 注意：循环结束后的最后一个 lastVersionedKey 必然是其前缀的最新版本，因此不需要处理
 		return nil
 	})
 
@@ -333,6 +354,11 @@ func (b *BadgerSession) GetKV(key []byte) ([]byte, error) {
 			return nil, nil
 		}
 		return nil, err
+	}
+	// 关键防御：如果读取到的数据长度小于 65，说明它不是一个完整的 Verkle 节点 (Internal/Leaf 至少 65b)。
+	// 可能是旧版本遗留的 HashedNode payload (32b) 或损坏数据。
+	if val != nil && len(val) < 65 {
+		return nil, nil
 	}
 	return val, nil
 }
