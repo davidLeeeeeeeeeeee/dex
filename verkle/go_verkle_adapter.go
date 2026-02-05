@@ -246,6 +246,7 @@ func (t *VerkleTree) Update(keys [][]byte, values [][]byte, newVersion Version) 
 }
 
 // UpdateWithSession 在会话中批量更新（支持大值分片存储）
+// 使用分批写入策略：大值使用独立事务分批写入，主事务只处理小数据
 func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte, values [][]byte, newVersion Version) ([]byte, error) {
 	if len(keys) != len(values) {
 		return nil, errors.New("keys and values must have the same length")
@@ -253,6 +254,21 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	// ========== 第一阶段：收集并分批写入大值 ==========
+	// 大值使用独立事务写入，避免主事务过大
+	type largeValueEntry struct {
+		key []byte
+		val []byte
+	}
+	var largeValues []largeValueEntry
+
+	// 预处理：收集所有值，大值记录下来后续分批写入
+	type processedEntry struct {
+		verkleKey [32]byte
+		treeVal   []byte
+	}
+	processedEntries := make([]processedEntry, 0, len(keys))
 
 	for i := 0; i < len(keys); i++ {
 		verkleKey := ToVerkleKey(keys[i])
@@ -269,17 +285,54 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 			h := sha256.Sum256(val)
 			hashPart := h[:31]
 
-			// 使用 Session 原子写入大值到 KV
-			if err := sess.Set(largeValueKey(hashPart), val, newVersion); err != nil {
-				return nil, err
-			}
+			// 收集大值，后续分批写入
+			largeValues = append(largeValues, largeValueEntry{
+				key: largeValueKey(hashPart),
+				val: val,
+			})
 
 			treeVal = make([]byte, 32)
 			treeVal[0] = markerIndirect
 			copy(treeVal[1:], hashPart)
 		}
 
-		if err := t.root.Insert(verkleKey[:], treeVal, t.nodeResolverWithSession(sess)); err != nil {
+		processedEntries = append(processedEntries, processedEntry{
+			verkleKey: verkleKey,
+			treeVal:   treeVal,
+		})
+	}
+
+	// 分批写入大值（每批最多 100 个，使用独立事务）
+	const largeValueBatchSize = 100
+	for i := 0; i < len(largeValues); i += largeValueBatchSize {
+		end := i + largeValueBatchSize
+		if end > len(largeValues) {
+			end = len(largeValues)
+		}
+		batch := largeValues[i:end]
+
+		batchSess, err := t.store.NewSession()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create large value batch session: %w", err)
+		}
+
+		for _, lv := range batch {
+			if err := batchSess.Set(lv.key, lv.val, newVersion); err != nil {
+				batchSess.Close()
+				return nil, fmt.Errorf("failed to set large value: %w", err)
+			}
+		}
+
+		if err := batchSess.Commit(); err != nil {
+			batchSess.Close()
+			return nil, fmt.Errorf("failed to commit large value batch %d-%d: %w", i, end, err)
+		}
+		batchSess.Close()
+	}
+
+	// ========== 第二阶段：更新树结构（内存操作） ==========
+	for _, entry := range processedEntries {
+		if err := t.root.Insert(entry.verkleKey[:], entry.treeVal, t.nodeResolverWithSession(sess)); err != nil {
 			return nil, err
 		}
 	}
@@ -291,22 +344,23 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 	t.version = newVersion
 	t.rootHistory[newVersion] = rootCommitment[:]
 
-	// 存储根承诺（也通过 session）
+	// ========== 第三阶段：保存根承诺和根节点 ==========
+	// 这些是小数据，可以在主事务中处理
 	if err := sess.Set(rootKey(newVersion), rootCommitment[:], newVersion); err != nil {
 		return nil, err
 	}
 
-	// 4. 深度感知持久化：执行完整递归保存并将深层节点从内存裁剪
-	if err := t.flushNodes(sess, newVersion); err != nil {
-		return nil, err
-	}
-
-	// 5. 特别补丁：根节点本身也需要被序列化保存，否则重启后 resolveNode(rootHash) 会失败
+	// 根节点序列化保存
 	rootData, err := t.root.Serialize()
-	if err == nil && len(rootData) >= 65 { // Check length: only save if it's a complete node.
+	if err == nil && len(rootData) >= 65 {
 		if err := sess.Set(nodeKey(rootCommitment[:]), rootData, newVersion); err != nil {
 			return nil, err
 		}
+	}
+
+	// ========== 第四阶段：分批持久化树节点 ==========
+	if err := t.flushNodes(sess, newVersion); err != nil {
+		return nil, err
 	}
 
 	// 清理过旧的历史版本缓存
