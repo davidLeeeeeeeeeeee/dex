@@ -331,7 +331,7 @@ func (t *VerkleTree) pruneHistory(currentVersion Version) {
 }
 
 // flushNodes 使用 go-verkle 官方的 BatchSerialize 将所有内存节点持久化
-// 这确保了所有深度的节点都被正确保存，解决多节点场景下的节点丢失问题
+// 使用分批写入策略，每批最多 batchSize 个节点使用独立事务提交，避免单个事务过大
 func (t *VerkleTree) flushNodes(sess VersionedStoreSession, version Version) error {
 	inner, ok := t.root.(*gverkle.InternalNode)
 	if !ok {
@@ -339,25 +339,66 @@ func (t *VerkleTree) flushNodes(sess VersionedStoreSession, version Version) err
 	}
 
 	// 使用 BatchSerialize 获取所有需要保存的节点
-	// 这会递归收集所有非 HashedNode 的节点并一次性序列化
 	serializedNodes, err := inner.BatchSerialize()
 	if err != nil {
 		return fmt.Errorf("batch serialize failed: %w", err)
 	}
 
-	// 保存所有序列化的节点
+	// 过滤有效节点
+	type nodeData struct {
+		key  []byte
+		data []byte
+		path []byte
+	}
+	var validNodes []nodeData
+
 	for _, sn := range serializedNodes {
 		if len(sn.SerializedBytes) < 65 {
 			continue
 		}
+		validNodes = append(validNodes, nodeData{
+			key:  sn.CommitmentBytes[:],
+			data: sn.SerializedBytes,
+			path: sn.Path,
+		})
+	}
 
-		// 使用 commitment 作为 key
-		_ = sess.Set(nodeKey(sn.CommitmentBytes[:]), sn.SerializedBytes, version)
+	if len(validNodes) == 0 {
+		return nil
+	}
 
-		// 同时使用 path 作为 key（如果有）
-		if len(sn.Path) > 0 {
-			_ = sess.Set(nodeKey(sn.Path), sn.SerializedBytes, version)
+	// 分批写入，每批最多 200 个节点（约 200 * 256B = 50KB，远低于 BadgerDB 事务限制）
+	const batchSize = 200
+
+	for i := 0; i < len(validNodes); i += batchSize {
+		end := i + batchSize
+		if end > len(validNodes) {
+			end = len(validNodes)
 		}
+		batch := validNodes[i:end]
+
+		// 每批使用独立事务
+		batchSess, err := t.store.NewSession()
+		if err != nil {
+			return fmt.Errorf("failed to create batch session: %w", err)
+		}
+
+		for _, nd := range batch {
+			// 使用 commitment 作为 key
+			_ = batchSess.Set(nodeKey(nd.key), nd.data, version)
+
+			// 同时使用 path 作为 key（如果有）
+			if len(nd.path) > 0 {
+				_ = batchSess.Set(nodeKey(nd.path), nd.data, version)
+			}
+		}
+
+		// 提交本批次
+		if err := batchSess.Commit(); err != nil {
+			batchSess.Close()
+			return fmt.Errorf("failed to commit batch %d-%d: %w", i, end, err)
+		}
+		batchSess.Close()
 	}
 
 	return nil
