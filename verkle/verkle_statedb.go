@@ -234,23 +234,12 @@ func (s *VerkleStateDBSession) GetKV(key string) ([]byte, error) {
 }
 
 func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error {
-	// ========== 关键修复：多节点状态同步 ==========
-	// 在执行更新前，先确保当前Verkle树的内存状态与父区块一致
-	// 否则，当不同节点执行同一区块时，可能因内存树结构不同而导致节点解析失败
-	if height > 1 {
-		parentVersion := Version(height - 1)
-		// 尝试从存储加载父区块的状态根
-		parentRootKey := s.db.rootKey(parentVersion)
-		parentRoot, err := s.sess.GetKV(parentRootKey)
-		if err == nil && len(parentRoot) == 32 {
-			// 尝试同步到父区块状态根（使用当前 Session 避免数据隔离问题）
-			if syncErr := s.db.tree.SyncFromStateRootWithSession(s.sess, parentRoot); syncErr != nil {
-				// 同步失败只打印警告，不阻塞执行
-				// 因为对于第一个区块或某些边界情况，父状态根可能不存在
-				fmt.Printf("[VM] Warning: StateDB sync failed via session: %v\n", syncErr)
-			}
-		}
-	}
+	// ========== 设计变更说明 ==========
+	// 之前：每个区块执行前都尝试同步父区块状态（SyncFromStateRootWithSession）
+	//       问题：当树变大时，BadgerDB 事务过大导致同步失败，造成各节点内存树不一致
+	// 现在：状态恢复只在节点启动时一次性完成（recoverLatestVersion）
+	//       运行时内存树始终保持最新状态，不需要每个区块都重新同步
+	// =================================
 
 	// 收集所有删除操作的 keys（用于日志）
 	deletedKeys := make([]string, 0)
