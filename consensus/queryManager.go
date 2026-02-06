@@ -166,8 +166,8 @@ func (qm *QueryManager) issueQuery() {
 		for _, b := range blocks {
 			candidates = append(candidates, b.ID)
 		}
-		// 使用 selectByMinHash 与 Snowball 保持一致的确定性选择规则
-		blockID = selectByMinHash(candidates)
+		// 使用 selectBestCandidate 与 Snowball 保持一致的确定性选择规则
+		blockID = selectBestCandidate(candidates)
 	}
 
 	block, exists := qm.store.Get(blockID)
@@ -281,11 +281,14 @@ func (qm *QueryManager) HandleChit(msg types.Message) {
 		qm.engine.SubmitChit(types.NodeID(msg.From), p.queryKey, msg.PreferredID)
 	}
 
-	// 事件驱动同步：探测到任何领先高度都尝试触发（不再等待 BehindThreshold 阈值）
+	// 事件驱动同步：探测到任何领先高度都尝试立即触发（打破 BehindThreshold 阈值限制）
 	if qm.syncManager != nil && msg.AcceptedHeight > 0 {
 		_, localAccepted := qm.store.GetLastAccepted()
 		if msg.AcceptedHeight > localAccepted {
-			qm.syncManager.TriggerSyncFromChit(msg.AcceptedHeight, types.NodeID(msg.From))
+			logs.Info("[QueryManager] Detected peer %s at height %d (local: %d), forcing aggressive sync",
+				msg.From, msg.AcceptedHeight, localAccepted)
+			// 直接调用同步，不等待定时器
+			go qm.syncManager.TriggerSyncFromChit(msg.AcceptedHeight, types.NodeID(msg.From))
 		}
 	}
 }

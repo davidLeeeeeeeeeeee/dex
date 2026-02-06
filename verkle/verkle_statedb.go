@@ -310,7 +310,13 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 }
 
 func (s *VerkleStateDBSession) Commit() error {
-	return s.sess.Commit()
+	// 先提交主事务
+	if err := s.sess.Commit(); err != nil {
+		return err
+	}
+	// 主事务提交后，分批写入待处理的节点数据
+	// 这些独立事务不会与已提交的主事务冲突
+	return s.db.tree.FlushPendingNodes()
 }
 
 func (s *VerkleStateDBSession) Rollback() error {

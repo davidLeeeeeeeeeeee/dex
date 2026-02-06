@@ -8,8 +8,23 @@ import (
 	"dex/utils"
 	"fmt"
 
+	"sync"
+
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
+)
+
+var (
+	accountPool = sync.Pool{
+		New: func() interface{} {
+			return &pb.Account{}
+		},
+	}
+	orderStatePool = sync.Pool{
+		New: func() interface{} {
+			return &pb.OrderState{}
+		},
+	}
 )
 
 // OrderTxHandler 订单交易处理器
@@ -111,8 +126,11 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		}, nil
 	}
 
-	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil {
+	account := accountPool.Get().(*pb.Account)
+	account.Reset()
+	defer accountPool.Put(account)
+
+	if err := proto.Unmarshal(accountData, account); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -209,9 +227,10 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	}
 
 	// 9. 根据撮合事件生成WriteOps
-	// 传入已修改的账户 cache，确保 Taker 的余额冻结不会被后续成交逻辑覆盖
+	// 传入已处理的账户数据，用于生成 WriteOp
+	// 账户在 defer 中会归还 pool
 	accountCache := map[string]*pb.Account{
-		ord.Base.FromAddress: &account,
+		ord.Base.FromAddress: account,
 	}
 	ws, err := h.generateWriteOpsFromTrades(ord, tradeEvents, sv, pair, accountCache)
 	if err != nil {
@@ -597,8 +616,11 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 					Owner:       oldOrderTx.Base.FromAddress,
 				}
 			} else {
-				orderState = &pb.OrderState{}
+				orderState = orderStatePool.Get().(*pb.OrderState)
+				orderState.Reset()
+				// 这里不能用 defer Put，因为后面还要存入 map 并被循环外的逻辑使用
 				if err := proto.Unmarshal(orderStateData, orderState); err != nil {
+					orderStatePool.Put(orderState) // 失败也要归还
 					continue
 				}
 			}
@@ -637,9 +659,12 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 
 	// 生成WriteOps保存所有更新的订单状态
 	for orderID, orderState := range stateUpdates {
-		// 保存订单状态
 		orderStateKey := keys.KeyOrderState(orderID)
 		orderStateData, err := proto.Marshal(orderState)
+
+		// Marshal 之后，该对象不再被需要，归还 Pool
+		orderStatePool.Put(orderState)
+
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal order state %s: %w", orderID, err)
 		}

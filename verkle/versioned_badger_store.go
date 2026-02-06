@@ -299,6 +299,26 @@ func (s *VersionedBadgerStore) Close() error {
 	return nil
 }
 
+// WriteBatch 使用 BadgerDB 的 WriteBatch 批量写入多个条目
+// WriteBatch 没有事务大小限制，适合大量数据的原子写入
+func (s *VersionedBadgerStore) WriteBatch(entries []BatchEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	wb := s.db.NewWriteBatch()
+	defer wb.Cancel()
+
+	for _, e := range entries {
+		versionedKey := s.encodeVersionedKey(e.Key, e.Version)
+		if err := wb.Set(versionedKey, e.Value); err != nil {
+			return err
+		}
+	}
+
+	return wb.Flush() // 原子写入所有数据
+}
+
 // ============================================
 // 内部辅助函数
 // ============================================

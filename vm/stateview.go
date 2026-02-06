@@ -181,11 +181,10 @@ func (s *overlayStateView) Diff() []WriteOp {
 	diff := make([]WriteOp, 0, len(s.overlay))
 	for _, k := range keys {
 		v := s.overlay[k]
-		valCopy := make([]byte, len(v.val))
-		copy(valCopy, v.val)
+		// 不需要再次复制，因为 Set/SetWithMeta 已经复制过了
 		diff = append(diff, WriteOp{
 			Key:         k,
-			Value:       valCopy,
+			Value:       v.val,
 			Del:         !v.exist,
 			SyncStateDB: v.syncStateDB,
 			Category:    v.category,

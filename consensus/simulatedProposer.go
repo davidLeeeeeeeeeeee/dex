@@ -24,7 +24,7 @@ func NewDefaultBlockProposer() interfaces.BlockProposer {
 
 func (p *DefaultBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, window int) (*types.Block, error) {
 	// 生成一个简单的 hash 以确保 blockID 格式与 RealBlockProposer 一致
-	// 这样 selectByMinHash 才能正确提取并比较 hash
+	// 这样 selectBestCandidate 才能正确提取并比较 hash
 	hashInput := fmt.Sprintf("%s-%d-%s-%d", parentID, height, proposer, window)
 	hash := sha256.Sum256([]byte(hashInput))
 	hashStr := fmt.Sprintf("%x", hash[:4]) // 取前 4 字节作为 8 字符的 hex

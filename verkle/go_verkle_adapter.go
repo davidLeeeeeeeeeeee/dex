@@ -29,7 +29,7 @@ const (
 	maxDirectValueSize = 31
 
 	// MaxMemoryDepth 内存常驻层数上限（高层路由层）
-	MaxMemoryDepth = 2
+	MaxMemoryDepth = 1
 )
 
 // VerkleProof Verkle Tree 的证明结构
@@ -51,11 +51,20 @@ func (p *VerkleProof) IsMembershipProof() bool {
 
 // VerkleTree 使用 go-verkle 库的 Verkle Tree 包装器
 type VerkleTree struct {
-	mu          sync.RWMutex
-	root        gverkle.VerkleNode
-	store       VersionedStore
-	version     Version
-	rootHistory map[Version][]byte
+	mu           sync.RWMutex
+	root         gverkle.VerkleNode
+	store        VersionedStore
+	version      Version
+	rootHistory  map[Version][]byte
+	pendingNodes []pendingNodeData // 待写入的节点数据（主事务提交后写入）
+}
+
+// pendingNodeData 待写入的节点数据
+type pendingNodeData struct {
+	key     []byte
+	data    []byte
+	path    []byte
+	version Version
 }
 
 // NewVerkleTree 创建新的 Verkle Tree 包装器 (v0.2.2 兼容)
@@ -358,10 +367,10 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 		}
 	}
 
-	// ========== 第四阶段：分批持久化树节点 ==========
-	if err := t.flushNodes(sess, newVersion); err != nil {
-		return nil, err
-	}
+	// ========== 第四阶段：收集并释放深层节点内存 ==========
+	// 注意：节点数据的持久化在主事务提交后通过 FlushPendingNodes 完成
+	// 这里只做内存释放（转换为 HashedNode）
+	t.collectAndFlushToMemory(newVersion)
 
 	// 清理过旧的历史版本缓存
 	t.pruneHistory(newVersion)
@@ -384,115 +393,97 @@ func (t *VerkleTree) pruneHistory(currentVersion Version) {
 	}
 }
 
-// flushNodes 使用 go-verkle 官方的 BatchSerialize 将所有内存节点持久化
-// 使用分批写入策略，每批最多 batchSize 个节点使用独立事务提交，避免单个事务过大
-func (t *VerkleTree) flushNodes(sess VersionedStoreSession, version Version) error {
+// collectAndFlushToMemory 收集深层节点并释放内存（转换为 HashedNode）
+// 节点数据存储在 pendingNodes 中，在主事务提交后通过 FlushPendingNodes 写入
+func (t *VerkleTree) collectAndFlushToMemory(version Version) {
 	inner, ok := t.root.(*gverkle.InternalNode)
 	if !ok {
-		return nil
-	}
-
-	// 使用 BatchSerialize 获取所有需要保存的节点
-	serializedNodes, err := inner.BatchSerialize()
-	if err != nil {
-		return fmt.Errorf("batch serialize failed: %w", err)
-	}
-
-	// 过滤有效节点
-	type nodeData struct {
-		key  []byte
-		data []byte
-		path []byte
-	}
-	var validNodes []nodeData
-
-	for _, sn := range serializedNodes {
-		if len(sn.SerializedBytes) < 65 {
-			continue
-		}
-		validNodes = append(validNodes, nodeData{
-			key:  sn.CommitmentBytes[:],
-			data: sn.SerializedBytes,
-			path: sn.Path,
-		})
-	}
-
-	if len(validNodes) == 0 {
-		return nil
-	}
-
-	// 分批写入，每批最多 200 个节点（约 200 * 256B = 50KB，远低于 BadgerDB 事务限制）
-	const batchSize = 200
-
-	for i := 0; i < len(validNodes); i += batchSize {
-		end := i + batchSize
-		if end > len(validNodes) {
-			end = len(validNodes)
-		}
-		batch := validNodes[i:end]
-
-		// 每批使用独立事务
-		batchSess, err := t.store.NewSession()
-		if err != nil {
-			return fmt.Errorf("failed to create batch session: %w", err)
-		}
-
-		for _, nd := range batch {
-			// 使用 commitment 作为 key
-			_ = batchSess.Set(nodeKey(nd.key), nd.data, version)
-
-			// 同时使用 path 作为 key（如果有）
-			if len(nd.path) > 0 {
-				_ = batchSess.Set(nodeKey(nd.path), nd.data, version)
-			}
-		}
-
-		// 提交本批次
-		if err := batchSess.Commit(); err != nil {
-			batchSess.Close()
-			return fmt.Errorf("failed to commit batch %d-%d: %w", i, end, err)
-		}
-		batchSess.Close()
-	}
-
-	return nil
-}
-
-// saveMemoryNodesRecursive 递归保存内存中的节点到存储，不涉及剪枝
-func (t *VerkleTree) saveMemoryNodesRecursive(sess VersionedStoreSession, node gverkle.VerkleNode, path []byte, version Version, depth int) {
-	if node == nil {
 		return
 	}
-	if _, ok := node.(gverkle.HashedNode); ok {
-		return // 已经是 HashedNode，说明是在更深层或已处理
-	}
 
-	data, err := node.Serialize()
-	if err == nil && len(data) >= 65 {
-		commitment := node.Commitment().Bytes()
-		_ = sess.Set(nodeKey(commitment[:]), data, version)
-		if len(path) > 0 {
-			_ = sess.Set(nodeKey(path), data, version)
-		}
-	}
+	// 注意：不再清空 pendingNodes，而是追加，由 FlushPendingNodes 在写入后清空
+	// t.pendingNodes = nil
 
-	// 只递归 InternalNode
-	if inner, ok := node.(*gverkle.InternalNode); ok {
-		// 修复：确保 depth == MaxMemoryDepth 的节点也被保存
-		// 之前的 >= 会导致 depth 2 的节点不被保存，只能由 FlushAtDepth 处理
-		// 这会导致多节点场景下节点数据缺失
-		if depth > MaxMemoryDepth {
+	// 使用 FlushAtDepth 将 MaxMemoryDepth 层以下的节点释放内存
+	// FlushAtDepth 会自动将这些节点替换为 HashedNode
+	inner.FlushAtDepth(uint8(MaxMemoryDepth), nil, func(path []byte, node gverkle.VerkleNode) {
+		data, err := node.Serialize()
+		if err != nil || len(data) < 65 {
 			return
 		}
+		commitment := node.Commitment().Bytes()
+		t.pendingNodes = append(t.pendingNodes, pendingNodeData{
+			key:     commitment[:],
+			data:    data,
+			path:    append([]byte(nil), path...), // 复制 path 避免闭包问题
+			version: version,
+		})
+	})
+}
 
-		children := inner.Children()
-		for i, child := range children {
-			childPath := make([]byte, len(path)+1)
-			copy(childPath, path)
-			childPath[len(path)] = byte(i)
-			t.saveMemoryNodesRecursive(sess, child, childPath, version, depth+1)
+// FlushPendingNodes 使用 WriteBatch 原子写入待处理的节点数据
+// WriteBatch 没有事务大小限制，可以一次性写入所有节点
+func (t *VerkleTree) FlushPendingNodes() error {
+	t.mu.Lock()
+	nodes := t.pendingNodes
+	t.pendingNodes = nil
+	t.mu.Unlock()
+
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	// 获取底层 BadgerStore 以使用 WriteBatch
+	badgerStore, ok := t.store.(*VersionedBadgerStore)
+	if !ok {
+		// 如果不是 BadgerStore，回退到简单实现（测试用）
+		return t.flushPendingNodesSimple(nodes)
+	}
+
+	// 收集所有要写入的条目
+	entries := make([]BatchEntry, 0, len(nodes)*2)
+	for _, nd := range nodes {
+		// 使用 commitment 作为 key
+		entries = append(entries, BatchEntry{
+			Key:     nodeKey(nd.key),
+			Value:   nd.data,
+			Version: nd.version,
+		})
+
+		// 同时使用 path 作为 key
+		if len(nd.path) > 0 {
+			entries = append(entries, BatchEntry{
+				Key:     nodeKey(nd.path),
+				Value:   nd.data,
+				Version: nd.version,
+			})
 		}
 	}
+
+	// 原子写入所有节点数据
+	return badgerStore.WriteBatch(entries)
+}
+
+// flushPendingNodesSimple 简单实现（用于非 BadgerStore 的测试场景）
+func (t *VerkleTree) flushPendingNodesSimple(nodes []pendingNodeData) error {
+	sess, err := t.store.NewSession()
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+
+	for _, nd := range nodes {
+		if err := sess.Set(nodeKey(nd.key), nd.data, nd.version); err != nil {
+			return err
+		}
+		if len(nd.path) > 0 {
+			if err := sess.Set(nodeKey(nd.path), nd.data, nd.version); err != nil {
+				return err
+			}
+		}
+	}
+
+	return sess.Commit()
 }
 
 // nodeKey 生成节点的存储 Key

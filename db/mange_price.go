@@ -11,6 +11,7 @@ import (
 var (
 	minPrice = decimal.NewFromFloat(1e-33)
 	maxPrice = decimal.NewFromFloat(1e33)
+	shift    = decimal.NewFromFloat(1e33)
 )
 
 // PriceToKey128 将 priceStr 转换为长度 67 的十进制字符串，用于有序比较
@@ -22,7 +23,6 @@ func PriceToKey128(priceStr string) (string, error) {
 	if price.Cmp(minPrice) < 0 || price.Cmp(maxPrice) > 0 {
 		return "", fmt.Errorf("price out of range [1e-33, 1e33], got=%s", priceStr)
 	}
-	shift := decimal.NewFromFloat(1e33)
 	shifted := price.Mul(shift)
 	shiftedInt := shifted.BigInt()
 	decStr := shiftedInt.String()
@@ -32,8 +32,10 @@ func PriceToKey128(priceStr string) (string, error) {
 	if padNeeded < 0 {
 		return "", fmt.Errorf("price exponent overflow > 1e66, got=%s", priceStr)
 	}
-	zeroPad := strings.Repeat("0", padNeeded)
-	return zeroPad + decStr, nil
+	if padNeeded == 0 {
+		return decStr, nil
+	}
+	return strings.Repeat("0", padNeeded) + decStr, nil
 }
 
 // KeyToPriceDecimal 解析 67 位字符串，再 /1e33

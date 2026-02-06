@@ -3,6 +3,7 @@ package consensus
 import (
 	"dex/interfaces"
 	"dex/types"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,63 +50,43 @@ func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]
 
 	sb.lastVotes = votes
 
-	// 确定性增强：如果当前偏好存在，但它不是所有候选集中 hash 最小的那个，
-	// 我们必须强制切换到最小的，否则节点会因为"赢家（最小Hash）"票数不足 Alpha 而卡在旧偏好上。
-	if sb.preference != "" && len(candidates) > 0 {
-		minBlock := selectByMinHash(candidates)
-		if sb.preference != minBlock {
-			sb.events.PublishAsync(types.BaseEvent{
-				EventType: types.EventPreferenceChanged,
-				EventData: PreferenceSwitch{BlockID: sb.preference, Confidence: sb.confidence, Winner: minBlock, Alpha: alpha},
-			})
-			sb.preference = minBlock
-			sb.confidence = 0
-			sb.successHistory = nil // 偏好切换，清空历史
-		}
-	}
-
-	if sb.preference != "" {
-		inCandidates := false
-		for _, c := range candidates {
-			if c == sb.preference {
-				inCandidates = true
-				break
-			}
-		}
-		if !inCandidates && len(candidates) > 0 {
-			sb.preference = selectByMinHash(candidates)
-			sb.confidence = 0
-			sb.successHistory = nil // 偏好切换，清空历史
-		}
-	}
-
-	// 确定性选择：直接选择所有候选区块中 hash 最小的作为本轮"赢家"
+	// 1. 找到这一轮谁真实拿到了最多票 (采样集中的多数派)
 	var winner string
 	winnerVotes := 0
-	if len(candidates) > 0 {
-		winner = selectByMinHash(candidates)
-		winnerVotes = votes[winner]
+	for id, count := range votes {
+		if count > winnerVotes {
+			winner = id
+			winnerVotes = count
+		} else if count == winnerVotes && count > 0 {
+			// 如果票数相等，通过规则打破平局，让各节点采样对齐
+			winner = selectBestCandidate([]string{winner, id})
+		}
 	}
 
 	if winnerVotes >= alpha {
-		// 关键：只有当这个最小 hash 的区块获得足够票数时才考虑切换或增加置信度
+		// --- 情况 A：采样成功，产生多数派赢家 ---
 		if winner != sb.preference {
+			// 监测到全网更强的偏好，或者从过时的低 Window 切换到高 Window
 			sb.events.PublishAsync(types.BaseEvent{
 				EventType: types.EventPreferenceChanged,
-				EventData: PreferenceSwitch{BlockID: sb.preference, Confidence: sb.confidence, Winner: winner, Alpha: alpha},
+				EventData: PreferenceSwitch{
+					BlockID:    sb.preference,
+					Confidence: sb.confidence,
+					Winner:     winner,
+					Alpha:      alpha,
+				},
 			})
 			sb.preference = winner
 			sb.confidence = 1
-			sb.successHistory = nil // 偏好切换，清空历史
-			// 记录第一轮有效投票
+			sb.successHistory = nil // 偏好切换，重置历史
 			sb.successHistory = append(sb.successHistory, SuccessRound{
 				Round:     1,
 				Timestamp: time.Now().UnixMilli(),
 				Votes:     voteDetails,
 			})
 		} else {
+			// 维持偏好，增加置信度
 			sb.confidence++
-			// 记录有效投票轮次
 			sb.successHistory = append(sb.successHistory, SuccessRound{
 				Round:     sb.confidence,
 				Timestamp: time.Now().UnixMilli(),
@@ -113,10 +94,29 @@ func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]
 			})
 		}
 	} else {
-		// 票数不足 alpha，置信度重置
+		// --- 情况 B：采样失败，全网票数分散 (如 33/33/33 或旧 Window 抢占失败) ---
+		// 此时重置信心，避免旧偏好由于“僵尸置信度”卡住共识
 		if sb.confidence > 0 {
 			sb.confidence = 0
-			sb.successHistory = nil // 失败，清空历史
+			sb.successHistory = nil
+		}
+
+		// 关键破局逻辑：当没有产生明确赢家时，节点应撤离过时的窗口，
+		// 向逻辑上最优的块 (Window 优先) 下齐，从而在下一轮瞬间形成多数派。
+		if len(candidates) > 0 {
+			best := selectBestCandidate(candidates)
+			if sb.preference != best {
+				sb.events.PublishAsync(types.BaseEvent{
+					EventType: types.EventPreferenceChanged,
+					EventData: PreferenceSwitch{
+						BlockID:    sb.preference,
+						Confidence: 0,
+						Winner:     best,
+						Alpha:      alpha,
+					},
+				})
+				sb.preference = best
+			}
 		}
 	}
 }
@@ -137,9 +137,29 @@ func extractBlockHash(blockID string) string {
 	return blockID[lastDash+1:]
 }
 
-// selectByMinHash 从候选列表中选择 hash 最小的区块
-// 使用字符串比较（hex 编码的 hash 字符串比较等价于数值比较）
-func selectByMinHash(candidates []string) string {
+// extractWindow 从 blockID 中提取 window 部分
+// blockID 格式: block-<height>-<proposer>-w<window>-<hash>
+func extractWindow(blockID string) int {
+	idx := strings.LastIndex(blockID, "-w")
+	if idx == -1 {
+		return 999 // 无法解析
+	}
+	windowPart := blockID[idx+2:]
+	nextDash := strings.Index(windowPart, "-")
+	if nextDash != -1 {
+		windowPart = windowPart[:nextDash]
+	}
+	w, err := strconv.Atoi(windowPart)
+	if err != nil {
+		return 999
+	}
+	return w
+}
+
+// selectBestCandidate 从候选列表中选择最优区块
+// 优先级规则：Window 越大优先级越高（代表更近、更有机会成功的轮次）；
+// Window 相同时，Hash 越小优先级越高（用于打破平局）。
+func selectBestCandidate(candidates []string) string {
 	if len(candidates) == 0 {
 		return ""
 	}
@@ -147,16 +167,27 @@ func selectByMinHash(candidates []string) string {
 		return candidates[0]
 	}
 
-	minBlock := candidates[0]
-	minHash := extractBlockHash(candidates[0])
+	bestBlock := candidates[0]
+	maxWindow := extractWindow(bestBlock)
+	minHash := extractBlockHash(bestBlock)
+
 	for _, cid := range candidates[1:] {
+		w := extractWindow(cid)
 		h := extractBlockHash(cid)
-		if h < minHash {
+
+		// 关键修正：Window 越大，优先级越高
+		if w > maxWindow {
+			maxWindow = w
 			minHash = h
-			minBlock = cid
+			bestBlock = cid
+		} else if w == maxWindow {
+			if h < minHash {
+				minHash = h
+				bestBlock = cid
+			}
 		}
 	}
-	return minBlock
+	return bestBlock
 }
 
 func (sb *Snowball) GetPreference() string {

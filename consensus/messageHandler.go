@@ -297,8 +297,8 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 					}
 				}
 				if len(cand) > 0 {
-					// 使用 selectByMinHash 与 Snowball 保持一致的确定性选择规则
-					preferred = selectByMinHash(cand)
+					// 使用 selectBestCandidate 与 Snowball 保持一致的确定性选择规则
+					preferred = selectBestCandidate(cand)
 				}
 			}
 		}

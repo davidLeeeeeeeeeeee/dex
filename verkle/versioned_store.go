@@ -41,6 +41,16 @@ type VersionedStore interface {
 
 	// NewSession 创建一个新的存储会话
 	NewSession() (VersionedStoreSession, error)
+
+	// WriteBatch 批量原子写入条目 (针对 BadgerDB 优化，绕过事务大小限制)
+	WriteBatch(entries []BatchEntry) error
+}
+
+// BatchEntry 表示一个批量写入条目
+type BatchEntry struct {
+	Key     []byte
+	Value   []byte
+	Version Version
 }
 
 // VersionedStoreSession 是支持会话的存储接口
@@ -149,6 +159,16 @@ func (m *SimpleVersionedMap) Set(key []byte, value []byte, version Version) erro
 		}
 	}
 	m.data[keyStr] = entries
+	return nil
+}
+
+// WriteBatch 为 SimpleVersionedMap 实现批量写入性能接口
+func (m *SimpleVersionedMap) WriteBatch(entries []BatchEntry) error {
+	for _, e := range entries {
+		if err := m.Set(e.Key, e.Value, e.Version); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
