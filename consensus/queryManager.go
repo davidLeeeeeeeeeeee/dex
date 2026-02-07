@@ -281,14 +281,11 @@ func (qm *QueryManager) HandleChit(msg types.Message) {
 		qm.engine.SubmitChit(types.NodeID(msg.From), p.queryKey, msg.PreferredID)
 	}
 
-	// 事件驱动同步：探测到任何领先高度都尝试立即触发（打破 BehindThreshold 阈值限制）
+	// 事件驱动同步：探测到任何领先高度都尝试触发（不再等待 BehindThreshold 阈值）
 	if qm.syncManager != nil && msg.AcceptedHeight > 0 {
 		_, localAccepted := qm.store.GetLastAccepted()
 		if msg.AcceptedHeight > localAccepted {
-			logs.Info("[QueryManager] Detected peer %s at height %d (local: %d), forcing aggressive sync",
-				msg.From, msg.AcceptedHeight, localAccepted)
-			// 直接调用同步，不等待定时器
-			go qm.syncManager.TriggerSyncFromChit(msg.AcceptedHeight, types.NodeID(msg.From))
+			qm.syncManager.TriggerSyncFromChit(msg.AcceptedHeight, types.NodeID(msg.From))
 		}
 	}
 }
