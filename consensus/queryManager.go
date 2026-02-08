@@ -1,8 +1,10 @@
 package consensus
 
 import (
+	"bytes"
 	"context"
 	cryptorand "crypto/rand"
+	"crypto/sha256"
 	"dex/interfaces"
 	"dex/logs"
 	"dex/types"
@@ -32,6 +34,9 @@ type QueryManager struct {
 	lastIssueTime        time.Time     // 上次发起查询的时间
 	queryCooldown        time.Duration // 发起查询的最小冷却时间
 	syncManager          *SyncManager  // 同步管理器引用，用于检查同步状态
+	// VRF 确定性采样
+	seqID    uint32 // 当前采样批次号，alpha 失败时递增，seed 变化时归零
+	lastSeed []byte // 上次使用的 VRF 种子，用于检测 seed 变化
 }
 
 type Poll struct {
@@ -40,6 +45,158 @@ type Poll struct {
 	queryKey  string
 	startTime time.Time
 	height    uint64
+}
+
+// computeVRFSeed 计算 VRF 种子: SHA256(ParentBlockHash || Height || Window || NodeID)
+func computeVRFSeed(parentID string, height uint64, window int, nodeID types.NodeID) []byte {
+	h := sha256.New()
+	h.Write([]byte(parentID))
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, height)
+	h.Write(buf)
+	binary.BigEndian.PutUint32(buf[:4], uint32(window))
+	h.Write(buf[:4])
+	h.Write([]byte(nodeID))
+	return h.Sum(nil)
+}
+
+// samplePeersDeterministic 基于 VRF 种子和批次号确定性地选取 k 个节点
+// 使用 SHA256(seed || seqID) 作为伪随机源驱动 Fisher-Yates 洗牌
+func samplePeersDeterministic(seed []byte, seqID uint32, k int, allPeers []types.NodeID) []types.NodeID {
+	if len(allPeers) == 0 {
+		return nil
+	}
+	if k > len(allPeers) {
+		k = len(allPeers)
+	}
+
+	// 构造本轮的确定性随机源
+	h := sha256.New()
+	h.Write(seed)
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, seqID)
+	h.Write(buf)
+	randSeed := h.Sum(nil)
+
+	// 用前 8 字节作为 math/rand 种子
+	rngSeed := int64(binary.BigEndian.Uint64(randSeed[:8]))
+	rng := rand.New(rand.NewSource(rngSeed))
+
+	// 复制一份避免修改原切片
+	peers := make([]types.NodeID, len(allPeers))
+	copy(peers, allPeers)
+
+	// Fisher-Yates 洗牌（只需洗前 k 个位置）
+	for i := 0; i < k; i++ {
+		j := i + rng.Intn(len(peers)-i)
+		peers[i], peers[j] = peers[j], peers[i]
+	}
+	return peers[:k]
+}
+
+func (qm *QueryManager) issueQuery() {
+	_, currentHeight := qm.store.GetLastAccepted()
+	nextHeight := currentHeight + 1
+
+	blocks := qm.store.GetByHeight(nextHeight)
+	if len(blocks) == 0 {
+		return
+	}
+
+	// 获取偏好区块ID
+	blockID := qm.engine.GetPreference(nextHeight)
+	if blockID != "" {
+		if _, exists := qm.store.Get(blockID); !exists {
+			logs.Warn("[QueryManager] Preferred block %s missing at height %d, fallback to candidates",
+				blockID, nextHeight)
+			blockID = ""
+		}
+	}
+	if blockID == "" {
+		candidates := make([]string, 0, len(blocks))
+		for _, b := range blocks {
+			candidates = append(candidates, b.ID)
+		}
+		// 使用 selectBestCandidate 与 Snowball 保持一致的确定性选择规则
+		blockID = selectBestCandidate(candidates)
+	}
+
+	block, exists := qm.store.Get(blockID)
+	if !exists {
+		logs.Warn("[QueryManager] Block %s not found for query at height %d (pending?), retrying after backoff", blockID, nextHeight)
+		// 数据还没补齐，延迟 500ms 后再试，避免形成高频查询风暴
+		time.AfterFunc(500*time.Millisecond, func() {
+			qm.tryIssueQuery()
+		})
+		return
+	}
+	requestID, _ := secureRandUint32()
+	queryKey := qm.engine.RegisterQuery(qm.nodeID, requestID, blockID, block.Header.Height)
+
+	poll := &Poll{
+		requestID: requestID,
+		blockID:   blockID,
+		queryKey:  queryKey,
+		startTime: time.Now(),
+		height:    block.Header.Height,
+	}
+	qm.activePolls.Store(requestID, poll)
+
+	// === VRF 确定性采样 ===
+	parentID := block.Header.ParentID
+	window := block.Header.Window
+	vrfSeed := computeVRFSeed(parentID, nextHeight, window, qm.nodeID)
+
+	// seed 变化时重置 seqID
+	if !bytes.Equal(vrfSeed, qm.lastSeed) {
+		qm.seqID = 0
+		qm.lastSeed = vrfSeed
+	}
+
+	allPeers := qm.transport.GetAllPeers(qm.nodeID)
+	peers := samplePeersDeterministic(vrfSeed, qm.seqID, qm.config.K, allPeers)
+
+	// 判断自己是否是该区块的提议者
+	isProposer := (block.Header.Proposer == string(qm.nodeID))
+
+	var msg types.Message
+	if isProposer {
+		// 只有提议者发送PushQuery（携带完整区块）
+		msg = types.Message{
+			Type:      types.MsgPushQuery,
+			From:      qm.nodeID,
+			RequestID: requestID,
+			BlockID:   blockID,
+			Block:     block, // 携带完整区块数据
+			Height:    block.Header.Height,
+			VRFSeed:   vrfSeed,
+			SeqID:     qm.seqID,
+		}
+		logs.Debug("[Node %s] Sending PushQuery for block %s (I'm the proposer, seqID=%d)",
+			qm.nodeID, blockID, qm.seqID)
+	} else {
+		// 非提议者发送PullQuery（只携带区块ID）
+		msg = types.Message{
+			Type:      types.MsgPullQuery,
+			From:      qm.nodeID,
+			RequestID: requestID,
+			BlockID:   blockID,
+			Height:    block.Header.Height,
+			VRFSeed:   vrfSeed,
+			SeqID:     qm.seqID,
+		}
+		logs.Debug("[Node %s] Sending PullQuery for block %s (seqID=%d)",
+			qm.nodeID, blockID, qm.seqID)
+	}
+
+	qm.transport.Broadcast(msg, peers)
+
+	if qm.node != nil {
+		qm.node.Stats.Mu.Lock()
+		qm.node.Stats.QueriesSent++
+		qm.node.Stats.QueriesPerHeight[block.Header.Height]++
+		qm.node.Stats.Mu.Unlock()
+	}
 }
 
 func NewQueryManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, config *ConsensusConfig, events interfaces.EventBus, logger logs.Logger) *QueryManager {
@@ -68,6 +225,12 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 		}
 
 		qm.cleanupPollsByQueryKeys(data.QueryKeys, data.Reason)
+
+		// VRF: 每次查询完成后递增 seqID，确保下轮采样使用不同批次
+		qm.mu.Lock()
+		qm.seqID++
+		qm.mu.Unlock()
+
 		if (data.Reason == "timeout" || data.Reason == "parent_missing") && len(data.QueryKeys) > 0 {
 			// 添加退避延迟，避免超时或因缺数据失败后立即重发导致自激荡
 			// 使用 200-500ms 随机退避 + jitter
@@ -143,95 +306,6 @@ func (qm *QueryManager) tryIssueQuery() {
 	qm.issueQuery()
 }
 
-func (qm *QueryManager) issueQuery() {
-	_, currentHeight := qm.store.GetLastAccepted()
-	nextHeight := currentHeight + 1
-
-	blocks := qm.store.GetByHeight(nextHeight)
-	if len(blocks) == 0 {
-		return
-	}
-
-	// 获取偏好区块ID
-	blockID := qm.engine.GetPreference(nextHeight)
-	if blockID != "" {
-		if _, exists := qm.store.Get(blockID); !exists {
-			logs.Warn("[QueryManager] Preferred block %s missing at height %d, fallback to candidates",
-				blockID, nextHeight)
-			blockID = ""
-		}
-	}
-	if blockID == "" {
-		candidates := make([]string, 0, len(blocks))
-		for _, b := range blocks {
-			candidates = append(candidates, b.ID)
-		}
-		// 使用 selectBestCandidate 与 Snowball 保持一致的确定性选择规则
-		blockID = selectBestCandidate(candidates)
-	}
-
-	block, exists := qm.store.Get(blockID)
-	if !exists {
-		logs.Warn("[QueryManager] Block %s not found for query at height %d (pending?), retrying after backoff", blockID, nextHeight)
-		// 数据还没补齐，延迟 500ms 后再试，避免形成高频查询风暴
-		time.AfterFunc(500*time.Millisecond, func() {
-			qm.tryIssueQuery()
-		})
-		return
-	}
-	requestID, _ := secureRandUint32()
-	queryKey := qm.engine.RegisterQuery(qm.nodeID, requestID, blockID, block.Header.Height)
-
-	poll := &Poll{
-		requestID: requestID,
-		blockID:   blockID,
-		queryKey:  queryKey,
-		startTime: time.Now(),
-		height:    block.Header.Height,
-	}
-	qm.activePolls.Store(requestID, poll)
-
-	peers := qm.transport.SamplePeers(qm.nodeID, qm.config.K)
-
-	// 判断自己是否是该区块的提议者
-	isProposer := (block.Header.Proposer == string(qm.nodeID))
-
-	var msg types.Message
-	if isProposer {
-		// 只有提议者发送PushQuery（携带完整区块）
-		msg = types.Message{
-			Type:      types.MsgPushQuery,
-			From:      qm.nodeID,
-			RequestID: requestID,
-			BlockID:   blockID,
-			Block:     block, // 携带完整区块数据
-			Height:    block.Header.Height,
-		}
-		logs.Debug("[Node %s] Sending PushQuery for block %s (I'm the proposer)",
-			qm.nodeID, blockID)
-	} else {
-		// 非提议者发送PullQuery（只携带区块ID）
-		msg = types.Message{
-			Type:      types.MsgPullQuery,
-			From:      qm.nodeID,
-			RequestID: requestID,
-			BlockID:   blockID,
-			Height:    block.Header.Height,
-		}
-		logs.Debug("[Node %s] Sending PullQuery for block %s",
-			qm.nodeID, blockID)
-	}
-
-	qm.transport.Broadcast(msg, peers)
-
-	if qm.node != nil {
-		qm.node.Stats.Mu.Lock()
-		qm.node.Stats.QueriesSent++
-		qm.node.Stats.QueriesPerHeight[block.Header.Height]++
-		qm.node.Stats.Mu.Unlock()
-	}
-}
-
 // 返回 [0, 2^32-1] 范围内的安全随机 uint32
 func secureRandUint32() (uint32, error) {
 	var b [4]byte
@@ -278,7 +352,7 @@ func (qm *QueryManager) HandleChit(msg types.Message) {
 				qm.RequestBlock(msg.PreferredID, types.NodeID(msg.From))
 			}
 		}
-		qm.engine.SubmitChit(types.NodeID(msg.From), p.queryKey, msg.PreferredID)
+		qm.engine.SubmitChit(types.NodeID(msg.From), p.queryKey, msg.PreferredID, msg.ChitSignature)
 	}
 
 	// 事件驱动同步：探测到任何领先高度都尝试触发（不再等待 BehindThreshold 阈值）

@@ -97,6 +97,9 @@ func main() {
 	// 启动 API 统计监控
 	go monitorMetrics(network)
 
+	// 每 10 秒打印所有节点的最终化区块 hash
+	go monitorFinalizedBlocks(network)
+
 	// 监控模拟进度
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
@@ -374,6 +377,72 @@ func printAPICallStatistics() {
 	}
 
 	fmt.Println("=====================================================")
+}
+
+// monitorFinalizedBlocks 每 10 秒打印所有节点的上一个最终化区块 hash
+func monitorFinalizedBlocks(network *consensus.NetworkManager) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		nodes := network.GetNodes()
+		if len(nodes) == 0 {
+			continue
+		}
+
+		// 按 NodeID 排序，方便对比
+		type nodeInfo struct {
+			id     types.NodeID
+			height uint64
+			hash   string
+		}
+		infos := make([]nodeInfo, 0, len(nodes))
+
+		for id, node := range nodes {
+			if node == nil {
+				continue
+			}
+			_, height := node.GetLastAccepted()
+			if height == 0 {
+				infos = append(infos, nodeInfo{id: id, height: 0, hash: "genesis"})
+				continue
+			}
+			store := node.GetBlockStore()
+			if b, ok := store.GetFinalizedAtHeight(height); ok {
+				infos = append(infos, nodeInfo{id: id, height: height, hash: b.ID})
+			} else {
+				infos = append(infos, nodeInfo{id: id, height: height, hash: "(not finalized)"})
+			}
+		}
+
+		sort.Slice(infos, func(i, j int) bool {
+			return string(infos[i].id) < string(infos[j].id)
+		})
+
+		fmt.Println("\n========== Finalized Block Status (per node) ==========")
+		fmt.Printf("Time: %s\n", time.Now().Format("15:04:05"))
+
+		// 按高度分组检查一致性
+		heightBlocks := make(map[uint64]map[string]int) // height -> blockHash -> count
+		for _, info := range infos {
+			fmt.Printf("  %-12s  height=%-5d  block=%s\n", info.id, info.height, info.hash)
+			if _, ok := heightBlocks[info.height]; !ok {
+				heightBlocks[info.height] = make(map[string]int)
+			}
+			heightBlocks[info.height][info.hash]++
+		}
+
+		// 一致性检查
+		for h, blocks := range heightBlocks {
+			if len(blocks) > 1 {
+				fmt.Printf("  ⚠️  INCONSISTENCY at height %d: %d different blocks!\n", h, len(blocks))
+				for hash, count := range blocks {
+					fmt.Printf("      %s  (%d nodes)\n", hash, count)
+				}
+			}
+		}
+		fmt.Println("=======================================================")
+	}
 }
 
 func sendProto(w http.ResponseWriter, msg proto.Message) {

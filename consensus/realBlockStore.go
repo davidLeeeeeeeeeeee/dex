@@ -42,6 +42,9 @@ type RealBlockStore struct {
 
 	// 最终化投票记录（用于调试）
 	finalizationChits map[uint64]*types.FinalizationChits
+
+	// VRF 签名集合（共识证据）
+	signatureSets map[uint64]*pb.ConsensusSignatureSet
 }
 
 // 创建真实的区块存储
@@ -98,6 +101,7 @@ func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots 
 		adapter:           NewConsensusAdapter(dbManager),
 		nodeID:            nodeID, // 记录节点ID
 		finalizationChits: make(map[uint64]*types.FinalizationChits),
+		signatureSets:     make(map[uint64]*pb.ConsensusSignatureSet),
 	}
 
 	// 初始化创世区块
@@ -862,6 +866,13 @@ func (s *RealBlockStore) cleanupOldData(belowHeight uint64) {
 		}
 	}
 
+	// 清理 signatureSets 中的旧高度
+	for height := range s.signatureSets {
+		if height < belowHeight {
+			delete(s.signatureSets, height)
+		}
+	}
+
 	if cleanedBlocks > 0 || cleanedHeights > 0 || cleanedFinalized > 0 {
 		logs.Debug("[RealBlockStore] Cleaned old data below height %d: blocks=%d, heights=%d, finalized=%d",
 			belowHeight, cleanedBlocks, cleanedHeights, cleanedFinalized)
@@ -957,4 +968,52 @@ func (s *RealBlockStore) GetFinalizationChits(height uint64) (*types.Finalizatio
 	s.mu.Unlock()
 
 	return &chits, true
+}
+
+// SetSignatureSet 存储指定高度的 VRF 签名集合
+func (s *RealBlockStore) SetSignatureSet(height uint64, sigSet *pb.ConsensusSignatureSet) {
+	s.mu.Lock()
+	s.signatureSets[height] = sigSet
+	s.mu.Unlock()
+
+	// 异步持久化（protobuf 序列化）
+	go func() {
+		key := fmt.Sprintf("consensus_sig_set_%d", height)
+		data, err := json.Marshal(sigSet)
+		if err != nil {
+			logs.Warn("[RealBlockStore] Failed to marshal signature set for height %d: %v", height, err)
+			return
+		}
+		s.dbManager.EnqueueSet(key, string(data))
+	}()
+}
+
+// GetSignatureSet 获取指定高度的 VRF 签名集合
+func (s *RealBlockStore) GetSignatureSet(height uint64) (*pb.ConsensusSignatureSet, bool) {
+	s.mu.RLock()
+	if sigSet, exists := s.signatureSets[height]; exists {
+		s.mu.RUnlock()
+		return sigSet, true
+	}
+	s.mu.RUnlock()
+
+	// 尝试从数据库加载
+	key := fmt.Sprintf("consensus_sig_set_%d", height)
+	data, err := s.dbManager.Read(key)
+	if err != nil || data == "" {
+		return nil, false
+	}
+
+	var sigSet pb.ConsensusSignatureSet
+	if err := json.Unmarshal([]byte(data), &sigSet); err != nil {
+		logs.Warn("[RealBlockStore] Failed to unmarshal signature set for height %d: %v", height, err)
+		return nil, false
+	}
+
+	// 缓存到内存
+	s.mu.Lock()
+	s.signatureSets[height] = &sigSet
+	s.mu.Unlock()
+
+	return &sigSet, true
 }

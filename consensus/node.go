@@ -33,6 +33,10 @@ type Node struct {
 }
 
 func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, byzantine bool, config *Config, logger logs.Logger) *Node {
+	return NewNodeWithSigner(id, transport, store, byzantine, config, logger, nil)
+}
+
+func NewNodeWithSigner(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, byzantine bool, config *Config, logger logs.Logger, signer interfaces.NodeSigner) *Node {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	events := NewEventBus()
@@ -42,7 +46,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 		ID:          id,
 		IsByzantine: byzantine,
 		transport:   transport,
-		store:       store, // 使用传入的 store
+		store:       store,
 		engine:      engine,
 		events:      events,
 		ctx:         ctx,
@@ -54,6 +58,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 
 	messageHandler := NewMessageHandler(id, byzantine, transport, store, engine, events, &config.Consensus, logger)
 	messageHandler.node = node
+	messageHandler.signer = signer
 
 	queryManager := NewQueryManager(id, transport, store, engine, &config.Consensus, events, logger)
 	queryManager.node = node
@@ -68,7 +73,7 @@ func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.B
 	// 注入 SyncManager 到 QueryManager，用于同步期间暂停共识
 	queryManager.SetSyncManager(syncManager)
 
-	snapshotManager := NewSnapshotManager(id, store, &config.Snapshot, events, logger) // 新增
+	snapshotManager := NewSnapshotManager(id, store, &config.Snapshot, events, logger)
 
 	proposalManager := NewProposalManager(id, transport, store, &config.Node, events, logger)
 	proposalManager.node = node

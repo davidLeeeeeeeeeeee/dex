@@ -34,23 +34,21 @@ func SignMessage(priv *ecdsa.PrivateKey, message string) (string, error) {
 		return "", err
 	}
 
-	// 将 r 和 s 补足至 32 字节
 	rBytes := r.Bytes()
 	sBytes := s.Bytes()
+	sig := make([]byte, 64)
+	copy(sig[32-len(rBytes):32], rBytes)
+	copy(sig[64-len(sBytes):64], sBytes)
 
-	rBytesPadded := make([]byte, 32)
-	sBytesPadded := make([]byte, 32)
-	copy(rBytesPadded[32-len(rBytes):], rBytes)
-	copy(sBytesPadded[32-len(sBytes):], sBytes)
-
-	return hex.EncodeToString(rBytesPadded) + hex.EncodeToString(sBytesPadded), nil
+	return hex.EncodeToString(sig), nil
 }
+
 func SignBlsMessage(message string) ([]byte, error) {
-	priv := utils.GetKeyManager().PrivateKeyECDSA
-	if priv == nil {
-		return nil, errors.New("miner private key not initialized")
+	keyMgr := utils.GetKeyManager()
+	if keyMgr.PrivateKeyECDSA == nil {
+		return nil, errors.New("miner private key not initialized in KeyManager")
 	}
-	return utils.BLSSignWithCache(priv, message)
+	return utils.BLSSignWithCache(keyMgr.PrivateKeyECDSA, message)
 }
 func PublicKeyToPEM(pub *ecdsa.PublicKey) string {
 	derBytes, err := x509.MarshalPKIXPublicKey(pub)

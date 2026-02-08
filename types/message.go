@@ -49,11 +49,15 @@ type Message struct {
 	Block     *Block
 	Height    uint64
 	ShortTxs  []byte // 短交易哈希列表（用于 ShortTxs 模式的区块传输）
+	// VRF 确定性采样上下文
+	VRFSeed []byte // VRF 种子 SHA256(ParentBlockHash, Height, Window, NodeID)
+	SeqID   uint32 // 采样批次号
 	// For Chits
 	PreferredID       string
 	PreferredIDHeight uint64
 	AcceptedID        string
 	AcceptedHeight    uint64
+	ChitSignature     []byte // VRF 投票签名: Sign(key, SHA256(preferred_block || height || vrf_seed || seq_id))
 	// For Sync
 	FromHeight     uint64
 	ToHeight       uint64
@@ -69,4 +73,7 @@ type Message struct {
 	RequestSnapshot bool
 	// For Frost
 	FrostPayload []byte // FrostEnvelope 序列化数据
+	// VRF 签名集合（同步时附带共识证据）
+	// VRF 签名集合（同步时附带共识证据，值为 proto.Marshal(ConsensusSignatureSet) 的原始字节）
+	SignatureSets map[uint64][]byte // height -> serialized pb.ConsensusSignatureSet
 }

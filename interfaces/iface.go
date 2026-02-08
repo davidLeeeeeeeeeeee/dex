@@ -33,7 +33,7 @@ type BlockStore interface {
 type ConsensusEngine interface {
 	Start(ctx context.Context) error
 	RegisterQuery(nodeID types.NodeID, requestID uint32, blockID string, height uint64) string
-	SubmitChit(nodeID types.NodeID, queryKey string, preferredID string)
+	SubmitChit(nodeID types.NodeID, queryKey string, preferredID string, chitSignature []byte)
 	GetActiveQueryCount() int
 	GetPreference(height uint64) string
 }
@@ -106,6 +106,15 @@ type Transport interface {
 	Receive() <-chan types.Message
 	Broadcast(msg types.Message, peers []types.NodeID)
 	SamplePeers(exclude types.NodeID, count int) []types.NodeID
+	GetAllPeers(exclude types.NodeID) []types.NodeID // VRF 确定性采样：获取所有已知节点
+}
+
+// NodeSigner 节点签名器接口（每个节点持有一个 KeyManager 实例）
+type NodeSigner interface {
+	// Sign 对 digest 进行 ECDSA 签名，返回 r||s（各 32 字节，共 64 字节）
+	Sign(digest []byte) ([]byte, error)
+	// PublicKeyBytes 返回压缩公钥字节（33 字节）
+	PublicKeyBytes() []byte
 }
 
 type EventBus interface {

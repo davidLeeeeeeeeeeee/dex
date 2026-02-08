@@ -21,14 +21,21 @@ type SuccessRound struct {
 }
 
 type Snowball struct {
-	mu             sync.RWMutex
-	preference     string
-	confidence     int
-	finalized      bool
-	events         interfaces.EventBus
-	lastVotes      map[string]int // 对应区块这一轮有多少赞成
-	successHistory []SuccessRound // 对当前偏好的有效投票历史（偏好切换时清空）
+	mu                  sync.RWMutex
+	preference          string
+	confidence          int
+	finalized           bool
+	events              interfaces.EventBus
+	lastVotes           map[string]int // 对应区块这一轮有多少赞成
+	successHistory      []SuccessRound // 对当前偏好的有效投票历史（偏好切换时清空）
+	consecutiveFailures int            // 连续失败次数（用于活性逃生阀）
 }
+
+// WindowEscalationThreshold 连续失败多少轮后，才允许在失败路径中跨 Window 切换偏好。
+// 必须远大于 Beta（最终化阈值），确保在任何分区中，另一个分区不可能已经最终化。
+// 设置为 Beta*3 = 45：即使最快的分区在 15 轮内最终化，
+// 慢分区至少需要 45 轮失败才会切换，此时快分区的最终化结果已传播到全网。
+const WindowEscalationThreshold = 45
 
 func NewSnowball(events interfaces.EventBus) *Snowball {
 	return &Snowball{
@@ -44,6 +51,15 @@ type PreferenceChangedData struct {
 }
 
 // RecordVoteWithDetails 记录投票并保存投票详情（用于最终化证据）
+//
+// 安全性关键设计：偏好切换只在两种情况下发生：
+//   - Case A（成功路径）：某个候选获得了 >= Alpha 的多数票 → 切换到该赢家
+//   - Case B（失败路径）：仅在 preference 为空时设置初始偏好；
+//     已有偏好时，只在连续失败超过 WindowEscalationThreshold 后才允许跨 Window 切换
+//
+// 这确保了 Snowball 的核心安全性不变量：一旦足够多的节点偏好区块 X 并开始
+// 积累 confidence，其他节点不会仅因 Window 号更大就"免费"切换到区块 Y，
+// 从而防止双重最终化（split-brain）。
 func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]int, alpha int, voteDetails []types.FinalizationChit) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -65,8 +81,11 @@ func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]
 
 	if winnerVotes >= alpha {
 		// --- 情况 A：采样成功，产生多数派赢家 ---
+		// 这是唯一合法的偏好切换路径：看到了 Alpha 多数票证据
+		sb.consecutiveFailures = 0 // 成功则重置失败计数
+
 		if winner != sb.preference {
-			// 监测到全网更强的偏好，或者从过时的低 Window 切换到高 Window
+			// 监测到全网更强的偏好 → 根据真实投票证据切换
 			sb.events.PublishAsync(types.BaseEvent{
 				EventType: types.EventPreferenceChanged,
 				EventData: PreferenceSwitch{
@@ -94,16 +113,22 @@ func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]
 			})
 		}
 	} else {
-		// --- 情况 B：采样失败，全网票数分散 (如 33/33/33 或旧 Window 抢占失败) ---
-		// 此时重置信心，避免旧偏好由于“僵尸置信度”卡住共识
+		// --- 情况 B：采样失败，全网票数分散 ---
+		// 重置置信度（防止僵尸置信度卡住共识）
 		if sb.confidence > 0 {
 			sb.confidence = 0
 			sb.successHistory = nil
 		}
+		sb.consecutiveFailures++
 
-		// 关键破局逻辑：当没有产生明确赢家时，节点应撤离过时的窗口，
-		// 向逻辑上最优的块 (Window 优先) 下齐，从而在下一轮瞬间形成多数派。
-		if len(candidates) > 0 {
+		// 安全性关键：失败路径中的偏好处理
+		if sb.preference == "" && len(candidates) > 0 {
+			// 尚无偏好 → 设置初始偏好（使用 selectBestCandidate 包含 Window 优先级）
+			best := selectBestCandidate(candidates)
+			sb.preference = best
+		} else if sb.preference != "" && len(candidates) > 0 && sb.consecutiveFailures >= WindowEscalationThreshold {
+			// 活性逃生阀：连续失败超过阈值 → 允许跨 Window 切换
+			// 此时可以安全地认为旧偏好无法收敛，需要切换到新候选
 			best := selectBestCandidate(candidates)
 			if sb.preference != best {
 				sb.events.PublishAsync(types.BaseEvent{
@@ -116,8 +141,11 @@ func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]
 					},
 				})
 				sb.preference = best
+				sb.consecutiveFailures = 0 // 切换后重置
 			}
 		}
+		// 如果已有偏好且未达到逃生阈值 → 保持当前偏好不变！
+		// 这是安全性的核心：不根据 Window 号"免费"切换偏好
 	}
 }
 

@@ -434,6 +434,24 @@ func (t *RealTransport) SamplePeers(exclude types.NodeID, count int) []types.Nod
 	return peers
 }
 
+// GetAllPeers 返回所有已知矿工节点（不含 exclude），用于 VRF 确定性采样
+func (t *RealTransport) GetAllPeers(exclude types.NodeID) []types.NodeID {
+	allMiners, err := t.dbManager.GetRandomMinersFast(1000) // 取足够多的矿工
+	if err != nil {
+		logs.Error("[RealTransport] GetAllPeers failed: %v", err)
+		return nil
+	}
+
+	peers := make([]types.NodeID, 0, len(allMiners))
+	for _, m := range allMiners {
+		id := types.NodeID(m.Address)
+		if id != exclude {
+			peers = append(peers, id)
+		}
+	}
+	return peers
+}
+
 func (t *RealTransport) startReceiveWorkers() {
 	for i := 0; i < t.receiveWorkers; i++ {
 		t.wg.Add(1)

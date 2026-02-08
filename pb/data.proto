@@ -384,6 +384,9 @@ message PushQuery {
   // 防重放 nonce：单调递增序列号，接收方维护每个发送方的最大已见 nonce
   // 拒绝 nonce <= max_seen_nonce 的消息
   uint64 nonce = 9;
+  // VRF 确定性采样字段
+  bytes vrf_seed = 10;   // 发起方的 VRF 种子 SHA256(ParentBlockHash, Height, Window, NodeID)
+  uint32 seq_id = 11;    // 本轮采样批次号（alpha 失败时递增）
 }
 
 // PullQuery requests the preferences of a remote peer given a container id.
@@ -398,6 +401,9 @@ message PullQuery {
   string block_id = 4;
   // Requesting peer's last accepted height
   uint64 requested_height = 5;
+  // VRF 确定性采样字段
+  bytes vrf_seed = 6;    // 发起方的 VRF 种子
+  uint32 seq_id = 7;     // 本轮采样批次号
 }
 
 // Chits contains the preferences of a peer in response to a PushQuery or
@@ -414,6 +420,36 @@ message Chits {
   // Last accepted block's height
   uint64 accepted_height = 6;
   bytes bitmap = 7; //上一个区块与自己联系过的节点
+  // VRF 投票签名: Sign(privateKey, SHA256(preferred_block || height || vrf_seed || seq_id))
+  bytes chit_signature = 8;
+}
+
+// --------------- VRF 签名集合（共识证据） ---------------
+
+// 单个 Chit 的签名记录
+// 签名内容: Sign(nodePrivateKey, SHA256(preferred_id || height || vrf_seed || seq_id))
+//   - preferred_id: 本消息的 preferred_id 字段
+//   - height, vrf_seed: 父级 ConsensusSignatureSet 的字段
+//   - seq_id: 父级 RoundSignatures 的 seq_id 字段
+message ChitSignature {
+  string node_id = 1;       // 投票节点 ID
+  string preferred_id = 2;  // 偏好的区块 ID（签名内容之一）
+  bytes signature = 3;      // 签名（验证时结合父级 height/vrf_seed/seq_id 还原签名原文）
+}
+
+// 单轮投票签名集合
+message RoundSignatures {
+  uint32 seq_id = 1;                     // 采样批次号（签名内容之一）
+  repeated ChitSignature signatures = 2; // 本轮所有签名
+}
+
+// 共识签名集合（记录达成共识的完整签名证据）
+message ConsensusSignatureSet {
+  string block_id = 1;                  // 最终化的区块 ID
+  uint64 height = 2;                    // 区块高度（签名内容之一）
+  string parent_id = 3;                 // 锚定父块 ID
+  bytes vrf_seed = 4;                   // Hash(ParentHash, Height, Window, NodeID)（签名内容之一）
+  repeated RoundSignatures rounds = 5;  // 所有有效轮次的签名（需 >= Beta 轮）
 }
 
 message HeightResponse{ // 需要在proto中定义

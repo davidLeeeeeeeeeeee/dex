@@ -91,3 +91,7 @@ func (t *SimulatedTransport) Broadcast(msg types.Message, peers []types.NodeID) 
 func (t *SimulatedTransport) SamplePeers(exclude types.NodeID, count int) []types.NodeID {
 	return t.network.SamplePeers(exclude, count)
 }
+
+func (t *SimulatedTransport) GetAllPeers(exclude types.NodeID) []types.NodeID {
+	return t.network.GetAllPeers(exclude)
+}

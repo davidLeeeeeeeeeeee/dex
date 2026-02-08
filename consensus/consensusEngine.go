@@ -4,6 +4,7 @@ import (
 	"context"
 	"dex/interfaces"
 	"dex/logs"
+	"dex/pb"
 	"dex/types"
 	"fmt"
 	"sync"
@@ -27,13 +28,14 @@ type SnowmanEngine struct {
 }
 
 type QueryContext struct {
-	queryKey  string
-	blockID   string
-	votes     map[string]int
-	voters    map[types.NodeID]string // nodeID -> preferredBlockID
-	responded int
-	startTime time.Time
-	height    uint64
+	queryKey   string
+	blockID    string
+	votes      map[string]int
+	voters     map[types.NodeID]string // nodeID -> preferredBlockID
+	signatures map[types.NodeID][]byte // VRF chit signatures: nodeID -> signature bytes
+	responded  int
+	startTime  time.Time
+	height     uint64
 }
 
 func NewSnowmanEngine(nodeID types.NodeID, store interfaces.BlockStore, config *ConsensusConfig, events interfaces.EventBus, logger logs.Logger) interfaces.ConsensusEngine {
@@ -60,7 +62,6 @@ func (e *SnowmanEngine) Start(ctx context.Context) error {
 
 	// 定期检查超时
 	go func() {
-		// DI 模式下不需要 SetThreadNodeContext，但为了兼容性仍可保留或直接用 Logger
 		logs.SetThreadLogger(e.Logger)
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
@@ -84,20 +85,20 @@ func (e *SnowmanEngine) RegisterQuery(nodeID types.NodeID, requestID uint32, blo
 
 	queryKey := fmt.Sprintf("%s-%d", nodeID, requestID)
 	e.activeQueries[queryKey] = &QueryContext{
-		queryKey:  queryKey,
-		blockID:   blockID,
-		votes:     make(map[string]int),
-		voters:    make(map[types.NodeID]string),
-		responded: 0,
-		startTime: time.Now(),
-		height:    height,
+		queryKey:   queryKey,
+		blockID:    blockID,
+		votes:      make(map[string]int),
+		voters:     make(map[types.NodeID]string),
+		signatures: make(map[types.NodeID][]byte),
+		startTime:  time.Now(),
+		height:     height,
 	}
 
 	return queryKey
 }
 
 // SubmitChit 提交来自特定节点的投票响应（Chit）
-func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferredID string) {
+func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferredID string, chitSignature []byte) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -114,6 +115,11 @@ func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferr
 	ctx.voters[nodeID] = preferredID
 	ctx.votes[preferredID]++
 	ctx.responded++ // 增加已收到的响应计数
+
+	// 存储 VRF 签名（用于签名集合证据）
+	if len(chitSignature) > 0 {
+		ctx.signatures[nodeID] = chitSignature
+	}
 
 	// --- 优化结算逻辑 ---
 	// 判定是否结算的两个维度：
@@ -198,13 +204,14 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 		logs.Debug("[Engine] Dropped %d vote(s) for non-candidate blocks at height %d (query=%s)",
 			droppedVotes, ctx.height, ctx.queryKey)
 	}
-	// 构建投票详情
+	// 构建投票详情（附带 VRF 签名）
 	voteDetails := make([]types.FinalizationChit, 0, len(ctx.voters))
 	for nodeID, preferredID := range ctx.voters {
 		voteDetails = append(voteDetails, types.FinalizationChit{
 			NodeID:      string(nodeID),
 			PreferredID: preferredID,
 			Timestamp:   ctx.startTime.UnixMilli(),
+			Signature:   ctx.signatures[nodeID], // nil if no signature
 		})
 	}
 	sb.RecordVoteWithDetails(candidates, filteredVotes, e.config.Alpha, voteDetails)
@@ -217,7 +224,9 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 	if sb.CanFinalize(e.config.Beta) && newPreference != "" {
 		// 收集最终化时的全部投票历史
 		chits := e.collectFinalizationChits(ctx.height, newPreference)
-		e.finalizeBlock(ctx.height, newPreference, chits)
+		// 组装 VRF 签名集合证据
+		sigSet := e.collectConsensusSignatureSet(ctx.height, newPreference)
+		e.finalizeBlock(ctx.height, newPreference, chits, sigSet)
 	}
 	return "success"
 }
@@ -255,16 +264,68 @@ func (e *SnowmanEngine) collectFinalizationChits(height uint64, blockID string) 
 	}
 }
 
-func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string, chits *types.FinalizationChits) {
+// collectConsensusSignatureSet 从 Snowball 有效轮次历史中提取签名集合
+func (e *SnowmanEngine) collectConsensusSignatureSet(height uint64, blockID string) *pb.ConsensusSignatureSet {
+	sb := e.snowballs[height]
+	if sb == nil {
+		return nil
+	}
+
+	// 获取父块信息作为锚点
+	var parentID string
+	if height > 0 {
+		if parent, ok := e.store.GetFinalizedAtHeight(height - 1); ok {
+			parentID = parent.ID
+		}
+	}
+
+	// 计算 VRF seed（与 queryManager 中一致）
+	var vrfSeed []byte
+	if block, ok := e.store.Get(blockID); ok {
+		vrfSeed = computeVRFSeed(parentID, height, block.Header.Window, e.nodeID)
+	}
+
+	successHistory := sb.GetSuccessHistory()
+	rounds := make([]*pb.RoundSignatures, 0, len(successHistory))
+	for _, sr := range successHistory {
+		chitSigs := make([]*pb.ChitSignature, 0, len(sr.Votes))
+		for _, v := range sr.Votes {
+			chitSigs = append(chitSigs, &pb.ChitSignature{
+				NodeId:      v.NodeID,
+				PreferredId: v.PreferredID,
+				Signature:   v.Signature,
+			})
+		}
+		rounds = append(rounds, &pb.RoundSignatures{
+			SeqId:      uint32(sr.Round),
+			Signatures: chitSigs,
+		})
+	}
+
+	return &pb.ConsensusSignatureSet{
+		BlockId:  blockID,
+		Height:   height,
+		ParentId: parentID,
+		VrfSeed:  vrfSeed,
+		Rounds:   rounds,
+	}
+}
+
+func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string, chits *types.FinalizationChits, sigSet *pb.ConsensusSignatureSet) {
 	if _, exists := e.store.Get(blockID); !exists {
 		logs.Warn("[Engine] Finalize skipped: block %s not found at height %d", blockID, height)
 		return
 	}
 	e.store.SetFinalized(height, blockID)
 
-	// 存储 chits 到 RealBlockStore（如果支持）
-	if realStore, ok := e.store.(*RealBlockStore); ok && chits != nil {
-		realStore.SetFinalizationChits(height, chits)
+	// 存储 chits 和签名集合到 RealBlockStore（如果支持）
+	if realStore, ok := e.store.(*RealBlockStore); ok {
+		if chits != nil {
+			realStore.SetFinalizationChits(height, chits)
+		}
+		if sigSet != nil {
+			realStore.SetSignatureSet(height, sigSet)
+		}
 	}
 
 	sb := e.snowballs[height]

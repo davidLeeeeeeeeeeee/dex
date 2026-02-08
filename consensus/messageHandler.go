@@ -32,7 +32,8 @@ type MessageHandler struct {
 	pendingQueries     map[uint32]types.Message
 	pendingQueriesMu   sync.RWMutex
 	stats              *stats.Stats
-	pendingBlockBuffer *PendingBlockBuffer // 待处理区块缓冲区
+	pendingBlockBuffer *PendingBlockBuffer   // 待处理区块缓冲区
+	signer             interfaces.NodeSigner // VRF 投票签名器（ECDSA）
 }
 
 func NewMessageHandler(id types.NodeID, byzantine bool, transport interfaces.Transport, store interfaces.BlockStore, engine interfaces.ConsensusEngine, events interfaces.EventBus, config *ConsensusConfig, logger logs.Logger) *MessageHandler {
@@ -133,7 +134,7 @@ func (h *MessageHandler) handlePullQuery(msg types.Message) {
 	}
 
 	// 有区块，直接发送chits投票
-	h.sendChits(types.NodeID(msg.From), msg.RequestID, block.Header.Height)
+	h.sendChits(types.NodeID(msg.From), msg.RequestID, block.Header.Height, msg.VRFSeed, msg.SeqID)
 }
 
 type PendingQueryKey struct {
@@ -167,7 +168,7 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 	// 如果该高度本地已经最终化/接受过，直接回复偏好即可（避免把旧高度的候选块重新塞回 store）
 	_, acceptedHeight := h.store.GetLastAccepted()
 	if msg.Block.Header.Height <= acceptedHeight {
-		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height)
+		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height, msg.VRFSeed, msg.SeqID)
 		return
 	}
 
@@ -182,7 +183,7 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 				h.nodeID, msg.Block.ID, msg.Block.Header.Window, currentWindow)
 			h.proposalManager.CacheProposal(msg.Block)
 			// 关键：即使缓存，也要回复 chits，避免对方 query 超时导致共识停滞
-			h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height)
+			h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height, msg.VRFSeed, msg.SeqID)
 			return
 		}
 	}
@@ -214,7 +215,7 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 							})
 						}
 						// 补发 Chits 给原始请求者
-						h.sendChits(fromNode, requestID, resolvedBlock.Header.Height)
+						h.sendChits(fromNode, requestID, resolvedBlock.Header.Height, msg.VRFSeed, msg.SeqID)
 					},
 				)
 				logs.Debug("[Node %s] Block %s has incomplete data, queued for resolution",
@@ -232,7 +233,7 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 		}
 
 		// 区块被拒绝也应回复，避免对方长期等待
-		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height)
+		h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height, msg.VRFSeed, msg.SeqID)
 		return
 	}
 
@@ -245,10 +246,24 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 		})
 	}
 
-	h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height)
+	h.sendChits(types.NodeID(msg.From), msg.RequestID, msg.Block.Header.Height, msg.VRFSeed, msg.SeqID)
 }
 
-func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeight uint64) {
+// computeChitSignature 计算投票签名: ECDSA.Sign(digest) where digest = SHA256(preferred || height || vrf_seed || seq_id)
+func computeChitSignature(signer interfaces.NodeSigner, preferred string, height uint64, vrfSeed []byte, seqID uint32) []byte {
+	if signer == nil {
+		return nil
+	}
+	digest := ComputeChitDigest(preferred, height, vrfSeed, seqID)
+	sig, err := signer.Sign(digest)
+	if err != nil {
+		logs.Warn("[computeChitSignature] ECDSA sign failed: %v", err)
+		return nil
+	}
+	return sig
+}
+
+func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeight uint64, vrfSeed []byte, seqID uint32) {
 	var preferred string
 
 	// 对于 height=0（创世区块），直接返回 genesis
@@ -304,15 +319,22 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 		}
 	}
 
+	// 生成投票签名（VRF 确定性采样证据）
+	var chitSig []byte
+	if len(vrfSeed) > 0 && preferred != "" {
+		chitSig = computeChitSignature(h.signer, preferred, queryHeight, vrfSeed, seqID)
+	}
+
 	accepted, acceptedHeight := h.store.GetLastAccepted()
-	logs.Debug("[sendChits] to=%s req=%d h=%d preferred=%v accepted=%v",
-		to, requestID, queryHeight, preferred, accepted)
+	logs.Debug("[sendChits] to=%s req=%d h=%d preferred=%v accepted=%v hasSig=%v",
+		to, requestID, queryHeight, preferred, accepted, len(chitSig) > 0)
 
 	h.transport.Send(to, types.Message{
 		Type: types.MsgChits, From: h.nodeID, RequestID: requestID,
 		PreferredID:       preferred,
 		PreferredIDHeight: queryHeight,
 		AcceptedID:        accepted, AcceptedHeight: acceptedHeight,
+		ChitSignature: chitSig,
 	})
 
 	// 增加 ChitsResponded 计数器
@@ -386,7 +408,7 @@ func (h *MessageHandler) checkPendingQueries(requestId uint32) {
 				blockID, requestId)
 			return
 		}
-		h.sendChits(types.NodeID(pendingMsg.From), pendingMsg.RequestID, block.Header.Height)
+		h.sendChits(types.NodeID(pendingMsg.From), pendingMsg.RequestID, block.Header.Height, pendingMsg.VRFSeed, pendingMsg.SeqID)
 	} else {
 		h.pendingQueriesMu.Unlock()
 	}

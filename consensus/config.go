@@ -47,6 +47,8 @@ type SyncConfig struct {
 	SampleSize         int           // 采样节点数量（默认 15）
 	QuorumRatio        float64       // Quorum 比例（默认 0.67，即 67%）
 	SampleTimeout      time.Duration // 采样超时时间
+	SyncAlpha          int           // 同步验证：每轮最少签名数（默认跟随共识 Alpha）
+	SyncBeta           int           // 同步验证：最少轮次数（默认跟随共识 Beta）
 }
 
 type GossipConfig struct {
@@ -92,6 +94,8 @@ func DefaultConfig() *Config {
 			SampleSize:         15,              // 采样 15 个节点
 			QuorumRatio:        0.67,            // 67% 拜占庭容错
 			SampleTimeout:      2 * time.Second, // 2 秒采样超时
+			SyncAlpha:          14,              // 同步签名验证：每轮至少 14 个签名
+			SyncBeta:           15,              // 同步签名验证：至少 15 轮
 		},
 		Gossip: GossipConfig{
 			Fanout:   15,

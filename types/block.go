@@ -47,9 +47,10 @@ type Block struct {
 
 // FinalizationChit 单个节点的投票信息
 type FinalizationChit struct {
-	NodeID      string `json:"node_id"`      // 投票节点 ID
-	PreferredID string `json:"preferred_id"` // 节点偏好的区块 ID
-	Timestamp   int64  `json:"timestamp"`    // 投票时间戳 (毫秒)
+	NodeID      string `json:"node_id"`             // 投票节点 ID
+	PreferredID string `json:"preferred_id"`        // 节点偏好的区块 ID
+	Timestamp   int64  `json:"timestamp"`           // 投票时间戳 (毫秒)
+	Signature   []byte `json:"signature,omitempty"` // VRF 投票签名（可选）
 }
 
 // RoundChits 单轮投票汇总

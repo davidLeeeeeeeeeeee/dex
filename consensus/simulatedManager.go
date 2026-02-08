@@ -5,6 +5,7 @@ import (
 	"dex/interfaces"
 	"dex/logs"
 	"dex/types"
+	"dex/utils"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -61,8 +62,17 @@ func (nm *NetworkManager) CreateNodes() {
 		nodeID := types.NodeID(strconv.Itoa(i))
 		// 为模拟场景创建 MemoryBlockStore
 		store := NewMemoryBlockStoreWithConfig(nm.config.Snapshot.MaxSnapshots)
+
+		// 为模拟节点生成 ECDSA 密钥对并注册公钥
+		keyMgr := utils.NewKeyManager()
+		if err := keyMgr.InitKeyRandom(); err != nil {
+			logs.Error("[NetworkManager] Failed to generate ECDSA key for node %s: %v", nodeID, err)
+			continue
+		}
+		RegisterNodePublicKey(nodeID, keyMgr.PublicKeyBytes())
+
 		// Inject a new NodeLogger for each node
-		node := NewNode(nodeID, nm.transports[nodeID], store, byzantineMap[nodeID], nm.config, logs.NewNodeLogger(string(nodeID), 2000))
+		node := NewNodeWithSigner(nodeID, nm.transports[nodeID], store, byzantineMap[nodeID], nm.config, logs.NewNodeLogger(string(nodeID), 2000), keyMgr)
 		nm.nodes[nodeID] = node
 	}
 }
@@ -93,6 +103,20 @@ func (nm *NetworkManager) SamplePeers(exclude types.NodeID, count int) []types.N
 	}
 
 	return peers[:count]
+}
+
+// GetAllPeers 返回所有已知节点（不含 exclude），用于 VRF 确定性采样
+func (nm *NetworkManager) GetAllPeers(exclude types.NodeID) []types.NodeID {
+	nm.mu.RLock()
+	defer nm.mu.RUnlock()
+
+	peers := make([]types.NodeID, 0, len(nm.nodes)-1)
+	for id := range nm.nodes {
+		if id != exclude {
+			peers = append(peers, id)
+		}
+	}
+	return peers
 }
 
 func (nm *NetworkManager) Start() {
