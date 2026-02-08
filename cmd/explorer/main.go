@@ -760,7 +760,10 @@ func (s *server) handleAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info := convertAccountToInfo(account)
+	// 从节点获取余额数据（余额已分离存储，需要独立 API 查询）
+	balances := s.fetchAccountBalances(ctx, req.Node, req.Address)
+
+	info := convertAccountToInfo(account, balances)
 	writeJSON(w, addressResponse{Account: info})
 }
 
@@ -779,7 +782,22 @@ func (s *server) fetchAccountByAddress(ctx context.Context, node string, address
 	return resp.Account, nil
 }
 
-func convertAccountToInfo(account *pb.Account) *accountInfo {
+// fetchAccountBalances 从节点获取账户的所有代币余额
+func (s *server) fetchAccountBalances(ctx context.Context, node string, address string) map[string]*pb.TokenBalance {
+	var resp pb.GetAccountBalancesResponse
+	req := &pb.GetAccountBalancesRequest{Address: address}
+	if err := s.fetchProto(ctx, node, "/getaccountbalances", req, &resp); err != nil {
+		log.Printf("[WARN] failed to fetch balances for %s: %v", address, err)
+		return nil
+	}
+	if resp.Error != "" {
+		log.Printf("[WARN] balances error for %s: %s", address, resp.Error)
+		return nil
+	}
+	return resp.Balances
+}
+
+func convertAccountToInfo(account *pb.Account, balances map[string]*pb.TokenBalance) *accountInfo {
 	if account == nil {
 		return nil
 	}
@@ -789,10 +807,22 @@ func convertAccountToInfo(account *pb.Account) *accountInfo {
 		UnclaimedReward: account.UnclaimedReward,
 		IsMiner:         account.IsMiner,
 		Index:           account.Index,
-		// TODO: 余额已分离存储，需添加独立 API 获取余额
-		// 参考 keys.KeyBalance(address, tokenAddress) 和 pb.TokenBalanceRecord
-		Balances: make(map[string]*tokenBalance),
+		Balances:        make(map[string]*tokenBalance),
 	}
+
+	// 从分离存储的余额数据中填充
+	for token, bal := range balances {
+		if bal != nil {
+			info.Balances[token] = &tokenBalance{
+				Balance:               bal.Balance,
+				MinerLockedBalance:    bal.MinerLockedBalance,
+				LiquidLockedBalance:   bal.LiquidLockedBalance,
+				WitnessLockedBalance:  bal.WitnessLockedBalance,
+				LeverageLockedBalance: bal.LeverageLockedBalance,
+			}
+		}
+	}
+
 	return info
 }
 

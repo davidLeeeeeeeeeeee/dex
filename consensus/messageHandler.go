@@ -291,24 +291,20 @@ func (h *MessageHandler) sendChits(to types.NodeID, requestID uint32, queryHeigh
 				}
 			}
 
-			// 关键改动：验证偏好的区块是否有完整数据
-			if preferred != "" {
-				if _, hasFullData := GetCachedBlock(preferred); !hasFullData {
-					logs.Debug("[sendChits] Preferred block %s has no full data, abstaining", preferred)
-					preferred = "" // 弃权
-				}
-			}
+			// 注意：此处不再检查 GetCachedBlock（pb.Block 缓存）。
+			// 共识投票只需要 types.Block（Store 存在 + 父链匹配即可），
+			// pb.Block 缓存状态与共识安全性无关。
+			// 之前的 GetCachedBlock 检查会导致 CPU 高负载时投票不一致：
+			// 节点弃权后 fallback 到不同的候选块，造成分叉。
 
 			// 如果没有有效偏好，从符合条件的候选中选择
 			if preferred == "" {
 				blocks := h.store.GetByHeight(queryHeight)
 				cand := make([]string, 0, len(blocks))
 				for _, b := range blocks {
-					// 必须满足父链接正确 AND 有完整数据
+					// 只需满足父链接正确（不再检查 GetCachedBlock）
 					if b.Header.ParentID == parent.ID {
-						if _, hasFullData := GetCachedBlock(b.ID); hasFullData {
-							cand = append(cand, b.ID)
-						}
+						cand = append(cand, b.ID)
 					}
 				}
 				if len(cand) > 0 {

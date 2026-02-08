@@ -894,8 +894,15 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 		}
 	}
 
-	// 加速追块：如果收到的是对方“已接受高度”范围内的区块，则可直接按父链关系推进本地 lastAccepted。
-	// 这能解决“本地已拥有区块但共识迟迟无法在该高度收敛”导致的长期停滞（反复 sync added=0）。
+	// 加速追块：如果收到的是对方"已接受高度"范围内的区块，则可直接按父链关系推进本地 lastAccepted。
+	// 这能解决"本地已拥有区块但共识迟迟无法在该高度收敛"导致的长期停滞（反复 sync added=0）。
+	//
+	// 注意：此处只使用 sync 响应中的区块，不混入本地 store 的候选。
+	// 原因：sync 响应来自已经最终化的 peer，代表它的最终化链。本地 store 可能有
+	// 未被选中分支的候选区块（不同 Window/不同 parent），混入会导致选择到
+	// 父链不兼容的区块，造成 SetFinalized 失败，链条中断。
+	// 防分叉保护在投票层（selectBestCandidate 偏好低 Window + sendChits 一致性）
+	// 和签名验证层（VerifySignatureSet）实现。
 	finalized := 0
 	acceptedID, acceptedHeight := sm.store.GetLastAccepted()
 	blocksByHeight := make(map[uint64][]*types.Block, len(msg.Blocks))
@@ -912,12 +919,17 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 		if len(cands) == 0 {
 			break
 		}
-		chosen := cands[0]
+		// 从 sync 响应的候选中选择父链匹配的区块
+		var chosen *types.Block
 		for _, c := range cands {
 			if c != nil && c.Header.ParentID == acceptedID {
 				chosen = c
 				break
 			}
+		}
+		// 如果没有父链匹配的，退化为第一个候选（RealBlockStore.SetFinalized 内部会做安全检查）
+		if chosen == nil {
+			chosen = cands[0]
 		}
 
 		// VRF 签名集合验证（如果可用）
@@ -969,7 +981,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 		if msg.ToHeight > acceptedHeight {
 			stalls := atomic.AddUint32(&sm.consecutiveStallCount, 1)
 			if stalls >= 3 {
-				logs.Warn("[Node %s] ⚠️ Sync stalled for %d rounds at height %d, breaking pipeline and switching peers",
+				logs.Debug("[Node %s] ⚠️ Sync stalled for %d rounds at height %d, breaking pipeline and switching peers",
 					sm.nodeID, stalls, acceptedHeight)
 				sm.Mu.Lock()
 				delete(sm.PeerHeights, types.NodeID(msg.From)) // 清理该 Peer 高度信息，强制重新采样

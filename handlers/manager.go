@@ -91,6 +91,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/gettxreceipt", hm.HandleGetTxReceipt)
 	mux.HandleFunc("/batchgetdata", hm.HandleBatchGetTx)
 	mux.HandleFunc("/getaccount", hm.HandleGetAccount)
+	mux.HandleFunc("/getaccountbalances", hm.HandleGetAccountBalances)
 	mux.HandleFunc("/nodes", hm.HandleNodes)
 	mux.HandleFunc("/getblockbyid", hm.HandleGet)
 	mux.HandleFunc("/put", hm.HandlePut)

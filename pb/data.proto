@@ -1152,6 +1152,18 @@ message GetAccountRequest {
 message GetAccountResponse {
   Account account = 1; // 账户信息
   string error = 2; // 错误信息
+  map<string, TokenBalance> balances = 3; // 账户所有代币余额（token地址 -> 余额信息）
+}
+
+// GetAccountBalancesRequest 获取账户余额请求
+message GetAccountBalancesRequest {
+  string address = 1; // 账户地址
+}
+
+// GetAccountBalancesResponse 获取账户余额响应
+message GetAccountBalancesResponse {
+  map<string, TokenBalance> balances = 1; // 代币余额（token地址 -> 余额信息）
+  string error = 2; // 错误信息
 }
 
 // GetTokenRequest 获取 Token 信息请求

@@ -141,11 +141,6 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	// 3. 根据订单方向检查余额（使用分离存储）
 	// - 卖单：需要有 BaseToken 余额（要卖出的币）
 	// - 买单：需要有 QuoteToken 余额（要支付的币）
-	var balanceUpdates []struct {
-		addr, token string
-		bal         *pb.TokenBalance
-	}
-
 	if ord.Side == pb.OrderSide_SELL {
 		// 卖单：检查并冻结 BaseToken 余额
 		bal := GetBalance(sv, ord.Base.FromAddress, ord.BaseToken)
@@ -161,10 +156,8 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
 		bal.Balance = current.Sub(amountDec).String()
 		bal.OrderFrozenBalance = frozen.Add(amountDec).String()
-		balanceUpdates = append(balanceUpdates, struct {
-			addr, token string
-			bal         *pb.TokenBalance
-		}{ord.Base.FromAddress, ord.BaseToken, bal})
+		// 写回 StateView，确保同区块内后续交易能看到冻结后的余额
+		SetBalance(sv, ord.Base.FromAddress, ord.BaseToken, bal)
 	} else {
 		// 买单：检查并冻结 QuoteToken 余额
 		bal := GetBalance(sv, ord.Base.FromAddress, ord.QuoteToken)
@@ -181,10 +174,8 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
 		bal.Balance = current.Sub(needed).String()
 		bal.OrderFrozenBalance = frozen.Add(needed).String()
-		balanceUpdates = append(balanceUpdates, struct {
-			addr, token string
-			bal         *pb.TokenBalance
-		}{ord.Base.FromAddress, ord.QuoteToken, bal})
+		// 写回 StateView，确保同区块内后续交易能看到冻结后的余额
+		SetBalance(sv, ord.Base.FromAddress, ord.QuoteToken, bal)
 	}
 
 	// 4. 生成交易对key（使用utils.GeneratePairKey确保一致性）
@@ -662,9 +653,6 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		orderStateKey := keys.KeyOrderState(orderID)
 		orderStateData, err := proto.Marshal(orderState)
 
-		// Marshal 之后，该对象不再被需要，归还 Pool
-		orderStatePool.Put(orderState)
-
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal order state %s: %w", orderID, err)
 		}
@@ -732,6 +720,11 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 	}
 	ws = append(ws, accountBalanceOps...)
 
+	// 所有使用 stateUpdates 的函数已执行完毕，现在安全地归还 Pool 对象
+	for _, orderState := range stateUpdates {
+		orderStatePool.Put(orderState)
+	}
+
 	return ws, nil
 }
 
@@ -756,6 +749,17 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 				Category:    "account",
 			})
 		}
+	}
+
+	// 生成冻结余额的 WriteOp（handleAddOrder 已通过 SetBalance 写入 sv）
+	if ord.Side == pb.OrderSide_SELL {
+		balKey := keys.KeyBalance(ord.Base.FromAddress, ord.BaseToken)
+		balData, _, _ := sv.Get(balKey)
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
+	} else {
+		balKey := keys.KeyBalance(ord.Base.FromAddress, ord.QuoteToken)
+		balData, _, _ := sv.Get(balKey)
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
 	}
 
 	// 创建 OrderState（可变状态）
@@ -810,9 +814,6 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		SyncStateDB: true,
 		Category:    "acc_orders_item",
 	})
-
-	// 5. 保存账户更新（如果有需要，比如 Nonce 或余额已在外部更新）
-	// 注意：在下单逻辑中，账户由于冻结余额，已经在 handleAddNewOrder 中被 Marshal 过了。
 
 	// 创建价格索引（基于 OrderState.IsFilled）
 	priceKey67, err := db.PriceToKey128(ord.Price)

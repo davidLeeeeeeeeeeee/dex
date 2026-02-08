@@ -184,9 +184,16 @@ func extractWindow(blockID string) int {
 	return w
 }
 
-// selectBestCandidate 从候选列表中选择最优区块
-// 优先级规则：Window 越大优先级越高（代表更近、更有机会成功的轮次）；
+// selectBestCandidate 从候选列表中选择最优区块（安全优先）
+// 优先级规则：Window 越小优先级越高（代表更早提出、被更多节点看到的区块）；
 // Window 相同时，Hash 越小优先级越高（用于打破平局）。
+//
+// 安全性原理：低 Window 的区块存在时间更长，被更多节点接收和投票，
+// 因此更可能是全网多数派的选择。偏好低 Window 可以防止 CPU/网络延迟
+// 导致慢节点直接跳到高 Window 块，避免分叉。
+// 活性保证：Window 升级通过 Snowball 的 Alpha 多数票成功路径（Case A）驱动，
+// 不依赖 selectBestCandidate。如果低 Window 确实无法收敛，
+// WindowEscalationThreshold (45轮) 的逃生阀仍然生效。
 func selectBestCandidate(candidates []string) string {
 	if len(candidates) == 0 {
 		return ""
@@ -196,21 +203,21 @@ func selectBestCandidate(candidates []string) string {
 	}
 
 	bestBlock := candidates[0]
-	maxWindow := extractWindow(bestBlock)
-	minHash := extractBlockHash(bestBlock)
+	bestWindow := extractWindow(bestBlock)
+	bestHash := extractBlockHash(bestBlock)
 
 	for _, cid := range candidates[1:] {
 		w := extractWindow(cid)
 		h := extractBlockHash(cid)
 
-		// 关键修正：Window 越大，优先级越高
-		if w > maxWindow {
-			maxWindow = w
-			minHash = h
+		// 安全优先：Window 越小，优先级越高
+		if w < bestWindow {
+			bestWindow = w
+			bestHash = h
 			bestBlock = cid
-		} else if w == maxWindow {
-			if h < minHash {
-				minHash = h
+		} else if w == bestWindow {
+			if h < bestHash {
+				bestHash = h
 				bestBlock = cid
 			}
 		}
