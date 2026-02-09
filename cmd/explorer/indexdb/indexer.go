@@ -57,7 +57,16 @@ func (idb *IndexDB) IndexBlock(block *pb.Block) error {
 // indexTransaction 索引单个交易
 func (idb *IndexDB) indexTransaction(tx *pb.AnyTx, height uint64, txIndex int) error {
 	record := extractTxRecord(tx, height, txIndex)
-	if record == nil {
+	if record == nil || record.TxID == "" {
+		return nil
+	}
+
+	// 防止累计区块重复索引同一 tx_id 覆盖历史详情
+	existing, err := idb.GetTxRecord(record.TxID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
 		return nil
 	}
 
@@ -148,14 +157,11 @@ func (idb *IndexDB) GetSyncNode() (string, error) {
 
 // GetAddressTxCount 获取地址交易数量
 func (idb *IndexDB) GetAddressTxCount(address string) (int, error) {
-	val, err := idb.Get(KeyAddressCount(address))
+	txs, err := idb.GetAddressTxHistory(address, 0)
 	if err != nil {
 		return 0, err
 	}
-	if val == "" {
-		return 0, nil
-	}
-	return strconv.Atoi(val)
+	return len(txs), nil
 }
 
 // CollectBlockAddresses 收集区块中涉及的所有地址

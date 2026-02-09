@@ -2,34 +2,67 @@ package indexdb
 
 import (
 	"encoding/json"
+	"sort"
 )
 
-// GetAddressTxHistory 获取地址的交易历史（按时间倒序）
+// GetAddressTxHistory gets tx history for an address in reverse-time order.
 func (idb *IndexDB) GetAddressTxHistory(address string, limit int) ([]*TxRecord, error) {
-	// limit <= 0 means no limit (return all records)
-
 	prefix := KeyAddressTxPrefix(address)
-	// 使用正向扫描，因为 key 中的高度已经是倒序的
-	kvs, err := idb.ScanPrefix(prefix, limit)
+	// Scan all first, then dedupe, then apply limit.
+	kvs, err := idb.ScanPrefix(prefix, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	var results []*TxRecord
+	byTxID := make(map[string]*TxRecord, len(kvs))
 	for _, kv := range kvs {
 		txID := kv.Value
 		record, err := idb.GetTxRecord(txID)
-		if err != nil {
+		if err != nil || record == nil {
 			continue
 		}
-		if record != nil {
-			results = append(results, record)
+
+		normalized := *record
+		if h, txIndex, ok := ParseAddressTxKey(kv.Key, address); ok {
+			// Recover true height/index from address index key to avoid overwritten tx_detail height.
+			normalized.Height = h
+			normalized.TxIndex = txIndex
+		}
+
+		// For duplicate tx_id entries, keep the earliest execution occurrence.
+		existing, exists := byTxID[txID]
+		if !exists ||
+			normalized.Height < existing.Height ||
+			(normalized.Height == existing.Height && normalized.TxIndex < existing.TxIndex) {
+			copy := normalized
+			byTxID[txID] = &copy
 		}
 	}
+
+	results := make([]*TxRecord, 0, len(byTxID))
+	for _, rec := range byTxID {
+		results = append(results, rec)
+	}
+
+	// Keep compatibility with prior ordering: height desc, tx_index asc.
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Height != results[j].Height {
+			return results[i].Height > results[j].Height
+		}
+		if results[i].TxIndex != results[j].TxIndex {
+			return results[i].TxIndex < results[j].TxIndex
+		}
+		return results[i].TxID < results[j].TxID
+	})
+
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+
 	return results, nil
 }
 
-// GetTxRecord 获取交易记录
+// GetTxRecord gets tx detail record by txID.
 func (idb *IndexDB) GetTxRecord(txID string) (*TxRecord, error) {
 	val, err := idb.Get(KeyTxDetail(txID))
 	if err != nil {
@@ -46,10 +79,10 @@ func (idb *IndexDB) GetTxRecord(txID string) (*TxRecord, error) {
 	return &record, nil
 }
 
-// GetBlockTxs 获取区块的所有交易
+// GetBlockTxs gets all tx records in a block.
 func (idb *IndexDB) GetBlockTxs(height uint64) ([]*TxRecord, error) {
 	prefix := KeyBlockTxPrefix(height)
-	kvs, err := idb.ScanPrefix(prefix, 0) // 不限制数量
+	kvs, err := idb.ScanPrefix(prefix, 0)
 	if err != nil {
 		return nil, err
 	}

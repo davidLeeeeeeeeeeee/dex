@@ -1,6 +1,10 @@
 package indexdb
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 const (
 	// 同步状态键
@@ -20,6 +24,32 @@ func KeyAddressTx(address string, height uint64, txIndex int) string {
 // KeyAddressTxPrefix 地址交易索引前缀
 func KeyAddressTxPrefix(address string) string {
 	return fmt.Sprintf("addr_tx_%s_", address)
+}
+
+// ParseAddressTxKey 解析地址交易索引 key，恢复真实高度和交易索引
+// key 格式: addr_tx_<address>_<invertedHeight>_<tx_index>
+func ParseAddressTxKey(key, address string) (height uint64, txIndex int, ok bool) {
+	prefix := KeyAddressTxPrefix(address)
+	if !strings.HasPrefix(key, prefix) {
+		return 0, 0, false
+	}
+
+	rest := strings.TrimPrefix(key, prefix)
+	parts := strings.Split(rest, "_")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+
+	invertedHeight, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	txIndex, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, false
+	}
+
+	return ^invertedHeight, txIndex, true
 }
 
 // KeyBlockTx 区块交易索引（用于查询某个区块的所有交易）

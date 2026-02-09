@@ -203,11 +203,10 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 	}
 	s.mu.Unlock()
 
-	// 第五步：异步保存到数据库（不持锁）
-	go func() {
-		logs.SetThreadNodeContext(string(s.nodeID))
-		s.saveBlockToDB(block)
-	}()
+	// 注意：不在 Add() 阶段保存区块到数据库
+	// 原因：Add() 时交易状态仍为 PENDING，如果异步 SaveBlock 在 SetFinalized()
+	// 的 SaveBlock（SUCCEED）之后执行，会用 PENDING 覆盖 SUCCEED，造成状态回退。
+	// 区块的持久化统一由 SetFinalized() 处理，确保保存的是最终状态。
 
 	logs.Debug("[RealBlockStore] Added block %s at height %d", block.ID, block.Header.Height)
 

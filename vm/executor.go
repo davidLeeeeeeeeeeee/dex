@@ -167,13 +167,19 @@ func (x *Executor) SetKindFn(fn KindFn) {
 
 // PreExecuteBlock 预执行区块（不写数据库）
 func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
+	return x.preExecuteBlock(b, true)
+}
+
+func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, error) {
 	if b == nil {
 		return nil, ErrNilBlock
 	}
 
 	// 检查缓存
-	if cached, ok := x.Cache.Get(b.BlockHash); ok {
-		return cached, nil
+	if useCache {
+		if cached, ok := x.Cache.Get(b.BlockHash); ok {
+			return cached, nil
+		}
 	}
 
 	if x.WitnessService != nil {
@@ -183,6 +189,10 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	// 创建新的状态视图
 	sv := NewStateView(x.ReadFn, x.ScanFn)
 	receipts := make([]*Receipt, 0, len(b.Body))
+	seenTxIDs := make(map[string]struct{}, len(b.Body))
+	appliedCache := make(map[string]bool, len(b.Body))
+	skippedDupInBlock := 0
+	skippedApplied := 0
 
 	// Step 1: 预扫描区块，收集所有交易对
 	pairs := collectPairsFromBlock(b)
@@ -201,6 +211,28 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 
 	// 遍历执行每个交易
 	for idx, tx := range b.Body {
+		if tx == nil {
+			continue
+		}
+
+		txID := tx.GetTxId()
+		if txID != "" {
+			if _, exists := seenTxIDs[txID]; exists {
+				skippedDupInBlock++
+				continue
+			}
+			seenTxIDs[txID] = struct{}{}
+
+			applied, ok := appliedCache[txID]
+			if !ok {
+				applied = x.isTxApplied(txID)
+				appliedCache[txID] = applied
+			}
+			if applied {
+				skippedApplied++
+				continue
+			}
+		}
 		// 提取交易类型
 		kind, err := x.KFn(tx)
 		if err != nil {
@@ -321,6 +353,12 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 		}
 		receipts = append(receipts, rc)
 	}
+	if skippedDupInBlock > 0 || skippedApplied > 0 {
+		logs.Debug(
+			"[VM] skipped txs in block: height=%d hash=%s dup=%d applied=%d body=%d",
+			b.Header.Height, b.BlockHash, skippedDupInBlock, skippedApplied, len(b.Body),
+		)
+	}
 
 	if err := x.applyWitnessFinalizedEvents(sv, b.Header.Height); err != nil {
 		return nil, err
@@ -435,12 +473,16 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 	defer x.mu.Unlock()
 
 	// 优先使用缓存的执行结果
-	if res, ok := x.Cache.Get(b.BlockHash); ok && res.Valid {
-		return x.applyResult(res, b)
+	if committed, blockHash := x.IsBlockCommitted(b.Header.Height); committed {
+		if blockHash == b.BlockHash {
+			return nil
+		}
+		return fmt.Errorf("block at height %d already committed with different hash: %s vs %s",
+			b.Header.Height, blockHash, b.BlockHash)
 	}
 
 	// 缓存缺失：重新执行
-	res, err := x.PreExecuteBlock(b)
+	res, err := x.preExecuteBlock(b, false)
 	if err != nil {
 		return fmt.Errorf("re-execute block failed: %v", err)
 	}
@@ -595,6 +637,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	for _, rc := range res.Receipts {
 		receiptMap[rc.TxID] = rc
 	}
+	processedStatusTxs := make(map[string]struct{}, len(receiptMap))
 
 	// 1. 先更新区块中所有交易的状态和执行高度
 	// 修改对象引用，会反映到传入的 pb.Block 中
@@ -603,20 +646,26 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 			continue
 		}
 		base := tx.GetBase()
-		if base == nil {
+		if base == nil || base.TxId == "" {
+			continue
+		}
+		if _, done := processedStatusTxs[base.TxId]; done {
 			continue
 		}
 
 		// 统一注入执行高度
-		base.ExecutedHeight = b.Header.Height
 
 		// 根据执行收据更新状态
-		if rc, ok := receiptMap[base.TxId]; ok {
-			if rc.Status == "SUCCEED" || rc.Status == "" {
-				base.Status = pb.Status_SUCCEED
-			} else {
-				base.Status = pb.Status_FAILED
-			}
+		rc, ok := receiptMap[base.TxId]
+		if !ok {
+			continue
+		}
+		processedStatusTxs[base.TxId] = struct{}{}
+		base.ExecutedHeight = b.Header.Height
+		if rc.Status == "SUCCEED" || rc.Status == "" {
+			base.Status = pb.Status_SUCCEED
+		} else {
+			base.Status = pb.Status_FAILED
 		}
 	}
 
@@ -627,15 +676,27 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		SaveTxRaw(tx *pb.AnyTx) error
 	}
 	if saver, ok := x.DB.(txRawSaver); ok {
+		savedRawTxs := make(map[string]struct{}, len(receiptMap))
 		for _, tx := range b.Body {
 			if tx == nil {
+				continue
+			}
+			txID := tx.GetTxId()
+			if txID == "" {
+				continue
+			}
+			if _, done := savedRawTxs[txID]; done {
+				continue
+			}
+			if _, executedThisBlock := receiptMap[txID]; !executedThisBlock {
 				continue
 			}
 			// 保存交易原文（已更新 Status 和 ExecutedHeight）
 			if err := saver.SaveTxRaw(tx); err != nil {
 				// 记录错误但不中断提交
-				fmt.Printf("[VM] Warning: failed to save tx raw %s: %v\n", tx.GetTxId(), err)
+				fmt.Printf("[VM] Warning: failed to save tx raw %s: %v\n", txID, err)
 			}
+			savedRawTxs[txID] = struct{}{}
 		}
 	}
 
@@ -707,6 +768,18 @@ func (x *Executor) GetTransactionStatus(txID string) (string, error) {
 		return "PENDING", nil
 	}
 	return string(status), nil
+}
+
+func (x *Executor) isTxApplied(txID string) bool {
+	if txID == "" {
+		return false
+	}
+	key := keys.KeyVMAppliedTx(txID)
+	status, err := x.DB.Get(key)
+	if err != nil || status == nil {
+		return false
+	}
+	return true
 }
 
 // GetTransactionError 获取交易错误信息

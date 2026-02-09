@@ -1797,7 +1797,12 @@ func (s *server) handleTxHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, _ := s.indexDB.GetAddressTxCount(address)
+	count := len(txs)
+	if limit > 0 {
+		if c, err := s.indexDB.GetAddressTxCount(address); err == nil {
+			count = c
+		}
+	}
 
 	resp := struct {
 		Address    string              `json:"address"`

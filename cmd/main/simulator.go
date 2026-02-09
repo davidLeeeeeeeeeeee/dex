@@ -29,11 +29,18 @@ func NewTxSimulator(nodes []*NodeInstance) *TxSimulator {
 func (s *TxSimulator) getNextNonce(addr string) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.nonces == nil {
+		s.nonces = make(map[string]uint64)
+	}
 	s.nonces[addr]++
 	return s.nonces[addr]
 }
 
 func (s *TxSimulator) Start() {
+	if s == nil {
+		logs.Error("SIMULATOR: TxSimulator is nil, skip start")
+		return
+	}
 	go s.monitorTxPool() // 监控交易池压力
 	go s.runRandomTransfers()
 	go s.runWitnessRegistration() // 见证者质押注册
@@ -49,7 +56,7 @@ func (s *TxSimulator) monitorTxPool() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if len(s.nodes) == 0 {
+		if len(s.nodes) == 0 || s.nodes[0] == nil || s.nodes[0].TxPool == nil {
 			continue
 		}
 
@@ -94,6 +101,9 @@ func (s *TxSimulator) runRandomTransfers() {
 			continue
 		}
 		// 随机选择一个发送方和接收方
+		if len(s.nodes) == 0 {
+			continue
+		}
 		fromIdx := mrand.Intn(len(s.nodes))
 		toIdx := mrand.Intn(len(s.nodes))
 		fromNode := s.nodes[fromIdx]
@@ -114,7 +124,7 @@ func (s *TxSimulator) runRandomTransfers() {
 
 func (s *TxSimulator) runWitnessRegistration() {
 	// 设置日志上下文为第一个节点，使得模拟器核心日志能显示在第一个节点的 Explorer 日志中
-	if len(s.nodes) > 0 {
+	if len(s.nodes) > 0 && s.nodes[0] != nil {
 		logs.SetThreadNodeContext(s.nodes[0].Address)
 	}
 
@@ -152,7 +162,7 @@ func (s *TxSimulator) runWitnessRegistration() {
 
 func (s *TxSimulator) runRechargeScenario() {
 	// 设置日志上下文
-	if len(s.nodes) > 0 {
+	if len(s.nodes) > 0 && s.nodes[0] != nil {
 		logs.SetThreadNodeContext(s.nodes[0].Address)
 	}
 
@@ -209,6 +219,9 @@ func (s *TxSimulator) runWitnessVoteWorker() {
 		// 简单的模拟逻辑：检测是否有正在进行的投票请求，并让所有见证者都投赞成票
 		// 在实际系统中，这通常由节点的本地事件触发
 		for _, node := range s.nodes {
+			if node == nil {
+				continue
+			}
 			if node.WitnessService == nil {
 				continue
 			}
@@ -288,6 +301,9 @@ func (s *TxSimulator) runWithdrawScenario() {
 
 	for range ticker.C {
 		logs.Info("Simulator: Starting Withdraw Scenario...")
+		if len(s.nodes) == 0 {
+			continue
+		}
 
 		userNode := s.nodes[mrand.Intn(len(s.nodes))]
 		if userNode == nil {

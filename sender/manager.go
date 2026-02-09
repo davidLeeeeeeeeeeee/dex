@@ -411,7 +411,7 @@ func doSendGetDataWithManager(t *SendTask, client *http.Client) error {
 	if pm.txPool != nil {
 		txId := anyTx.GetTxId()
 		if txId != "" {
-			if err := pm.txPool.StoreAnyTx(&anyTx); err != nil {
+			if err := pm.txPool.CacheAnyTx(&anyTx); err != nil {
 				logs.Debug("[doSendGetData] storeAnyTx fail: %v", err)
 			}
 		}

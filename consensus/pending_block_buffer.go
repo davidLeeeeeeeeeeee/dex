@@ -291,7 +291,7 @@ func (b *PendingBlockBuffer) fetchMissingTxs(entry *pendingBlockEntry) {
 
 		// 存入 TxPool
 		for _, tx := range txs {
-			if err := b.txPool.StoreAnyTx(tx); err != nil {
+			if err := b.txPool.CacheAnyTx(tx); err != nil {
 				if b.logger != nil {
 					b.logger.Debug("[PendingBlockBuffer] Failed to store tx: %v", err)
 				}

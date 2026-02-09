@@ -11,3 +11,4 @@ explorer/package-lock.json
 explorer/dist/
 explorer_data/
 *.exe~
+.gocache/

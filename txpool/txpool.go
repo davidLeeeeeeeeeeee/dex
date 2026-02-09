@@ -3,6 +3,7 @@ package txpool
 import (
 	"dex/config"
 	"dex/db"
+	"dex/keys"
 	"dex/logs"
 	"dex/network"
 	"dex/pb"
@@ -126,7 +127,9 @@ func (tp *TxPool) RemoveTx(txID string) error {
 	defer tp.mu.Unlock()
 
 	tp.pendingAnyTxCache.Remove(txID)
-	tp.shortPendingAnyTxCache.Remove(txID[2:18])
+	if len(txID) >= 18 {
+		tp.shortPendingAnyTxCache.Remove(txID[2:18])
+	}
 
 	// 同时从DB删除
 	return tp.dbManager.DeletePendingAnyTx(txID)
@@ -175,10 +178,50 @@ func (tp *TxPool) GetPendingTxs() []*pb.AnyTx {
 }
 
 // 内部方法
+func (tp *TxPool) isTxApplied(txID string) bool {
+	if txID == "" || tp.dbManager == nil {
+		return false
+	}
+	status, err := tp.dbManager.Get(keys.KeyVMAppliedTx(txID))
+	return err == nil && len(status) > 0
+}
+
+func (tp *TxPool) cacheAnyTxUnlocked(txID string, anyTx *pb.AnyTx, pending bool) {
+	tp.cacheTx.Add(txID, anyTx)
+	if pending {
+		tp.pendingAnyTxCache.Add(txID, anyTx)
+	}
+	if len(txID) >= 18 {
+		shortID := txID[2:18]
+		tp.shortTxCache.Add(shortID, txID)
+		if pending {
+			tp.shortPendingAnyTxCache.Add(shortID, txID)
+		}
+	}
+}
+
+// CacheAnyTx stores tx only for short-hash lookup and does not put it into pending.
+func (tp *TxPool) CacheAnyTx(anyTx *pb.AnyTx) error {
+	if anyTx == nil {
+		return fmt.Errorf("nil transaction")
+	}
+	txID := anyTx.GetTxId()
+	if txID == "" {
+		return fmt.Errorf("txID is empty")
+	}
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	tp.cacheAnyTxUnlocked(txID, anyTx, false)
+	return nil
+}
+
 func (tp *TxPool) storeAnyTx(anyTx *pb.AnyTx) error {
 	txID := anyTx.GetTxId()
 	if txID == "" {
 		return fmt.Errorf("txID is empty")
+	}
+	if tp.isTxApplied(txID) {
+		return tp.CacheAnyTx(anyTx)
 	}
 
 	tp.mu.Lock()
@@ -190,12 +233,7 @@ func (tp *TxPool) storeAnyTx(anyTx *pb.AnyTx) error {
 	}
 
 	// 1. 先同步写入内存缓存（确保立即可用于区块还原）
-	tp.pendingAnyTxCache.Add(txID, anyTx)
-	tp.cacheTx.Add(txID, anyTx)
-	if len(txID) >= 18 {
-		tp.shortPendingAnyTxCache.Add(txID[2:18], txID)
-		tp.shortTxCache.Add(txID[2:18], txID)
-	}
+	tp.cacheAnyTxUnlocked(txID, anyTx, true)
 
 	tp.mu.Unlock()
 
@@ -217,15 +255,28 @@ func (p *TxPool) loadFromDB() {
 		return
 	}
 
+	stalePendingKeys := make([]string, 0)
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	for _, anyTx := range pendingAnyTxs {
 		txID := ExtractAnyTxId(anyTx)
 		if txID == "" {
 			continue
 		}
-		p.pendingAnyTxCache.Add(txID, anyTx)
+		if p.isTxApplied(txID) {
+			stalePendingKeys = append(stalePendingKeys, db.KeyPendingAnyTx(txID))
+			continue
+		}
+		p.cacheAnyTxUnlocked(txID, anyTx, true)
 	}
+	p.mu.Unlock()
+
+	for _, staleKey := range stalePendingKeys {
+		_ = p.dbManager.DeleteKey(staleKey)
+	}
+	if len(stalePendingKeys) > 0 {
+		logs.Warn("[TxPool] Dropped %d stale pending txs already applied by VM", len(stalePendingKeys))
+	}
+
 	logs.Verbose("[TxPool] Loaded %d pending AnyTx from DB.\n", len(pendingAnyTxs))
 }
 
@@ -234,19 +285,20 @@ func (p *TxPool) StoreAnyTx(anyTx *pb.AnyTx) error {
 	if txID == "" {
 		return fmt.Errorf("txID is empty")
 	}
+	if p.isTxApplied(txID) {
+		return p.CacheAnyTx(anyTx)
+	}
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	// 如果池里已经有了就跳过
 	if _, exists := p.pendingAnyTxCache.Get(txID); exists {
+		p.mu.Unlock()
 		return nil
 	}
 	// 加入内存缓存
-	p.pendingAnyTxCache.Add(txID, anyTx)
-	p.cacheTx.Add(txID, anyTx)
-	p.shortPendingAnyTxCache.Add(txID[2:18], txID)
-	p.shortTxCache.Add(txID[2:18], txID)
+	p.cacheAnyTxUnlocked(txID, anyTx, true)
+	p.mu.Unlock()
 	//logs.Trace("[TxPool] Added TxId %s to shortPendingAnyTxCache.", txID[2:18])
 	// —— 直接落DB
 	if err := p.dbManager.SavePendingAnyTx(anyTx); err != nil {
@@ -260,7 +312,9 @@ func (p *TxPool) RemoveAnyTx(txID string) {
 	defer p.mu.Unlock()
 
 	p.pendingAnyTxCache.Remove(txID)
-	p.shortPendingAnyTxCache.Remove(txID[2:18])
+	if len(txID) >= 18 {
+		p.shortPendingAnyTxCache.Remove(txID[2:18])
+	}
 	// —— 直接删DB
 	_ = p.dbManager.DeletePendingAnyTx(txID)
 }
