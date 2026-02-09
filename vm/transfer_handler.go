@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// TransferTxHandler 杞处浜ゆ槗澶勭悊鍣?
+// TransferTxHandler 转账交易处理器
 type TransferTxHandler struct{}
 
 func (h *TransferTxHandler) Kind() string {
@@ -17,7 +17,7 @@ func (h *TransferTxHandler) Kind() string {
 }
 
 func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 鎻愬彇Transaction
+	// 1. 提取Transaction
 	transferTx, ok := tx.GetContent().(*pb.AnyTx_Transaction)
 	if !ok {
 		return nil, &Receipt{
@@ -36,7 +36,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, fmt.Errorf("invalid transfer transaction")
 	}
 
-	// 楠岃瘉杞处閲戦
+	// 验证转账金额
 	amount, err := parsePositiveBalanceStrict("transfer amount", transfer.Amount)
 	if err != nil {
 		return nil, &Receipt{
@@ -46,7 +46,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, fmt.Errorf("invalid transfer amount: %s", transfer.Amount)
 	}
 
-	// 2. 妫€鏌ュ彂閫佹柟璐︽埛鏄惁琚喕缁?
+	// 2. 检查发送方账户是否被冻结
 	freezeKey := keys.KeyFreeze(transfer.Base.FromAddress, transfer.TokenAddress)
 	freezeData, isFrozen, _ := sv.Get(freezeKey)
 	if isFrozen && string(freezeData) == "true" {
@@ -57,7 +57,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, fmt.Errorf("sender account is frozen for token: %s", transfer.TokenAddress)
 	}
 
-	// 3. 璇诲彇鍙戦€佹柟璐︽埛
+	// 3. 读取发送方账户
 	fromAccountKey := keys.KeyAccount(transfer.Base.FromAddress)
 	fromAccountData, fromExists, err := sv.Get(fromAccountKey)
 	if err != nil || !fromExists {
@@ -77,7 +77,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, err
 	}
 
-	// 4. 浣跨敤鍒嗙瀛樺偍妫€鏌ュ彂閫佹柟浣欓
+	// 4. 使用分离存储检查发送方余额
 	fromTokenBal := GetBalance(sv, transfer.Base.FromAddress, transfer.TokenAddress)
 	fromBalance, err := parseBalanceStrict("sender balance", fromTokenBal.Balance)
 	if err != nil {
@@ -174,7 +174,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	// 7. 鎵ц杞处涓庢墸璐癸紙浣跨敤鍒嗙瀛樺偍锛?
 	// 鍑忓皯鍙戦€佹柟浣欓
 	if transfer.TokenAddress == FeeToken {
-		// FB 杞处锛氫竴娆℃€ф墸闄?total (amount + fee)
+		// 非 FB 转账：分别扣除 amount 和 fee
 		totalDeduct, err := SafeAdd(amount, feeAmount)
 		if err != nil {
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "amount+fee overflow"}, err
@@ -268,7 +268,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Category:    "account",
 	})
 
-	// 娣诲姞浣欓 WriteOps锛堝彂閫佹柟锛?
+	// 8. 记录转账历史
 	fromTokenBalKey := keys.KeyBalance(transfer.Base.FromAddress, transfer.TokenAddress)
 	fromTokenBalData, _, _ := sv.Get(fromTokenBalKey)
 	ws = append(ws, WriteOp{Key: fromTokenBalKey, Value: fromTokenBalData, SyncStateDB: true, Category: "balance"})

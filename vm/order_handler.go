@@ -27,9 +27,9 @@ var (
 	}
 )
 
-// OrderTxHandler 鐠併垹宕熸禍銈嗘婢跺嫮鎮婇敓?
+// OrderTxHandler 订单交易处理器
 type OrderTxHandler struct {
-	// 閸栧搫娼＄痪褍鍩嗛惃鍕吂閸楁洜缈辩紓鎾崇摠閿涘牏鏁?Executor 閿?PreExecuteBlock 閺冩儼顔曠純顕嗙礆
+	// 区块级别的订单簿缓存（由 Executor 在 PreExecuteBlock 时设置）
 	orderBooks map[string]*matching.OrderBook
 }
 
@@ -37,13 +37,13 @@ func (h *OrderTxHandler) Kind() string {
 	return "order"
 }
 
-// SetOrderBooks 鐠佸墽鐤嗛崠鍝勬健缁狙冨焼閻ㄥ嫯顓归崡鏇犵勘缂傛挸鐡?
+// SetOrderBooks 设置区块级别的订单簿缓存
 func (h *OrderTxHandler) SetOrderBooks(books map[string]*matching.OrderBook) {
 	h.orderBooks = books
 }
 
 func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 閹绘劕褰嘜rderTx
+	// 1. 提取OrderTx
 	orderTx, ok := tx.GetContent().(*pb.AnyTx_OrderTx)
 	if !ok {
 		return nil, &Receipt{
@@ -62,7 +62,7 @@ func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 		}, fmt.Errorf("invalid order transaction")
 	}
 
-	// 2. 閺嶈宓侀幙宥勭稊缁鐎烽崚鍡楀絺婢跺嫮鎮?
+	// 2. 根据操作类型分发处理
 	switch ord.Op {
 	case pb.OrderOp_ADD:
 		return h.handleAddOrder(ord, sv)
@@ -77,7 +77,7 @@ func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 	}
 }
 
-// handleAddOrder 婢跺嫮鎮婂ǎ璇插/閺囧瓨鏌婄拋銏犲礋閿涘苯鑻熼幍褑顢戦幘顔兼値
+// handleAddOrder 处理添加/更新订单，并执行撮合
 func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	amountBI, err := parsePositiveBalanceStrict("order amount", ord.Amount)
 	if err != nil {
@@ -652,7 +652,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 				Owner:            newOrd.Base.FromAddress,
 			}
 		} else {
-			// 鏉╂瑦妲稿鎻掔摠閸︺劎娈戠拋銏犲礋閿涘奔绮燬tateView閸旂姾娴?OrderState
+ // 失败也要归还
 			orderStateKey := keys.KeyOrderState(ev.OrderID)
 			orderStateData, exists, err := sv.Get(orderStateKey)
 			if err != nil || !exists {
@@ -761,7 +761,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			Category:    "orderstate",
 		})
 
-		// 閺囧瓨鏌婃禒閿嬬壐缁便垹绱?
+	// 所有使用 stateUpdates 的函数已执行完毕，现在安全地归还 Pool 对象
 		priceKey67, err := db.PriceToKey128(orderState.Price)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert price to key: %w", err)
@@ -777,7 +777,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			Category:    "index",
 		})
 
-		// 婵″倹鐏夌拋銏犲礋瀹告彃鐣崗銊﹀灇娴溿倧绱濋崚娑樼紦閺傛壆娈戝鍙夊灇娴溿倗鍌ㄩ敓?
+	// 如果 accountCache 中有更新后的账户，生成对应的 WriteOp
 		if orderState.IsFilled {
 			newIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, true, priceKey67, orderID)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
@@ -917,7 +917,7 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		return nil, fmt.Errorf("failed to convert price to key: %w", err)
 	}
 
-	// Phase 2: 婢х偛濮?side 閸欏倹鏆熼崠鍝勫瀻娑旀澘宕?
+		// 创建成交记录
 	priceIndexKey := keys.KeyOrderPriceIndex(pair, ord.Side, orderState.IsFilled, priceKey67, ord.Base.TxId)
 	indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 	ws = append(ws, WriteOp{
@@ -1037,7 +1037,7 @@ func (h *OrderTxHandler) generateTradeRecordsFromStates(
 			}
 		}
 
-		// 鐎瑰鍙忛幋顏勫絿鐠併垹宕?ID閿涘矂浼╅崗宥堢Ш閿?
+	// key 格式: "address:token"
 		takerIDShort := takerOrderID
 		if len(takerIDShort) > 8 {
 			takerIDShort = takerIDShort[:8]

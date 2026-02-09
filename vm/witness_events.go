@@ -110,8 +110,8 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		if err := unmarshalProtoCompat(vaultStateData, &vaultState); err == nil {
 			if vaultState.Status == VaultLifecycleDraining {
 				// DRAINING 鐘舵€佺殑 Vault 涓嶅啀鎺ュ彈鏂板叆璐?
-				// 娉ㄦ剰锛氳繖閲屽簲璇ユ嫆缁濓紝浣嗙敱浜庢槸 finalized 浜嬩欢锛屽彲鑳藉凡缁忓彂鐢燂紝璁板綍璀﹀憡
-				// 瀹為檯搴旇鍦?witness_handler.go 涓嫆缁?
+				// DRAINING 状态的 Vault 不再接受新入账
+				// 注意：这里应该拒绝，但由于是 finalized 事件，可能已经发生，记录警告
 				return fmt.Errorf("vault %d is DRAINING, cannot accept new recharge", vaultID)
 			}
 		}
@@ -151,7 +151,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		setWithMeta(sv, utxoKey, utxoData, true, "frost_funds_utxo")
 
 		// 鏇存柊 Vault 鐨勮祫閲戣处鏈仛鍚堢姸鎬侊紙鍙€夛紝鐢ㄤ簬鏌ヨ鎬婚锛?
-		// TODO: 鏇存柊鎬讳綑棰?
+		// 更新 Vault 的资金账本聚合状态（可选，用于查询总额）
 	} else {
 		// 璐︽埛閾?鍚堢害閾撅細鍐欏叆 lot FIFO
 		seqKey := keys.KeyFrostFundsLotSeq(chain, asset, vaultID, finalizeHeight)

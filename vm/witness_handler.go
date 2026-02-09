@@ -1,5 +1,5 @@
 // vm/witness_handler.go
-// 瑙佽瘉鑰呯浉鍏充氦鏄撳鐞嗗櫒
+// 见证者相关交易处理器
 package vm
 
 import (
@@ -49,7 +49,7 @@ func allocateVaultIDWithLifecycleCheck(sv StateView, chain, requestID string, va
 			// 妫€鏌?lifecycle锛堜粠 VaultTransitionState 鑾峰彇锛屾垨浠?VaultState.Status 鎺ㄦ柇锛?
 			// 濡傛灉 Vault 澶勪簬 DRAINING 鐘舵€侊紝灏濊瘯涓嬩竴涓?ACTIVE Vault
 			if vaultState.Status == VaultLifecycleDraining {
-				// 鏌ユ壘涓嬩竴涓?ACTIVE 鐨?Vault
+			// 如果 Vault 处于 DRAINING 状态，尝试下一个 ACTIVE Vault
 				for offset := uint32(1); offset < vaultCount; offset++ {
 					candidateID := (initialVaultID + offset) % vaultCount
 					candidateKey := keys.KeyFrostVaultState(chain, candidateID)
@@ -84,7 +84,7 @@ type WitnessServiceAware interface {
 
 // ==================== WitnessStakeTxHandler ====================
 
-// WitnessStakeTxHandler 瑙佽瘉鑰呰川鎶?瑙ｈ川鎶间氦鏄撳鐞嗗櫒
+// ==================== WitnessStakeTxHandler ====================
 type WitnessStakeTxHandler struct {
 	witnessSvc *witness.Service
 }
@@ -420,7 +420,7 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 	// 4. 璋冪敤 WitnessService 鏇存柊鐘舵€侊紙鍐呭瓨锛?
 	var finalRequest *pb.RechargeRequest
 	if h.witnessSvc != nil {
-		// 璁剧疆鎶曠エ浜ゆ槗 ID
+	// 4. 调用 WitnessService 更新状态（内存）
 		vote.Vote.TxId = vote.Base.TxId
 		updatedRequest, err := h.witnessSvc.ProcessVote(vote.Vote)
 		if err != nil {

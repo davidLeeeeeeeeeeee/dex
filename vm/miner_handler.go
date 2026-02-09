@@ -242,7 +242,7 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 
 	ws := make([]WriteOp, 0)
 
-	// 灏嗛攣瀹氫綑棰濊浆鍥炲彲鐢ㄤ綑棰濓紙浣跨敤瀹夊叏鍔犳硶锛?
+	// 保存更新后的余额
 	fbBal.MinerLockedBalance = "0"
 
 	currentBalance, err := parseBalanceStrict("balance", fbBal.Balance)
@@ -276,7 +276,7 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 		Category:    "balance",
 	})
 
-	// 鍙栨秷鐭垮伐鐘舵€?
+	// 记录停止挖矿历史
 	account.IsMiner = false
 
 	// 淇濆瓨鏇存柊鍚庣殑璐︽埛锛堜笉鍚綑棰濓級

@@ -19,7 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Executor VM閹笛嗩攽???
+// Executor VM执行器
 type Executor struct {
 	mu             sync.RWMutex
 	DB             iface.DBManager
@@ -28,14 +28,14 @@ type Executor struct {
 	KFn            KindFn
 	ReadFn         ReadThroughFn
 	ScanFn         ScanFn
-	WitnessService *witness.Service // 鐟欎浇鐦夐懓鍛箛閸斺槄绱欑痪顖氬敶鐎涙顓哥粻妤伳侀崸妤嬬礆
+	WitnessService *witness.Service // 见证者服务（纯内存计算模块）
 }
 
 func NewExecutor(db iface.DBManager, reg *HandlerRegistry, cache SpecExecCache) *Executor {
 	return NewExecutorWithWitness(db, reg, cache, nil)
 }
 
-// NewExecutorWithWitnessService 娴ｈ法鏁ゅ鍙夋箒閻ㄥ嫯顫嗙拠浣解偓鍛箛閸斺€冲灡瀵ゅ搫鐡欓幍褑顢戦崳?
+// NewExecutorWithWitnessService 使用已有的见证者服务创建子执行器
 func NewExecutorWithWitnessService(db iface.DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessSvc *witness.Service) *Executor {
 	if reg == nil {
 		reg = NewHandlerRegistry()
@@ -52,12 +52,12 @@ func NewExecutorWithWitnessService(db iface.DBManager, reg *HandlerRegistry, cac
 		WitnessService: witnessSvc,
 	}
 
-	// 鐠佸墽鐤哛eadFn
+	// 设置ReadFn
 	executor.ReadFn = func(key string) ([]byte, error) {
 		return db.Get(key)
 	}
 
-	// 鐠佸墽鐤哠canFn
+	// 设置ScanFn
 	executor.ScanFn = func(prefix string) (map[string][]byte, error) {
 		return db.Scan(prefix)
 	}
@@ -65,15 +65,15 @@ func NewExecutorWithWitnessService(db iface.DBManager, reg *HandlerRegistry, cac
 	return executor
 }
 
-// NewExecutorWithWitness 閸掓稑缂撶敮锕侇潌鐠囦浇鈧懏婀囬崝锛勬畱閹笛嗩攽???
+// NewExecutorWithWitness 创建带见证者服务的执行器
 func NewExecutorWithWitness(db iface.DBManager, reg *HandlerRegistry, cache SpecExecCache, witnessConfig *witness.Config) *Executor {
-	// 閸掓稑缂撻獮璺烘儙閸斻劏顫嗙拠浣解偓鍛箛???
+	// 创建并启动见证者服务
 	witnessSvc := witness.NewService(witnessConfig)
 	_ = witnessSvc.Start()
 
 	executor := NewExecutorWithWitnessService(db, reg, cache, witnessSvc)
 
-	// 閸掓繂顫愰崠?Witness 閻樿埖???
+	// 初始化 Witness 状态
 	if err := executor.LoadWitnessState(); err != nil {
 		fmt.Printf("[VM] Warning: failed to load witness state: %v\n", err)
 	}
@@ -81,13 +81,13 @@ func NewExecutorWithWitness(db iface.DBManager, reg *HandlerRegistry, cache Spec
 	return executor
 }
 
-// LoadWitnessState 娴犲孩鏆熼幑顔肩氨閸旂姾娴囬幍鈧張澶嬫た鐠哄啰娈戠憴浣界槈閼板懌鈧礁鍙嗙拹锕侇嚞濮瑰倸鎷伴幐鎴炲灛鐠佹澘缍嶉崚?WitnessService 閸愬懎鐡ㄦ稉?
+// LoadWitnessState 从数据库加载所有活跃的见证者、入账请求和挑战记录到 WitnessService 内存中
 func (x *Executor) LoadWitnessState() error {
 	if x.WitnessService == nil {
 		return nil
 	}
 
-	// 1. 閸旂姾娴囩憴浣界槈閼板懍淇婇幁顖ょ礄閹碘偓閺堝妞跨捄鍐潌鐠囦浇鈧懘鍏橀棁鈧憰浣告躬閸愬懎鐡ㄦ稉顓濅簰娓氳儻绻樼悰宀勬閺堟椽鈧瀚ㄩ敍?
+	// 1. 加载见证者信息（所有活跃见证者都需要在内存中以便进行随机选择）
 	winfoMap, err := x.DB.Scan(keys.KeyWitnessInfoPrefix())
 	if err == nil {
 		count := 0
@@ -103,14 +103,14 @@ func (x *Executor) LoadWitnessState() error {
 		}
 	}
 
-	// 2. 閸旂姾娴囬棃鐐电矒閹胶娈戦崗銉ㄥ鐠囬攱???
+	// 2. 加载非终态的入账请求
 	requestMap, err := x.DB.Scan(keys.KeyRechargeRequestPrefix())
 	if err == nil {
 		count := 0
 		for _, data := range requestMap {
 			var req pb.RechargeRequest
 			if err := unmarshalProtoCompat(data, &req); err == nil {
-				// 閸欘亝婀侀棃鐐电矒閹緤绱橮ENDING, VOTING, CONSENSUS_PASS, CHALLENGE_PERIOD, CHALLENGED, ARBITRATION, SHELVED閿涘娓剁憰浣稿???
+				// 只有非终态（PENDING, VOTING, CONSENSUS_PASS, CHALLENGE_PERIOD, CHALLENGED, ARBITRATION, SHELVED）需要加载
 				if req.Status != pb.RechargeRequestStatus_RECHARGE_FINALIZED &&
 					req.Status != pb.RechargeRequestStatus_RECHARGE_REJECTED {
 					x.WitnessService.LoadRequest(&req)
@@ -123,7 +123,7 @@ func (x *Executor) LoadWitnessState() error {
 		}
 	}
 
-	// 3. 閸旂姾娴囬棃鐐电矒閹胶娈戦幐鎴炲灛鐠佹澘???
+	// 3. 加载非终态的挑战记录
 	challengeMap, err := x.DB.Scan(keys.KeyChallengeRecordPrefix())
 	if err == nil {
 		count := 0
@@ -144,28 +144,28 @@ func (x *Executor) LoadWitnessState() error {
 	return nil
 }
 
-// SetWitnessService 鐠佸墽鐤嗙憴浣界槈閼板懏婀囬崝鈽呯礄閻劋绨ù瀣槸閹存牞鍤滅€规矮绠熼柊宥囩枂???
+// SetWitnessService 设置见证者服务（用于测试或自定义配置）
 func (x *Executor) SetWitnessService(svc *witness.Service) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	x.WitnessService = svc
 }
 
-// GetWitnessService 閼惧嘲褰囩憴浣界槈閼板懏婀囬崝?
+// GetWitnessService 获取见证者服务
 func (x *Executor) GetWitnessService() *witness.Service {
 	x.mu.RLock()
 	defer x.mu.RUnlock()
 	return x.WitnessService
 }
 
-// SetKindFn 鐠佸墽鐤咾ind閹绘劕褰囬崙鑺ユ殶
+// SetKindFn 设置Kind提取函数
 func (x *Executor) SetKindFn(fn KindFn) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	x.KFn = fn
 }
 
-// PreExecuteBlock 妫板嫭澧界悰灞藉隘閸ф绱欐稉宥呭晸閺佺増宓佹惔鎿勭礆
+// PreExecuteBlock 预执行区块（不写数据库）
 func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	return x.preExecuteBlock(b, true)
 }
@@ -175,7 +175,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		return nil, ErrNilBlock
 	}
 
-	// 濡偓閺屻儳绱???
+	// 检查缓存
 	if useCache {
 		if cached, ok := x.Cache.Get(b.BlockHash); ok {
 			return cached, nil
@@ -186,7 +186,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		x.WitnessService.SetCurrentHeight(b.Header.Height)
 	}
 
-	// 閸掓稑缂撻弬鎵畱閻樿埖鈧浇顫嬮崶?
+	// 创建新的状态视图
 	sv := NewStateView(x.ReadFn, x.ScanFn)
 	receipts := make([]*Receipt, 0, len(b.Body))
 	seenTxIDs := make(map[string]struct{}, len(b.Body))
@@ -194,10 +194,10 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 	skippedDupInBlock := 0
 	skippedApplied := 0
 
-	// Step 1: 妫板嫭澹傞幓蹇撳隘閸ф绱濋弨鍫曟肠閹碘偓閺堝姘﹂弰鎾愁嚠
+	// Step 1: 预扫描区块，收集所有交易对
 	pairs := collectPairsFromBlock(b)
 
-	// Step 2 & 3: 娑撯偓濞嗏剝鈧囧櫢瀵ょ儤澧嶉張澶庮吂閸楁洜???
+	// Step 2 & 3: 一次性重建所有订单簿
 	pairBooks, err := x.rebuildOrderBooksForPairs(pairs, sv)
 	if err != nil {
 		return &SpecResult{
@@ -209,7 +209,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		}, nil
 	}
 
-	// 闁秴宸婚幍褑顢戝В蹇庨嚋娴溿倖???
+	// 遍历执行每个交易
 	for idx, tx := range b.Body {
 		if tx == nil {
 			continue
@@ -233,7 +233,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 				continue
 			}
 		}
-		// 閹绘劕褰囨禍銈嗘缁???
+		// 提取交易类型
 		kind, err := x.KFn(tx)
 		if err != nil {
 			return &SpecResult{
@@ -245,12 +245,12 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 			}, nil
 		}
 
-		// 缂佺喍绔村▔銊ュ弳瑜版挸澧犻幍褑顢戞妯哄閸掗姘﹂弰?BaseMessage 娑擃叏绱濇笟?Handler 娴ｈ法???
+		// 统一注入当前执行高度到交易 BaseMessage 中，供 Handler 使用
 		if base := getBaseMessage(tx); base != nil {
 			base.ExecutedHeight = b.Header.Height
 		}
 
-		// 閼惧嘲褰囩€电懓绨查惃鍑ndler
+		// 获取对应的Handler
 		h, ok := x.Reg.Get(kind)
 		if !ok {
 			return &SpecResult{
@@ -262,43 +262,43 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 			}, nil
 		}
 
-		// Step 4: 婵″倹鐏夐弰?OrderTxHandler閿涘本鏁為崗?pairBooks
-		// 閻楃懓鍩嗗▔銊﹀壈閿涙艾娲滄稉?HandlerRegistry 娑擃厼鐡ㄩ崒銊ф畱閺勵垰宕熸笟瀣剁礉閸︺劌鑻熼崣鎴炲⒔鐞涘苯顦挎稉顏勫隘閸ф???
-		// 娑撳秷鍏橀惄瀛樺复娣囶喗鏁奸崡鏇氱伐閻ㄥ嫮濮搁幀浣碘偓鍌氱箑妞よ鍘犻梾鍡曠娑擃亜鐪柈銊ョ杽娓氬绱濈涵顔荤箽閺堫剚顐奸幍褑顢戞担璺ㄦ暏濮濓絿鈥橀惃鍕吂閸楁洜缈遍妴?
+		// Step 4: 如果是 OrderTxHandler，注入 pairBooks
+		// 特别注意：因为 HandlerRegistry 中存储的是单例，在并发执行多个区块时
+		// 不能直接修改单例的状态。必须克隆一个局部实例，确保本次执行使用正确的订单簿。
 		if orderHandler, ok := h.(*OrderTxHandler); ok {
-			localHandler := *orderHandler // 濞村懏瀚圭拹婵撶礉閸ョ姳???OrderTxHandler 缂佹挻鐎粻鈧崡鏇礉閸欘亪娓堕幏鐤 map 閹稿洭鎷＄€涙???
+			localHandler := *orderHandler // 浅拷贝，因为 OrderTxHandler 结构简单，只需拷贝 map 指针字段
 			localHandler.SetOrderBooks(pairBooks)
 			h = &localHandler
 		}
 
-		// Step 5: 婵″倹鐏夐弰?WitnessServiceAware handler閿涘本鏁為崗?WitnessService
+		// Step 5: 如果是 WitnessServiceAware handler，注入 WitnessService
 		if witnessAware, ok := h.(WitnessServiceAware); ok && x.WitnessService != nil {
 			witnessAware.SetWitnessService(x.WitnessService)
 		}
 
-		// 閸掓稑缂撹箛顐ゅ弾閻愮櫢绱濋悽銊ょ艾婢惰精瑙﹂弮璺烘礀???
+		// 创建快照点，用于失败时回滚
 		snapshot := sv.Snapshot()
 
-		// 閹笛嗩攽娴溿倖???
+		// 执行交易
 		ws, rc, err := h.DryRun(tx, sv)
 		if err != nil {
-			// 婵″倹???Handler 鏉╂柨娲栨禍?Receipt閿涘矁顕╅弰搴㈡Ц娑撯偓娑擃亜褰叉禒銉︾垼鐠侀璐熸径杈Е閻ㄥ嫧鈧粈绗熼崝锟犳晩鐠囶垪鈧繐绱欐俊鍌欑稇妫版繀绗夌搾绛圭礆
-			// 鏉╂瑧顫掗幆鍛枌娑撳绗夋惔鏃€瀵曢幒澶嬫殻娑擃亜灏崸妤嬬礉閼板本妲哥拋鏉跨秿婢惰精瑙﹂悩鑸碘偓浣歌嫙缂佈呯敾
+			// 如果 Handler 返回了 Receipt，说明是一个可以标记为失败的“业务错误”（如余额不足）
+			// 这种情况下不应挂掉整个区块，而是记录失败状态并继续
 			if rc != nil {
-				// 閸ョ偞绮撮悩鑸碘偓浣稿煂鐠囥儰姘﹂弰鎾村⒔鐞涘苯???
+				// 回滚状态到该交易执行前
 				sv.Revert(snapshot)
 
-				// 绾喕绻氶悩鑸碘偓浣圭垼鐠囧棔???FAILED
+				// 确保状态标识为 FAILED
 				rc.Status = "FAILED"
 				if rc.Error == "" {
 					rc.Error = err.Error()
 				}
 
-				// 婵夘偄???Receipt 閸忓啯鏆熼幑顔艰嫙閺€鍫曟肠
-				// 娴ｈ法鏁ら崠鍝勬健閺冨爼妫块幋瀹犫偓宀勬姜閺堫剙婀撮弮鍫曟？閿涘瞼鈥樻穱婵嗩樋閼哄倻鍋ｇ涵顔肩暰???
+				// 填充 Receipt 元数据并收集
+				// 使用区块时间戳而非本地时间，确保多节点确定性
 				rc.BlockHeight = b.Header.Height
 				rc.Timestamp = b.Header.Timestamp
-				// FAILED 娴溿倖妲楁稊鐔活唶瑜版洖娲栧姘倵閻ㄥ嫪缍戞０婵嗘彥???
+				// FAILED 交易也记录回滚后的余额快照
 				if base := getBaseMessage(tx); base != nil && base.FromAddress != "" {
 					fbBal := GetBalance(sv, base.FromAddress, "FB")
 					if fbBal != nil {
@@ -311,7 +311,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 				continue
 			}
 
-			// 閻喐顒滈惃鍕礂???缁崵绮虹痪褔鏁婄拠顖ょ礄婵″倹妫ら弫鍫滄唉閺勬挻鐗稿蹇ョ礆閿涘苯娲栧姘嫙閹锋帞绮烽崠鍝勬健
+			// 真正的协议/系统级错误（如无效交易格式），回滚并拒绝区块
 			sv.Revert(snapshot)
 			return &SpecResult{
 				BlockID:  b.BlockHash,
@@ -322,12 +322,12 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 			}, nil
 		}
 
-		// 鐏忓敋s鎼存梻鏁ら崚鐨乿erlay閿涘牆顩ч弸娣抮yRun濞屸剝婀侀惄瀛樺复閸愭獨v???
+		// 将ws应用到overlay（如果DryRun没有直接写sv）
 		for _, w := range ws {
 			if w.Del {
 				sv.Del(w.Key)
 			} else {
-				// 娴ｈ法???SetWithMeta 娣囨繄鏆€閸忓啯鏆熼幑?
+				// 使用 SetWithMeta 保留元数据
 				if svWithMeta, ok := sv.(interface {
 					SetWithMeta(string, []byte, bool, string)
 				}); ok {
@@ -337,13 +337,13 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 				}
 			}
 		}
-		// 婵夘偄???Receipt 閸忓啯鏆熼幑?
-		// 娴ｈ法鏁ら崠鍝勬健閺冨爼妫块幋瀹犫偓宀勬姜閺堫剙婀撮弮鍫曟？閿涘瞼鈥樻穱婵嗩樋閼哄倻鍋ｇ涵顔肩暰???
+		// 填充 Receipt 元数据
+		// 使用区块时间戳而非本地时间，确保多节点确定性
 		if rc != nil {
 			rc.BlockHeight = b.Header.Height
 			rc.Timestamp = b.Header.Timestamp
 
-			// 閹规洝骞忔禍銈嗘閹笛嗩攽閸氬海???FB 娴ｆ瑩顤傝箛顐ゅ弾閿涘牅???StateView 娑擃叀顕伴崣鏍电礉閸欏秵妲цぐ鎾冲 tx 閹笛嗩攽閸氬海娈戦惇鐔风杽閻樿埖鈧緤???
+			// 捕获交易执行后的 FB 余额快照（从 StateView 中读取，反映当前 tx 执行后的真实状态）
 			if base := getBaseMessage(tx); base != nil && base.FromAddress != "" {
 				fbBal := GetBalance(sv, base.FromAddress, "FB")
 				if fbBal != nil {
@@ -364,12 +364,12 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		return nil, err
 	}
 
-	// ========== 閸栧搫娼℃總鏍уС娑撳孩澧滅紒顓″瀭閸掑棗???==========
+	// ========== 区块奖励与手续费分发 ==========
 	if b.Header.Miner != "" {
-		// 1. 鐠侊紕鐣婚崠鍝勬健閸╄櫣顢呮總鏍уС閿涘牏閮寸紒鐔奉杻閸欐埊???
+		// 1. 计算区块基础奖励（系统增发）
 		blockReward := CalculateBlockReward(b.Header.Height, DefaultBlockRewardParams)
 
-		// 2. 濮瑰洦鈧姘﹂弰鎾村缂侇叀???
+		// 2. 汇总交易手续费
 		totalFees := big.NewInt(0)
 		for _, rc := range receipts {
 			if rc.Fee != "" {
@@ -380,11 +380,11 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 			}
 		}
 
-		// 3. 鐠侊紕鐣婚幀璇差殯???
+		// 3. 计算总奖励
 		totalReward, _ := SafeAdd(blockReward, totalFees)
 
 		if totalReward.Sign() > 0 {
-			// 4. 閹稿鐦笟瀣瀻???
+			// 4. 按比例分配
 			ratio := DefaultBlockRewardParams.WitnessRewardRatio
 			totalRewardDec := decimal.NewFromBigInt(totalReward, 0)
 
@@ -394,25 +394,25 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 			witnessReward := witnessRewardDec.BigInt()
 			minerReward := minerRewardDec.BigInt()
 
-			// 5. 閸掑棝鍘ょ紒娆戠唵???(70%)
-			// 绾喖鐣鹃幀褎鏁兼潻娑崇窗婵″倹鐏夐惌鍨紣鐠愶附鍩涙稉宥呯摠閸︻煉绱濋懛顏勫З閸掓稑缂撻弬鎷屽???
-			// 鏉╂瑧鈥樻穱婵囧閺堝濡悙鐟版躬閹笛嗩攽婵傛牕濮抽弮鏈甸獓閻㈢喓娴夐崥宀€???WriteOp
+			// 5. 分配给矿工 (70%)
+			// 确定性改进：如果矿工账户不存在，自动创建新账户
+			// 这确保所有节点在执行奖励时产生相同的 WriteOp
 			minerAccountKey := keys.KeyAccount(b.Header.Miner)
 			minerAccountData, exists, err := sv.Get(minerAccountKey)
 			var minerAccount pb.Account
 			if err == nil && exists {
 				_ = unmarshalProtoCompat(minerAccountData, &minerAccount)
 			} else {
-				// 閻灝浼愮拹锔藉煕娑撳秴鐡ㄩ崷顭掔礉閸掓稑缂撻弬鎷屽閹村嚖绱欐稉宥呭晙閸栧懎???Balances 鐎涙顔岄敍?
+				// 矿工账户不存在，创建新账户（不再包含 Balances 字段）
 				minerAccount = pb.Account{
 					Address: b.Header.Miner,
 				}
 			}
-			// 娣囨繂鐡ㄩ惌鍨紣鐠愶附鍩涢敍鍫滅瑝閸栧懎鎯堟担娆擃杺???
+			// 保存矿工账户（不包含余额）
 			rewardedAccountData, _ := proto.Marshal(&minerAccount)
 			sv.Set(minerAccountKey, rewardedAccountData)
 
-			// 娴ｈ法鏁ら崚鍡欘瀲鐎涙ê鍋嶉弴瀛樻煀閻灝浼愭担娆擃杺
+			// 使用分离存储更新矿工余额
 			const RewardToken = "FB"
 			minerFBBal := GetBalance(sv, b.Header.Miner, RewardToken)
 			currentBal, _ := ParseBalance(minerFBBal.Balance)
@@ -420,7 +420,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 			minerFBBal.Balance = newBal.String()
 			SetBalance(sv, b.Header.Miner, RewardToken, minerFBBal)
 
-			// 6. 閸掑棝鍘ょ紒娆掝潌鐠囦浇鈧懎顨涢崝杈ㄧ潨 (30%)
+			// 6. 分配给见证者奖励池 (30%)
 			if witnessReward.Sign() > 0 {
 				rewardPoolKey := keys.KeyWitnessRewardPool()
 				currentPoolData, exists, _ := sv.Get(rewardPoolKey)
@@ -432,8 +432,8 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 				sv.Set(rewardPoolKey, []byte(newPool.String()))
 			}
 
-			// 7. 娣囨繂鐡ㄦ總鏍уС鐠佹澘???
-			// 娴ｈ法鏁ら崠鍝勬健閺冨爼妫块幋瀹犫偓宀勬姜閺堫剙婀撮弮鍫曟？閿涘瞼鈥樻穱婵嗩樋閼哄倻鍋ｇ涵顔肩暰???
+			// 7. 保存奖励记录
+			// 使用区块时间戳而非本地时间，确保多节点确定性
 			rewardRecord := &pb.BlockReward{
 				Height:        b.Header.Height,
 				Miner:         b.Header.Miner,
@@ -448,7 +448,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		}
 	}
 
-	// 閸掓稑缂撻幍褑顢戠紒鎾寸亯
+	// 创建执行结果
 	res := &SpecResult{
 		BlockID:  b.BlockHash,
 		ParentID: b.Header.PrevBlockHash,
@@ -458,12 +458,12 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		Diff:     sv.Diff(),
 	}
 
-	// 缂傛挸鐡ㄧ紒鎾寸亯
+	// 缓存结果
 	x.Cache.Put(res)
 	return res, nil
 }
 
-// CommitFinalizedBlock 閺堚偓缂佸牆瀵查幓鎰唉閿涘牆鍟撻崗銉︽殶閹诡喖绨遍敍?
+// CommitFinalizedBlock 最终化提交（写入数据库）
 func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 	if b == nil {
 		return ErrNilBlock
@@ -472,7 +472,7 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 
-	// 娴兼ê鍘涙担璺ㄦ暏缂傛挸鐡ㄩ惃鍕⒔鐞涘瞼绮ㄩ弸?
+	// 优先使用缓存的执行结果
 	if committed, blockHash := x.IsBlockCommitted(b.Header.Height); committed {
 		if blockHash == b.BlockHash {
 			return nil
@@ -481,7 +481,7 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 			b.Header.Height, blockHash, b.BlockHash)
 	}
 
-	// 缂傛挸鐡ㄧ紓鍝勩亼閿涙岸鍣搁弬鐗堝⒔???
+	// 缓存缺失：重新执行
 	res, err := x.preExecuteBlock(b, false)
 	if err != nil {
 		return fmt.Errorf("re-execute block failed: %v", err)
@@ -494,18 +494,18 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 	return x.applyResult(res, b)
 }
 
-// applyResult 鎼存梻鏁ら幍褑顢戠紒鎾寸亯閸掔増鏆熼幑顔肩氨閿涘牏绮烘稉鈧幓鎰唉閸忋儱褰涢敍?
-// 鏉╂瑦妲搁崬顖欑閻ㄥ嫭娓剁紒鍫濆閹绘劒姘﹂悙鐧哥礉閹碘偓閺堝濮搁幀浣稿綁閸栨牠鍏橀崷銊ㄧ箹闁插苯顦╅悶?
+// applyResult 应用执行结果到数据库（统一提交入口）
+// 这是唯一的最终化提交点，所有状态变化都在这里处理
 func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
-	// 瀵偓閸氼垱鏆熼幑顔肩氨娴兼俺???
+	// 开启数据库会话
 	sess, err := x.DB.NewSession()
 	if err != nil {
 		return fmt.Errorf("failed to open db session: %v", err)
 	}
 	defer sess.Close()
 
-	// ========== 缁楊兛绔村銉窗濡偓閺屻儱绠撶粵澶嬧偓?==========
-	// 闂冨弶顒涢崥灞肩閸栧搫娼＄悮顐﹀櫢婢跺秵褰佹禍?
+	// ========== 第一步：检查幂等性 ==========
+	// 防止同一区块被重复提交
 	if committed, blockHash := x.IsBlockCommitted(b.Header.Height); committed {
 		if blockHash == b.BlockHash {
 			return nil
@@ -514,13 +514,13 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 			b.Header.Height, blockHash, b.BlockHash)
 	}
 
-	// ========== 缁楊兛绨╁銉窗鎼存梻鏁ら幍鈧張澶屽Ц閹礁褰夐弴?==========
-	// 闁秴???Diff 娑擃厾娈戦幍鈧張澶婂晸閹垮秳???
-	stateDBUpdates := make([]*WriteOp, 0) // 閻劋绨弨鍫曟肠闂団偓鐟曚礁鎮撳銉ュ煂 StateDB 閻ㄥ嫭娲块弬?
-	accountUpdates := make([]*WriteOp, 0) // 閻劋绨弨鍫曟肠鐠愶附鍩涢弴瀛樻煀閿涘瞼鏁ゆ禍搴㈡纯???stake index
+	// ========== 第二步：应用所有状态变更 ==========
+	// 遍历 Diff 中的所有写操作
+	stateDBUpdates := make([]*WriteOp, 0) // 用于收集需要同步到 StateDB 的更新
+	accountUpdates := make([]*WriteOp, 0) // 用于收集账户更新，用于更新 stake index
 
 	for i := range res.Diff {
-		w := &res.Diff[i] // 娴ｈ法鏁ら幐鍥嫛閿涘苯娲滄稉?WriteOp 閻ㄥ嫭鏌熷▔鏇熸Ц閹稿洭鎷￠幒銉︽暪???
+		w := &res.Diff[i] // 使用指针，因为 WriteOp 的方法是指针接收器
 		// 濡偓濞村澶勯幋閿嬫纯閺傚府绱欓悽銊ょ艾閺囧瓨???stake index???
 		if !w.Del && (w.Category == "account" || strings.HasPrefix(w.Key, "v1_account_")) {
 			accountUpdates = append(accountUpdates, w)
@@ -540,7 +540,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 
 	// ========== 缁楊兛绗佸銉窗閺囧瓨???Stake Index ==========
-	// 鐎甸€涚艾鐠愶附鍩涢弴瀛樻煀閿涘矂娓剁憰浣规纯???stake index
+	// ========== 第三步：更新 Stake Index ==========
 	if len(accountUpdates) > 0 {
 		// 鐏忔繆鐦亸?DBManager 鏉烆剚宕叉稉鍝勫徔???UpdateStakeIndex 閺傝纭堕惃鍕???
 		type StakeIndexUpdater interface {
@@ -555,8 +555,8 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 				}
 
 				// 娴ｈ法鏁ら崚鍡欘瀲鐎涙ê鍋嶉惃鍕稇妫版繆顓哥粻?stake
-				// 濞夈劍鍓伴敍姘崇箹闁插矂娓剁憰浣风矤 StateDB ???WriteOps 娑擃叀顕伴崣?FB 娴ｆ瑩???
-				// 閻㈠彉绨担娆擃杺瀹告彃鍨庣粋璇茬摠閸岊煉绱濋幋鎴滄粦閻╁瓨甯存禒?stateDBUpdates 娑擃厽鐓￠幍鎯ь嚠鎼存梻娈戞担娆擃杺閺囧瓨???
+				// 使用分离存储的余额计算 stake
+				// 注意：这里需要从 StateDB 或 WriteOps 中读取 FB 余额
 
 				// 鐠侊紕鐣婚弮?stake閿涘牅???StateDB session 鐠囪褰囬敍?
 				oldStake := decimal.Zero
@@ -568,7 +568,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 				}
 
 				// 鐠侊紕鐣婚弬?stake閿涘牅绮犺ぐ鎾冲 WriteOps 娑擃厽鐓￠幍鎯ь嚠鎼存梻娈戞担娆擃杺閺囧瓨鏌婇敍?
-				newStake := oldStake // 姒涙顓绘稉宥呭綁
+				newStake := oldStake				// 计算新 stake（从当前 WriteOps 中查找对应的余额更新）
 				balanceKey := keys.KeyBalance(address, "FB")
 				for _, wop := range stateDBUpdates {
 					if wop.Key == balanceKey && !wop.Del {
@@ -592,9 +592,9 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 
 	// ========== 缁楊剙娲撳銉窗閸氬本顒為崚?StateDB ==========
-	// 缂佺喍绔存径鍕倞閹碘偓閺堝娓剁憰浣告倱濮濄儱???StateDB 閻ㄥ嫭鏆熼幑?
-	// 閸楀厖濞囧▽鈩冩箒閺囧瓨鏌婇敍灞肩瘍鐠嬪啰???ApplyStateUpdate 娴犮儳鈥樼拋銈呯秼閸撳秹鐝惔锔炬畱閻樿埖鈧焦???
-	// 鏉烆剚宕叉稉?[]interface{} 娴犮儲寮х搾铏复閸欙綀顩﹀Ч?
+	// ========== 第四步：同步到 StateDB ==========
+	// 统一处理所有需要同步到 StateDB 的数据
+	// 即使没有更新，也调用 ApplyStateUpdate 以确认当前高度的状态根
 	stateDBUpdatesIface := make([]interface{}, len(stateDBUpdates))
 	for i, w := range stateDBUpdates {
 		stateDBUpdatesIface[i] = w
@@ -607,7 +607,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 
 	// ========== 缁楊剙娲撳銉窗閸愭瑥鍙嗘禍銈嗘婢跺嫮鎮婇悩鑸碘偓?==========
-	// 鐠佹澘缍嶅В蹇庨嚋娴溿倖妲楅惃鍕⒔鐞涘瞼濮搁幀浣告嫲闁挎瑨顕ゆ穱鈩冧紖
+	// ========== 第四步：写入交易处理状态 ==========
 	for _, rc := range res.Receipts {
 		// 娴溿倖妲楅悩鑸碘偓?
 		statusKey := keys.KeyVMAppliedTx(rc.TxID)
@@ -631,7 +631,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 
 	// ========== 缁楊剙娲撳銉ㄋ夐崗鍜冪窗閺囧瓨鏌婇崠鍝勬健娴溿倖妲楅悩鑸碘偓浣歌嫙娣囨繂鐡ㄩ崢鐔告瀮 ==========
-	// 閸掓稑???TxID ???Receipt 閻ㄥ嫭妲х亸鍕剁礉閸旂娀鈧喐鐓￠幍?
+	// ========== 第四步补充：更新区块交易状态并保存原文 ==========
 	receiptMap := make(map[string]*Receipt, len(res.Receipts))
 	for _, rc := range res.Receipts {
 		receiptMap[rc.TxID] = rc
@@ -639,7 +639,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	processedStatusTxs := make(map[string]struct{}, len(receiptMap))
 
 	// 1. 閸忓牊娲块弬鏉垮隘閸фぞ鑵戦幍鈧張澶夋唉閺勬挾娈戦悩鑸碘偓浣告嫲閹笛嗩攽妤傛ê???
-	// 娣囶喗鏁肩€电钖勫鏇犳暏閿涘奔绱伴崣宥嗘Ё閸掗绱堕崗銉ф畱 pb.Block ???
+	// 1. 先更新区块中所有交易的状态和执行高度
 	for _, tx := range b.Body {
 		if tx == nil {
 			continue
@@ -669,8 +669,8 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 
 	// 2. 鐏忓棙娲块弬鏉挎倵閻ㄥ嫪姘﹂弰鎾冲斧閺傚洣绻氱€涙ê鍩岄弫鐗堝祦鎼存搫绱欐稉宥呭讲閸欐﹫绱氶敍灞间簰娓氬灝鎮楃紒顓熺叀???
-	// 鐠併垹宕熺花璺ㄥЦ閹緤绱欑拋銏犲礋閻樿埖鈧降鈧椒鐜弽鑲╁偍瀵洜鐡戦敍澶婂弿闁劎???Diff 娑擃厾???WriteOp 閹貉冨煑
-	// 濞夈劍鍓伴敍姝剅derTx ???娴溿倖妲楅弻銉嚄"闁插本妲告稉宥呭讲閸欐ê甯弬鍥风幢???鐠併垹宕熺花?闁插本妲搁崣顖氬綁閻樿埖鈧緤绱濇稉銈堚偓鍛氦鎼存洖鍨庣粋?
+	// 2. 将更新后的交易原文保存到数据库（不可变），以便后续查询
+	// 订单簿状态（订单状态、价格索引等）全部由 Diff 中的 WriteOp 控制
 	type txRawSaver interface {
 		SaveTxRaw(tx *pb.AnyTx) error
 	}
@@ -700,7 +700,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 
 	// ========== 缁楊兛绨插銉窗閸愭瑥鍙嗛崠鍝勬健閹绘劒姘﹂弽鍥唶 ==========
-	// 閻劋绨獮鍌滅搼閹勵梾???
+	// ========== 第五步：写入区块提交标记 ==========
 	commitKey := keys.KeyVMCommitHeight(b.Header.Height)
 	x.DB.EnqueueSet(commitKey, b.BlockHash)
 
@@ -733,7 +733,7 @@ func (x *Executor) IsBlockCommitted(height uint64) (bool, string) {
 }
 
 // extractAddressFromAccountKey 娴犲氦澶勯幋?key 娑擃厽褰侀崣鏍ф勾閸р偓
-// 閺嶇厧绱￠敍???_account_<address> ???account_<address>
+// extractAddressFromAccountKey 从账户 key 中提取地址
 func extractAddressFromAccountKey(key string) string {
 	// 缁夊娅庨悧鍫熸拱閸撳秶???
 	prefixes := []string{"v1_account_", "account_"}
@@ -820,7 +820,7 @@ func ValidateBlock(b *pb.Block) error {
 }
 
 // collectPairsFromBlock 妫板嫭澹傞幓蹇撳隘閸ф绱濋弨鍫曟肠閹碘偓閺堝娓剁憰浣规尦閸氬牏娈戞禍銈嗘???
-// 绾喖鐣鹃幀褎鏁兼潻娑崇窗鏉╂柨娲栭幒鎺戠碍閸氬海娈戞禍銈嗘鐎电懓鍨悰顭掔礉绾喕绻氭径姘冲Ν閻愮懓顦╅悶鍡涖€庢惔蹇庣???
+// collectPairsFromBlock 预扫描区块，收集所有需要撮合的交易对
 func collectPairsFromBlock(b *pb.Block) []string {
 	pairSet := make(map[string]struct{})
 
@@ -853,7 +853,7 @@ func collectPairsFromBlock(b *pb.Block) []string {
 
 //	娑撯偓濞嗏剝鈧囧櫢瀵ょ儤澧嶉張澶夋唉閺勬挸顕惃鍕吂閸楁洜???
 //
-// 鏉╂柨娲栭敍姝產p[pair]*matching.OrderBook
+//
 func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[string]*matching.OrderBook, error) {
 	if len(pairs) == 0 {
 		return make(map[string]*matching.OrderBook), nil
@@ -865,7 +865,7 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 		ob := matching.NewOrderBookWithSink(nil)
 
 		// 2. 閸掑棗鍩嗛崝鐘烘祰娑旀壆娲忛崪灞藉礌閻╂娈戦張顏呭灇娴溿倛顓归崡?(is_filled:false)
-		// 閸旂姾娴囨稊鎵磸 Top 500
+		// 2. 分别加载买盘和卖盘的未成交订单 (is_filled:false)
 		buyPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_BUY, false)
 		buyOrders, err := x.DB.ScanKVWithLimitReverse(buyPrefix, 500)
 		if err == nil {

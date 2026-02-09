@@ -1,5 +1,5 @@
 // vm/frost_dkg_handlers.go
-// Frost DKG/鏉烆喗宕查惄绋垮彠娴溿倖妲?TxHandler 鐎圭偟骞?
+// Frost DKG/轮换相关交易 TxHandler 实现
 
 package vm
 
@@ -43,7 +43,7 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 
 	logs.Debug("[DKGCommit] sender=%s chain=%s vault=%d epoch=%d algo=%v", sender, chain, vaultID, epochID, signAlgo)
 
-	// 1. 楠炲倻鐡戝Λ鈧弻?
+	// 1. 幂等检查
 	existingKey := keys.KeyFrostVaultDkgCommit(chain, vaultID, epochID, sender)
 	existingData, exists, _ := sv.Get(existingKey)
 	if exists && len(existingData) > 0 {
@@ -51,7 +51,7 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "SUCCEED", WriteCount: 0}, nil
 	}
 
-	// 2. 妤犲矁鐦?VaultTransitionState 鐎涙ê婀稉鏃傚Ц閹焦顒滅涵?
+	// 2. 验证 VaultTransitionState 存在且状态正确
 	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 	transitionData, transitionExists, _ := sv.Get(transitionKey)
 	if !transitionExists || len(transitionData) == 0 {
@@ -63,24 +63,24 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
 	}
 
-	// 3. 娑撱儲鐗搁弽锟犵崣 Commit 缁愭褰涢敍姘涧閼宠棄婀?[Trigger, CommitDeadline] 閸栨椽妫?
+	// 3. 严格校验 Commit 窗口：只能在 [Trigger, CommitDeadline] 区间
 	if height < transition.TriggerHeight || height > transition.DkgCommitDeadline {
 		logs.Warn("[DKGCommit] height out of window: height=%d window=[%d, %d]", height, transition.TriggerHeight, transition.DkgCommitDeadline)
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("commit window violation (height %d, window [%d, %d])", height, transition.TriggerHeight, transition.DkgCommitDeadline)}, nil
 	}
 
-	// 4. 濡偓閺?DKG 閻樿埖鈧?
+	// 4. 检查 DKG 状态
 	if transition.DkgStatus != DKGStatusCommitting && transition.DkgStatus != DKGStatusNotStarted {
-		// 閺冦垻鍔ч張澶夌啊娑撱儲鐗搁惃鍕彯鎼达箑灏梻杈剧礉闁槒绶悩鑸碘偓浣诡梾閺屻儱褰叉禒銉︽纯娑撱儲鐗搁妴?
-		// 婵″倹鐏夐悩鑸碘偓浣稿嚒缂佸繑甯规潻娑樺煂 SHARING閿涘矁顕╅弰搴″嚒缂佸繗绻冩禍?Commit 闂冭埖顔岄敍鍫熷灗閼板懏婀佹禍楦跨箽鐟欏嫭褰侀崜宥嗗腹閻樿埖鈧緤绱濇担鍡涚彯鎼达附顥呭ù瀣Ц缁楊兛绔撮柆鎾绘Щ缁惧尅绱?
+		// 既然有了严格的高度区间，逻辑状态检查可以更严格。
+		// 如果状态已经推进到 SHARING，说明已经过了 Commit 阶段（或者有人违规提前推状态，但高度检测是第一道防线）
 		logs.Warn("[DKGCommit] invalid dkg_status for commit: %s", transition.DkgStatus)
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, nil
 	}
 
-	// 閸戝棗顦崘娆愭惙娴ｆ粌鍨悰?
+	// 准备写操作列表
 	ops := []WriteOp{}
 
-	// 婵″倹鐏夎ぐ鎾冲閺?NOT_STARTED閿涘苯鍨崷銊﹀复閺€璺哄煂缁楊兛绔存稉?CommitTx 閺冭埖甯规潻娑樺煂 COMMITTING 閻樿埖鈧?
+	// 如果当前是 NOT_STARTED，则在接收到第一个 CommitTx 时推进到 COMMITTING 状态
 	if transition.DkgStatus == DKGStatusNotStarted {
 		transition.DkgStatus = DKGStatusCommitting
 		transitionData, err := proto.Marshal(transition)
@@ -94,22 +94,22 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		}
 	}
 
-	// 4. 濡偓閺?sign_algo 娑撯偓閼峰瓨鈧?
+	// 4. 检查 sign_algo 一致性
 	if transition.SignAlgo != signAlgo {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "sign_algo mismatch"}, errors.New("sign_algo mismatch")
 	}
 
-	// 5. 濡偓閺?sender 閺勵垰鎯侀崷?new_committee_members 娑?
+	// 5. 检查 sender 是否在 new_committee_members 中
 	if !isInCommittee(sender, transition.NewCommitteeMembers) {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "sender not in committee"}, errors.New("sender not in committee")
 	}
 
-	// 6. 妤犲矁鐦夐幍鑳嚡閻愯鏆熼幑?
+	// 6. 验证承诺点数据
 	if len(req.CommitmentPoints) == 0 || len(req.AI0) == 0 {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "empty commitment data"}, errors.New("empty commitment data")
 	}
 
-	// 7. 鐎涙ê鍋嶉幍鑳嚡
+	// 7. 存储承诺
 	commitment := &pb.FrostVaultDkgCommitment{
 		Chain:            chain,
 		VaultId:          vaultID,
@@ -176,12 +176,12 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	logs.Debug("[DKGShare] sender=%s chain=%s vault=%d epoch=%d dealer=%s receiver=%s",
 		sender, chain, vaultID, epochID, dealerID, receiverID)
 
-	// 妤犲矁鐦?sender 閺?dealer
+	// 验证 sender 是 dealer
 	if sender != dealerID {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "sender != dealer_id"}, errors.New("sender != dealer_id")
 	}
 
-	// 1. 楠炲倻鐡戝Λ鈧弻?
+	// 1. 幂等检查
 	existingKey := keys.KeyFrostVaultDkgShare(chain, vaultID, epochID, dealerID, receiverID)
 	existingData, exists, _ := sv.Get(existingKey)
 	if exists && len(existingData) > 0 {
@@ -189,7 +189,7 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 		return nil, &Receipt{TxID: txID, Status: "SUCCEED", WriteCount: 0}, nil
 	}
 
-	// 2. 妤犲矁鐦?VaultTransitionState 鐎涙ê婀稉鏃傚Ц閹焦顒滅涵?
+	// 2. 验证 VaultTransitionState 存在且状态正确
 	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 	transitionData, transitionExists, _ := sv.Get(transitionKey)
 	if !transitionExists || len(transitionData) == 0 {
@@ -201,7 +201,7 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
 	}
 
-	// 3. 娑撱儲鐗搁弽锟犵崣 Sharing 缁愭褰涢敍姘涧閼宠棄婀?(CommitDeadline, SharingDeadline] 閸栨椽妫?
+	// 3. 严格校验 Sharing 窗口：只能在 (CommitDeadline, SharingDeadline] 区间
 	if height <= transition.DkgCommitDeadline {
 		logs.Warn("[DKGShare] too early: height=%d <= deadline=%d", height, transition.DkgCommitDeadline)
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("sharing window violation (too early: height %d <= commit_deadline %d)", height, transition.DkgCommitDeadline)}, nil
@@ -211,7 +211,7 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("sharing window violation (too late: height %d > sharing_deadline %d)", height, transition.DkgSharingDeadline)}, nil
 	}
 
-	// 4. 濡偓閺?DKG 閻樿埖鈧?
+	// 4. 检查 DKG 状态
 	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusCommitting &&
 		transition.DkgStatus != DKGStatusNotStarted {
 		logs.Warn("[DKGShare] invalid dkg_status for share: %s", transition.DkgStatus)
@@ -220,7 +220,7 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 
 	ops := []WriteOp{}
 
-	// 婵″倹鐏夎ぐ鎾冲閺?COMMITTING 閹?NOT_STARTED閿涘苯鍨崷銊﹀复閺€璺哄煂缁楊兛绔存稉?ShareTx 閺冭埖甯规潻娑樺煂 SHARING 閻樿埖鈧?
+	// 如果当前是 COMMITTING 或 NOT_STARTED，则在接收到第一个 ShareTx 时推进到 SHARING 状态
 	if transition.DkgStatus == DKGStatusCommitting || transition.DkgStatus == DKGStatusNotStarted {
 		transition.DkgStatus = DKGStatusSharing
 		transitionData, err := proto.Marshal(transition)
@@ -234,7 +234,7 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 		}
 	}
 
-	// 4. 濡偓閺?dealer/receiver 閺勵垰鎯侀崷?new_committee_members 娑?
+	// 4. 检查 dealer/receiver 是否在 new_committee_members 中
 	if !isInCommittee(dealerID, transition.NewCommitteeMembers) {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "dealer not in committee"}, errors.New("dealer not in committee")
 	}
@@ -242,12 +242,12 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "receiver not in committee"}, errors.New("receiver not in committee")
 	}
 
-	// 5. 妤犲矁鐦夌€靛棙鏋冩稉宥勮礋缁?
+	// 5. 验证密文不为空
 	if len(req.Ciphertext) == 0 {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "empty ciphertext"}, errors.New("empty ciphertext")
 	}
 
-	// 6. 鐎涙ê鍋?share
+	// 6. 存储 share
 	share := &pb.FrostVaultDkgShare{
 		Chain:       chain,
 		VaultId:     vaultID,
@@ -313,12 +313,12 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 	logs.Debug("[DKGComplaint] sender=%s chain=%s vault=%d epoch=%d dealer=%s receiver=%s",
 		sender, chain, vaultID, epochID, dealerID, receiverID)
 
-	// 妤犲矁鐦?sender 閺?receiver
+	// 验证 sender 是 receiver
 	if sender != receiverID {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "sender != receiver_id"}, errors.New("sender != receiver_id")
 	}
 
-	// 1. 楠炲倻鐡戝Λ鈧弻?
+	// 1. 幂等检查
 	complaintKey := keys.KeyFrostVaultDkgComplaint(chain, vaultID, epochID, dealerID, receiverID)
 	existingData, exists, _ := sv.Get(complaintKey)
 	if exists && len(existingData) > 0 {
@@ -326,7 +326,7 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 		return nil, &Receipt{TxID: txID, Status: "SUCCEED", WriteCount: 0}, nil
 	}
 
-	// 2. 妤犲矁鐦?VaultTransitionState 鐎涙ê婀稉鏃傚Ц閹焦顒滅涵?
+	// 2. 验证 VaultTransitionState 存在且状态正确
 	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 	transitionData, transitionExists, _ := sv.Get(transitionKey)
 	if !transitionExists || len(transitionData) == 0 {
@@ -338,18 +338,18 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
 	}
 
-	// 3. 娑撱儲鐗搁弽锟犵崣 Dispute 缁愭褰涢敍姘涧閼宠棄婀?(SharingDeadline, DisputeDeadline] 閸栨椽妫?
+	// 3. 严格校验 Dispute 窗口：只能在 (SharingDeadline, DisputeDeadline] 区间
 	if height <= transition.DkgSharingDeadline || height > transition.DkgDisputeDeadline {
 		logs.Warn("[DKGComplaint] height out of window: height=%d window=(%d, %d]", height, transition.DkgSharingDeadline, transition.DkgDisputeDeadline)
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("dispute window violation (height %d, window (%d, %d])", height, transition.DkgSharingDeadline, transition.DkgDisputeDeadline)}, nil
 	}
 
-	// 4. 濡偓閺?DKG 閻樿埖鈧?
+	// 4. 检查 DKG 状态
 	if transition.DkgStatus != DKGStatusSharing && transition.DkgStatus != DKGStatusResolving {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("invalid dkg_status=%s", transition.DkgStatus)}, errors.New("invalid dkg_status")
 	}
 
-	// 4. 濡偓閺?dealer/receiver 閺勵垰鎯侀崷?new_committee_members 娑?
+	// 4. 检查 dealer/receiver 是否在 new_committee_members 中
 	if !isInCommittee(dealerID, transition.NewCommitteeMembers) {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "dealer not in committee"}, errors.New("dealer not in committee")
 	}
@@ -357,14 +357,14 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "receiver not in committee"}, errors.New("receiver not in committee")
 	}
 
-	// 5. 妤犲矁鐦夌€电懓绨查惃?share 瀹歌弓绗傞柧?
+	// 5. 验证对应的 share 已上链
 	shareKey := keys.KeyFrostVaultDkgShare(chain, vaultID, epochID, dealerID, receiverID)
 	shareData, shareExists, _ := sv.Get(shareKey)
 	if !shareExists || len(shareData) == 0 {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "share not found"}, errors.New("share not found")
 	}
 
-	// 6. 鐎涙ê鍋嶉幎鏇＄様
+	// 6. 存储投诉
 	complaint := &pb.FrostVaultDkgComplaint{
 		Chain:           chain,
 		VaultId:         vaultID,
@@ -389,7 +389,7 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 		Category:    "frost_dkg_complaint",
 	}}
 
-	// 7. 閺囧瓨鏌?transition 閻樿埖鈧礁鍩?Resolving閿涘牆顩ч弸婊嗙箷閸?Sharing閿?
+	// 7. 更新 transition 状态到 Resolving（如果还在 Sharing）
 	if transition.DkgStatus == DKGStatusSharing {
 		transition.DkgStatus = DKGStatusResolving
 		transitionData, err := proto.Marshal(transition)
@@ -445,12 +445,12 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	logs.Debug("[DKGReveal] sender=%s chain=%s vault=%d epoch=%d dealer=%s receiver=%s",
 		sender, chain, vaultID, epochID, dealerID, receiverID)
 
-	// 妤犲矁鐦?sender 閺?dealer
+	// 验证 sender 是 dealer
 	if sender != dealerID {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "sender != dealer_id"}, errors.New("sender != dealer_id")
 	}
 
-	// 1. 閺屻儲澹樼€电懓绨查惃鍕鐠?
+	// 1. 查找对应的投诉
 	complaintKey := keys.KeyFrostVaultDkgComplaint(chain, vaultID, epochID, dealerID, receiverID)
 	complaintData, complaintExists, _ := sv.Get(complaintKey)
 	if !complaintExists || len(complaintData) == 0 {
@@ -462,7 +462,7 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse complaint"}, err
 	}
 
-	// 2. 濡偓閺屻儲濮囩拠澶屽Ц閹礁鎷?Reveal 閹搭亝顒涙妯哄
+	// 2. 检查投诉状态和 Reveal 截止高度
 	if complaint.Status != ComplaintStatusPending {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("complaint status=%s", complaint.Status)}, errors.New("complaint not pending")
 	}
@@ -471,12 +471,12 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "reveal deadline exceeded"}, nil
 	}
 
-	// 3. 妤犲矁鐦?reveal 閺佺増宓?
+	// 3. 验证 reveal 数据
 	if len(req.Share) == 0 || len(req.EncRand) == 0 {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "empty reveal data"}, errors.New("empty reveal data")
 	}
 
-	// 4. 閼惧嘲褰?transition 閻樿埖鈧?
+	// 4. 获取 transition 状态
 	transitionKey := keys.KeyFrostVaultTransition(chain, vaultID, epochID)
 	transitionData, transitionExists, _ := sv.Get(transitionKey)
 	if !transitionExists || len(transitionData) == 0 {
@@ -488,7 +488,7 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse transition"}, err
 	}
 
-	// 5. 閼惧嘲褰?dealer 閻?commitment 閸滃苯甯慨?share
+	// 5. 获取 dealer 的 commitment 和原始 share
 	commitKey := keys.KeyFrostVaultDkgCommit(chain, vaultID, epochID, dealerID)
 	commitData, commitExists, _ := sv.Get(commitKey)
 	if !commitExists || len(commitData) == 0 {
@@ -511,22 +511,22 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to parse share"}, err
 	}
 
-	// 6. 妤犲矁鐦?reveal閿涘牆鐦戦惍浣割劅妤犲矁鐦夐敍?
+	// 6. 验证 reveal（密码学验证）
 	receiverIndex := getReceiverIndexInCommittee(receiverID, transition.NewCommitteeMembers)
 	valid := verifyRevealInDryRun(req.Share, req.EncRand, originalShare.Ciphertext, commitment.CommitmentPoints, receiverIndex)
 
 	ops := []WriteOp{}
 
-	// 7. 閺嶈宓佹宀冪槈缂佹挻鐏夋径鍕倞
-	// 濞夈劍鍓伴敍姝俥wCommitteeMembers 鐏忚鲸妲?qualified_set閿涘苯澧ч梽銈嗘娴犲氦顕氶梿鍡楁値缁夊娅?
-	// disqualified_set 閸欘垯浜掗柅姘崇箖閹舵洝鐦旂拋鏉跨秿閸?transition 閻樿埖鈧焦甯归弬顓ㄧ礉閺嗗倷绗夐崡鏇犲缂佸瓨濮?
+	// 7. 根据验证结果处理
+	// 注意：NewCommitteeMembers 就是 qualified_set，剔除时从该集合移除
+	// disqualified_set 可以通过投诉记录和 transition 状态推断，暂不单独维护
 	if valid {
-		// share 閺堝鏅?- 閹埖鍓伴幎鏇＄様
-		// 婢跺嫮鎮婄憴鍕灟閿涙氨缍掑▽鈩冨鐠囧鈧懐娈?bond閿涘苯澧ч梽銈嗗鐠囧鈧拑绱濆〒鍛敄 dealer commitment閿涘澃hare 瀹稿弶纭犻棁璇х礆
+		// share 有效 - 恶意投诉
+		// 处理规则：罚没投诉者的 bond，剔除投诉者，清空 dealer commitment（share 已泄露）
 		complaint.Status = ComplaintStatusResolved
 		logs.Info("[DKGReveal] share is valid, false complaint by receiver=%s", receiverID)
 
-		// 缂冩碍鐥呴幎鏇＄様閼板懐娈?bond閿?00% 缂冩碍鐥呴敍?
+		// 罚没投诉者的 bond（100% 罚没）
 		if complaint.Bond != "" && complaint.Bond != "0" {
 			bondAmount, err := parsePositiveBalanceStrict("complaint bond", complaint.Bond)
 			if err == nil {
@@ -553,7 +553,7 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 				receiverID, transition.DkgN, transition.DkgThresholdT)
 		}
 
-		// 濞撳懐鈹?dealer 閻?commitment閿涘澃hare 瀹稿弶纭犻棁璇х礉闂団偓鐟曚線鍣搁弬鎵晸閹存劧绱?
+		// dealer 需要重新提交 commitment 和 share
 		// 濞夈劍鍓伴敍姘涧濞撳懐鈹栫拠?dealer 閻?commitment閿涘苯鍙炬禒鏍у棘娑撳氦鈧懍绻氶幐浣风瑝閸?
 		// dealer 闂団偓鐟曚線鍣搁弬鐗堝絹娴?commitment 閸?share
 		ops = append(ops, WriteOp{
@@ -631,7 +631,7 @@ func (h *FrostVaultDkgRevealTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
 
-// verifyRevealInDryRun 閸?DryRun 娑擃參鐛欑拠?reveal 閺佺増宓侀敍鍫㈢暆閸栨牜澧楅敍灞界杽闂勫懎绨茬拫鍐暏鐎瑰本鏆ｆ宀冪槈閿?
+	// 基本参数校验
 func verifyRevealInDryRun(share, encRand, ciphertext []byte, commitmentPoints [][]byte, receiverIndex int) bool {
 	// 閸╃儤婀伴崣鍌涙殶閺嶏繝鐛?
 	if len(share) == 0 || len(encRand) == 0 || len(ciphertext) == 0 || len(commitmentPoints) == 0 {
@@ -663,24 +663,24 @@ func removeFromCommittee(committee []string, memberID string) []string {
 	return result
 }
 
-// checkDkgRestartRule 濡偓閺?DKG 闁插秴鎯庣憴鍕灟
+// 返回是否需要重启
 // 瑜?current_n < initial_t 閺冭绱濊箛鍛淬€忛柌宥呮儙 DKG
 // 鏉╂柨娲栭弰顖氭儊闂団偓鐟曚線鍣搁崥?
 func checkDkgRestartRule(currentN, initialT uint32) bool {
 	return int(currentN) < int(initialT)
 }
 
-// handleDkgRestart 婢跺嫮鎮?DKG 闁插秴鎯庨敍鍫濈秼 qualified_set 娑撳秷鍐婚弮璁圭礆
-// 閺嶈宓佺拋鎹愵吀閺傚洦銆傞敍宀勫櫢閸氼垱妞傞棁鈧憰渚婄窗
-// - epoch_id += 1閿涘牊鏌?epoch閿?
-// - 闁插秵鏌婇崝鐘烘祰鐎瑰本鏆ｆ慨鏂挎喅娴?
-// - 濞撳懐鈹?disqualified_set
-// - 闁插秶鐤?initial_n 閸?initial_t
+// - epoch_id += 1（新 epoch）
+// - 重新加载完整委员会
+// - 清空 disqualified_set
+// - 重置 initial_n 和 initial_t
+// - dkg_status = COMMITTING
+// TODO: 重启时必须更新 DkgCommitDeadline，否则会立即过期。需配合当前区块高度计算。
 // - dkg_status = COMMITTING
 // TODO: 闁插秴鎯庨弮璺虹箑妞ょ粯娲块弬?DkgCommitDeadline閿涘苯鎯侀崚娆庣窗缁斿宓嗘潻鍥ㄦ埂閵嗗倿娓堕柊宥呮値瑜版挸澧犻崠鍝勬健妤傛ê瀹崇拋锛勭暬閵?
 func handleDkgRestart(transition *pb.VaultTransitionState, newEpochID uint64, fullCommittee []string, thresholdRatio float64) {
 	transition.EpochId = newEpochID
-	transition.NewCommitteeMembers = fullCommittee // 闁插秵鏌婇崝鐘烘祰鐎瑰本鏆ｆ慨鏂挎喅娴?
+	transition.NewCommitteeMembers = fullCommittee	// 重新计算门限
 	transition.DkgN = uint32(len(fullCommittee))
 	// 闁插秵鏌婄拋锛勭暬闂傘劑妾?
 	threshold := int(float64(len(fullCommittee)) * thresholdRatio)
@@ -764,7 +764,7 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 	}
 
 	logs.Info("[DKGValidation] received validation confirmation from %s for group pubkey %x", sender, req.NewGroupPubkey[:8])
-	// TODO: 閻㈢喍楠囬悳顖氼暔鎼存棁浠涢崥?T 娑?Partial Signatures 楠炲爼鐛欑拠浣虹矋缁涙儳鎮?
+	// 4. 更新 transition 状态
 
 	// 4. 閺囧瓨鏌?transition 閻樿埖鈧?
 	transition.DkgStatus = DKGStatusKeyReady
@@ -807,9 +807,9 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 		vault.CommitteeMembers = transition.NewCommitteeMembers
 	}
 	// 鐠佸墽鐤?lifecycle閿涙KG 鐎瑰本鍨氶崥搴礉婵″倹鐏夋潻娆愭Ц妫ｆ牗顐奸崚娑樼紦閿涘ifecycle 娑?KEY_READY
-	// 婵″倹鐏夐弰顖欑矤閺?Vault 鏉烆喗宕查弶銉ф畱閿涘ifecycle 鎼存棁顕氬鑼病閸?transition 娑擃叀顔曠純?
+		// transition 中可能已经有 lifecycle 信息，但 VaultState 本身不存储 lifecycle
 	if transition.Lifecycle != "" {
-		// transition 娑擃厼褰查懗钘夊嚒缂佸繑婀?lifecycle 娣団剝浼呴敍灞肩稻 VaultState 閺堫剝闊╂稉宥呯摠閸?lifecycle
+		// VaultState 的 status 字段用于表示密钥状态：PENDING -> KEY_READY -> ACTIVE
 		// lifecycle 娑撴槒顩﹂崷?VaultTransitionState 娑擃厾顓搁悶?
 		// VaultState 閻?status 鐎涙顔岄悽銊ょ艾鐞涖劎銇氱€靛棝鎸滈悩鑸碘偓渚婄窗PENDING -> KEY_READY -> ACTIVE
 	}
@@ -881,7 +881,7 @@ func (h *FrostVaultTransitionSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView)
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "empty signature"}, errors.New("empty signature")
 	}
 
-	// TODO: 娴ｈ法鏁ら弮?vault 閻?group_pubkey 妤犲矁鐦夌粵鎯ф倳
+	// 3. 更新旧 Vault 状态为 DRAINING
 
 	// 3. 閺囧瓨鏌婇弮?Vault 閻樿埖鈧椒璐?DRAINING
 	oldVault.Status = VaultLifecycleDraining
@@ -979,7 +979,7 @@ func slashBond(sv StateView, address string, bondAmount *big.Int, reason string)
 }
 
 // slashMinerStake 缂冩碍鐥呴惌鍨紣閻ㄥ嫯宸濋幎濂稿櫨閿?00% 濮ｆ柧绶ラ敍灞肩矤 MinerLockedBalance 娑擃厽澧搁梽銈忕礆
-// 鏉╂柨娲?WriteOp 閸掓銆冮悽銊ょ艾閺囧瓨鏌婄拹锔藉煕娴ｆ瑩顤?
+	// 使用 FB 作为原生代币
 func slashMinerStake(sv StateView, address string, reason string) ([]WriteOp, error) {
 	// 娴ｈ法鏁?FB 娴ｆ粈璐熼崢鐔烘晸娴狅絽绔?
 	tokenAddr := "FB"

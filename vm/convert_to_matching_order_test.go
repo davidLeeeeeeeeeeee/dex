@@ -8,7 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// 娴嬭瘯浣跨敤 OrderState 鐨勮浆鎹㈠嚱鏁?
+// 测试使用 OrderState 的转换函数
 func TestConvertOrderStateToMatchingOrder_UsesFilledBaseWhenBaseTokenIsFirst(t *testing.T) {
 	t.Parallel()
 
@@ -37,16 +37,16 @@ func TestConvertOrderStateToMatchingOrder_UsesFilledBaseWhenBaseTokenIsFirst(t *
 func TestConvertOrderStateToMatchingOrder_UsesFilledBaseForBuyOrder(t *testing.T) {
 	t.Parallel()
 
-	// 涔板崟锛氱敤鎴锋兂涔?10 FB锛屽凡缁忎拱鍒?5 FB锛岃繕鍓?5 FB 瑕佷拱
+	// 买单：用户想买 10 FB，已经买到 5 FB，还剩 5 FB 要买
 	state := &pb.OrderState{
 		OrderId:     "buy_order_1",
 		BaseToken:   "FB",
 		QuoteToken:  "USDT",
 		Side:        pb.OrderSide_BUY,
 		Price:       "17",
-		Amount:      "10", // 瑕佷拱 10 FB
-		FilledBase:  "5",  // 宸蹭拱鍒?5 FB
-		FilledQuote: "85", // 宸叉敮浠?8.5 USDT
+		Amount:      "10",  // 要买 10 FB
+		FilledBase:  "5",   // 已买到 5 FB
+		FilledQuote: "85", // 已支付 8.5 USDT
 		IsFilled:    false,
 	}
 
@@ -55,7 +55,7 @@ func TestConvertOrderStateToMatchingOrder_UsesFilledBaseForBuyOrder(t *testing.T
 		t.Fatalf("convertOrderStateToMatchingOrder returned error: %v", err)
 	}
 
-	// 鍓╀綑閲?= Amount - FilledBase = 10 - 5 = 5
+	// 剩余量 = Amount - FilledBase = 10 - 5 = 5
 	if !o.Amount.Equal(decimal.RequireFromString("5")) {
 		t.Fatalf("unexpected remaining amount: got=%s want=%s", o.Amount, "5")
 	}
@@ -64,16 +64,16 @@ func TestConvertOrderStateToMatchingOrder_UsesFilledBaseForBuyOrder(t *testing.T
 func TestConvertOrderStateToMatchingOrder_FullFillReturnsError(t *testing.T) {
 	t.Parallel()
 
-	// 璁㈠崟宸插畬鍏ㄦ垚浜わ細Amount = FilledBase锛屽墿浣欓噺涓?0
+	// 订单已完全成交：Amount = FilledBase，剩余量为 0
 	state := &pb.OrderState{
 		OrderId:     "sell_order_full",
 		BaseToken:   "FB",
 		QuoteToken:  "USDT",
 		Side:        pb.OrderSide_SELL,
 		Price:       "17",
-		Amount:      "10",  // 瑕佸崠 10 FB
-		FilledBase:  "10",  // 宸插崠鍑?10 FB
-		FilledQuote: "170", // 宸叉敹鍒?170 USDT
+		Amount:      "10", // 要卖 10 FB
+		FilledBase:  "10", // 已卖出 10 FB
+		FilledQuote: "170", // 已收到 17 USDT
 		IsFilled:    true,
 	}
 
@@ -83,7 +83,7 @@ func TestConvertOrderStateToMatchingOrder_FullFillReturnsError(t *testing.T) {
 	}
 }
 
-// 娴嬭瘯鏃х増 OrderTx 鐨勫吋瀹规€ц浆鎹㈠嚱鏁?
+// 测试旧版 OrderTx 的兼容性转换函数
 func TestConvertToMatchingOrderLegacy_NewOrder(t *testing.T) {
 	t.Parallel()
 
@@ -103,7 +103,7 @@ func TestConvertToMatchingOrderLegacy_NewOrder(t *testing.T) {
 		t.Fatalf("convertToMatchingOrderLegacy returned error: %v", err)
 	}
 
-	// 鏂拌鍗曟病鏈夋垚浜わ紝鍓╀綑閲?= Amount = 10
+	// 新订单没有成交，剩余量 = Amount = 10
 	if !o.Amount.Equal(decimal.RequireFromString("10")) {
 		t.Fatalf("unexpected remaining amount: got=%s want=%s", o.Amount, "10")
 	}
