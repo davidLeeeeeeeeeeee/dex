@@ -1,98 +1,79 @@
 ---
-name: VM (Virtual Machine)
-description: Core transaction execution layer, handles all tx types, state transitions, and order matching integration.
+name: VM
+description: Transaction execution engine, handler registry, block pre-execution, commit path, and state diff generation.
 triggers:
-  - 交易处理
-  - 订单执行
-  - 状态转换
-  - 撮合引擎
-  - order handler
-  - transfer
-  - miner
-  - withdraw
-  - DKG handler
+  - vm
+  - execute block
+  - tx handler
+  - receipt
+  - writeop
 ---
 
-# VM (虚拟机) 模块指南
+# VM Skill
 
-VM 是整个 DEX 的核心执行层，负责所有交易的验证、执行和状态转换。
+Use this skill for execution correctness, receipt status, write operations, and tx handler behavior.
 
-## 目录结构
+## Source Map
 
-```
-vm/
-├── executor.go              # 核心执行器，区块执行入口
-├── handlers.go              # Handler 注册和分发
-├── types.go                 # WriteOp, ExecuteResult 等核心类型
-├── state.go                 # 状态管理
-├── stateview.go             # 只读状态视图
-│
-├── order_handler.go         # ⭐ 订单处理（最复杂）
-├── transfer_handler.go      # 转账处理
-├── miner_handler.go         # 矿工注册/注销
-├── freeze_handler.go        # 冻结/解冻
-├── issue_token_handler.go   # Token 发行
-├── block_reward.go          # 区块奖励
-│
-├── frost_*.go               # FROST/DKG 相关 Handler（10+个文件）
-├── witness_*.go             # 见证者相关 Handler
-└── safe_math.go             # 安全数学运算
-```
+- Handler kind dispatch: `vm/handlers.go`
+- Default handler registration: `vm/default_handlers.go`
+- Executor lifecycle: `vm/executor.go`
+- Core types (`WriteOp`, `Receipt`): `vm/types.go`
+- Order integration:
+  - `vm/order_handler.go`
+  - `vm/executor.go` (orderbook rebuild path)
+- Frost integration:
+  - `vm/frost_*.go`
+  - `vm/frost_dkg_handlers.go`
+- Witness integration:
+  - `vm/witness_handler.go`
+  - `vm/witness_events.go`
 
-## 核心概念
+## Core Execution Path
 
-### WriteOp 机制
-所有状态修改通过 `WriteOp` 结构返回，由 executor 统一写入：
-```go
-type WriteOp struct {
-    Key         string
-    Value       []byte
-    Del         bool
-    SyncStateDB bool  // 是否同步到 StateDB
-    Category    string // "account", "order", "trade" 等
-}
-```
+1. `PreExecuteBlock` runs dry execution over block txs.
+2. Each tx resolves kind via `DefaultKindFn`.
+3. Handler `DryRun` returns `[]WriteOp` and a receipt.
+4. `CommitFinalizedBlock` reuses or recomputes result and calls `applyResult`.
+5. `applyResult` persists writes and updates state backend through DB session.
 
-### Handler 接口
-```go
-type TxHandler interface {
-    Handle(ctx *ExecuteContext, anyTx *pb.AnyTx) (*ExecuteResult, error)
-}
-```
+## Typical Tasks
 
-## 关键文件详解
+1. Wrong tx type routing:
+   - inspect `DefaultKindFn` cases in `vm/handlers.go`
+2. Block valid in one node but invalid in another:
+   - inspect deterministic orderbook rebuild and tx duplicate skip logic in `vm/executor.go`
+3. Receipt status or error text issues:
+   - inspect receipt mutation and final persistence flow in `vm/executor.go`
 
-| 文件 | 职责 | 复杂度 |
-|:---|:---|:---:|
-| `order_handler.go` | 订单创建、撮合、成交记录生成 | ⭐⭐⭐⭐⭐ |
-| `executor.go` | 区块执行、Diff 计算、回滚 | ⭐⭐⭐⭐ |
-| `frost_dkg_handlers.go` | DKG 状态机转换 | ⭐⭐⭐⭐ |
-| `transfer_handler.go` | 余额转账 | ⭐⭐ |
-| `miner_handler.go` | 矿工质押/解押 | ⭐⭐ |
+## 已知陷阱（实战经验）
 
-## 开发规范
+1. **内存泄漏 — SpecExecLRU 缓存过大**（已识别，待优化）：
+   - `vm/spec_cache.go` 中的 `SpecExecLRU` 会缓存每个区块的预执行结果（含完整 `Diff`）
+   - pprof 堆分析显示该缓存可增长到 40GB+
+   - **应对**：缩小缓存大小；区块 finalize 后清除 `SpecResult.Diff`
 
-1. **不直接写数据库**: 所有修改通过返回 `WriteOp` 切片
-2. **幂等性**: 相同交易多次执行结果必须一致
-3. **错误处理**: 验证失败返回 error，不 panic
-4. **日志前缀**: `[OrderHandler]`, `[VMExecutor]` 等
+2. **余额不一致 — SetBalance 双写冲突**：
+   - `order_handler.go` 中 `handleAddOrder` 调用 `SetBalance` 冻结余额
+   - `updateAccountBalancesFromStates` 也会写入余额
+   - 两者的 WriteOp 在 `executor.go` 中通过 `applyResult` 重复应用，可能导致 "insufficient balance"
+   - **排查流程**：参考 `/.agent/workflows/debug_balance.md`
 
-## 常见任务
+3. **nil pointer panic in updateAccountBalancesFromStates**：
+   - 历史bug：map key 为 nil 指针时触发 `runtime.fatalpanic`
+   - 确保 `order_handler.go` 中使用 map 前做空指针检查
 
-### 添加新交易类型
-1. 在 `pb/data.proto` 添加消息定义
-2. 创建 `xxx_handler.go` 实现 `TxHandler`
-3. 在 `handlers.go` 注册 handler
+4. **余额工具函数**：
+   - `vm/balance_helper.go` 包含余额读写的通用辅助函数
+   - `vm/stateview.go` 提供 StateView 抽象层
 
-### 调试订单撮合问题
-1. 检查 `order_handler.go` 的 `executeOrderTx`
-2. 查看 `matching/` 模块的撮合逻辑
-3. 日志关键字: `[OrderHandler]`, `[Matching]`
-
-## 测试
+## Quick Commands
 
 ```bash
-go test ./vm/... -v
-go test ./vm/ -run TestOrderHandler -v
+rg "DefaultKindFn|RegisterDefaultHandlers|Kind\\(\\)" vm
+rg "PreExecuteBlock|CommitFinalizedBlock|applyResult|IsBlockCommitted" vm/executor.go
+rg "DryRun\\(" vm
+rg "SpecExecLRU|specCache|SpecResult" vm
+rg "SetBalance|GetBalance|balanceUpdates" vm
 ```
 

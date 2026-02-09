@@ -1,111 +1,54 @@
 ---
 name: Configuration
-description: System configuration management including node settings, FROST parameters, witness config, and genesis data.
+description: Node/system configuration map including network, txpool, sender, frost, witness, and genesis bootstrap settings.
 triggers:
-  - 配置
   - config
-  - 参数
+  - configuration
   - genesis
-  - 初始化
+  - frost config
+  - witness config
 ---
 
-# Config (配置) 模块指南
+# Configuration Skill
 
-管理所有系统配置参数。
+Use this skill when changing defaults, boot parameters, or JSON config behavior.
 
-## 目录结构
+## Source Map
 
-```
-config/
-├── config.go              # ⭐ 主配置结构
-├── frost.go               # FROST 参数
-├── frost_default.json     # FROST 默认配置
-├── witness.go             # 见证者参数
-├── witness_default.json   # 见证者默认配置
-└── genesis.json           # 创世配置
-```
+- Core config structs/defaults: `config/config.go`
+- FROST config structs/defaults: `config/frost.go`
+- Witness config structs/defaults: `config/witness.go`
+- Config files:
+  - `config/frost_default.json`
+  - `config/witness_default.json`
+  - `config/genesis.json`
+- Bootstrap application logic: `cmd/main/bootstrap.go`
 
-## 主配置 (config.go)
+## Key Facts
 
-```go
-type Config struct {
-    Node     NodeConfig
-    Database DatabaseConfig
-    Network  NetworkConfig
-    Consensus ConsensusConfig
-    VM       VMConfig
-}
+- `config.DefaultConfig()` is the global fallback.
+- Runtime calls `LoadFromFile("")`, which currently loads:
+  - `config/frost_default.json`
+  - `config/witness_default.json`
+- Genesis balances/tokens are applied in `cmd/main/bootstrap.go` via:
+  - `applyGenesisBalances`
+  - `initGenesisTokens`
 
-type NodeConfig struct {
-    Port        int
-    DataDir     string
-    LogLevel    string
-    EnableFrost bool
-}
-```
+## Typical Tasks
 
-## FROST 配置 (frost.go)
+1. Tune network/sender behavior:
+   - edit `config/config.go` (`NetworkConfig`, `SenderConfig`, `TxPoolConfig`)
+2. Tune FROST thresholds/timeouts/chains:
+   - edit `config/frost.go` and `config/frost_default.json`
+3. Tune witness voting/challenge windows:
+   - edit `config/witness.go` and `config/witness_default.json`
+4. Change genesis token/allocation defaults:
+   - edit `config/genesis.json` and bootstrap usage in `cmd/main/bootstrap.go`
 
-```go
-type FrostConfig struct {
-    Threshold       int     // 门限值 t
-    TotalShares     int     // 总份额 n
-    DKGWindowSize   int     // DKG 窗口大小（区块数）
-    SignTimeout     time.Duration
-    MaxRetries      int
-}
-```
+## Quick Commands
 
-## 见证者配置 (witness.go)
-
-```go
-type WitnessConfig struct {
-    MinStake          string   // 最小质押
-    VoteThreshold     float64  // 投票阈值
-    ChallengePeriod   int      // 挑战期（区块数）
-    ArbitrationThreshold float64
-}
-```
-
-## Genesis 配置
-
-```json
-// genesis.json
-{
-  "initial_accounts": [
-    {"address": "0x...", "balance": "1000000"}
-  ],
-  "initial_tokens": [
-    {"symbol": "FB", "address": "0x...", "total_supply": "..."}
-  ]
-}
-```
-
-## 使用方式
-
-```go
-// 加载默认配置
-cfg := config.DefaultConfig()
-
-// 从文件加载
-cfg, _ := config.LoadFromFile("config.json")
-
-// 获取 FROST 配置
-frostCfg := config.DefaultFrostConfig()
-```
-
-## 环境变量
-
-支持通过环境变量覆盖配置：
 ```bash
-DEX_NODE_PORT=8443
-DEX_DATA_DIR=./data
-DEX_LOG_LEVEL=debug
+rg "type .*Config struct|Default.*Config|Load.*Config" config
+rg "LoadFromFile|LoadGenesisConfig|applyGenesisBalances|initGenesisTokens" cmd/main
 ```
-
-## 开发规范
-
-1. **默认值**: 所有配置必须有合理默认值
-2. **验证**: 加载后需验证配置有效性
-3. **热更新**: 部分配置支持运行时更新
 

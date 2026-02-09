@@ -151,8 +151,8 @@ t.flushNodes(sess, newVersion)
 
 | 文件 | 修改内容 |
 |-----|---------|
-| [verkle_statedb.go](file:///Users/david/GolandProjects/dex/verkle/verkle_statedb.go) | 移除 `ApplyUpdate` 中的运行时同步 |
-| [go_verkle_adapter.go](file:///Users/david/GolandProjects/dex/verkle/go_verkle_adapter.go) | `flushNodes` 分批写入（每批200节点）<br>`UpdateWithSession` 大值分批写入（每批100个） |
+| `verkle/verkle_statedb.go` | 移除 `ApplyUpdate` 中的运行时同步 |
+| `verkle/go_verkle_adapter.go` | `flushNodes` 分批写入（每批200节点）；`UpdateWithSession` 大值分批写入（每批100个） |
 
 ---
 

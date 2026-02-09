@@ -1,113 +1,116 @@
 # DEX Agent Guide
 
-本文档帮助 AI Agent 快速理解项目结构并定位相关代码。
+This folder stores AI-facing retrieval metadata for the `dex` codebase.
+Last updated: `2026-02-09`.
 
-## 快速导航
+## Quick Routing
 
-### 按任务类型
+Use this table to jump to the right area fast.
 
-| 任务类型 | 主要目录 | Skill |
-|:---|:---|:---|
-| 订单/撮合/成交 | `vm/order_handler.go`, `matching/` | vm, matching |
-| DKG/签名/Vault | `frost/`, `vm/frost_*.go` | frost |
-| 共识/区块/同步 | `consensus/` | consensus |
-| API/接口 | `handlers/` | handlers |
-| 前端/UI | `explorer/src/` | explorer |
-| 数据存储 | `db/`, `keys/` | db |
-| 见证/跨链 | `witness/`, `vm/witness_*.go` | witness |
-| 配置 | `config/` | config |
+| Task | Primary paths | Suggested skill |
+| --- | --- | --- |
+| Transaction execution, receipts, state diff | `vm/`, `pb/data.proto`, `keys/` | `vm` |
+| Order matching and orderbook behavior | `matching/`, `vm/order_handler.go`, `handlers/handleOrderBook.go` | `matching` + `vm` |
+| Consensus, voting, block sync | `consensus/` | `consensus` |
+| FROST withdraw / DKG / runtime workers | `frost/`, `vm/frost_*.go`, `handlers/frost_*.go` | `frost` |
+| HTTP API behavior | `handlers/`, `cmd/main/node.go` | `handlers` |
+| DB persistence and key schema | `db/`, `keys/`, `verkle/` | `db` + `verkle` |
+| Verkle state root or state-session issues | `verkle/`, `db/db.go`, `keys/category.go` | `verkle` |
+| Witness workflow and arbitration | `witness/`, `vm/witness_*.go` | `witness` |
+| Tx queueing and gossip send path | `txpool/`, `sender/`, `network/` | `txpool` + `sender` + `network` |
+| Frontend dashboard and explorer APIs | `explorer/`, `cmd/explorer/` | `explorer` |
+| Config and bootstrap defaults | `config/`, `cmd/main/bootstrap.go` | `config` |
 
-### 按文件类型
+## Runtime Entrypoints
 
-| 后缀 | 位置 | 说明 |
-|:---|:---|:---|
-| `*.go` | 根目录各模块 | Go 后端代码 |
-| `*.vue` | `explorer/src/` | Vue 前端组件 |
-| `*.ts` | `explorer/src/` | TypeScript |
-| `*.proto` | `pb/` | Protobuf 定义 |
-| `*.json` | `config/` | 配置文件 |
+- Node runtime:
+  - `cmd/main/main.go`
+  - `cmd/main/node.go`
+  - `cmd/main/bootstrap.go`
+- Explorer runtime:
+  - `cmd/explorer/main.go`
+  - `cmd/explorer/syncer/syncer.go`
+  - `cmd/explorer/indexdb/`
+- Simulator runtime:
+  - `cmd/main/simulator.go`
+  - `simulateMain/tes.go`
 
-## 核心文件索引
+## Current Storage Architecture
 
-### 入口点
-- `cmd/main/` - 节点主入口 (Go 模块)
-- `cmd/explorer/main.go` - Explorer 后端
-- `explorer/src/App.vue` - 前端主入口
+- Canonical persistence manager is `db.Manager` in `db/db.go`.
+- Mutable state is mirrored into Verkle through `dbSession.ApplyStateUpdate` and `verkle/`.
+- Key routing (stateful vs flow keys) is defined in `keys/category.go`.
+- Legacy/experimental trees still exist:
+  - `stateDB/` (legacy StateDB package)
+  - `jmt/` (Jellyfish Merkle Tree implementation)
 
-### 最复杂的文件 (修改需谨慎)
-- `vm/order_handler.go` - 订单处理 (~900 行)
-- `consensus/consensusEngine.go` - 共识引擎 (~800 行)
-- `frost/runtime/transition_worker.go` - DKG 驱动 (~600 行)
-- `handlers/handleOrderBook.go` - 订单簿 API (~500 行)
+## Main API Surfaces
 
-### Key 命名规范
-所有数据库 Key 定义在 `keys/keys.go`，格式：`v1_<type>_<params>`
+- Node API registration is centralized in `handlers/manager.go` (`RegisterRoutes`).
+- FROST query/admin routes live in:
+  - `handlers/frost_query_handlers.go`
+  - `handlers/frost_admin_handlers.go`
+- Explorer-side API gateway is in:
+  - `cmd/explorer/main.go`
+  - `cmd/explorer/frost_handlers.go`
+  - `explorer/src/api.ts`
 
-## Skills 目录
+## Skill Directory
 
-```
+```text
 .agent/skills/
-├── project_overview/  # 项目总览
-├── vm/                # 虚拟机/交易执行
-├── frost/             # 门限签名/DKG
-├── consensus/         # Snowball 共识
-├── matching/          # 撮合引擎
-├── handlers/          # HTTP API
-├── db/                # 数据库层
-├── statedb/           # 状态数据库
-├── witness/           # 见证系统
-├── explorer/          # 前端
-├── sender/            # 网络发送
-├── txpool/            # 交易池
-└── config/            # 配置管理
+  config/
+  consensus/
+  db/
+  explorer/
+  frost/
+  handlers/
+  jmt/
+  matching/
+  network/
+  project_overview/
+  sender/
+  statedb/
+  txpool/
+  verkle/
+  vm/
+  witness/
 ```
 
-## 常见任务模板
-
-### 1. 添加新 API 接口
-1. 在 `handlers/` 添加处理函数
-2. 在 `cmd/main/node.go` 注册路由
-3. 在 `explorer/src/api.ts` 添加前端调用
-4. 在 `explorer/src/types.ts` 添加类型定义
-
-### 2. 添加新交易类型
-1. 在 `pb/data.proto` 定义消息
-2. 运行 `protoc --go_out=. pb/data.proto`
-3. 在 `vm/` 创建 handler
-4. 在 `vm/handlers.go` 注册
-
-### 3. 修改订单簿逻辑
-1. 阅读 `matching/match.go` 了解撮合
-2. 修改 `vm/order_handler.go`
-3. 更新 `handlers/handleOrderBook.go` 如需改 API
-4. 运行 `go test ./vm/... ./matching/... -v`
-
-### 4. 修改前端组件
-1. 找到对应 `.vue` 文件
-2. 检查 `api.ts` 是否有对应接口
-3. 修改组件
-4. 运行 `cd explorer && npm run dev` 测试
-
-## 调试技巧
+## Fast Search Commands
 
 ```bash
-# 查看特定日志
-grep "\[OrderHandler\]" logs/node.log
-grep "\[DKG\]" logs/node.log
+# All HTTP routes
+rg "HandleFunc\\(" handlers cmd/main cmd/explorer
 
-# 测试 API
-curl "https://localhost:8443/status" -k
-curl "https://localhost:8443/orderbook?pair=FB_USDT" -k
+# All tx handler kinds in VM
+rg "return \"[a-z0-9_]+\"" vm/handlers.go
 
-# 运行特定测试
-go test ./vm/ -run TestOrderHandler -v
-go test ./matching/ -run TestMatch -v
+# FROST runtime workers/sessions
+rg "type .*Worker|type .*Session|func \\(.*\\) Start" frost/runtime
+
+# Stateful key classification
+rg "statePrefixes|IsStatefulKey|CategorizeKey" keys
+
+# Verkle apply path
+rg "ApplyStateUpdate|ApplyUpdate|CommitRoot" db verkle vm
 ```
 
-## 注意事项
+## Workflow Directory
 
-1. **不要直接修改 `pb/data.pb.go`** - 这是生成的文件
-2. **修改 Key 格式要同步 `keys/keys.go`** - 保持一致性
-3. **VM 中不直接写数据库** - 通过 WriteOp 返回
-4. **前端修改后需 `npm run build`** - 生产部署
+```text
+.agent/workflows/
+  build_and_run.md      # 构建并运行节点、Explorer 或模拟器
+  debug_balance.md      # 排查余额异常
+  debug_consensus.md    # 排查共识分叉、同步卡住
+```
 
+## `.agent` Maintenance Checklist
+
+When core code changes, update these files together:
+
+1. `.agent/AGENT_GUIDE.md`
+2. `.agent/skills/project_overview/SKILL.md`
+3. Affected module skill files in `.agent/skills/*/SKILL.md`
+4. `.agent/docs/retrieval_index.md`
+5. `.agent/workflows/` if operational procedures change

@@ -1,97 +1,77 @@
 ---
 name: Project Overview
-description: High-level architecture map of the DEX project with module index and quick navigation guide.
+description: High-level routing map for dex architecture, module ownership, and entrypoint navigation.
 triggers:
-  - 项目概览
-  - 架构
-  - 模块索引
-  - 入门
   - overview
   - architecture
+  - module map
+  - codebase
 ---
 
-# DEX 项目概览 (Project Overview)
+# Project Overview Skill
 
-区块链去中心化交易所，集成 FROST 门限签名、Snowball 共识、订单撮合、跨链见证。
+Use this skill when you need to quickly route a task to the right module before deep editing.
 
-## 架构层次
+## Architecture Snapshot
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    cmd/main/ (项目入口)                      │
-├─────────────────────────────────────────────────────────────┤
-│  handlers/          │  explorer/         │  network/         │
-│  HTTP API 层        │  前端 Vue + TS     │  P2P 通信         │
-├─────────────────────────────────────────────────────────────┤
-│  consensus/         │  txpool/           │  sender/          │
-│  Snowball 共识      │  交易池            │  消息发送         │
-├─────────────────────────────────────────────────────────────┤
-│  vm/                │  matching/         │  witness/         │
-│  交易执行           │  订单撮合          │  跨链见证         │
-├─────────────────────────────────────────────────────────────┤
-│  frost/             │  db/               │  stateDB/         │
-│  门限签名 + DKG     │  BadgerDB 存储     │  状态数据库       │
-├─────────────────────────────────────────────────────────────┤
-│                      jmt/ (状态根计算)                        │
-│                  16 叉版本化 Jellyfish Merkle Tree            │
-└─────────────────────────────────────────────────────────────┘
-```
+- Runtime entry:
+  - `cmd/main/main.go`
+  - `cmd/main/node.go`
+  - `cmd/main/bootstrap.go`
+- Explorer entry:
+  - `cmd/explorer/main.go`
+  - `cmd/explorer/syncer/syncer.go`
+  - `explorer/src/App.vue`
+- Protocol definition:
+  - `pb/data.proto`
 
-## Skills 索引
+## Core Data Path
 
-| Skill | 目录 | 职责 | 复杂度 |
-|:---|:---|:---|:---:|
-| **vm** | `vm/` | 交易执行、订单处理、状态转换 | ⭐⭐⭐⭐⭐ |
-| **frost** | `frost/` | DKG、门限签名、运行时 | ⭐⭐⭐⭐⭐ |
-| **consensus** | `consensus/` | Snowball 共识、区块同步 | ⭐⭐⭐⭐ |
-| **jmt** | `jmt/` | 16 叉 Merkle 树、StateRoot | ⭐⭐⭐⭐ |
-| **matching** | `matching/` | 订单撮合引擎 | ⭐⭐⭐ |
-| **handlers** | `handlers/` | HTTP API 接口 | ⭐⭐⭐ |
-| **db** | `db/`, `keys/` | 数据库、Key 规范 | ⭐⭐⭐ |
-| **statedb** | `stateDB/` | 状态存储、快照 | ⭐⭐⭐ |
-| **witness** | `witness/` | 跨链见证、BLS | ⭐⭐⭐ |
-| **explorer** | `explorer/` | 前端界面 | ⭐⭐ |
-| **sender** | `sender/` | P2P 发送 | ⭐⭐ |
-| **txpool** | `txpool/` | 交易池 | ⭐⭐ |
-| **config** | `config/` | 配置管理 | ⭐ |
+1. Incoming tx enters `handlers/` and then `txpool/`.
+2. Consensus proposes/finalizes blocks in `consensus/`.
+3. VM executes block body in `vm/`.
+4. `db.Manager` persists writes to Badger and mirrors stateful keys to Verkle.
+5. Query APIs and explorer read paths return state/tx/block data.
 
-## 任务路由
+Key files:
 
-根据任务关键词选择 Skill：
+- `vm/executor.go`
+- `db/db.go`
+- `keys/category.go`
+- `verkle/verkle_statedb.go`
 
-| 关键词 | 推荐 Skill |
-|:---|:---|
-| 订单、撮合、成交 | `vm` + `matching` |
-| DKG、签名、Vault | `frost` |
-| 共识、区块、同步 | `consensus` |
-| StateRoot、Merkle | `jmt` |
-| API、接口、查询 | `handlers` |
-| 前端、UI、显示 | `explorer` |
-| 数据库、Key、存储 | `db` |
-| 入账、见证、BLS | `witness` |
+## Module-to-Skill Routing
 
-## 技术栈
+| If task mentions | Go to skill | Primary paths |
+| --- | --- | --- |
+| tx execution, receipt, dry-run, write diff | `vm` | `vm/` |
+| orderbook/match logic | `matching` (+ `vm`) | `matching/`, `vm/order_handler.go` |
+| consensus/vote/query/sync | `consensus` | `consensus/` |
+| withdraw/dkg/committee/frost envelope | `frost` | `frost/`, `vm/frost_*.go` |
+| API route/response errors | `handlers` | `handlers/`, `cmd/main/node.go` |
+| badger keys/storage/index | `db` | `db/`, `keys/` |
+| state root / session / proof with Verkle | `verkle` | `verkle/`, `db/db.go` |
+| witness stake/challenge/arbitration | `witness` | `witness/`, `vm/witness_*.go` |
+| tx queue, pending, dedupe | `txpool` | `txpool/` |
+| P2P sending/retry/backoff | `sender` | `sender/` |
+| peer registry | `network` | `network/network.go` |
+| frontend explorer UI/API | `explorer` | `explorer/`, `cmd/explorer/` |
+| config/defaults/bootstrap params | `config` | `config/`, `cmd/main/bootstrap.go` |
+| legacy state db package | `statedb` | `stateDB/` |
+| legacy JMT tree package | `jmt` | `jmt/` |
 
-- **Backend**: Go 1.20+, HTTP/3 (QUIC)
-- **Frontend**: Vue 3, TypeScript, Vite
-- **Protocol**: Protobuf (`pb/data.proto`)
-- **Database**: BadgerDB + StateDB
-- **State Tree**: JMT (16 叉 Jellyfish Merkle Tree)
+## Current Notes
 
-## 常用命令
+- Verkle is wired into runtime state apply path (`db/db.go`).
+- `stateDB/` and `jmt/` still exist but are no longer the default runtime state backend.
+- FROST has both on-chain handlers (`vm/frost_*.go`) and off-chain runtime workers (`frost/runtime/`).
+
+## Useful Commands
 
 ```bash
-# 启动节点
-go run ./cmd/main
-
-# 启动前端
-cd explorer && npm run dev
-
-# 编译 protobuf
-protoc --go_out=. pb/data.proto
-
-# 运行测试
-go test ./vm/... -v
-go test ./matching/... -v
-go test ./jmt/... -v
+rg "HandleFunc\\(" handlers cmd/main cmd/explorer
+rg "DefaultKindFn|RegisterDefaultHandlers" vm
+rg "ApplyStateUpdate|CommitRoot" db verkle vm
+rg "issueQuery|RegisterQuery|SubmitChit" consensus
 ```
+

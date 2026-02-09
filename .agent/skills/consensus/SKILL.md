@@ -1,112 +1,68 @@
 ---
 name: Consensus
-description: Guide for understanding and modifying the Snowball consensus protocol and block management.
+description: Snowman/Snowball consensus, query polling, gossip handling, and block sync management.
 triggers:
-  - 共识
-  - Snowball
-  - 区块同步
-  - 查询管理
-  - QueryManager
-  - SyncManager
+  - consensus
+  - snowball
+  - query manager
+  - sync manager
+  - finalization
 ---
 
-# Consensus (共识层) 模块指南
+# Consensus Skill
 
-该模块实现了基于 Snowball 的概率性共识协议。
+Use this skill for block preference, chit voting, query lifecycle, or sync behavior.
 
-## 目录结构
+## Source Map
 
-```
-consensus/
-├── snowball.go           # ⭐ Snowball 算法核心
-├── consensusEngine.go    # 共识循环驱动
-├── node.go               # 节点入口
-│
-├── queryManager.go       # 查询管理器（发起投票查询）
-├── gossipManager.go      # Gossip 消息传播
-├── syncManager.go        # 区块同步（含快照同步）
-├── snapshotManager.go    # 快照管理
-│
-├── realProposer.go       # ⭐ 区块提案（含缓存机制）
-├── realBlockStore.go     # 区块持久化
-├── realTransport.go      # 网络传输
-│
-├── pending_block_buffer.go  # 待处理区块缓冲
-├── messageHandler.go     # 消息处理分发
-├── adapter.go            # 类型转换适配器
-└── config.go             # 共识配置
-```
+- Engine and vote processing: `consensus/consensusEngine.go`
+- Snowball state machine: `consensus/snowball.go`
+- Query issue/retry logic: `consensus/queryManager.go`
+- Sync and height polling: `consensus/syncManager.go`
+- Message dispatch: `consensus/messageHandler.go`
+- Pending block tracking: `consensus/pending_block_buffer.go`
+- Runtime wiring: `consensus/node.go`, `consensus/realManager.go`
 
-## 核心概念
+## Key Behaviors
 
-| 概念 | 说明 |
-|:---|:---|
-| **Snowball** | 概率性共识算法，通过多轮采样达成共识 |
-| **Query** | 向对等节点发起查询以决定区块偏好 |
-| **Gossip** | 传播区块 Header 和投票信息 |
-| **BlockStore** | 负责区块的持久化和高度索引 |
+- Query flow:
+  1. QueryManager picks preference/candidate.
+  2. Registers query in engine.
+  3. Broadcasts `PushQuery` or `PullQuery`.
+  4. Engine collects chits and updates Snowball preference.
+- Sync flow:
+  - Height polling + targeted sync requests + timeout cleanup.
+  - Includes stall protection and in-flight range dedupe.
 
-## 新增核心组件
+## Typical Tasks
 
-### QueryManager
-负责发起和管理共识查询：
-```go
-// 发起查询
-qm.issueQuery()
+1. Fix query storm or retry behavior:
+   - inspect `queryCooldown`, retry backoff, and timeout handlers in `consensus/queryManager.go`
+2. Fix finalization inconsistency:
+   - inspect candidate filtering and vote recording in `consensus/consensusEngine.go`
+3. Fix stuck syncing:
+   - inspect `checkAndSync`, `processTimeouts`, and height response handling in `consensus/syncManager.go`
 
-// 处理投票响应
-qm.HandleChit(msg)
+## 已知陷阱（实战经验）
 
-// 请求缺失区块（带限流）
-qm.RequestBlock(blockID, fromNode)
-```
+1. **共识分叉**（已修复）：
+   - **根因**：`selectBestCandidate` 在 `snowball.go` 中未优先选择低 window block，导致高CPU负载下不同节点偏好不同候选。
+   - **修复**：`selectBestCandidate` 优先低 window block；移除 `messageHandler.go` 中的 `GetCachedBlock` 前置检查（该检查在高负载下可能跳过投票，导致投票不一致）；`syncManager.go` 的 Fast-Finalize 路径合并本地和同步候选，优先低 window block。
+   - **排查流程**：参考 `/.agent/workflows/debug_consensus.md`
 
-### RealProposer 区块缓存
-提案的区块在最终化前缓存在内存中：
-```go
-// 缓存区块
-consensus.CacheBlock(block)
+2. **同步卡住**：
+   - 关注 `syncManager.go` 中 stall protection 和 in-flight range dedupe 逻辑
+   - 丢包环境下 `HandleSyncResponse` 超时可能导致 range 永不释放
 
-// 获取缓存
-block, ok := consensus.GetCachedBlock(blockID)
+3. **查询风暴**：
+   - `queryManager.go` 中 `queryCooldown` 不够时可能导致指数级重试
+   - 注意区分 `PushQuery` 和 `PullQuery` 的使用场景
 
-// 清理低于指定高度的缓存
-consensus.CleanupBlockCacheBelowHeight(height)
+## Quick Commands
+
+```bash
+rg "issueQuery|RegisterQuery|SubmitChit|processVotes" consensus
+rg "checkAndSync|pollPeerHeights|processTimeouts|HandleHeightResponse" consensus
+rg "selectBestCandidate|GetCachedBlock|FastFinalize" consensus
 ```
 
-### SyncManager 快照同步
-支持快照快速同步落后节点：
-```go
-// 请求快照同步（大幅落后时使用）
-sm.requestSnapshotSync(targetHeight)
-
-// 常规区块同步
-sm.requestSync(fromHeight, toHeight)
-```
-
-## Block Header/Body 分离
-
-区块现在分为 Header 和 Body：
-```go
-type BlockHeader struct {
-    Height      uint64
-    ParentID    string
-    StateRoot   string   // JMT 状态根
-    TxHash      string   // 交易累积哈希
-    Proposer    string
-    Window      int
-    VRFProof    []byte
-}
-```
-
-## 代码约定
-
-- **Interface Driven**: `Real` 前缀是生产实现，`Simulated` 前缀用于测试
-- **Concurrency**: 广泛使用 `sync.RWMutex` 保护状态
-- **日志前缀**: `[Snowball]`, `[QueryManager]`, `[SyncManager]`, `[RealProposer]`
-
-## 调试说明
-
-- 共识不推进 → 检查 `QueryManager` 采样是否正常
-- 区块同步卡住 → 检查 `SyncManager` 日志
-- 查看区块缓存大小: `consensus.GetBlockCacheSize()`
