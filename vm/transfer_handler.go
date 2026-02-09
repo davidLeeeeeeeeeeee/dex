@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// TransferTxHandler 转账交易处理器
+// TransferTxHandler 杞处浜ゆ槗澶勭悊鍣?
 type TransferTxHandler struct{}
 
 func (h *TransferTxHandler) Kind() string {
@@ -17,7 +17,7 @@ func (h *TransferTxHandler) Kind() string {
 }
 
 func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 提取Transaction
+	// 1. 鎻愬彇Transaction
 	transferTx, ok := tx.GetContent().(*pb.AnyTx_Transaction)
 	if !ok {
 		return nil, &Receipt{
@@ -36,9 +36,9 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, fmt.Errorf("invalid transfer transaction")
 	}
 
-	// 验证转账金额
-	amount, ok := new(big.Int).SetString(transfer.Amount, 10)
-	if !ok || amount.Sign() <= 0 {
+	// 楠岃瘉杞处閲戦
+	amount, err := parsePositiveBalanceStrict("transfer amount", transfer.Amount)
+	if err != nil {
 		return nil, &Receipt{
 			TxID:   transfer.Base.TxId,
 			Status: "FAILED",
@@ -46,7 +46,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, fmt.Errorf("invalid transfer amount: %s", transfer.Amount)
 	}
 
-	// 2. 检查发送方账户是否被冻结
+	// 2. 妫€鏌ュ彂閫佹柟璐︽埛鏄惁琚喕缁?
 	freezeKey := keys.KeyFreeze(transfer.Base.FromAddress, transfer.TokenAddress)
 	freezeData, isFrozen, _ := sv.Get(freezeKey)
 	if isFrozen && string(freezeData) == "true" {
@@ -57,7 +57,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, fmt.Errorf("sender account is frozen for token: %s", transfer.TokenAddress)
 	}
 
-	// 3. 读取发送方账户
+	// 3. 璇诲彇鍙戦€佹柟璐︽埛
 	fromAccountKey := keys.KeyAccount(transfer.Base.FromAddress)
 	fromAccountData, fromExists, err := sv.Get(fromAccountKey)
 	if err != nil || !fromExists {
@@ -69,7 +69,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	var fromAccount pb.Account
-	if err := proto.Unmarshal(fromAccountData, &fromAccount); err != nil {
+	if err := unmarshalProtoCompat(fromAccountData, &fromAccount); err != nil {
 		return nil, &Receipt{
 			TxID:   transfer.Base.TxId,
 			Status: "FAILED",
@@ -77,11 +77,15 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, err
 	}
 
-	// 4. 使用分离存储检查发送方余额
+	// 4. 浣跨敤鍒嗙瀛樺偍妫€鏌ュ彂閫佹柟浣欓
 	fromTokenBal := GetBalance(sv, transfer.Base.FromAddress, transfer.TokenAddress)
-	fromBalance, ok := new(big.Int).SetString(fromTokenBal.Balance, 10)
-	if !ok || fromBalance == nil {
-		fromBalance = big.NewInt(0)
+	fromBalance, err := parseBalanceStrict("sender balance", fromTokenBal.Balance)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   transfer.Base.TxId,
+			Status: "FAILED",
+			Error:  "invalid sender balance",
+		}, err
 	}
 
 	if fromBalance.Cmp(amount) < 0 {
@@ -92,15 +96,19 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, fmt.Errorf("insufficient balance")
 	}
 
-	// 5. 扣除交易手续费（如果是 native token）
-	// 假设手续费始终用 FB 支付
+	// 5. 鎵ｉ櫎浜ゆ槗鎵嬬画璐癸紙濡傛灉鏄?native token锛?
+	// 鍋囪鎵嬬画璐瑰缁堢敤 FB 鏀粯
 	const FeeToken = "FB"
-	feeAmount, _ := ParseBalance(transfer.Base.Fee)
-	if feeAmount == nil {
-		feeAmount = big.NewInt(0)
+	feeAmount, err := parseBalanceStrict("tx fee", transfer.Base.Fee)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   transfer.Base.TxId,
+			Status: "FAILED",
+			Error:  "invalid fee",
+		}, err
 	}
 
-	// 读取 FB 余额用于扣费（使用分离存储）
+	// 璇诲彇 FB 浣欓鐢ㄤ簬鎵ｈ垂锛堜娇鐢ㄥ垎绂诲瓨鍌級
 	var fbBalance *big.Int
 	var fromFBBal *pb.TokenBalance
 	if transfer.TokenAddress == FeeToken {
@@ -108,15 +116,19 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		fromFBBal = fromTokenBal
 	} else {
 		fromFBBal = GetBalance(sv, transfer.Base.FromAddress, FeeToken)
-		fbBalance, _ = ParseBalance(fromFBBal.Balance)
-		if fbBalance == nil {
-			fbBalance = big.NewInt(0)
+		fbBalance, err = parseBalanceStrict("sender FB balance", fromFBBal.Balance)
+		if err != nil {
+			return nil, &Receipt{
+				TxID:   transfer.Base.TxId,
+				Status: "FAILED",
+				Error:  "invalid sender FB balance",
+			}, err
 		}
 	}
 
-	// 检查是否足够支付手续费
+	// 妫€鏌ユ槸鍚﹁冻澶熸敮浠樻墜缁垂
 	if transfer.TokenAddress == FeeToken {
-		// 如果转账的是 FB，总额 = amount + fee
+		// 濡傛灉杞处鐨勬槸 FB锛屾€婚 = amount + fee
 		totalNeeded, err := SafeAdd(amount, feeAmount)
 		if err != nil {
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "amount+fee overflow"}, err
@@ -129,7 +141,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 			}, fmt.Errorf("insufficient FB balance")
 		}
 	} else {
-		// 如果转账不是 FB，独立检查 FB 余额支付 fee
+		// 濡傛灉杞处涓嶆槸 FB锛岀嫭绔嬫鏌?FB 浣欓鏀粯 fee
 		if fbBalance.Cmp(feeAmount) < 0 {
 			return nil, &Receipt{
 				TxID:   transfer.Base.TxId,
@@ -139,13 +151,13 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}
 	}
 
-	// 6. 读取接收方账户（用于确保账户存在，后续余额使用分离存储）
+	// 6. 璇诲彇鎺ユ敹鏂硅处鎴凤紙鐢ㄤ簬纭繚璐︽埛瀛樺湪锛屽悗缁綑棰濅娇鐢ㄥ垎绂诲瓨鍌級
 	toAccountKey := keys.KeyAccount(transfer.To)
 	toAccountData, toExists, _ := sv.Get(toAccountKey)
 
 	var toAccount pb.Account
 	if toExists {
-		if err := proto.Unmarshal(toAccountData, &toAccount); err != nil {
+		if err := unmarshalProtoCompat(toAccountData, &toAccount); err != nil {
 			return nil, &Receipt{
 				TxID:   transfer.Base.TxId,
 				Status: "FAILED",
@@ -153,16 +165,16 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 			}, err
 		}
 	} else {
-		// 创建新账户（不含余额字段）
+		// 鍒涘缓鏂拌处鎴凤紙涓嶅惈浣欓瀛楁锛?
 		toAccount = pb.Account{
 			Address: transfer.To,
 		}
 	}
 
-	// 7. 执行转账与扣费（使用分离存储）
-	// 减少发送方余额
+	// 7. 鎵ц杞处涓庢墸璐癸紙浣跨敤鍒嗙瀛樺偍锛?
+	// 鍑忓皯鍙戦€佹柟浣欓
 	if transfer.TokenAddress == FeeToken {
-		// FB 转账：一次性扣除 total (amount + fee)
+		// FB 杞处锛氫竴娆℃€ф墸闄?total (amount + fee)
 		totalDeduct, err := SafeAdd(amount, feeAmount)
 		if err != nil {
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "amount+fee overflow"}, err
@@ -174,7 +186,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		fromFBBal.Balance = newFromBalance.String()
 		SetBalance(sv, transfer.Base.FromAddress, FeeToken, fromFBBal)
 	} else {
-		// 非 FB 转账：分别扣除 amount 和 fee
+		// 闈?FB 杞处锛氬垎鍒墸闄?amount 鍜?fee
 		newFromBalance, err := SafeSub(fromBalance, amount)
 		if err != nil {
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
@@ -182,7 +194,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		fromTokenBal.Balance = newFromBalance.String()
 		SetBalance(sv, transfer.Base.FromAddress, transfer.TokenAddress, fromTokenBal)
 
-		// 扣除 FB Fee
+		// 鎵ｉ櫎 FB Fee
 		currentFB, err := ParseBalance(fromFBBal.Balance)
 		if err != nil {
 			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "invalid FB balance"}, err
@@ -195,13 +207,17 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		SetBalance(sv, transfer.Base.FromAddress, FeeToken, fromFBBal)
 	}
 
-	// 增加接收方余额（使用分离存储）
+	// 澧炲姞鎺ユ敹鏂逛綑棰濓紙浣跨敤鍒嗙瀛樺偍锛?
 	toTokenBal := GetBalance(sv, transfer.To, transfer.TokenAddress)
-	toBalance, _ := new(big.Int).SetString(toTokenBal.Balance, 10)
-	if toBalance == nil {
-		toBalance = big.NewInt(0)
+	toBalance, err := parseBalanceStrict("receiver balance", toTokenBal.Balance)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   transfer.Base.TxId,
+			Status: "FAILED",
+			Error:  "invalid receiver balance",
+		}, err
 	}
-	// 使用安全加法检查接收方余额溢出
+	// 浣跨敤瀹夊叏鍔犳硶妫€鏌ユ帴鏀舵柟浣欓婧㈠嚭
 	newToBalance, err := SafeAdd(toBalance, amount)
 	if err != nil {
 		return nil, &Receipt{
@@ -213,10 +229,10 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	toTokenBal.Balance = newToBalance.String()
 	SetBalance(sv, transfer.To, transfer.TokenAddress, toTokenBal)
 
-	// 7. 保存更新后的账户和余额
+	// 7. 淇濆瓨鏇存柊鍚庣殑璐︽埛鍜屼綑棰?
 	ws := make([]WriteOp, 0)
 
-	// 保存发送方账户（不含余额）
+	// 淇濆瓨鍙戦€佹柟璐︽埛锛堜笉鍚綑棰濓級
 	updatedFromData, err := proto.Marshal(&fromAccount)
 	if err != nil {
 		return nil, &Receipt{
@@ -234,7 +250,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Category:    "account",
 	})
 
-	// 保存接收方账户（不含余额）
+	// 淇濆瓨鎺ユ敹鏂硅处鎴凤紙涓嶅惈浣欓锛?
 	updatedToData, err := proto.Marshal(&toAccount)
 	if err != nil {
 		return nil, &Receipt{
@@ -252,7 +268,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Category:    "account",
 	})
 
-	// 添加余额 WriteOps（发送方）
+	// 娣诲姞浣欓 WriteOps锛堝彂閫佹柟锛?
 	fromTokenBalKey := keys.KeyBalance(transfer.Base.FromAddress, transfer.TokenAddress)
 	fromTokenBalData, _, _ := sv.Get(fromTokenBalKey)
 	ws = append(ws, WriteOp{Key: fromTokenBalKey, Value: fromTokenBalData, SyncStateDB: true, Category: "balance"})
@@ -263,12 +279,12 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		ws = append(ws, WriteOp{Key: fromFBBalKey, Value: fromFBBalData, SyncStateDB: true, Category: "balance"})
 	}
 
-	// 添加余额 WriteOps（接收方）
+	// 娣诲姞浣欓 WriteOps锛堟帴鏀舵柟锛?
 	toTokenBalKey := keys.KeyBalance(transfer.To, transfer.TokenAddress)
 	toTokenBalData, _, _ := sv.Get(toTokenBalKey)
 	ws = append(ws, WriteOp{Key: toTokenBalKey, Value: toTokenBalData, SyncStateDB: true, Category: "balance"})
 
-	// 8. 记录转账历史
+	// 8. 璁板綍杞处鍘嗗彶
 	historyKey := keys.KeyTransferHistory(transfer.Base.TxId)
 	historyData, _ := proto.Marshal(transfer)
 	ws = append(ws, WriteOp{

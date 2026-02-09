@@ -7,10 +7,10 @@ import (
 	"dex/pb"
 	"dex/utils"
 	"fmt"
+	"math/big"
 
 	"sync"
 
-	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -27,9 +27,9 @@ var (
 	}
 )
 
-// OrderTxHandler 订单交易处理器
+// OrderTxHandler 鐠併垹宕熸禍銈嗘婢跺嫮鎮婇敓?
 type OrderTxHandler struct {
-	// 区块级别的订单簿缓存（由 Executor 在 PreExecuteBlock 时设置）
+	// 閸栧搫娼＄痪褍鍩嗛惃鍕吂閸楁洜缈辩紓鎾崇摠閿涘牏鏁?Executor 閿?PreExecuteBlock 閺冩儼顔曠純顕嗙礆
 	orderBooks map[string]*matching.OrderBook
 }
 
@@ -37,13 +37,13 @@ func (h *OrderTxHandler) Kind() string {
 	return "order"
 }
 
-// SetOrderBooks 设置区块级别的订单簿缓存
+// SetOrderBooks 鐠佸墽鐤嗛崠鍝勬健缁狙冨焼閻ㄥ嫯顓归崡鏇犵勘缂傛挸鐡?
 func (h *OrderTxHandler) SetOrderBooks(books map[string]*matching.OrderBook) {
 	h.orderBooks = books
 }
 
 func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 提取OrderTx
+	// 1. 閹绘劕褰嘜rderTx
 	orderTx, ok := tx.GetContent().(*pb.AnyTx_OrderTx)
 	if !ok {
 		return nil, &Receipt{
@@ -62,7 +62,7 @@ func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 		}, fmt.Errorf("invalid order transaction")
 	}
 
-	// 2. 根据操作类型分发处理
+	// 2. 閺嶈宓侀幙宥勭稊缁鐎烽崚鍡楀絺婢跺嫮鎮?
 	switch ord.Op {
 	case pb.OrderOp_ADD:
 		return h.handleAddOrder(ord, sv)
@@ -77,20 +77,18 @@ func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 	}
 }
 
-// handleAddOrder 处理添加/更新订单，并执行撮合
+// handleAddOrder 婢跺嫮鎮婂ǎ璇插/閺囧瓨鏌婄拋銏犲礋閿涘苯鑻熼幍褑顢戦幘顔兼値
 func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 验证订单参数
-	amountDec, err := decimal.NewFromString(ord.Amount)
-	if err != nil || amountDec.LessThanOrEqual(decimal.Zero) {
+	amountBI, err := parsePositiveBalanceStrict("order amount", ord.Amount)
+	if err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
 			Error:  "invalid order amount",
-		}, nil // 业务逻辑失败不应挂掉区块
+		}, nil
 	}
-
-	priceDec, err := decimal.NewFromString(ord.Price)
-	if err != nil || priceDec.LessThanOrEqual(decimal.Zero) {
+	priceBI, err := parsePositiveBalanceStrict("order price", ord.Price)
+	if err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -98,24 +96,6 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		}, nil
 	}
 
-	// 检查是否超过 MaxUint256
-	maxUint256Dec := decimal.NewFromBigInt(MaxUint256, 0)
-	if amountDec.GreaterThan(maxUint256Dec) {
-		return nil, &Receipt{
-			TxID:   ord.Base.TxId,
-			Status: "FAILED",
-			Error:  "amount overflow",
-		}, nil
-	}
-	if priceDec.GreaterThan(maxUint256Dec) {
-		return nil, &Receipt{
-			TxID:   ord.Base.TxId,
-			Status: "FAILED",
-			Error:  "price overflow",
-		}, nil
-	}
-
-	// 2. 读取账户
 	accountKey := keys.KeyAccount(ord.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil || !exists {
@@ -130,7 +110,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	account.Reset()
 	defer accountPool.Put(account)
 
-	if err := proto.Unmarshal(accountData, account); err != nil {
+	if err := unmarshalProtoCompat(accountData, account); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -138,50 +118,69 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		}, nil
 	}
 
-	// 3. 根据订单方向检查余额（使用分离存储）
-	// - 卖单：需要有 BaseToken 余额（要卖出的币）
-	// - 买单：需要有 QuoteToken 余额（要支付的币）
 	if ord.Side == pb.OrderSide_SELL {
-		// 卖单：检查并冻结 BaseToken 余额
 		bal := GetBalance(sv, ord.Base.FromAddress, ord.BaseToken)
-		current, _ := decimal.NewFromString(bal.Balance)
-		if current.LessThan(amountDec) {
+		current, err := parseBalanceStrict("balance", bal.Balance)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid balance state"}, err
+		}
+		if current.Cmp(amountBI) < 0 {
 			return nil, &Receipt{
 				TxID:   ord.Base.TxId,
 				Status: "FAILED",
-				Error:  fmt.Sprintf("insufficient %s balance: has %s, need %s", ord.BaseToken, current, amountDec),
+				Error:  fmt.Sprintf("insufficient %s balance: has %s, need %s", ord.BaseToken, current.String(), amountBI.String()),
 			}, fmt.Errorf("insufficient balance")
 		}
-		// 1) 扣除余额，增加订单锁定余额
-		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
-		bal.Balance = current.Sub(amountDec).String()
-		bal.OrderFrozenBalance = frozen.Add(amountDec).String()
-		// 写回 StateView，确保同区块内后续交易能看到冻结后的余额
+		frozen, err := parseBalanceStrict("order frozen balance", bal.OrderFrozenBalance)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid frozen balance state"}, err
+		}
+		newBalance, err := SafeSub(current, amountBI)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
+		}
+		newFrozen, err := SafeAdd(frozen, amountBI)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "frozen balance overflow"}, err
+		}
+		bal.Balance = newBalance.String()
+		bal.OrderFrozenBalance = newFrozen.String()
 		SetBalance(sv, ord.Base.FromAddress, ord.BaseToken, bal)
 	} else {
-		// 买单：检查并冻结 QuoteToken 余额
 		bal := GetBalance(sv, ord.Base.FromAddress, ord.QuoteToken)
-		current, _ := decimal.NewFromString(bal.Balance)
-		needed := amountDec.Mul(priceDec)
-		if current.LessThan(needed) {
+		current, err := parseBalanceStrict("balance", bal.Balance)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid balance state"}, err
+		}
+		needed, err := SafeMul(amountBI, priceBI)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "amount*price overflow"}, nil
+		}
+		if current.Cmp(needed) < 0 {
 			return nil, &Receipt{
 				TxID:   ord.Base.TxId,
 				Status: "FAILED",
-				Error:  fmt.Sprintf("insufficient %s balance to buy: has %s, need %s", ord.QuoteToken, current, needed),
+				Error:  fmt.Sprintf("insufficient %s balance to buy: has %s, need %s", ord.QuoteToken, current.String(), needed.String()),
 			}, fmt.Errorf("insufficient balance")
 		}
-		// 1) 扣除余额，增加订单锁定余额
-		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
-		bal.Balance = current.Sub(needed).String()
-		bal.OrderFrozenBalance = frozen.Add(needed).String()
-		// 写回 StateView，确保同区块内后续交易能看到冻结后的余额
+		frozen, err := parseBalanceStrict("order frozen balance", bal.OrderFrozenBalance)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid frozen balance state"}, err
+		}
+		newBalance, err := SafeSub(current, needed)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
+		}
+		newFrozen, err := SafeAdd(frozen, needed)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "frozen balance overflow"}, err
+		}
+		bal.Balance = newBalance.String()
+		bal.OrderFrozenBalance = newFrozen.String()
 		SetBalance(sv, ord.Base.FromAddress, ord.QuoteToken, bal)
 	}
 
-	// 4. 生成交易对key（使用utils.GeneratePairKey确保一致性）
 	pair := utils.GeneratePairKey(ord.BaseToken, ord.QuoteToken)
-
-	// 5. 从缓存中获取订单簿（已在 PreExecuteBlock 中重建）
 	orderBook, ok := h.orderBooks[pair]
 	if !ok {
 		return nil, &Receipt{
@@ -191,14 +190,11 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		}, fmt.Errorf("order book not found for pair: %s", pair)
 	}
 
-	// 6. 收集撮合事件
 	var tradeEvents []matching.TradeUpdate
 	orderBook.SetTradeSink(func(ev matching.TradeUpdate) {
 		tradeEvents = append(tradeEvents, ev)
 	})
 
-	// 7. 将新订单转换为matching.Order并添加到订单簿
-	// 新订单还没有 OrderState，使用 Legacy 函数（假设未成交）
 	newOrder, err := convertToMatchingOrderLegacy(ord)
 	if err != nil {
 		return nil, &Receipt{
@@ -208,7 +204,6 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		}, err
 	}
 
-	// 8. 执行撮合
 	if err := orderBook.AddOrder(newOrder); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
@@ -217,9 +212,6 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 		}, err
 	}
 
-	// 9. 根据撮合事件生成WriteOps
-	// 传入已处理的账户数据，用于生成 WriteOp
-	// 账户在 defer 中会归还 pool
 	accountCache := map[string]*pb.Account{
 		ord.Base.FromAddress: account,
 	}
@@ -239,8 +231,8 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	}, nil
 }
 
-// handleRemoveOrder 处理撤单
-// 现在使用 OrderState 而不是 OrderTx
+// handleRemoveOrder 婢跺嫮鎮婇幘銈呭礋
+// 閻滄澘婀担璺ㄦ暏 OrderState 閼板奔绗夐敓?OrderTx
 func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	if ord.OpTargetId == "" {
 		return nil, &Receipt{
@@ -250,11 +242,9 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		}, fmt.Errorf("op_target_id is required")
 	}
 
-	// 读取要撤销的订单状态
 	targetStateKey := keys.KeyOrderState(ord.OpTargetId)
 	targetStateData, exists, err := sv.Get(targetStateKey)
 	if err != nil || !exists {
-		// 兼容旧数据：尝试从旧的 OrderTx 加载
 		targetOrderKey := keys.KeyOrder(ord.OpTargetId)
 		targetOrderData, oldExists, oldErr := sv.Get(targetOrderKey)
 		if oldErr != nil || !oldExists {
@@ -266,7 +256,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		}
 
 		var oldOrderTx pb.OrderTx
-		if err := proto.Unmarshal(targetOrderData, &oldOrderTx); err != nil {
+		if err := unmarshalProtoCompat(targetOrderData, &oldOrderTx); err != nil {
 			return nil, &Receipt{
 				TxID:   ord.Base.TxId,
 				Status: "FAILED",
@@ -274,7 +264,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 			}, err
 		}
 
-		// 验证权限
 		if oldOrderTx.Base.FromAddress != ord.Base.FromAddress {
 			return nil, &Receipt{
 				TxID:   ord.Base.TxId,
@@ -283,12 +272,11 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 			}, fmt.Errorf("permission denied")
 		}
 
-		// 使用旧数据处理撤单
 		return h.handleRemoveOrderLegacy(ord, &oldOrderTx, sv)
 	}
 
 	var targetState pb.OrderState
-	if err := proto.Unmarshal(targetStateData, &targetState); err != nil {
+	if err := unmarshalProtoCompat(targetStateData, &targetState); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -296,7 +284,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		}, err
 	}
 
-	// 验证权限：只有订单创建者可以撤单
 	if targetState.Owner != ord.Base.FromAddress {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
@@ -305,7 +292,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		}, fmt.Errorf("permission denied")
 	}
 
-	// 读取账户
 	accountKey := keys.KeyAccount(ord.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil || !exists {
@@ -317,7 +303,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}
 
 	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil {
+	if err := unmarshalProtoCompat(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -325,39 +311,74 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		}, err
 	}
 
-	// 1) 返还剩余锁定余额
-	remainingBase, _ := decimal.NewFromString(targetState.Amount)
-	filledBase, _ := decimal.NewFromString(targetState.FilledBase)
-	toRefundBase := remainingBase.Sub(filledBase)
+	totalAmount, err := parseBalanceStrict("order amount", targetState.Amount)
+	if err != nil {
+		return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid order state amount"}, err
+	}
+	filledBase, err := parseBalanceStrict("order filled_base", targetState.FilledBase)
+	if err != nil {
+		return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid order state filled_base"}, err
+	}
+	toRefundBase, err := SafeSub(totalAmount, filledBase)
+	if err != nil {
+		return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid order state: filled exceeds amount"}, err
+	}
 
 	if targetState.Side == pb.OrderSide_SELL {
-		// 卖单退回 BaseToken（使用分离存储）
 		bal := GetBalance(sv, ord.Base.FromAddress, targetState.BaseToken)
-		current, _ := decimal.NewFromString(bal.Balance)
-		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
-		// 原子更新：可用 += 待退回，冻结 -= 待退回
-		bal.Balance = current.Add(toRefundBase).String()
-		bal.OrderFrozenBalance = frozen.Sub(toRefundBase).String()
+		current, err := parseBalanceStrict("balance", bal.Balance)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid balance state"}, err
+		}
+		frozen, err := parseBalanceStrict("order frozen balance", bal.OrderFrozenBalance)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid frozen balance state"}, err
+		}
+		newBalance, err := SafeAdd(current, toRefundBase)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "balance overflow"}, err
+		}
+		newFrozen, err := SafeSub(frozen, toRefundBase)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "frozen balance underflow"}, err
+		}
+		bal.Balance = newBalance.String()
+		bal.OrderFrozenBalance = newFrozen.String()
 		SetBalance(sv, ord.Base.FromAddress, targetState.BaseToken, bal)
 	} else {
-		// 买单退回 QuoteToken（使用分离存储）
-		// 注意：下单时冻结的是 Amount * LimitPrice
-		// 已经成交的部分，冻结额度已在 updateAccountBalancesFromStates 中扣除
-		// 剩余未成交部分，冻结额度应为 (Amount - FilledBase) * LimitPrice
-		limitPrice, _ := decimal.NewFromString(targetState.Price)
-		toRefundQuote := toRefundBase.Mul(limitPrice)
+		limitPrice, err := parseBalanceStrict("order price", targetState.Price)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid order state price"}, err
+		}
+		toRefundQuote, err := SafeMul(toRefundBase, limitPrice)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "refund overflow"}, err
+		}
 
 		bal := GetBalance(sv, ord.Base.FromAddress, targetState.QuoteToken)
-		current, _ := decimal.NewFromString(bal.Balance)
-		frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
-		bal.Balance = current.Add(toRefundQuote).String()
-		bal.OrderFrozenBalance = frozen.Sub(toRefundQuote).String()
+		current, err := parseBalanceStrict("balance", bal.Balance)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid balance state"}, err
+		}
+		frozen, err := parseBalanceStrict("order frozen balance", bal.OrderFrozenBalance)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid frozen balance state"}, err
+		}
+		newBalance, err := SafeAdd(current, toRefundQuote)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "balance overflow"}, err
+		}
+		newFrozen, err := SafeSub(frozen, toRefundQuote)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "frozen balance underflow"}, err
+		}
+		bal.Balance = newBalance.String()
+		bal.OrderFrozenBalance = newFrozen.String()
 		SetBalance(sv, ord.Base.FromAddress, targetState.QuoteToken, bal)
 	}
 
 	ws := make([]WriteOp, 0)
 
-	// 添加余额更新的 WriteOp
 	if targetState.Side == pb.OrderSide_SELL {
 		balKey := keys.KeyBalance(ord.Base.FromAddress, targetState.BaseToken)
 		balData, _, _ := sv.Get(balKey)
@@ -368,7 +389,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
 	}
 
-	// 更新订单状态为已撤单（而不是删除）
 	targetState.Status = pb.OrderStateStatus_ORDER_CANCELLED
 	updatedStateData, err := proto.Marshal(&targetState)
 	if err != nil {
@@ -387,7 +407,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Category:    "orderstate",
 	})
 
-	// 4. 从离散订单列表中移除 (Phase 2 重构)
 	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.OpTargetId)
 	ws = append(ws, WriteOp{
 		Key:         accOrderItemKey,
@@ -397,7 +416,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Category:    "acc_orders_item",
 	})
 
-	// 保存更新后的账户（不含余额）
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
@@ -415,7 +433,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Category:    "account",
 	})
 
-	// 删除价格索引
 	pair := utils.GeneratePairKey(targetState.BaseToken, targetState.QuoteToken)
 	priceKey67, err := db.PriceToKey128(targetState.Price)
 	if err != nil {
@@ -442,7 +459,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}, nil
 }
 
-// handleRemoveOrderLegacy 处理旧数据格式的撤单（兼容性）
+// handleRemoveOrderLegacy 婢跺嫮鎮婇弮褎鏆熼幑顔界壐瀵繒娈戦幘銈呭礋閿涘牆鍚嬬€硅鈧嶇礆
 func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	accountKey := keys.KeyAccount(ord.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
@@ -455,7 +472,7 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 	}
 
 	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil {
+	if err := unmarshalProtoCompat(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   ord.Base.TxId,
 			Status: "FAILED",
@@ -465,7 +482,6 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 
 	ws := make([]WriteOp, 0)
 
-	// 删除旧的订单数据
 	targetOrderKey := keys.KeyOrder(ord.OpTargetId)
 	ws = append(ws, WriteOp{
 		Key:         targetOrderKey,
@@ -475,7 +491,6 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 		Category:    "order",
 	})
 
-	// 4. 从离散订单列表中移除 (Phase 2 重构)
 	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.OpTargetId)
 	ws = append(ws, WriteOp{
 		Key:         accOrderItemKey,
@@ -485,38 +500,57 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 		Category:    "acc_orders_item",
 	})
 
-	// 5. 计算并返还冻结及扣除的余额
 	var refundToken string
-	var refundAmount decimal.Decimal
-
+	var refundAmount *big.Int
 	if targetOrder.Side == pb.OrderSide_SELL {
 		refundToken = targetOrder.BaseToken
-		amount, _ := decimal.NewFromString(targetOrder.Amount)
-		refundAmount = amount
+		refundAmount, err = parseBalanceStrict("order amount", targetOrder.Amount)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid order amount"}, err
+		}
 	} else {
 		refundToken = targetOrder.QuoteToken
-		amount, _ := decimal.NewFromString(targetOrder.Amount)
-		price, _ := decimal.NewFromString(targetOrder.Price)
-		refundAmount = amount.Mul(price)
+		amountBI, err := parseBalanceStrict("order amount", targetOrder.Amount)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid order amount"}, err
+		}
+		priceBI, err := parseBalanceStrict("order price", targetOrder.Price)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid order price"}, err
+		}
+		refundAmount, err = SafeMul(amountBI, priceBI)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "refund overflow"}, err
+		}
 	}
 
-	// loading balance using separated storage
 	bal := GetBalance(sv, ord.Base.FromAddress, refundToken)
-	current, _ := decimal.NewFromString(bal.Balance)
-	frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
+	current, err := parseBalanceStrict("balance", bal.Balance)
+	if err != nil {
+		return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid balance state"}, err
+	}
+	frozen, err := parseBalanceStrict("order frozen balance", bal.OrderFrozenBalance)
+	if err != nil {
+		return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "invalid frozen balance state"}, err
+	}
 
-	// Update balances
-	bal.Balance = current.Add(refundAmount).String()
-	if frozen.LessThan(refundAmount) {
+	newBalance, err := SafeAdd(current, refundAmount)
+	if err != nil {
+		return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "balance overflow"}, err
+	}
+	bal.Balance = newBalance.String()
+	if frozen.Cmp(refundAmount) < 0 {
 		bal.OrderFrozenBalance = "0"
 	} else {
-		bal.OrderFrozenBalance = frozen.Sub(refundAmount).String()
+		newFrozen, err := SafeSub(frozen, refundAmount)
+		if err != nil {
+			return nil, &Receipt{TxID: ord.Base.TxId, Status: "FAILED", Error: "frozen balance underflow"}, err
+		}
+		bal.OrderFrozenBalance = newFrozen.String()
 	}
 
-	// Write back balance
 	SetBalance(sv, ord.Base.FromAddress, refundToken, bal)
 
-	// Generate Balance WriteOp
 	balKey := keys.KeyBalance(ord.Base.FromAddress, refundToken)
 	balData, _, _ := sv.Get(balKey)
 	ws = append(ws, WriteOp{
@@ -543,7 +577,6 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 		Category:    "account",
 	})
 
-	// 删除价格索引
 	pair := utils.GeneratePairKey(targetOrder.BaseToken, targetOrder.QuoteToken)
 	priceKey67, err := db.PriceToKey128(targetOrder.Price)
 	if err != nil {
@@ -574,8 +607,8 @@ func (h *OrderTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
 
-// generateWriteOpsFromTrades 根据撮合事件生成WriteOps
-// 现在使用 OrderState 存储可变状态，OrderTx 只是不可变的交易原文
+// generateWriteOpsFromTrades 閺嶈宓侀幘顔兼値娴滃娆㈤悽鐔稿灇WriteOps
+// 閻滄澘婀担璺ㄦ暏 OrderState 鐎涙ê鍋嶉崣顖氬綁閻樿埖鈧緤绱漁rderTx 閸欘亝妲告稉宥呭讲閸欐娈戞禍銈嗘閸樼喐鏋?
 func (h *OrderTxHandler) generateWriteOpsFromTrades(
 	newOrd *pb.OrderTx,
 	tradeEvents []matching.TradeUpdate,
@@ -585,24 +618,24 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 ) ([]WriteOp, error) {
 	ws := make([]WriteOp, 0)
 
-	// 如果没有撮合事件，说明订单未成交，直接保存订单状态
+	// 婵″倹鐏夊▽鈩冩箒閹绢喖鎮庢禍瀣╂閿涘矁顕╅弰搴ゎ吂閸楁洘婀幋鎰唉閿涘瞼娲块幒銉ょ箽鐎涙顓归崡鏇犲Ц閿?
 	if len(tradeEvents) == 0 {
-		// 注意：这里的 saveNewOrder 内部会生成账户更新 WriteOp
-		// 但由于 handleAddOrder 已经冻结了余额，我们这里的 WriteOp 与初始的一致
+		// 濞夈劍鍓伴敍姘崇箹闁插瞼娈?saveNewOrder 閸愬懘鍎存导姘辨晸閹存劘澶勯幋閿嬫纯閿?WriteOp
+		// 娴ｅ棛鏁遍敓?handleAddOrder 瀹歌尙绮￠崘鑽ょ波娴滃棔缍戞０婵撶礉閹存垳婊戞潻娆撳櫡閿?WriteOp 娑撳骸鍨垫慨瀣畱娑撯偓閿?
 		return h.saveNewOrder(newOrd, sv, pair, accountCache)
 	}
 
-	// 处理每个撮合事件 - 使用 OrderState 存储可变状态
+	// 婢跺嫮鎮婂В蹇庨嚋閹绢喖鎮庢禍瀣╂ - 娴ｈ法鏁?OrderState 鐎涙ê鍋嶉崣顖氬綁閻樿鎷?
 	stateUpdates := make(map[string]*pb.OrderState) // orderID -> updated OrderState
 
 	for _, ev := range tradeEvents {
-		// 加载订单状态 - 优先从 stateUpdates 中获取已更新的版本
+		// 閸旂姾娴囩拋銏犲礋閻樿鎷?- 娴兼ê鍘涢敓?stateUpdates 娑擃叀骞忛崣鏍у嚒閺囧瓨鏌婇惃鍕閿?
 		var orderState *pb.OrderState
 		if cached, ok := stateUpdates[ev.OrderID]; ok {
-			// 已有该订单状态的更新版本，在其基础上继续更新
+			// 瀹稿弶婀佺拠銉吂閸楁洜濮搁幀浣烘畱閺囧瓨鏌婇悧鍫熸拱閿涘苯婀崗璺虹唨绾偓娑撳﹦鎴风紒顓熸纯閿?
 			orderState = cached
 		} else if ev.OrderID == newOrd.Base.TxId {
-			// 这是新订单，创建初始 OrderState
+			// 鏉╂瑦妲搁弬鎷岊吂閸楁洩绱濋崚娑樼紦閸掓繂顫?OrderState
 			orderState = &pb.OrderState{
 				OrderId:          newOrd.Base.TxId,
 				FilledBase:       "0",
@@ -619,24 +652,24 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 				Owner:            newOrd.Base.FromAddress,
 			}
 		} else {
-			// 这是已存在的订单，从StateView加载 OrderState
+			// 鏉╂瑦妲稿鎻掔摠閸︺劎娈戠拋銏犲礋閿涘奔绮燬tateView閸旂姾娴?OrderState
 			orderStateKey := keys.KeyOrderState(ev.OrderID)
 			orderStateData, exists, err := sv.Get(orderStateKey)
 			if err != nil || !exists {
-				// 兼容旧数据：尝试从旧的 OrderTx 加载
+				// 閸忕厧顔愰弮褎鏆熼幑顕嗙窗鐏忔繆鐦禒搴㈡＋閿?OrderTx 閸旂姾娴?
 				orderKey := keys.KeyOrder(ev.OrderID)
 				orderData, oldExists, oldErr := sv.Get(orderKey)
 				if oldErr != nil || !oldExists {
 					continue
 				}
 				var oldOrderTx pb.OrderTx
-				if err := proto.Unmarshal(orderData, &oldOrderTx); err != nil {
+				if err := unmarshalProtoCompat(orderData, &oldOrderTx); err != nil {
 					continue
 				}
-				// 转换为 OrderState
+				// 鏉烆剚宕查敓?OrderState
 				orderState = &pb.OrderState{
 					OrderId:     ev.OrderID,
-					FilledBase:  "0", // 旧数据可能没有这些字段，重新计算
+					FilledBase:  "0", // 閺冄勬殶閹诡喖褰查懗鑺ョ梾閺堝绻栨禍娑樼摟濞堢绱濋柌宥嗘煀鐠侊紕鐣?
 					FilledQuote: "0",
 					IsFilled:    false,
 					Status:      pb.OrderStateStatus_ORDER_OPEN,
@@ -650,24 +683,46 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			} else {
 				orderState = orderStatePool.Get().(*pb.OrderState)
 				orderState.Reset()
-				// 这里不能用 defer Put，因为后面还要存入 map 并被循环外的逻辑使用
-				if err := proto.Unmarshal(orderStateData, orderState); err != nil {
-					orderStatePool.Put(orderState) // 失败也要归还
+				// 鏉╂瑩鍣锋稉宥堝厴閿?defer Put閿涘苯娲滄稉鍝勬倵闂堛垼绻曠憰浣哥摠閿?map 楠炴儼顫﹀顏嗗箚婢舵牜娈戦柅鏄忕帆娴ｈ法鏁?
+				if err := unmarshalProtoCompat(orderStateData, orderState); err != nil {
+					orderStatePool.Put(orderState) // 婢惰精瑙︽稊鐔活洣瑜版帟绻?
 					continue
 				}
 			}
 		}
 
-		// 更新订单状态的成交信息
-		filledBase, _ := decimal.NewFromString(orderState.FilledBase)
-		filledQuote, _ := decimal.NewFromString(orderState.FilledQuote)
+		// 閺囧瓨鏌婄拋銏犲礋閻樿埖鈧胶娈戦幋鎰唉娣団剝浼?
+		filledBase, err := parseBalanceStrict("order filled_base", orderState.FilledBase)
+		if err != nil {
+			return nil, fmt.Errorf("invalid order state filled_base for %s: %w", ev.OrderID, err)
+		}
+		filledQuote, err := parseBalanceStrict("order filled_quote", orderState.FilledQuote)
+		if err != nil {
+			return nil, fmt.Errorf("invalid order state filled_quote for %s: %w", ev.OrderID, err)
+		}
+		tradeAmtBI, err := decimalToBalanceStrict("trade amount", ev.TradeAmt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trade amount for %s: %w", ev.OrderID, err)
+		}
+		tradePriceBI, err := decimalToBalanceStrict("trade price", ev.TradePrice)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trade price for %s: %w", ev.OrderID, err)
+		}
+		tradeQuoteBI, err := SafeMul(tradeAmtBI, tradePriceBI)
+		if err != nil {
+			return nil, fmt.Errorf("trade quote overflow for %s: %w", ev.OrderID, err)
+		}
+		newFilledBase, err := SafeAdd(filledBase, tradeAmtBI)
+		if err != nil {
+			return nil, fmt.Errorf("filled_base overflow for %s: %w", ev.OrderID, err)
+		}
+		newFilledQuote, err := SafeAdd(filledQuote, tradeQuoteBI)
+		if err != nil {
+			return nil, fmt.Errorf("filled_quote overflow for %s: %w", ev.OrderID, err)
+		}
 
-		// 更新成交量
-		filledBase = filledBase.Add(ev.TradeAmt)
-		filledQuote = filledQuote.Add(ev.TradeAmt.Mul(ev.TradePrice))
-
-		orderState.FilledBase = filledBase.String()
-		orderState.FilledQuote = filledQuote.String()
+		orderState.FilledBase = newFilledBase.String()
+		orderState.FilledQuote = newFilledQuote.String()
 		orderState.IsFilled = ev.IsFilled
 		if ev.IsFilled {
 			orderState.Status = pb.OrderStateStatus_ORDER_FILLED
@@ -675,7 +730,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 
 		stateUpdates[ev.OrderID] = orderState
 
-		// 同时确保订单实体被保存（兼容索引重建）
+		// 閸氬本妞傜涵顔荤箽鐠併垹宕熺€圭偘缍嬬悮顐＄箽鐎涙﹫绱欓崗鐓庮啇缁便垹绱╅柌宥呯紦閿?
 		if ev.OrderID == newOrd.Base.TxId {
 			orderKey := keys.KeyOrderTx(newOrd.Base.TxId)
 			orderData, _ := proto.Marshal(newOrd)
@@ -689,7 +744,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		}
 	}
 
-	// 生成WriteOps保存所有更新的订单状态
+	// 閻㈢喐鍨歐riteOps娣囨繂鐡ㄩ幍鈧張澶嬫纯閺傛壆娈戠拋銏犲礋閻樿鎷?
 	for orderID, orderState := range stateUpdates {
 		orderStateKey := keys.KeyOrderState(orderID)
 		orderStateData, err := proto.Marshal(orderState)
@@ -706,13 +761,13 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			Category:    "orderstate",
 		})
 
-		// 更新价格索引
+		// 閺囧瓨鏌婃禒閿嬬壐缁便垹绱?
 		priceKey67, err := db.PriceToKey128(orderState.Price)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert price to key: %w", err)
 		}
 
-		// 删除旧的未成交索引
+		// 閸掔娀娅庨弮褏娈戦張顏呭灇娴溿倗鍌ㄩ敓?
 		oldIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, false, priceKey67, orderID)
 		ws = append(ws, WriteOp{
 			Key:         oldIndexKey,
@@ -722,7 +777,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			Category:    "index",
 		})
 
-		// 如果订单已完全成交，创建新的已成交索引
+		// 婵″倹鐏夌拋銏犲礋瀹告彃鐣崗銊﹀灇娴溿倧绱濋崚娑樼紦閺傛壆娈戝鍙夊灇娴溿倗鍌ㄩ敓?
 		if orderState.IsFilled {
 			newIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, true, priceKey67, orderID)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
@@ -734,7 +789,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 				Category:    "index",
 			})
 		} else {
-			// 如果未完全成交，保留未成交索引 (使用新的 Key 格式补全 Side)
+			// 婵″倹鐏夐張顏勭暚閸忋劍鍨氭禍銈忕礉娣囨繄鏆€閺堫亝鍨氭禍銈囧偍閿?(娴ｈ法鏁ら弬鎵畱 Key 閺嶇厧绱＄悰銉ュ弿 Side)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 			ws = append(ws, WriteOp{
 				Key:         oldIndexKey,
@@ -746,22 +801,22 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 		}
 	}
 
-	// 生成成交记录
+	// 閻㈢喐鍨氶幋鎰唉鐠佹澘缍?
 	tradeRecordOps, err := h.generateTradeRecordsFromStates(newOrd, tradeEvents, stateUpdates, pair)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate trade records: %w", err)
 	}
 	ws = append(ws, tradeRecordOps...)
 
-	// 更新账户余额
-	// 将 accountCache 传入，确保同一笔交易内的余额修改是累积的
+	// 閺囧瓨鏌婄拹锔藉煕娴ｆ瑩顤?
+	// 閿?accountCache 娴肩姴鍙嗛敍宀€鈥樻穱婵嗘倱娑撯偓缁楁柧姘﹂弰鎾冲敶閻ㄥ嫪缍戞０婵呮叏閺€瑙勬Ц缁鳖垳袧閿?
 	accountBalanceOps, err := h.updateAccountBalancesFromStates(tradeEvents, stateUpdates, sv, accountCache)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update account balances: %w", err)
 	}
 	ws = append(ws, accountBalanceOps...)
 
-	// 所有使用 stateUpdates 的函数已执行完毕，现在安全地归还 Pool 对象
+	// 閹碘偓閺堝濞囬敓?stateUpdates 閻ㄥ嫬鍤遍弫鏉垮嚒閹笛嗩攽鐎瑰本鐦敍宀€骞囬崷銊ョ暔閸忋劌婀磋ぐ鎺曠箷 Pool 鐎电钖?
 	for _, orderState := range stateUpdates {
 		orderStatePool.Put(orderState)
 	}
@@ -769,15 +824,15 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 	return ws, nil
 }
 
-// generateWriteOpsFromTrades ... (此处省略，保持前面的更新)
-// 注意：updateAccountBalances 函数已被弃用，此处直接将其内容清空或删除
+// generateWriteOpsFromTrades ... (濮濄倕顦╅惇浣烘殣閿涘奔绻氶幐浣稿闂堛垻娈戦弴瀛樻煀)
+// 濞夈劍鍓伴敍姝秔dateAccountBalances 閸戣姤鏆熷鑼额潶瀵啰鏁ら敍灞绢劃婢跺嫮娲块幒銉ョ殺閸忚泛鍞寸€硅绔荤粚鐑樺灗閸掔娀娅?
 
-// saveNewOrder 保存新订单（未成交的情况）
-// 现在保存 OrderState 而不是 OrderTx（OrderTx 作为交易原文由 applyResult 统一保存到 v1_txraw_<txid>）
+// saveNewOrder 娣囨繂鐡ㄩ弬鎷岊吂閸楁洩绱欓張顏呭灇娴溿倗娈戦幆鍛枌閿?
+// 閻滄澘婀穱婵嗙摠 OrderState 閼板奔绗夐敓?OrderTx閿涘湦rderTx 娴ｆ粈璐熸禍銈嗘閸樼喐鏋冮敓?applyResult 缂佺喍绔存穱婵嗙摠閿?v1_txraw_<txid>閿?
 func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string, accountCache map[string]*pb.Account) ([]WriteOp, error) {
 	ws := make([]WriteOp, 0)
 
-	// 如果 accountCache 中有更新后的账户，生成对应的 WriteOp
+	// 婵″倹鐏?accountCache 娑擃厽婀侀弴瀛樻煀閸氬海娈戠拹锔藉煕閿涘瞼鏁撻幋鎰嚠鎼存梻娈?WriteOp
 	if accountCache != nil {
 		if acc, ok := accountCache[ord.Base.FromAddress]; ok {
 			accountKey := keys.KeyAccount(ord.Base.FromAddress)
@@ -792,7 +847,7 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		}
 	}
 
-	// 生成冻结余额的 WriteOp（handleAddOrder 已通过 SetBalance 写入 sv）
+	// 閻㈢喐鍨氶崘鑽ょ波娴ｆ瑩顤傞敓?WriteOp閿涘潝andleAddOrder 瀹告煡鈧俺绻?SetBalance 閸愭瑥鍙?sv閿?
 	if ord.Side == pb.OrderSide_SELL {
 		balKey := keys.KeyBalance(ord.Base.FromAddress, ord.BaseToken)
 		balData, _, _ := sv.Get(balKey)
@@ -803,7 +858,7 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
 	}
 
-	// 创建 OrderState（可变状态）
+	// 閸掓稑缂?OrderState閿涘牆褰查崣妯煎Ц閹緤绱?
 	orderState := &pb.OrderState{
 		OrderId:          ord.Base.TxId,
 		FilledBase:       "0",
@@ -812,7 +867,7 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		Status:           pb.OrderStateStatus_ORDER_OPEN,
 		CreateHeight:     ord.Base.ExecutedHeight,
 		LastUpdateHeight: ord.Base.ExecutedHeight,
-		// 冗余字段，方便查询
+		// 閸愭ぞ缍戠€涙顔岄敍灞炬煙娓氭寧鐓￠敓?
 		BaseToken:  ord.BaseToken,
 		QuoteToken: ord.QuoteToken,
 		Amount:     ord.Amount,
@@ -835,7 +890,7 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		Category:    "orderstate",
 	})
 
-	// 同时保存订单实体，以便索引重建逻辑（RebuildOrderPriceIndexes）能正常工作
+	// 閸氬本妞傛穱婵嗙摠鐠併垹宕熺€圭偘缍嬮敍灞间簰娓氳法鍌ㄥ鏇㈠櫢瀵ゆ椽鈧槒绶敍鍦buildOrderPriceIndexes閿涘鍏樺锝呯埗瀹搞儰缍?
 	orderKey := keys.KeyOrderTx(ord.Base.TxId)
 	orderData, _ := proto.Marshal(ord)
 	ws = append(ws, WriteOp{
@@ -846,23 +901,23 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		Category:    "order",
 	})
 
-	// 4. 读取独立存储的订单列表并添加新订单 (Phase 2 重构：改为离散存储)
+	// 4. 鐠囪褰囬悪顒傜彌鐎涙ê鍋嶉惃鍕吂閸楁洖鍨悰銊ヨ嫙濞ｈ濮為弬鎷岊吂閿?(Phase 2 闁插秵鐎敍姘暭娑撹櫣顬囬弫锝呯摠閿?
 	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.Base.TxId)
 	ws = append(ws, WriteOp{
 		Key:         accOrderItemKey,
-		Value:       []byte{1}, // 仅作为标记存在
+		Value:       []byte{1}, // 娴犲懍缍旀稉鐑樼垼鐠佹澘鐡ㄩ敓?
 		Del:         false,
 		SyncStateDB: true,
 		Category:    "acc_orders_item",
 	})
 
-	// 创建价格索引（基于 OrderState.IsFilled）
+	// 閸掓稑缂撴禒閿嬬壐缁便垹绱╅敍鍫濈唨閿?OrderState.IsFilled閿?
 	priceKey67, err := db.PriceToKey128(ord.Price)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert price to key: %w", err)
 	}
 
-	// Phase 2: 增加 side 参数区分买卖
+	// Phase 2: 婢х偛濮?side 閸欏倹鏆熼崠鍝勫瀻娑旀澘宕?
 	priceIndexKey := keys.KeyOrderPriceIndex(pair, ord.Side, orderState.IsFilled, priceKey67, ord.Base.TxId)
 	indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 	ws = append(ws, WriteOp{
@@ -876,8 +931,8 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 	return ws, nil
 }
 
-// generateTradeRecords 根据撮合事件生成成交记录
-// 撮合事件成对出现（taker 和 maker 各一个），需要合并成一条成交记录
+// generateTradeRecords 閺嶈宓侀幘顔兼値娴滃娆㈤悽鐔稿灇閹存劒姘︾拋鏉跨秿
+// 閹绢喖鎮庢禍瀣╂閹存劕顕崙铏瑰箛閿涘澅aker 閿?maker 閸氬嫪绔存稉顏庣礆閿涘矂娓剁憰浣告値楠炶埖鍨氭稉鈧弶鈩冨灇娴溿倛顔囬敓?
 func (h *OrderTxHandler) generateTradeRecords(
 	newOrd *pb.OrderTx,
 	tradeEvents []matching.TradeUpdate,
@@ -886,13 +941,13 @@ func (h *OrderTxHandler) generateTradeRecords(
 ) ([]WriteOp, error) {
 	ws := make([]WriteOp, 0)
 
-	// 新订单是 taker，撮合事件成对出现
-	// 遍历事件，每两个事件生成一条成交记录
+	// 閺傛媽顓归崡鏇熸Ц taker閿涘本鎸抽崥鍫滅皑娴犺埖鍨氱€电懓鍤敓?
+	// 闁秴宸绘禍瀣╂閿涘本鐦℃稉銈勯嚋娴滃娆㈤悽鐔稿灇娑撯偓閺夆剝鍨氭禍銈堫唶閿?
 	for i := 0; i < len(tradeEvents)-1; i += 2 {
 		takerEv := tradeEvents[i]
 		makerEv := tradeEvents[i+1]
 
-		// 确定 taker 和 maker
+		// 绾喖鐣?taker 閿?maker
 		var takerOrderID, makerOrderID string
 		var tradePrice, tradeAmount string
 		var takerSide pb.OrderSide
@@ -913,11 +968,11 @@ func (h *OrderTxHandler) generateTradeRecords(
 			}
 		}
 
-		// 生成成交 ID（使用 taker 订单 ID + maker 订单 ID + 索引）
+		// 閻㈢喐鍨氶幋鎰唉 ID閿涘牅濞囬敓?taker 鐠併垹宕?ID + maker 鐠併垹宕?ID + 缁便垹绱╅敓?
 		tradeID := fmt.Sprintf("%s_%s_%d", takerOrderID[:8], makerOrderID[:8], i/2)
 		timestamp := utils.NowRFC3339()
 
-		// 创建成交记录
+		// 閸掓稑缂撻幋鎰唉鐠佹澘缍?
 		tradeRecord := &pb.TradeRecord{
 			TradeId:      tradeID,
 			Pair:         pair,
@@ -935,7 +990,7 @@ func (h *OrderTxHandler) generateTradeRecords(
 			return nil, fmt.Errorf("failed to marshal trade record: %w", err)
 		}
 
-		// 使用时间戳作为 key 前缀，让最新的成交记录排在前面
+		// 娴ｈ法鏁ら弮鍫曟？閹村厖缍旈敓?key 閸撳秶绱戦敍宀冾唨閺堚偓閺傛壆娈戦幋鎰唉鐠佹澘缍嶉幒鎺戞躬閸撳秹娼?
 		tradeKey := keys.KeyTradeRecord(pair, utils.NowUnixNano(), tradeID)
 		ws = append(ws, WriteOp{
 			Key:         tradeKey,
@@ -949,7 +1004,7 @@ func (h *OrderTxHandler) generateTradeRecords(
 	return ws, nil
 }
 
-// generateTradeRecordsFromStates 使用 OrderState 生成成交记录
+// generateTradeRecordsFromStates 娴ｈ法鏁?OrderState 閻㈢喐鍨氶幋鎰唉鐠佹澘缍?
 func (h *OrderTxHandler) generateTradeRecordsFromStates(
 	newOrd *pb.OrderTx,
 	tradeEvents []matching.TradeUpdate,
@@ -982,7 +1037,7 @@ func (h *OrderTxHandler) generateTradeRecordsFromStates(
 			}
 		}
 
-		// 安全截取订单 ID，避免越界
+		// 鐎瑰鍙忛幋顏勫絿鐠併垹宕?ID閿涘矂浼╅崗宥堢Ш閿?
 		takerIDShort := takerOrderID
 		if len(takerIDShort) > 8 {
 			takerIDShort = takerIDShort[:8]
@@ -1024,7 +1079,7 @@ func (h *OrderTxHandler) generateTradeRecordsFromStates(
 	return ws, nil
 }
 
-// updateAccountBalancesFromStates 使用 OrderState 更新账户余额（使用分离存储）
+// updateAccountBalancesFromStates 娴ｈ法鏁?OrderState 閺囧瓨鏌婄拹锔藉煕娴ｆ瑩顤傞敍鍫滃▏閻劌鍨庣粋璇茬摠閸岊煉绱?
 func (h *OrderTxHandler) updateAccountBalancesFromStates(
 	tradeEvents []matching.TradeUpdate,
 	stateUpdates map[string]*pb.OrderState,
@@ -1036,14 +1091,11 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 		accountCache = make(map[string]*pb.Account)
 	}
 
-	// 使用余额缓存替代账户缓存
-	// key 格式: "address:token"
 	type balanceCacheKey struct {
 		addr, token string
 	}
 	balanceCache := make(map[balanceCacheKey]*pb.TokenBalance)
 
-	// 辅助函数：获取或加载余额
 	getOrLoadBalance := func(addr, token string) *pb.TokenBalance {
 		key := balanceCacheKey{addr, token}
 		if bal, ok := balanceCache[key]; ok {
@@ -1061,76 +1113,90 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 		}
 
 		address := orderState.Owner
-
-		// 加载相关余额
 		baseBal := getOrLoadBalance(address, orderState.BaseToken)
 		quoteBal := getOrLoadBalance(address, orderState.QuoteToken)
 
-		baseBalance, err := decimal.NewFromString(baseBal.Balance)
+		baseBalance, err := parseBalanceStrict("balance", baseBal.Balance)
 		if err != nil {
-			baseBalance = decimal.Zero
+			return nil, err
 		}
-		quoteBalance, err := decimal.NewFromString(quoteBal.Balance)
+		quoteBalance, err := parseBalanceStrict("balance", quoteBal.Balance)
 		if err != nil {
-			quoteBalance = decimal.Zero
+			return nil, err
+		}
+		tradeAmtBI, err := decimalToBalanceStrict("trade amount", ev.TradeAmt)
+		if err != nil {
+			return nil, err
+		}
+		tradePriceBI, err := decimalToBalanceStrict("trade price", ev.TradePrice)
+		if err != nil {
+			return nil, err
+		}
+		tradeQuoteAmt, err := SafeMul(tradeAmtBI, tradePriceBI)
+		if err != nil {
+			return nil, err
 		}
 
 		if orderState.Side == pb.OrderSide_SELL {
-			// 卖单：
-			// 1. 扣除 OrderFrozenBalance 中的成交部分（这是下单时预扣的）
-			frozen, _ := decimal.NewFromString(baseBal.OrderFrozenBalance)
-			baseBal.OrderFrozenBalance = frozen.Sub(ev.TradeAmt).String()
-
-			// 2. 增加 QuoteToken 余额（成交得到的）
-			tradeQuoteAmt := ev.TradeAmt.Mul(ev.TradePrice)
-			newQuoteBalance := quoteBalance.Add(tradeQuoteAmt)
+			frozen, err := parseBalanceStrict("order frozen balance", baseBal.OrderFrozenBalance)
+			if err != nil {
+				return nil, err
+			}
+			newFrozen, err := SafeSub(frozen, tradeAmtBI)
+			if err != nil {
+				return nil, fmt.Errorf("seller frozen balance underflow: %w", err)
+			}
+			newQuoteBalance, err := SafeAdd(quoteBalance, tradeQuoteAmt)
+			if err != nil {
+				return nil, fmt.Errorf("seller quote balance overflow: %w", err)
+			}
+			baseBal.OrderFrozenBalance = newFrozen.String()
 			quoteBal.Balance = newQuoteBalance.String()
 		} else {
-			// 买单：
-			// 1. 扣除 OrderFrozenBalance 中的成交部分（这是下单时预扣的 QuoteToken）
-			// 注意：这里需要考虑"价格优化"退款。
-			// 下单时冻结的是：amount * LimitPrice
-			// 实际消耗的是：tradeAmt * MatchPrice
-			// 冻结额度消耗应按照 LimitPrice 计算，以确保最后能完全释放
-			limitPrice, _ := decimal.NewFromString(orderState.Price)
-			frozenToDeduct := ev.TradeAmt.Mul(limitPrice)
+			limitPrice, err := parseBalanceStrict("order price", orderState.Price)
+			if err != nil {
+				return nil, err
+			}
+			frozenToDeduct, err := SafeMul(tradeAmtBI, limitPrice)
+			if err != nil {
+				return nil, err
+			}
 
-			frozen, _ := decimal.NewFromString(quoteBal.OrderFrozenBalance)
-			quoteBal.OrderFrozenBalance = frozen.Sub(frozenToDeduct).String()
+			frozen, err := parseBalanceStrict("order frozen balance", quoteBal.OrderFrozenBalance)
+			if err != nil {
+				return nil, err
+			}
+			newFrozen, err := SafeSub(frozen, frozenToDeduct)
+			if err != nil {
+				return nil, fmt.Errorf("buyer frozen balance underflow: %w", err)
+			}
+			quoteBal.OrderFrozenBalance = newFrozen.String()
 
-			// 2. 增加 BaseToken 余额（买到的币）
-			newBaseBalance := baseBalance.Add(ev.TradeAmt)
+			newBaseBalance, err := SafeAdd(baseBalance, tradeAmtBI)
+			if err != nil {
+				return nil, fmt.Errorf("buyer base balance overflow: %w", err)
+			}
 			baseBal.Balance = newBaseBalance.String()
 
-			// 3. 处理价格优化退款：如果 MatchPrice < LimitPrice，将差额退回 liquid balance
-			if ev.TradePrice.LessThan(limitPrice) {
-				priceDiff := limitPrice.Sub(ev.TradePrice)
-				refundQuote := ev.TradeAmt.Mul(priceDiff)
-
-				// 这里的 refundQuote 其实已经在上面从 OrderFrozenBalance 中扣除了（因为按 LimitPrice 扣的）
-				// 而用户实际只需要付 ev.TradeAmt * ev.TradePrice。
-				// 所以差额补回到 Balance。
-				currentQuoteBal, _ := decimal.NewFromString(quoteBal.Balance)
-				quoteBal.Balance = currentQuoteBal.Add(refundQuote).String()
-			}
-		}
-
-		// 检查余额是否超过 MaxUint256 或为负数
-		maxUint256Dec := decimal.NewFromBigInt(MaxUint256, 0)
-		for _, bal := range []*pb.TokenBalance{baseBal, quoteBal} {
-			b, _ := decimal.NewFromString(bal.Balance)
-			if b.GreaterThan(maxUint256Dec) {
-				return nil, fmt.Errorf("balance overflow")
-			}
-			f, _ := decimal.NewFromString(bal.OrderFrozenBalance)
-			if f.IsNegative() {
-				// 强制归零，防止负数冻结余额导致账户锁死
-				bal.OrderFrozenBalance = "0"
+			if tradePriceBI.Cmp(limitPrice) < 0 {
+				priceDiff := new(big.Int).Sub(limitPrice, tradePriceBI)
+				refundQuote, err := SafeMul(tradeAmtBI, priceDiff)
+				if err != nil {
+					return nil, err
+				}
+				currentQuoteBal, err := parseBalanceStrict("balance", quoteBal.Balance)
+				if err != nil {
+					return nil, err
+				}
+				newQuoteBalance, err := SafeAdd(currentQuoteBal, refundQuote)
+				if err != nil {
+					return nil, fmt.Errorf("buyer quote refund overflow: %w", err)
+				}
+				quoteBal.Balance = newQuoteBalance.String()
 			}
 		}
 	}
 
-	// 将所有修改的余额写回 StateView 并生成 WriteOps
 	for key, bal := range balanceCache {
 		SetBalance(sv, key.addr, key.token, bal)
 		balKey := keys.KeyBalance(key.addr, key.token)

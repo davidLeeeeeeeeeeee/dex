@@ -1,5 +1,5 @@
 // vm/witness_handler.go
-// 见证者相关交易处理器
+// 瑙佽瘉鑰呯浉鍏充氦鏄撳鐞嗗櫒
 package vm
 
 import (
@@ -10,88 +10,86 @@ import (
 	"dex/witness"
 	"encoding/binary"
 	"fmt"
-	"math/big"
 	"strconv"
 
-	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
 )
 
-// DefaultVaultCount 默认每条链的 Vault 数量
+// DefaultVaultCount 榛樿姣忔潯閾剧殑 Vault 鏁伴噺
 const DefaultVaultCount = 100
 
-// allocateVaultID 确定性分配 vault_id
-// 使用 H(request_id) % vault_count 确保相同 request_id 总是分配到相同 vault
+// allocateVaultID 纭畾鎬у垎閰?vault_id
+// 浣跨敤 H(request_id) % vault_count 纭繚鐩稿悓 request_id 鎬绘槸鍒嗛厤鍒扮浉鍚?vault
 func allocateVaultID(requestID string, vaultCount uint32) uint32 {
 	if vaultCount == 0 {
 		vaultCount = DefaultVaultCount
 	}
 	hash := sha256.Sum256([]byte(requestID))
-	// 使用前 4 字节作为 uint32
+	// 浣跨敤鍓?4 瀛楄妭浣滀负 uint32
 	n := binary.BigEndian.Uint32(hash[:4])
 	return n % vaultCount
 }
 
-// allocateVaultIDWithLifecycleCheck 确定性分配 vault_id，并检查 Vault lifecycle
-// 如果分配的 Vault 处于 DRAINING 状态，尝试下一个可用的 ACTIVE Vault
+// allocateVaultIDWithLifecycleCheck 纭畾鎬у垎閰?vault_id锛屽苟妫€鏌?Vault lifecycle
+// 濡傛灉鍒嗛厤鐨?Vault 澶勪簬 DRAINING 鐘舵€侊紝灏濊瘯涓嬩竴涓彲鐢ㄧ殑 ACTIVE Vault
 func allocateVaultIDWithLifecycleCheck(sv StateView, chain, requestID string, vaultCount uint32) (uint32, error) {
 	if vaultCount == 0 {
 		vaultCount = DefaultVaultCount
 	}
 
-	// 计算初始 vault_id（确定性）
+	// 璁＄畻鍒濆 vault_id锛堢‘瀹氭€э級
 	initialVaultID := allocateVaultID(requestID, vaultCount)
 
-	// 检查初始 Vault 的 lifecycle
+	// 妫€鏌ュ垵濮?Vault 鐨?lifecycle
 	vaultStateKey := keys.KeyFrostVaultState(chain, initialVaultID)
 	vaultStateData, exists, _ := sv.Get(vaultStateKey)
 	if exists && len(vaultStateData) > 0 {
 		var vaultState pb.FrostVaultState
-		if err := proto.Unmarshal(vaultStateData, &vaultState); err == nil {
-			// 检查 lifecycle（从 VaultTransitionState 获取，或从 VaultState.Status 推断）
-			// 如果 Vault 处于 DRAINING 状态，尝试下一个 ACTIVE Vault
+		if err := unmarshalProtoCompat(vaultStateData, &vaultState); err == nil {
+			// 妫€鏌?lifecycle锛堜粠 VaultTransitionState 鑾峰彇锛屾垨浠?VaultState.Status 鎺ㄦ柇锛?
+			// 濡傛灉 Vault 澶勪簬 DRAINING 鐘舵€侊紝灏濊瘯涓嬩竴涓?ACTIVE Vault
 			if vaultState.Status == VaultLifecycleDraining {
-				// 查找下一个 ACTIVE 的 Vault
+				// 鏌ユ壘涓嬩竴涓?ACTIVE 鐨?Vault
 				for offset := uint32(1); offset < vaultCount; offset++ {
 					candidateID := (initialVaultID + offset) % vaultCount
 					candidateKey := keys.KeyFrostVaultState(chain, candidateID)
 					candidateData, candidateExists, _ := sv.Get(candidateKey)
 					if candidateExists && len(candidateData) > 0 {
 						var candidateState pb.FrostVaultState
-						if err := proto.Unmarshal(candidateData, &candidateState); err == nil {
+						if err := unmarshalProtoCompat(candidateData, &candidateState); err == nil {
 							if candidateState.Status == "ACTIVE" {
 								return candidateID, nil
 							}
 						}
 					} else {
-						// 如果 Vault 不存在，默认认为是 ACTIVE（新创建的 Vault）
+						// 濡傛灉 Vault 涓嶅瓨鍦紝榛樿璁や负鏄?ACTIVE锛堟柊鍒涘缓鐨?Vault锛?
 						return candidateID, nil
 					}
 				}
-				// 如果所有 Vault 都是 DRAINING，返回错误
+				// 濡傛灉鎵€鏈?Vault 閮芥槸 DRAINING锛岃繑鍥為敊璇?
 				return 0, fmt.Errorf("no ACTIVE vault available for chain %s", chain)
 			}
 		}
 	}
 
-	// 初始 Vault 是 ACTIVE 或不存在（默认 ACTIVE）
+	// 鍒濆 Vault 鏄?ACTIVE 鎴栦笉瀛樺湪锛堥粯璁?ACTIVE锛?
 	return initialVaultID, nil
 }
 
-// WitnessServiceAware 见证者服务感知接口
-// 实现此接口的 handler 可以接收 WitnessService 的引用
+// WitnessServiceAware 瑙佽瘉鑰呮湇鍔℃劅鐭ユ帴鍙?
+// 瀹炵幇姝ゆ帴鍙ｇ殑 handler 鍙互鎺ユ敹 WitnessService 鐨勫紩鐢?
 type WitnessServiceAware interface {
 	SetWitnessService(svc *witness.Service)
 }
 
 // ==================== WitnessStakeTxHandler ====================
 
-// WitnessStakeTxHandler 见证者质押/解质押交易处理器
+// WitnessStakeTxHandler 瑙佽瘉鑰呰川鎶?瑙ｈ川鎶间氦鏄撳鐞嗗櫒
 type WitnessStakeTxHandler struct {
 	witnessSvc *witness.Service
 }
 
-// SetWitnessService 设置见证者服务
+// SetWitnessService 璁剧疆瑙佽瘉鑰呮湇鍔?
 func (h *WitnessStakeTxHandler) SetWitnessService(svc *witness.Service) {
 	h.witnessSvc = svc
 }
@@ -114,7 +112,7 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 	ws := make([]WriteOp, 0)
 	address := stake.Base.FromAddress
 
-	// 读取账户
+	// 璇诲彇璐︽埛
 	accountKey := keys.KeyAccount(address)
 	accountData, accountExists, err := sv.Get(accountKey)
 	if err != nil {
@@ -123,39 +121,38 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 
 	var account pb.Account
 	if accountExists {
-		if err := proto.Unmarshal(accountData, &account); err != nil {
+		if err := unmarshalProtoCompat(accountData, &account); err != nil {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "failed to parse account"}, err
 		}
 	} else {
 		return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "account not found"}, fmt.Errorf("account not found")
 	}
 
-	// 读取见证者信息
+	// 璇诲彇瑙佽瘉鑰呬俊鎭?
 	witnessKey := keys.KeyWitnessInfo(address)
 	witnessData, witnessExists, _ := sv.Get(witnessKey)
 
 	var witnessInfo pb.WitnessInfo
 	if witnessExists {
-		if err := proto.Unmarshal(witnessData, &witnessInfo); err != nil {
+		if err := unmarshalProtoCompat(witnessData, &witnessInfo); err != nil {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "failed to parse witness info"}, err
 		}
 	} else {
 		witnessInfo = pb.WitnessInfo{Address: address, StakeAmount: "0", Status: pb.WitnessStatus_WITNESS_CANDIDATE}
 	}
 
-	amount, ok := new(big.Int).SetString(stake.Amount, 10)
-	if !ok {
+	amount, err := parsePositiveBalanceStrict("witness stake amount", stake.Amount)
+	if err != nil {
 		return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "invalid amount"}, fmt.Errorf("invalid amount")
 	}
 
-	// 使用分离存储读取余额
+	// 浣跨敤鍒嗙瀛樺偍璇诲彇浣欓
 	fbBalance := GetBalance(sv, address, "FB")
 
 	if stake.Op == pb.OrderOp_ADD {
-		// 使用 WitnessService 进行验证（如果可用）
+		// 浣跨敤 WitnessService 杩涜楠岃瘉锛堝鏋滃彲鐢級
 		if h.witnessSvc != nil {
-			amountDec, _ := decimal.NewFromString(stake.Amount)
-			if _, err := h.witnessSvc.ProcessStake(address, amountDec); err != nil {
+			if _, err := h.witnessSvc.ProcessStake(address, balanceToDecimal(amount)); err != nil {
 				if err == witness.ErrWitnessAlreadyActive {
 					logs.Warn("[WitnessStake] witness %s already active, treating as success (idempotent)", address)
 				} else {
@@ -164,23 +161,23 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 			}
 		}
 
-		balance, _ := new(big.Int).SetString(fbBalance.Balance, 10)
-		if balance == nil {
-			balance = big.NewInt(0)
+		balance, err := parseBalanceStrict("balance", fbBalance.Balance)
+		if err != nil {
+			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "invalid balance state"}, err
 		}
 		if balance.Cmp(amount) < 0 {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "insufficient balance"}, fmt.Errorf("insufficient balance")
 		}
-		// 使用安全减法
+		// 浣跨敤瀹夊叏鍑忔硶
 		newBalance, err := SafeSub(balance, amount)
 		if err != nil {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "balance underflow"}, fmt.Errorf("balance underflow: %w", err)
 		}
-		lockedBalance, _ := new(big.Int).SetString(fbBalance.WitnessLockedBalance, 10)
-		if lockedBalance == nil {
-			lockedBalance = big.NewInt(0)
+		lockedBalance, err := parseBalanceStrict("witness locked balance", fbBalance.WitnessLockedBalance)
+		if err != nil {
+			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "invalid locked balance state"}, err
 		}
-		// 使用安全加法检查锁定余额溢出
+		// 浣跨敤瀹夊叏鍔犳硶妫€鏌ラ攣瀹氫綑棰濇孩鍑?
 		newLocked, err := SafeAdd(lockedBalance, amount)
 		if err != nil {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "locked balance overflow"}, fmt.Errorf("locked balance overflow: %w", err)
@@ -188,11 +185,11 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		fbBalance.Balance = newBalance.String()
 		fbBalance.WitnessLockedBalance = newLocked.String()
 
-		currentStake, _ := new(big.Int).SetString(witnessInfo.StakeAmount, 10)
-		if currentStake == nil {
-			currentStake = big.NewInt(0)
+		currentStake, err := parseBalanceStrict("witness stake amount", witnessInfo.StakeAmount)
+		if err != nil {
+			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "invalid witness stake state"}, err
 		}
-		// 使用安全加法检查质押金额溢出
+		// 浣跨敤瀹夊叏鍔犳硶妫€鏌ヨ川鎶奸噾棰濇孩鍑?
 		newStake, err := SafeAdd(currentStake, amount)
 		if err != nil {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "stake amount overflow"}, fmt.Errorf("stake amount overflow: %w", err)
@@ -200,7 +197,7 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		witnessInfo.StakeAmount = newStake.String()
 		witnessInfo.Status = pb.WitnessStatus_WITNESS_ACTIVE
 	} else {
-		// 使用 WitnessService 进行验证（如果可用）
+		// 浣跨敤 WitnessService 杩涜楠岃瘉锛堝鏋滃彲鐢級
 		if h.witnessSvc != nil {
 			if _, err := h.witnessSvc.ProcessUnstake(address); err != nil {
 				return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: err.Error()}, err
@@ -217,7 +214,7 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		witnessInfo.UnstakeHeight = stake.Base.ExecutedHeight
 	}
 
-	// 保存余额更新
+	// 淇濆瓨浣欓鏇存柊
 	SetBalance(sv, address, "FB", fbBalance)
 	balanceKey := keys.KeyBalance(address, "FB")
 	balanceData, _, _ := sv.Get(balanceKey)
@@ -239,7 +236,7 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 	historyData, _ := proto.Marshal(stake)
 	ws = append(ws, WriteOp{Key: historyKey, Value: historyData, Del: false, SyncStateDB: false, Category: "history"})
 
-	// 同步到 WitnessService 内存状态
+	// 鍚屾鍒?WitnessService 鍐呭瓨鐘舵€?
 	if h.witnessSvc != nil {
 		h.witnessSvc.LoadWitness(&witnessInfo)
 	}
@@ -253,13 +250,13 @@ func (h *WitnessStakeTxHandler) Apply(tx *pb.AnyTx) error {
 
 // ==================== WitnessRequestTxHandler ====================
 
-// WitnessRequestTxHandler 入账见证请求处理器
+// WitnessRequestTxHandler 鍏ヨ处瑙佽瘉璇锋眰澶勭悊鍣?
 type WitnessRequestTxHandler struct {
 	witnessSvc *witness.Service
 	VaultCount uint32
 }
 
-// SetWitnessService 设置见证者服务
+// SetWitnessService 璁剧疆瑙佽瘉鑰呮湇鍔?
 func (h *WitnessRequestTxHandler) SetWitnessService(svc *witness.Service) {
 	h.witnessSvc = svc
 }
@@ -285,8 +282,8 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 	existingKey := keys.KeyRechargeRequest(requestID)
 	requestData, exists, _ := sv.Get(existingKey)
 	if exists {
-		// 容错处理：如果请求已存在，且状态是活跃的或者是已完成的，允许这笔交易作为“空操作”成功，或者返回 FAILED 凭证但不报错
-		// 在区块链中，重复的交易 hash 本身不应该能进入池子，但如果由于分叉等原因进来了，我们返回 FAILED 凭据而不是 error
+		// 瀹归敊澶勭悊锛氬鏋滆姹傚凡瀛樺湪锛屼笖鐘舵€佹槸娲昏穬鐨勬垨鑰呮槸宸插畬鎴愮殑锛屽厑璁歌繖绗斾氦鏄撲綔涓衡€滅┖鎿嶄綔鈥濇垚鍔燂紝鎴栬€呰繑鍥?FAILED 鍑瘉浣嗕笉鎶ラ敊
+		// 鍦ㄥ尯鍧楅摼涓紝閲嶅鐨勪氦鏄?hash 鏈韩涓嶅簲璇ヨ兘杩涘叆姹犲瓙锛屼絾濡傛灉鐢变簬鍒嗗弶绛夊師鍥犺繘鏉ヤ簡锛屾垜浠繑鍥?FAILED 鍑嵁鑰屼笉鏄?error
 		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "request already exists"}, nil
 	}
 
@@ -304,7 +301,7 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 
 	var rechargeRequest *pb.RechargeRequest
 
-	// 使用 WitnessService 创建请求（包含见证者选择）
+	// 浣跨敤 WitnessService 鍒涘缓璇锋眰锛堝寘鍚璇佽€呴€夋嫨锛?
 	if h.witnessSvc != nil {
 		var err error
 		rechargeRequest, err = h.witnessSvc.CreateRechargeRequest(request)
@@ -312,7 +309,7 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 			return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: err.Error()}, err
 		}
 	} else {
-		// 降级模式：不使用 WitnessService
+		// 闄嶇骇妯″紡锛氫笉浣跨敤 WitnessService
 		rechargeRequest = &pb.RechargeRequest{
 			RequestId:        requestID,
 			NativeChain:      request.NativeChain,
@@ -329,8 +326,8 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 		}
 	}
 
-	// 确定性分配 vault_id，避免跨 Vault 混用资金
-	// 注意：需要检查 Vault lifecycle，DRAINING 的 Vault 不再分配新入账
+	// 纭畾鎬у垎閰?vault_id锛岄伩鍏嶈法 Vault 娣风敤璧勯噾
+	// 娉ㄦ剰锛氶渶瑕佹鏌?Vault lifecycle锛孌RAINING 鐨?Vault 涓嶅啀鍒嗛厤鏂板叆璐?
 	vCount := h.VaultCount
 	if vCount == 0 {
 		vCount = DefaultVaultCount
@@ -341,7 +338,7 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 	}
 	rechargeRequest.VaultId = vaultID
 
-	// 序列化最终的请求数据
+	// 搴忓垪鍖栨渶缁堢殑璇锋眰鏁版嵁
 	requestData, err = proto.Marshal(rechargeRequest)
 	if err != nil {
 		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "failed to marshal request"}, err
@@ -372,12 +369,12 @@ func (h *WitnessRequestTxHandler) Apply(tx *pb.AnyTx) error {
 
 // ==================== WitnessVoteTxHandler ====================
 
-// WitnessVoteTxHandler 见证投票处理器
+// WitnessVoteTxHandler 瑙佽瘉鎶曠エ澶勭悊鍣?
 type WitnessVoteTxHandler struct {
 	witnessSvc *witness.Service
 }
 
-// SetWitnessService 设置见证者服务
+// SetWitnessService 璁剧疆瑙佽瘉鑰呮湇鍔?
 func (h *WitnessVoteTxHandler) SetWitnessService(svc *witness.Service) {
 	h.witnessSvc = svc
 }
@@ -404,13 +401,13 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 	requestKey := keys.KeyRechargeRequest(requestID)
 	requestData, requestExists, err := sv.Get(requestKey)
 	if err != nil || !requestExists {
-		// 如果请求找不到，返回 FAILED 凭据，但不返回 error
-		// 这样可以避免整笔交易导致区块验证失败，从而解决共识停滞问题
+		// 濡傛灉璇锋眰鎵句笉鍒帮紝杩斿洖 FAILED 鍑嵁锛屼絾涓嶈繑鍥?error
+		// 杩欐牱鍙互閬垮厤鏁寸瑪浜ゆ槗瀵艰嚧鍖哄潡楠岃瘉澶辫触锛屼粠鑰岃В鍐冲叡璇嗗仠婊為棶棰?
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "request not found"}, nil
 	}
 
 	var request pb.RechargeRequest
-	if err := proto.Unmarshal(requestData, &request); err != nil {
+	if err := unmarshalProtoCompat(requestData, &request); err != nil {
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "failed to parse request"}, err
 	}
 
@@ -420,20 +417,20 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "duplicate vote"}, nil
 	}
 
-	// 4. 调用 WitnessService 更新状态（内存）
+	// 4. 璋冪敤 WitnessService 鏇存柊鐘舵€侊紙鍐呭瓨锛?
 	var finalRequest *pb.RechargeRequest
 	if h.witnessSvc != nil {
-		// 设置投票交易 ID
+		// 璁剧疆鎶曠エ浜ゆ槗 ID
 		vote.Vote.TxId = vote.Base.TxId
 		updatedRequest, err := h.witnessSvc.ProcessVote(vote.Vote)
 		if err != nil {
-			// 业务逻辑错误（例如状态不对）不应该废掉整个区块
+			// 涓氬姟閫昏緫閿欒锛堜緥濡傜姸鎬佷笉瀵癸級涓嶅簲璇ュ簾鎺夋暣涓尯鍧?
 			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, nil
 		}
 		finalRequest = updatedRequest
 	} else {
 
-		// 降级：手动更新（仅用于测试）
+		// 闄嶇骇锛氭墜鍔ㄦ洿鏂帮紙浠呯敤浜庢祴璇曪級
 		request.Votes = append(request.Votes, vote.Vote)
 		switch vote.Vote.VoteType {
 		case pb.WitnessVoteType_VOTE_PASS:
@@ -467,12 +464,12 @@ func (h *WitnessVoteTxHandler) Apply(tx *pb.AnyTx) error {
 
 // ==================== WitnessChallengeTxHandler ====================
 
-// WitnessChallengeTxHandler 挑战交易处理器
+// WitnessChallengeTxHandler 鎸戞垬浜ゆ槗澶勭悊鍣?
 type WitnessChallengeTxHandler struct {
 	witnessSvc *witness.Service
 }
 
-// SetWitnessService 设置见证者服务
+// SetWitnessService 璁剧疆瑙佽瘉鑰呮湇鍔?
 func (h *WitnessChallengeTxHandler) SetWitnessService(svc *witness.Service) {
 	h.witnessSvc = svc
 }
@@ -503,7 +500,7 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 	}
 
 	var request pb.RechargeRequest
-	if err := proto.Unmarshal(requestData, &request); err != nil {
+	if err := unmarshalProtoCompat(requestData, &request); err != nil {
 		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "failed to parse request"}, err
 	}
 
@@ -527,20 +524,23 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 	}
 
 	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil {
+	if err := unmarshalProtoCompat(accountData, &account); err != nil {
 		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "failed to parse account"}, err
 	}
 
-	stakeAmount, ok := new(big.Int).SetString(challenge.StakeAmount, 10)
-	if !ok {
+	stakeAmount, err := parsePositiveBalanceStrict("challenge stake amount", challenge.StakeAmount)
+	if err != nil {
 		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "invalid stake amount"}, fmt.Errorf("invalid stake amount")
 	}
 
 	// 使用分离存储读取余额
 	fbBalance := GetBalance(sv, challengerAddr, "FB")
 
-	balance, _ := new(big.Int).SetString(fbBalance.Balance, 10)
-	if balance == nil || balance.Cmp(stakeAmount) < 0 {
+	balance, err := parseBalanceStrict("balance", fbBalance.Balance)
+	if err != nil {
+		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "invalid balance state"}, err
+	}
+	if balance.Cmp(stakeAmount) < 0 {
 		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "insufficient balance"}, fmt.Errorf("insufficient balance")
 	}
 
@@ -635,7 +635,7 @@ func (h *ArbitrationVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp
 	}
 
 	var challenge pb.ChallengeRecord
-	if err := proto.Unmarshal(challengeData, &challenge); err != nil {
+	if err := unmarshalProtoCompat(challengeData, &challenge); err != nil {
 		return nil, &Receipt{TxID: arbVote.Base.TxId, Status: "FAILED", Error: "failed to parse challenge"}, err
 	}
 
@@ -709,12 +709,15 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	}
 
 	var witnessInfo pb.WitnessInfo
-	if err := proto.Unmarshal(witnessData, &witnessInfo); err != nil {
+	if err := unmarshalProtoCompat(witnessData, &witnessInfo); err != nil {
 		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "failed to parse witness info"}, err
 	}
 
-	pendingReward, _ := new(big.Int).SetString(witnessInfo.PendingReward, 10)
-	if pendingReward == nil || pendingReward.Sign() <= 0 {
+	pendingReward, err := parseBalanceStrict("pending reward", witnessInfo.PendingReward)
+	if err != nil {
+		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "invalid pending reward state"}, err
+	}
+	if pendingReward.Sign() <= 0 {
 		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "no pending reward"}, fmt.Errorf("no pending reward")
 	}
 
@@ -723,19 +726,18 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 
 	var account pb.Account
 	if accountExists {
-		if err := proto.Unmarshal(accountData, &account); err != nil {
+		if err := unmarshalProtoCompat(accountData, &account); err != nil {
 			return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "failed to parse account"}, err
 		}
 	} else {
 		account = pb.Account{Address: witnessAddr}
 	}
 
-	// 使用分离存储读取余额
 	fbBalance := GetBalance(sv, witnessAddr, "FB")
 
-	currentBalance, _ := new(big.Int).SetString(fbBalance.Balance, 10)
-	if currentBalance == nil {
-		currentBalance = big.NewInt(0)
+	currentBalance, err := parseBalanceStrict("balance", fbBalance.Balance)
+	if err != nil {
+		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "invalid balance state"}, err
 	}
 	newBalance, err := SafeAdd(currentBalance, pendingReward)
 	if err != nil {
@@ -744,9 +746,9 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	fbBalance.Balance = newBalance.String()
 	SetBalance(sv, witnessAddr, "FB", fbBalance)
 
-	totalReward, _ := new(big.Int).SetString(witnessInfo.TotalReward, 10)
-	if totalReward == nil {
-		totalReward = big.NewInt(0)
+	totalReward, err := parseBalanceStrict("total reward", witnessInfo.TotalReward)
+	if err != nil {
+		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "invalid total reward state"}, err
 	}
 	newTotalReward, err := SafeAdd(totalReward, pendingReward)
 	if err != nil {
@@ -755,7 +757,7 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	witnessInfo.TotalReward = newTotalReward.String()
 	witnessInfo.PendingReward = "0"
 
-	// 保存余额更新
+	// 淇濆瓨浣欓鏇存柊
 	balanceKey := keys.KeyBalance(witnessAddr, "FB")
 	balanceData, _, _ := sv.Get(balanceKey)
 	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, SyncStateDB: true, Category: "balance"})

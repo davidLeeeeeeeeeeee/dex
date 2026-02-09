@@ -84,6 +84,29 @@ func SafeSub(a, b *big.Int) (*big.Int, error) {
 	return result, nil
 }
 
+// SafeMul 安全乘法：a * b
+// 返回 (结果, 错误)
+// 如果结果超过 MaxUint256，返回 ErrOverflow
+func SafeMul(a, b *big.Int) (*big.Int, error) {
+	if a == nil {
+		a = big.NewInt(0)
+	}
+	if b == nil {
+		b = big.NewInt(0)
+	}
+
+	// 检查是否有负数
+	if a.Sign() < 0 || b.Sign() < 0 {
+		return nil, errors.New("negative value not allowed")
+	}
+
+	result := new(big.Int).Mul(a, b)
+	if result.Cmp(MaxUint256) > 0 {
+		return nil, ErrOverflow
+	}
+	return result, nil
+}
+
 // MustAdd 安全加法，panic 版本（仅用于已验证不会溢出的场景）
 func MustAdd(a, b *big.Int) *big.Int {
 	result, err := SafeAdd(a, b)

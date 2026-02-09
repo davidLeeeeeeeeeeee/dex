@@ -1,5 +1,5 @@
 // vm/frost_withdraw_request.go
-// Frost 提现请求交易处理器
+// Frost 鎻愮幇璇锋眰浜ゆ槗澶勭悊鍣?
 package vm
 
 import (
@@ -14,7 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// WithdrawRequestStatus 提现请求状态
+// WithdrawRequestStatus 鎻愮幇璇锋眰鐘舵€?
 type WithdrawRequestStatus string
 
 const (
@@ -22,7 +22,7 @@ const (
 	WithdrawStatusSigned WithdrawRequestStatus = "SIGNED"
 )
 
-// FrostWithdrawRequest 提现请求结构（链上存储）
+// FrostWithdrawRequest 鎻愮幇璇锋眰缁撴瀯锛堥摼涓婂瓨鍌級
 type FrostWithdrawRequest struct {
 	WithdrawID    string                `json:"withdraw_id"`
 	TxID          string                `json:"tx_id"`
@@ -33,11 +33,11 @@ type FrostWithdrawRequest struct {
 	Amount        string                `json:"amount"`
 	RequestHeight uint64                `json:"request_height"`
 	Status        WithdrawRequestStatus `json:"status"`
-	JobID         string                `json:"job_id,omitempty"` // 当 status=SIGNED 时存在
+	JobID         string                `json:"job_id,omitempty"` // 褰?status=SIGNED 鏃跺瓨鍦?
 	VaultID       uint32                `json:"vault_id,omitempty"`
 }
 
-// FrostWithdrawRequestTxHandler Frost 提现请求交易处理器
+// FrostWithdrawRequestTxHandler Frost 鎻愮幇璇锋眰浜ゆ槗澶勭悊鍣?
 type FrostWithdrawRequestTxHandler struct{}
 
 func (h *FrostWithdrawRequestTxHandler) Kind() string {
@@ -62,35 +62,35 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 	amount := req.Amount
 	requestHeight := req.Base.ExecutedHeight
 
-	// 基本参数校验
+	// 鍩烘湰鍙傛暟鏍￠獙
 	if chain == "" || asset == "" || to == "" || amount == "" {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "missing required fields"}, errors.New("missing required fields")
 	}
 
-	// 校验金额
+	// 鏍￠獙閲戦
 	amountBI, err := ParseBalance(amount)
 	if err != nil {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid amount format"}, err
 	}
 	amount = amountBI.String()
 
-	// 幂等检查：使用 tx_id 作为唯一标识
+	// 骞傜瓑妫€鏌ワ細浣跨敤 tx_id 浣滀负鍞竴鏍囪瘑
 	txRefKey := keys.KeyFrostWithdrawTxRef(txID)
 	existingWithdrawID, exists, _ := sv.Get(txRefKey)
 	if exists && len(existingWithdrawID) > 0 {
-		// 已经处理过，返回成功但不做任何修改（幂等）
+		// 宸茬粡澶勭悊杩囷紝杩斿洖鎴愬姛浣嗕笉鍋氫换浣曚慨鏀癸紙骞傜瓑锛?
 		return nil, &Receipt{TxID: txID, Status: "SUCCEED", Error: "", WriteCount: 0}, nil
 	}
 
-	// 获取当前 (chain, asset) 队列的 seq
+	// 鑾峰彇褰撳墠 (chain, asset) 闃熷垪鐨?seq
 	seqKey := keys.KeyFrostWithdrawFIFOSeq(chain, asset)
 	currentSeq := readUint64FromState(sv, seqKey)
 	newSeq := currentSeq + 1
 
-	// 生成 withdraw_id = H(chain || asset || seq || request_height)
+	// 鐢熸垚 withdraw_id = H(chain || asset || seq || request_height)
 	withdrawID := generateWithdrawID(chain, asset, newSeq, requestHeight)
 
-	// 创建 WithdrawRequest
+	// 鍒涘缓 WithdrawRequest
 	withdrawReq := &FrostWithdrawRequest{
 		WithdrawID:    withdrawID,
 		TxID:          txID,
@@ -103,16 +103,16 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 		Status:        WithdrawStatusQueued,
 	}
 
-	// 序列化 WithdrawRequest
+	// 搴忓垪鍖?WithdrawRequest
 	withdrawData, err := marshalWithdrawRequest(withdrawReq)
 	if err != nil {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to marshal withdraw request"}, err
 	}
 
-	// 准备写入操作
+	// 鍑嗗鍐欏叆鎿嶄綔
 	ops := make([]WriteOp, 0, 4)
 
-	// 1. 写入 WithdrawRequest 本身
+	// 1. 鍐欏叆 WithdrawRequest 鏈韩
 	withdrawKey := keys.KeyFrostWithdraw(withdrawID)
 	ops = append(ops, WriteOp{
 		Key:         withdrawKey,
@@ -121,7 +121,7 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 		Category:    "frost_withdraw",
 	})
 
-	// 2. 写入 FIFO 索引：seq -> withdraw_id
+	// 2. 鍐欏叆 FIFO 绱㈠紩锛歴eq -> withdraw_id
 	fifoKey := keys.KeyFrostWithdrawFIFOIndex(chain, asset, newSeq)
 	ops = append(ops, WriteOp{
 		Key:         fifoKey,
@@ -130,7 +130,7 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 		Category:    "frost_withdraw_fifo",
 	})
 
-	// 3. 更新 seq 计数器
+	// 3. 鏇存柊 seq 璁℃暟鍣?
 	ops = append(ops, WriteOp{
 		Key:         seqKey,
 		Value:       []byte(strconv.FormatUint(newSeq, 10)),
@@ -138,7 +138,7 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 		Category:    "frost_withdraw_seq",
 	})
 
-	// 4. 写入 tx_id -> withdraw_id 引用（用于幂等检查）
+	// 4. 鍐欏叆 tx_id -> withdraw_id 寮曠敤锛堢敤浜庡箓绛夋鏌ワ級
 	ops = append(ops, WriteOp{
 		Key:         txRefKey,
 		Value:       []byte(withdrawID),
@@ -146,7 +146,7 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 		Category:    "frost_withdraw_ref",
 	})
 
-	// 将 ops 应用到 StateView
+	// 灏?ops 搴旂敤鍒?StateView
 	for _, op := range ops {
 		sv.Set(op.Key, op.Value)
 	}
@@ -158,7 +158,7 @@ func (h *FrostWithdrawRequestTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
 
-// generateWithdrawID 生成全网唯一的 withdraw_id
+// generateWithdrawID 鐢熸垚鍏ㄧ綉鍞竴鐨?withdraw_id
 // withdraw_id = H(chain || asset || seq || request_height)
 func generateWithdrawID(chain, asset string, seq, requestHeight uint64) string {
 	data := chain + "|" + asset + "|" + strconv.FormatUint(seq, 10) + "|" + strconv.FormatUint(requestHeight, 10)
@@ -166,7 +166,7 @@ func generateWithdrawID(chain, asset string, seq, requestHeight uint64) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// readUint64FromState 从 StateView 读取 uint64 值
+// readUint64FromState 浠?StateView 璇诲彇 uint64 鍊?
 func readUint64FromState(sv StateView, key string) uint64 {
 	data, exists, err := sv.Get(key)
 	if err != nil || !exists || len(data) == 0 {
@@ -179,8 +179,8 @@ func readUint64FromState(sv StateView, key string) uint64 {
 	return n
 }
 
-// marshalWithdrawRequest 序列化 WithdrawRequest 为 protobuf
-// 使用 pb.FrostWithdrawState 进行存储
+// marshalWithdrawRequest 搴忓垪鍖?WithdrawRequest 涓?protobuf
+// 浣跨敤 pb.FrostWithdrawState 杩涜瀛樺偍
 func marshalWithdrawRequest(req *FrostWithdrawRequest) ([]byte, error) {
 	state := &pb.FrostWithdrawState{
 		WithdrawId:    req.WithdrawID,
@@ -198,10 +198,10 @@ func marshalWithdrawRequest(req *FrostWithdrawRequest) ([]byte, error) {
 	return proto.Marshal(state)
 }
 
-// unmarshalWithdrawRequest 从 protobuf 反序列化 WithdrawRequest
+// unmarshalWithdrawRequest 浠?protobuf 鍙嶅簭鍒楀寲 WithdrawRequest
 func unmarshalWithdrawRequest(data []byte) (*FrostWithdrawRequest, error) {
 	state := &pb.FrostWithdrawState{}
-	if err := proto.Unmarshal(data, state); err != nil {
+	if err := unmarshalProtoCompat(data, state); err != nil {
 		return nil, err
 	}
 	return &FrostWithdrawRequest{

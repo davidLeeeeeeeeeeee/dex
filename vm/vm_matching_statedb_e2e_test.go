@@ -1,6 +1,7 @@
 package vm_test
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
@@ -14,6 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
+
+func requireProtoUnmarshalCompat(t *testing.T, data []byte, msg proto.Message) {
+	t.Helper()
+	if err := proto.Unmarshal(data, msg); err == nil {
+		return
+	}
+	trimmed := bytes.TrimRight(data, "\x00")
+	require.NotEqual(t, len(data), len(trimmed))
+	require.NoError(t, proto.Unmarshal(trimmed, msg))
+}
 
 // TestE2E_OrderMatching_VM_StateDB_Integration
 // 端到端集成测试：验证 VM、Matching、StateDB 三模块完美配合
@@ -282,7 +293,7 @@ func getE2EAccount(t *testing.T, dbMgr *db.Manager, address string) *pb.Account 
 
 	var account pb.Account
 	// 使用 proto 反序列化
-	require.NoError(t, proto.Unmarshal(accountData, &account))
+	requireProtoUnmarshalCompat(t, accountData, &account)
 	return &account
 }
 
@@ -295,7 +306,7 @@ func getE2EBalance(t *testing.T, dbMgr *db.Manager, address, token string) *pb.T
 	}
 
 	var record pb.TokenBalanceRecord
-	require.NoError(t, proto.Unmarshal(balData, &record))
+	requireProtoUnmarshalCompat(t, balData, &record)
 	if record.Balance == nil {
 		return &pb.TokenBalance{Balance: "0"}
 	}
@@ -310,7 +321,7 @@ func getE2EOrder(t *testing.T, dbMgr *db.Manager, orderID string) *pb.OrderTx {
 	require.NotNil(t, orderData)
 
 	var order pb.OrderTx
-	require.NoError(t, proto.Unmarshal(orderData, &order))
+	requireProtoUnmarshalCompat(t, orderData, &order)
 	return &order
 }
 
@@ -322,7 +333,7 @@ func getE2EOrderState(t *testing.T, dbMgr *db.Manager, orderID string) *pb.Order
 	require.NotNil(t, orderStateData)
 
 	var orderState pb.OrderState
-	require.NoError(t, proto.Unmarshal(orderStateData, &orderState))
+	requireProtoUnmarshalCompat(t, orderStateData, &orderState)
 	return &orderState
 }
 

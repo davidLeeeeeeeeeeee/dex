@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestOrderBalance_TakerAtomic 验证 Taker 账户在一次交易内的两次余额变更（冻结+扣减）是否原子
+// TestOrderBalance_TakerAtomic 楠岃瘉 Taker 璐︽埛鍦ㄤ竴娆′氦鏄撳唴鐨勪袱娆′綑棰濆彉鏇达紙鍐荤粨+鎵ｅ噺锛夋槸鍚﹀師瀛?
 func TestOrderBalance_TakerAtomic(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbMgr, err := db.NewManager(tmpDir, logs.NewNodeLogger("test", 0))
@@ -27,27 +27,27 @@ func TestOrderBalance_TakerAtomic(t *testing.T) {
 	aliceAddr := "alice"
 	bobAddr := "bob"
 
-	// Alice 挂单: 1.0 BTC @ 50000 USDT
-	createE2ETestAccount(t, dbMgr, aliceAddr, map[string]string{"BTC": "10.0", "USDT": "0"})
-	// Bob 吃单: 100000 USDT
-	createE2ETestAccount(t, dbMgr, bobAddr, map[string]string{"BTC": "0.0", "USDT": "100000.0"})
+	// Alice 鎸傚崟: 1.0 BTC @ 50000 USDT
+	createE2ETestAccount(t, dbMgr, aliceAddr, map[string]string{"BTC": "10", "USDT": "0"})
+	// Bob 鍚冨崟: 100000 USDT
+	createE2ETestAccount(t, dbMgr, bobAddr, map[string]string{"BTC": "0", "USDT": "100000"})
 	require.NoError(t, dbMgr.ForceFlush())
 
-	// Block 1: Alice 挂单
+	// Block 1: Alice 鎸傚崟
 	block1 := &pb.Block{
 		BlockHash: "b1",
 		Header:    &pb.BlockHeader{Height: 1},
-		Body:      []*pb.AnyTx{createSellOrder("s1", aliceAddr, "BTC", "USDT", "50000", "1.0")},
+		Body:      []*pb.AnyTx{createSellOrder("s1", aliceAddr, "BTC", "USDT", "50000", "2")},
 	}
 	require.NoError(t, executor.CommitFinalizedBlock(block1))
 	require.NoError(t, dbMgr.ForceFlush())
 
-	// Block 2: Bob 吃单 0.5 BTC @ 50000
-	// 预期：
-	// 1. 下单瞬间：冻结 0.5 * 50000 = 25000 USDT。Liquid: 75000, Frozen: 25000
-	// 2. 撮合成交：扣除 Frozen 25000，增加 BTC 0.5。
-	// 最终 Bob: Liquid BTC 0.5, Liquid USDT 75000, Frozen USDT 0.
-	buyOrder := createBuyOrder("b1", bobAddr, "BTC", "USDT", "50000", "0.5")
+	// Block 2: Bob 鍚冨崟 0.5 BTC @ 50000
+	// 棰勬湡锛?
+	// 1. 涓嬪崟鐬棿锛氬喕缁?0.5 * 50000 = 25000 USDT銆侺iquid: 75000, Frozen: 25000
+	// 2. 鎾悎鎴愪氦锛氭墸闄?Frozen 25000锛屽鍔?BTC 0.5銆?
+	// 鏈€缁?Bob: Liquid BTC 0.5, Liquid USDT 75000, Frozen USDT 0.
+	buyOrder := createBuyOrder("b1", bobAddr, "BTC", "USDT", "50000", "1")
 	block2 := &pb.Block{
 		BlockHash: "b2",
 		Header:    &pb.BlockHeader{Height: 2, PrevBlockHash: "b1"},
@@ -58,12 +58,12 @@ func TestOrderBalance_TakerAtomic(t *testing.T) {
 
 	bobUSDT := getE2EBalance(t, dbMgr, bobAddr, "USDT")
 	bobBTC := getE2EBalance(t, dbMgr, bobAddr, "BTC")
-	assert.Equal(t, "75000", bobUSDT.Balance)
+	assert.Equal(t, "50000", bobUSDT.Balance)
 	assert.Equal(t, "0", bobUSDT.OrderFrozenBalance)
-	assert.Equal(t, "0.5", bobBTC.Balance)
+	assert.Equal(t, "1", bobBTC.Balance)
 }
 
-// TestOrderBalance_BuyRefund 验证买单以低价成交时的退款逻辑
+// TestOrderBalance_BuyRefund 楠岃瘉涔板崟浠ヤ綆浠锋垚浜ゆ椂鐨勯€€娆鹃€昏緫
 func TestOrderBalance_BuyRefund(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbMgr, err := db.NewManager(tmpDir, logs.NewNodeLogger("test", 0))
@@ -78,30 +78,30 @@ func TestOrderBalance_BuyRefund(t *testing.T) {
 	aliceAddr := "alice"
 	bobAddr := "bob"
 
-	// Alice 挂廉价卖单: 1.0 BTC @ 40000 USDT
-	createE2ETestAccount(t, dbMgr, aliceAddr, map[string]string{"BTC": "10.0", "USDT": "0"})
-	// Bob 挂高价买单: 1.0 BTC @ 60000 USDT
-	createE2ETestAccount(t, dbMgr, bobAddr, map[string]string{"BTC": "0.0", "USDT": "100000.0"})
+	// Alice 鎸傚粔浠峰崠鍗? 1.0 BTC @ 40000 USDT
+	createE2ETestAccount(t, dbMgr, aliceAddr, map[string]string{"BTC": "10", "USDT": "0"})
+	// Bob 鎸傞珮浠蜂拱鍗? 1.0 BTC @ 60000 USDT
+	createE2ETestAccount(t, dbMgr, bobAddr, map[string]string{"BTC": "0", "USDT": "100000"})
 	require.NoError(t, dbMgr.ForceFlush())
 
-	// Block 1: Alice 挂单
+	// Block 1: Alice 鎸傚崟
 	block1 := &pb.Block{
 		BlockHash: "b1",
 		Header:    &pb.BlockHeader{Height: 1},
-		Body:      []*pb.AnyTx{createSellOrder("s1", aliceAddr, "BTC", "USDT", "40000", "1.0")},
+		Body:      []*pb.AnyTx{createSellOrder("s1", aliceAddr, "BTC", "USDT", "40000", "1")},
 	}
 	require.NoError(t, executor.CommitFinalizedBlock(block1))
 	require.NoError(t, dbMgr.ForceFlush())
 
-	// Block 2: Bob 挂单 @ 60000，成交价应该是 Alice 的 40000
-	// 预期：
-	// 1. 下单瞬间：冻结 1.0 * 60000 = 60000 USDT。Liquid: 40000, Frozen: 60000
-	// 2. 撮合成交：
-	//    - 实际支出的 Frozen = 1.0 * 60000 (按冻结时价格释放)
-	//    - 实际支付给 Alice = 1.0 * 40000
-	//    - 退回用户 Liquid = 1.0 * (60000 - 40000) = 20000
-	// 最终 Bob: Liquid BTC 1.0, Liquid USDT (40000 + 20000) = 60000, Frozen USDT 0.
-	buyOrder := createBuyOrder("b1", bobAddr, "BTC", "USDT", "60000", "1.0")
+	// Block 2: Bob 鎸傚崟 @ 60000锛屾垚浜や环搴旇鏄?Alice 鐨?40000
+	// 棰勬湡锛?
+	// 1. 涓嬪崟鐬棿锛氬喕缁?1.0 * 60000 = 60000 USDT銆侺iquid: 40000, Frozen: 60000
+	// 2. 鎾悎鎴愪氦锛?
+	//    - 瀹為檯鏀嚭鐨?Frozen = 1.0 * 60000 (鎸夊喕缁撴椂浠锋牸閲婃斁)
+	//    - 瀹為檯鏀粯缁?Alice = 1.0 * 40000
+	//    - 閫€鍥炵敤鎴?Liquid = 1.0 * (60000 - 40000) = 20000
+	// 鏈€缁?Bob: Liquid BTC 1.0, Liquid USDT (40000 + 20000) = 60000, Frozen USDT 0.
+	buyOrder := createBuyOrder("b1", bobAddr, "BTC", "USDT", "60000", "1")
 	block2 := &pb.Block{
 		BlockHash: "b2",
 		Header:    &pb.BlockHeader{Height: 2, PrevBlockHash: "b1"},
@@ -118,7 +118,7 @@ func TestOrderBalance_BuyRefund(t *testing.T) {
 	assert.Equal(t, "1", bobBTC.Balance)
 }
 
-// TestOrderBalance_RemoveOrder 验证撤单时的余额解冻精度
+// TestOrderBalance_RemoveOrder 楠岃瘉鎾ゅ崟鏃剁殑浣欓瑙ｅ喕绮惧害
 func TestOrderBalance_RemoveOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbMgr, err := db.NewManager(tmpDir, logs.NewNodeLogger("test", 0))
@@ -131,12 +131,12 @@ func TestOrderBalance_RemoveOrder(t *testing.T) {
 	executor := vm.NewExecutor(dbMgr, registry, nil)
 
 	aliceAddr := "alice"
-	createE2ETestAccount(t, dbMgr, aliceAddr, map[string]string{"BTC": "0.0", "USDT": "100000.0"})
+	createE2ETestAccount(t, dbMgr, aliceAddr, map[string]string{"BTC": "0", "USDT": "100000"})
 	require.NoError(t, dbMgr.ForceFlush())
 
-	// Alice 挂买单: 1.0 BTC @ 60000 USDT，但只成交了 0.5 BTC (假想撮合，或者直接撤单)
-	// 为了简单直接测试撤单：挂单 60000，冻结 60000。撤单应退回 60000。
-	buyOrder := createBuyOrder("b1", aliceAddr, "BTC", "USDT", "60000", "1.0")
+	// Alice 鎸備拱鍗? 1.0 BTC @ 60000 USDT锛屼絾鍙垚浜や簡 0.5 BTC (鍋囨兂鎾悎锛屾垨鑰呯洿鎺ユ挙鍗?
+	// 涓轰簡绠€鍗曠洿鎺ユ祴璇曟挙鍗曪細鎸傚崟 60000锛屽喕缁?60000銆傛挙鍗曞簲閫€鍥?60000銆?
+	buyOrder := createBuyOrder("b1", aliceAddr, "BTC", "USDT", "60000", "1")
 	block1 := &pb.Block{
 		BlockHash: "b1",
 		Header:    &pb.BlockHeader{Height: 1},
@@ -145,7 +145,7 @@ func TestOrderBalance_RemoveOrder(t *testing.T) {
 	require.NoError(t, executor.CommitFinalizedBlock(block1))
 	require.NoError(t, dbMgr.ForceFlush())
 
-	// Block 2: 撤单 b1
+	// Block 2: 鎾ゅ崟 b1
 	removeTx := &pb.AnyTx{
 		Content: &pb.AnyTx_OrderTx{
 			OrderTx: &pb.OrderTx{

@@ -4,6 +4,7 @@ import (
 	"dex/pb"
 	"errors"
 	"fmt"
+	"math/big"
 	"sync"
 
 	"github.com/shopspring/decimal"
@@ -86,11 +87,11 @@ func convertOrderTxToOrder(o *pb.OrderTx) (*Order, error) {
 		side = BUY
 	}
 
-	price, err := decimal.NewFromString(o.Price)
+	price, err := parsePositiveIntegerDecimal(o.Price, "price")
 	if err != nil {
 		return nil, fmt.Errorf("parse price error: %v", err)
 	}
-	amount, err := decimal.NewFromString(o.Amount)
+	amount, err := parsePositiveIntegerDecimal(o.Amount, "amount")
 	if err != nil {
 		return nil, fmt.Errorf("parse amount error: %v", err)
 	}
@@ -106,4 +107,20 @@ func convertOrderTxToOrder(o *pb.OrderTx) (*Order, error) {
 		Price:  price,
 		Amount: amount,
 	}, nil
+}
+
+func parsePositiveIntegerDecimal(raw string, field string) (decimal.Decimal, error) {
+	if raw == "" {
+		return decimal.Zero, fmt.Errorf("%s is empty", field)
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] < '0' || raw[i] > '9' {
+			return decimal.Zero, fmt.Errorf("%s must be integer digits", field)
+		}
+	}
+	v, ok := new(big.Int).SetString(raw, 10)
+	if !ok || v.Sign() <= 0 {
+		return decimal.Zero, fmt.Errorf("%s must be positive integer", field)
+	}
+	return decimal.NewFromBigInt(v, 0), nil
 }

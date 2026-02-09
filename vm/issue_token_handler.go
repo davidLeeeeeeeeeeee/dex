@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// IssueTokenTxHandler 发币交易处理器
+// IssueTokenTxHandler 鍙戝竵浜ゆ槗澶勭悊鍣?
 type IssueTokenTxHandler struct{}
 
 func (h *IssueTokenTxHandler) Kind() string {
@@ -16,7 +16,7 @@ func (h *IssueTokenTxHandler) Kind() string {
 }
 
 func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 提取IssueTokenTx
+	// 1. 鎻愬彇IssueTokenTx
 	issueTokenTx, ok := tx.GetContent().(*pb.AnyTx_IssueTokenTx)
 	if !ok {
 		return nil, &Receipt{
@@ -35,7 +35,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 		}, fmt.Errorf("invalid issue token transaction")
 	}
 
-	// 2. 验证发行者账户是否存在
+	// 2. 楠岃瘉鍙戣鑰呰处鎴锋槸鍚﹀瓨鍦?
 	accountKey := keys.KeyAccount(issueTx.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil {
@@ -54,9 +54,9 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 		}, fmt.Errorf("account not found: %s", issueTx.Base.FromAddress)
 	}
 
-	// 解析账户数据
+	// 瑙ｆ瀽璐︽埛鏁版嵁
 	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil {
+	if err := unmarshalProtoCompat(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   issueTx.Base.TxId,
 			Status: "FAILED",
@@ -74,10 +74,10 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 		}, err
 	}
 
-	// 3. 生成Token地址（使用tx_id作为token地址）
+	// 3. 鐢熸垚Token鍦板潃锛堜娇鐢╰x_id浣滀负token鍦板潃锛?
 	tokenAddress := issueTx.Base.TxId
 
-	// 检查token是否已存在
+	// 妫€鏌oken鏄惁宸插瓨鍦?
 	tokenKey := keys.KeyToken(tokenAddress)
 	_, tokenExists, _ := sv.Get(tokenKey)
 	if tokenExists {
@@ -88,7 +88,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 		}, fmt.Errorf("token already exists: %s", tokenAddress)
 	}
 
-	// 4. 创建Token记录
+	// 4. 鍒涘缓Token璁板綍
 	token := &pb.Token{
 		Address:     tokenAddress,
 		Symbol:      issueTx.TokenSymbol,
@@ -109,21 +109,21 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 
 	ws := make([]WriteOp, 0)
 
-	// 保存Token记录（独立存储，不再使用 TokenRegistry.Tokens）
+	// 淇濆瓨Token璁板綍锛堢嫭绔嬪瓨鍌紝涓嶅啀浣跨敤 TokenRegistry.Tokens锛?
 	ws = append(ws, WriteOp{
 		Key:         tokenKey,
 		Value:       tokenData,
 		Del:         false,
-		SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
+		SyncStateDB: true, // 鉁?鏀逛负 true锛屾敮鎸佽交鑺傜偣鍚屾
 		Category:    "token",
 	})
 
-	// 5. 将总供应量分配给发行者（使用分离存储）
+	// 5. 灏嗘€讳緵搴旈噺鍒嗛厤缁欏彂琛岃€咃紙浣跨敤鍒嗙瀛樺偍锛?
 	issuerBal := GetBalance(sv, issueTx.Base.FromAddress, tokenAddress)
 	issuerBal.Balance = totalSupply.String()
 	SetBalance(sv, issueTx.Base.FromAddress, tokenAddress, issuerBal)
 
-	// 读取更新后的余额数据用于 WriteOp
+	// 璇诲彇鏇存柊鍚庣殑浣欓鏁版嵁鐢ㄤ簬 WriteOp
 	balanceKey := keys.KeyBalance(issueTx.Base.FromAddress, tokenAddress)
 	balanceData, _, _ := sv.Get(balanceKey)
 
@@ -135,10 +135,10 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 		Category:    "balance",
 	})
 
-	// 6. Token 已经通过 tokenKey (KeyToken) 存储
-	// 不再需要 TokenRegistry.Tokens map，每个 token 独立存储
+	// 6. Token 宸茬粡閫氳繃 tokenKey (KeyToken) 瀛樺偍
+	// 涓嶅啀闇€瑕?TokenRegistry.Tokens map锛屾瘡涓?token 鐙珛瀛樺偍
 
-	// 7. 返回执行结果
+	// 7. 杩斿洖鎵ц缁撴灉
 	rc := &Receipt{
 		TxID:       issueTx.Base.TxId,
 		Status:     "SUCCEED",

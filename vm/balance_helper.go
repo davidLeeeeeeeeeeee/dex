@@ -24,7 +24,7 @@ func GetBalance(sv StateView, addr, token string) *pb.TokenBalance {
 	}
 
 	var record pb.TokenBalanceRecord
-	if err := proto.Unmarshal(data, &record); err != nil {
+	if err := unmarshalProtoCompat(data, &record); err != nil {
 		return &pb.TokenBalance{
 			Balance: "0",
 		}
@@ -63,7 +63,7 @@ func GetBalanceOrCreate(sv StateView, addr, token string) (*pb.TokenBalance, boo
 	}
 
 	var record pb.TokenBalanceRecord
-	if err := proto.Unmarshal(data, &record); err != nil {
+	if err := unmarshalProtoCompat(data, &record); err != nil {
 		return &pb.TokenBalance{
 			Balance: "0",
 		}, true

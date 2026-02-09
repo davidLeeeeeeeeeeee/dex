@@ -53,9 +53,14 @@ func (ob *OrderBook) PruneByMarkPrice(markPrice decimal.Decimal) {
 
 // AddOrder 新增订单并（可选）尝试局部撮合
 func (ob *OrderBook) AddOrder(o *Order) error {
-	// 这里用 decimal.Zero 比较
 	if o.Amount.Cmp(decimal.Zero) <= 0 {
 		return errors.New("order amount must be positive")
+	}
+	if o.Amount.Exponent() < 0 {
+		return errors.New("order amount must be integer")
+	}
+	if o.Price.Exponent() < 0 {
+		return errors.New("order price must be integer")
 	}
 	lowerBound := decimal.NewFromFloat(1e-33)
 	upperBound := decimal.NewFromFloat(1e33)
@@ -112,6 +117,12 @@ func (ob *OrderBook) AddOrder(o *Order) error {
 func (ob *OrderBook) AddOrderWithoutMatch(o *Order) error {
 	if o.Amount.Cmp(decimal.Zero) <= 0 {
 		return errors.New("order amount must be positive")
+	}
+	if o.Amount.Exponent() < 0 {
+		return errors.New("order amount must be integer")
+	}
+	if o.Price.Exponent() < 0 {
+		return errors.New("order price must be integer")
 	}
 	lowerBound := decimal.NewFromFloat(1e-33)
 	upperBound := decimal.NewFromFloat(1e33)

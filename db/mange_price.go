@@ -20,6 +20,9 @@ func PriceToKey128(priceStr string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid price string %q: %v", priceStr, err)
 	}
+	if price.Exponent() < 0 {
+		return "", fmt.Errorf("price must be integer, got=%s", priceStr)
+	}
 	if price.Cmp(minPrice) < 0 || price.Cmp(maxPrice) > 0 {
 		return "", fmt.Errorf("price out of range [1e-33, 1e33], got=%s", priceStr)
 	}

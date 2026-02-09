@@ -4,8 +4,8 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
-	"fmt"
 	mrand "math/rand"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -356,8 +356,8 @@ func (s *TxSimulator) runOrderScenario() {
 			nonce := s.getNextNonce(node.Address)
 
 			// 随机价格和数量（使用较小的数量，避免余额不足）
-			basePrice := 1.0 + float64(mrand.Intn(10))*0.1
-			amount := 1.0 + float64(mrand.Intn(5))
+			basePrice := int64(10 + mrand.Intn(10))
+			amount := int64(1 + mrand.Intn(5))
 
 			// 随机决定买单还是卖单
 			isBuyOrder := mrand.Intn(2) == 0
@@ -367,29 +367,29 @@ func (s *TxSimulator) runOrderScenario() {
 				// 买单：用 USDT 买 FB
 				tx = generateOrderTx(
 					node.Address,
-					"FB",                           // base_token - 想要买入的代币
-					"USDT",                         // quote_token - 用于支付的代币
-					fmt.Sprintf("%.2f", amount),    // 想买入的 FB 数量
-					fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
+					"FB",                             // base_token - 想要买入的代币
+					"USDT",                           // quote_token - 用于支付的代币
+					strconv.FormatInt(amount, 10),    // 想买入的 FB 数量
+					strconv.FormatInt(basePrice, 10), // 每个 FB 的价格（以 USDT 计）
 					nonce,
 					pb.OrderSide_BUY,
 				)
 				s.submitTx(node, tx)
-				logs.Trace("Simulator: Added BUY order %s (nonce=%d) from %s, buy %.2f FB @ %.2f USDT",
+				logs.Trace("Simulator: Added BUY order %s (nonce=%d) from %s, buy %d FB @ %d USDT",
 					tx.GetBase().TxId, nonce, node.Address, amount, basePrice)
 			} else {
 				// 卖单：卖 FB 换 USDT
 				tx = generateOrderTx(
 					node.Address,
-					"FB",                           // base_token - 要卖出的代币
-					"USDT",                         // quote_token - 想要获得的代币
-					fmt.Sprintf("%.2f", amount),    // 要卖出的 FB 数量
-					fmt.Sprintf("%.2f", basePrice), // 每个 FB 的价格（以 USDT 计）
+					"FB",                             // base_token - 要卖出的代币
+					"USDT",                           // quote_token - 想要获得的代币
+					strconv.FormatInt(amount, 10),    // 要卖出的 FB 数量
+					strconv.FormatInt(basePrice, 10), // 每个 FB 的价格（以 USDT 计）
 					nonce,
 					pb.OrderSide_SELL,
 				)
 				s.submitTx(node, tx)
-				logs.Trace("Simulator: Added SELL order %s (nonce=%d) from %s, sell %.2f FB @ %.2f USDT",
+				logs.Trace("Simulator: Added SELL order %s (nonce=%d) from %s, sell %d FB @ %d USDT",
 					tx.GetBase().TxId, nonce, node.Address, amount, basePrice)
 			}
 		}
@@ -433,8 +433,8 @@ func (s *TxSimulator) RunMassOrderScenario(orderCount int) {
 		nonce := s.getNextNonce(node.Address)
 
 		// 生成随机订单参数
-		basePrice := 1.0 + float64(mrand.Intn(100))*0.01
-		amount := 0.1 + float64(mrand.Intn(10))*0.1
+		basePrice := int64(1 + mrand.Intn(100))
+		amount := int64(1 + mrand.Intn(10))
 		isBuyOrder := mrand.Intn(2) == 0
 
 		var side pb.OrderSide
@@ -448,8 +448,8 @@ func (s *TxSimulator) RunMassOrderScenario(orderCount int) {
 			node.Address,
 			"FB",
 			"USDT",
-			fmt.Sprintf("%.2f", amount),
-			fmt.Sprintf("%.2f", basePrice),
+			strconv.FormatInt(amount, 10),
+			strconv.FormatInt(basePrice, 10),
 			nonce,
 			side,
 		)

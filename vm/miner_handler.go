@@ -4,12 +4,11 @@ import (
 	"dex/keys"
 	"dex/pb"
 	"fmt"
-	"math/big"
 
 	"google.golang.org/protobuf/proto"
 )
 
-// MinerTxHandler 矿工交易处理器
+// MinerTxHandler 鐭垮伐浜ゆ槗澶勭悊鍣?
 type MinerTxHandler struct{}
 
 func (h *MinerTxHandler) Kind() string {
@@ -17,7 +16,7 @@ func (h *MinerTxHandler) Kind() string {
 }
 
 func (h *MinerTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 提取MinerTx
+	// 1. 鎻愬彇MinerTx
 	minerTxWrapper, ok := tx.GetContent().(*pb.AnyTx_MinerTx)
 	if !ok {
 		return nil, &Receipt{
@@ -36,7 +35,7 @@ func (h *MinerTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 		}, fmt.Errorf("invalid miner transaction")
 	}
 
-	// 2. 根据操作类型分发处理
+	// 2. 鏍规嵁鎿嶄綔绫诲瀷鍒嗗彂澶勭悊
 	switch minerTx.Op {
 	case pb.OrderOp_ADD:
 		return h.handleStartMining(minerTx, sv)
@@ -51,11 +50,11 @@ func (h *MinerTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 	}
 }
 
-// handleStartMining 处理启动挖矿
+// handleStartMining 澶勭悊鍚姩鎸栫熆
 func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 验证锁定金额
-	amount, ok := new(big.Int).SetString(minerTx.Amount, 10)
-	if !ok || amount.Sign() <= 0 {
+	// 楠岃瘉閿佸畾閲戦
+	amount, err := parsePositiveBalanceStrict("mining amount", minerTx.Amount)
+	if err != nil {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
 			Status: "FAILED",
@@ -63,7 +62,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 		}, fmt.Errorf("invalid mining amount: %s", minerTx.Amount)
 	}
 
-	// 读取矿工账户
+	// 璇诲彇鐭垮伐璐︽埛
 	accountKey := keys.KeyAccount(minerTx.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil || !exists {
@@ -75,7 +74,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	}
 
 	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil {
+	if err := unmarshalProtoCompat(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
 			Status: "FAILED",
@@ -83,14 +82,21 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 		}, err
 	}
 
-	// 假设使用原生代币进行挖矿质押
+	// 鍋囪浣跨敤鍘熺敓浠ｅ竵杩涜鎸栫熆璐ㄦ娂
 	nativeTokenAddr := "FB"
 
-	// 使用分离存储读取余额
+	// 浣跨敤鍒嗙瀛樺偍璇诲彇浣欓
 	fbBal := GetBalance(sv, minerTx.Base.FromAddress, nativeTokenAddr)
 
-	balance, _ := new(big.Int).SetString(fbBal.Balance, 10)
-	if balance == nil || balance.Cmp(amount) < 0 {
+	balance, err := parseBalanceStrict("balance", fbBal.Balance)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   minerTx.Base.TxId,
+			Status: "FAILED",
+			Error:  "invalid balance state",
+		}, err
+	}
+	if balance.Cmp(amount) < 0 {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
 			Status: "FAILED",
@@ -100,7 +106,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 
 	ws := make([]WriteOp, 0)
 
-	// 从可用余额转移到挖矿锁定余额（使用安全减法）
+	// 浠庡彲鐢ㄤ綑棰濊浆绉诲埌鎸栫熆閿佸畾浣欓锛堜娇鐢ㄥ畨鍏ㄥ噺娉曪級
 	newBalance, err := SafeSub(balance, amount)
 	if err != nil {
 		return nil, &Receipt{
@@ -111,11 +117,15 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	}
 	fbBal.Balance = newBalance.String()
 
-	currentLockedBalance, _ := new(big.Int).SetString(fbBal.MinerLockedBalance, 10)
-	if currentLockedBalance == nil {
-		currentLockedBalance = big.NewInt(0)
+	currentLockedBalance, err := parseBalanceStrict("miner locked balance", fbBal.MinerLockedBalance)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   minerTx.Base.TxId,
+			Status: "FAILED",
+			Error:  "invalid locked balance state",
+		}, err
 	}
-	// 使用安全加法检查锁定余额溢出
+	// 浣跨敤瀹夊叏鍔犳硶妫€鏌ラ攣瀹氫綑棰濇孩鍑?
 	newLockedBalance, err := SafeAdd(currentLockedBalance, amount)
 	if err != nil {
 		return nil, &Receipt{
@@ -126,7 +136,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	}
 	fbBal.MinerLockedBalance = newLockedBalance.String()
 
-	// 保存更新后的余额
+	// 淇濆瓨鏇存柊鍚庣殑浣欓
 	SetBalance(sv, minerTx.Base.FromAddress, nativeTokenAddr, fbBal)
 	balanceKey := keys.KeyBalance(minerTx.Base.FromAddress, nativeTokenAddr)
 	balanceData, _, _ := sv.Get(balanceKey)
@@ -139,10 +149,10 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 		Category:    "balance",
 	})
 
-	// 设置为矿工状态
+	// 璁剧疆涓虹熆宸ョ姸鎬?
 	account.IsMiner = true
 
-	// 保存更新后的账户（不含余额）
+	// 淇濆瓨鏇存柊鍚庣殑璐︽埛锛堜笉鍚綑棰濓級
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
@@ -160,7 +170,7 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 		Category:    "account",
 	})
 
-	// 记录挖矿历史
+	// 璁板綍鎸栫熆鍘嗗彶
 	historyKey := keys.KeyMinerHistory(minerTx.Base.TxId)
 	historyData, _ := proto.Marshal(minerTx)
 	ws = append(ws, WriteOp{
@@ -178,9 +188,9 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 	}, nil
 }
 
-// handleStopMining 处理停止挖矿
+// handleStopMining 澶勭悊鍋滄鎸栫熆
 func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 读取矿工账户
+	// 璇诲彇鐭垮伐璐︽埛
 	accountKey := keys.KeyAccount(minerTx.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
 	if err != nil || !exists {
@@ -192,7 +202,7 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 	}
 
 	var account pb.Account
-	if err := proto.Unmarshal(accountData, &account); err != nil {
+	if err := unmarshalProtoCompat(accountData, &account); err != nil {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
 			Status: "FAILED",
@@ -200,7 +210,7 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 		}, err
 	}
 
-	// 检查是否是矿工
+	// 妫€鏌ユ槸鍚︽槸鐭垮伐
 	if !account.IsMiner {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
@@ -211,11 +221,18 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 
 	nativeTokenAddr := "FB"
 
-	// 使用分离存储读取余额
+	// 浣跨敤鍒嗙瀛樺偍璇诲彇浣欓
 	fbBal := GetBalance(sv, minerTx.Base.FromAddress, nativeTokenAddr)
 
-	lockedBalance, _ := new(big.Int).SetString(fbBal.MinerLockedBalance, 10)
-	if lockedBalance == nil || lockedBalance.Sign() <= 0 {
+	lockedBalance, err := parseBalanceStrict("miner locked balance", fbBal.MinerLockedBalance)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   minerTx.Base.TxId,
+			Status: "FAILED",
+			Error:  "invalid locked balance state",
+		}, err
+	}
+	if lockedBalance.Sign() <= 0 {
 		return nil, &Receipt{
 			TxID:   minerTx.Base.TxId,
 			Status: "FAILED",
@@ -225,12 +242,16 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 
 	ws := make([]WriteOp, 0)
 
-	// 将锁定余额转回可用余额（使用安全加法）
+	// 灏嗛攣瀹氫綑棰濊浆鍥炲彲鐢ㄤ綑棰濓紙浣跨敤瀹夊叏鍔犳硶锛?
 	fbBal.MinerLockedBalance = "0"
 
-	currentBalance, _ := new(big.Int).SetString(fbBal.Balance, 10)
-	if currentBalance == nil {
-		currentBalance = big.NewInt(0)
+	currentBalance, err := parseBalanceStrict("balance", fbBal.Balance)
+	if err != nil {
+		return nil, &Receipt{
+			TxID:   minerTx.Base.TxId,
+			Status: "FAILED",
+			Error:  "invalid balance state",
+		}, err
 	}
 	newBalance, err := SafeAdd(currentBalance, lockedBalance)
 	if err != nil {
@@ -242,7 +263,7 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 	}
 	fbBal.Balance = newBalance.String()
 
-	// 保存更新后的余额
+	// 淇濆瓨鏇存柊鍚庣殑浣欓
 	SetBalance(sv, minerTx.Base.FromAddress, nativeTokenAddr, fbBal)
 	balanceKey := keys.KeyBalance(minerTx.Base.FromAddress, nativeTokenAddr)
 	balanceData, _, _ := sv.Get(balanceKey)
@@ -255,10 +276,10 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 		Category:    "balance",
 	})
 
-	// 取消矿工状态
+	// 鍙栨秷鐭垮伐鐘舵€?
 	account.IsMiner = false
 
-	// 保存更新后的账户（不含余额）
+	// 淇濆瓨鏇存柊鍚庣殑璐︽埛锛堜笉鍚綑棰濓級
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{
@@ -276,7 +297,7 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 		Category:    "account",
 	})
 
-	// 记录停止挖矿历史
+	// 璁板綍鍋滄鎸栫熆鍘嗗彶
 	historyKey := keys.KeyMinerHistory(minerTx.Base.TxId)
 	historyData, _ := proto.Marshal(minerTx)
 	ws = append(ws, WriteOp{

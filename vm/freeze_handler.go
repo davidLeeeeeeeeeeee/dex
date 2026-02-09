@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// FreezeTxHandler 冻结/解冻Token交易处理器
+// FreezeTxHandler 鍐荤粨/瑙ｅ喕Token浜ゆ槗澶勭悊鍣?
 type FreezeTxHandler struct{}
 
 func (h *FreezeTxHandler) Kind() string {
@@ -16,7 +16,7 @@ func (h *FreezeTxHandler) Kind() string {
 }
 
 func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 提取FreezeTx
+	// 1. 鎻愬彇FreezeTx
 	freezeTx, ok := tx.GetContent().(*pb.AnyTx_FreezeTx)
 	if !ok {
 		return nil, &Receipt{
@@ -35,7 +35,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 		}, fmt.Errorf("invalid freeze transaction")
 	}
 
-	// 2. 验证Token是否存在
+	// 2. 楠岃瘉Token鏄惁瀛樺湪
 	tokenKey := fmt.Sprintf("token_%s", freeze.TokenAddr)
 	tokenData, tokenExists, err := sv.Get(tokenKey)
 	if err != nil {
@@ -54,9 +54,9 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 		}, fmt.Errorf("token not found: %s", freeze.TokenAddr)
 	}
 
-	// 解析Token数据
+	// 瑙ｆ瀽Token鏁版嵁
 	var token pb.Token
-	if err := proto.Unmarshal(tokenData, &token); err != nil {
+	if err := unmarshalProtoCompat(tokenData, &token); err != nil {
 		return nil, &Receipt{
 			TxID:   freeze.Base.TxId,
 			Status: "FAILED",
@@ -64,7 +64,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 		}, err
 	}
 
-	// 3. 验证操作者是否是Token的owner
+	// 3. 楠岃瘉鎿嶄綔鑰呮槸鍚︽槸Token鐨刼wner
 	if token.Owner != freeze.Base.FromAddress {
 		return nil, &Receipt{
 			TxID:   freeze.Base.TxId,
@@ -73,7 +73,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 		}, fmt.Errorf("only token owner can freeze/unfreeze: owner=%s, from=%s", token.Owner, freeze.Base.FromAddress)
 	}
 
-	// 4. 读取目标账户
+	// 4. 璇诲彇鐩爣璐︽埛
 	targetAccountKey := keys.KeyAccount(freeze.TargetAddr)
 	targetAccountData, targetExists, err := sv.Get(targetAccountKey)
 	if err != nil {
@@ -92,9 +92,9 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 		}, fmt.Errorf("target account not found: %s", freeze.TargetAddr)
 	}
 
-	// 解析目标账户
+	// 瑙ｆ瀽鐩爣璐︽埛
 	var targetAccount pb.Account
-	if err := proto.Unmarshal(targetAccountData, &targetAccount); err != nil {
+	if err := unmarshalProtoCompat(targetAccountData, &targetAccount); err != nil {
 		return nil, &Receipt{
 			TxID:   freeze.Base.TxId,
 			Status: "FAILED",
@@ -102,33 +102,33 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 		}, err
 	}
 
-	// 5. 执行冻结/解冻逻辑
-	// 这里使用一个特殊的key来标记账户的某个token是否被冻结
+	// 5. 鎵ц鍐荤粨/瑙ｅ喕閫昏緫
+	// 杩欓噷浣跨敤涓€涓壒娈婄殑key鏉ユ爣璁拌处鎴风殑鏌愪釜token鏄惁琚喕缁?
 	freezeKey := keys.KeyFreeze(freeze.TargetAddr, freeze.TokenAddr)
 
 	ws := make([]WriteOp, 0)
 
 	if freeze.Freeze {
-		// 冻结：设置冻结标记
+		// 鍐荤粨锛氳缃喕缁撴爣璁?
 		ws = append(ws, WriteOp{
 			Key:         freezeKey,
 			Value:       []byte("true"),
 			Del:         false,
-			SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
+			SyncStateDB: true, // 鉁?鏀逛负 true锛屾敮鎸佽交鑺傜偣鍚屾
 			Category:    "freeze",
 		})
 	} else {
-		// 解冻：删除冻结标记
+		// 瑙ｅ喕锛氬垹闄ゅ喕缁撴爣璁?
 		ws = append(ws, WriteOp{
 			Key:         freezeKey,
 			Value:       nil,
 			Del:         true,
-			SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
+			SyncStateDB: true, // 鉁?鏀逛负 true锛屾敮鎸佽交鑺傜偣鍚屾
 			Category:    "freeze",
 		})
 	}
 
-	// 6. 记录冻结/解冻历史
+	// 6. 璁板綍鍐荤粨/瑙ｅ喕鍘嗗彶
 	historyKey := keys.KeyFreezeHistory(freeze.Base.TxId)
 	historyData, _ := proto.Marshal(freeze)
 	ws = append(ws, WriteOp{
@@ -139,7 +139,7 @@ func (h *FreezeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receip
 		Category:    "history",
 	})
 
-	// 7. 返回执行结果
+	// 7. 杩斿洖鎵ц缁撴灉
 	action := "frozen"
 	if !freeze.Freeze {
 		action = "unfrozen"

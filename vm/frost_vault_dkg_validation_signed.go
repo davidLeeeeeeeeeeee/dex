@@ -1,6 +1,6 @@
 // vm/frost_vault_dkg_validation_signed.go
-// FrostVaultDkgValidationSignedTx 辅助函数
-// Handler 实现在 frost_vault_dkg_validation_signed_handler.go 中
+// FrostVaultDkgValidationSignedTx 杈呭姪鍑芥暟
+// Handler 瀹炵幇鍦?frost_vault_dkg_validation_signed_handler.go 涓?
 package vm
 
 import (
@@ -9,59 +9,59 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// ========== 序列化辅助函数 ==========
+// ========== 搴忓垪鍖栬緟鍔╁嚱鏁?==========
 
-// marshalFrostVaultTransition 序列化 VaultTransitionState
+// marshalFrostVaultTransition 搴忓垪鍖?VaultTransitionState
 func marshalFrostVaultTransition(state *pb.VaultTransitionState) ([]byte, error) {
 	return proto.Marshal(state)
 }
 
-// unmarshalFrostVaultTransition 反序列化 VaultTransitionState
+// unmarshalFrostVaultTransition 鍙嶅簭鍒楀寲 VaultTransitionState
 func unmarshalFrostVaultTransition(data []byte) (*pb.VaultTransitionState, error) {
 	state := &pb.VaultTransitionState{}
-	if err := proto.Unmarshal(data, state); err != nil {
+	if err := unmarshalProtoCompat(data, state); err != nil {
 		return nil, err
 	}
 	return state, nil
 }
 
-// marshalFrostVaultState 序列化 FrostVaultState
+// marshalFrostVaultState 搴忓垪鍖?FrostVaultState
 func marshalFrostVaultState(state *pb.FrostVaultState) ([]byte, error) {
 	return proto.Marshal(state)
 }
 
-// unmarshalFrostVaultState 反序列化 FrostVaultState
+// unmarshalFrostVaultState 鍙嶅簭鍒楀寲 FrostVaultState
 func unmarshalFrostVaultState(data []byte) (*pb.FrostVaultState, error) {
 	state := &pb.FrostVaultState{}
-	if err := proto.Unmarshal(data, state); err != nil {
+	if err := unmarshalProtoCompat(data, state); err != nil {
 		return nil, err
 	}
 	return state, nil
 }
 
-// marshalFrostDkgCommitment 序列化 FrostVaultDkgCommitment
+// marshalFrostDkgCommitment 搴忓垪鍖?FrostVaultDkgCommitment
 func marshalFrostDkgCommitment(commitment *pb.FrostVaultDkgCommitment) ([]byte, error) {
 	return proto.Marshal(commitment)
 }
 
-// unmarshalFrostDkgCommitment 反序列化 FrostVaultDkgCommitment
+// unmarshalFrostDkgCommitment 鍙嶅簭鍒楀寲 FrostVaultDkgCommitment
 func unmarshalFrostDkgCommitment(data []byte) (*pb.FrostVaultDkgCommitment, error) {
 	commitment := &pb.FrostVaultDkgCommitment{}
-	if err := proto.Unmarshal(data, commitment); err != nil {
+	if err := unmarshalProtoCompat(data, commitment); err != nil {
 		return nil, err
 	}
 	return commitment, nil
 }
 
-// marshalFrostDkgShare 序列化 FrostVaultDkgShare
+// marshalFrostDkgShare 搴忓垪鍖?FrostVaultDkgShare
 func marshalFrostDkgShare(share *pb.FrostVaultDkgShare) ([]byte, error) {
 	return proto.Marshal(share)
 }
 
-// unmarshalFrostDkgShare 反序列化 FrostVaultDkgShare
+// unmarshalFrostDkgShare 鍙嶅簭鍒楀寲 FrostVaultDkgShare
 func unmarshalFrostDkgShare(data []byte) (*pb.FrostVaultDkgShare, error) {
 	share := &pb.FrostVaultDkgShare{}
-	if err := proto.Unmarshal(data, share); err != nil {
+	if err := unmarshalProtoCompat(data, share); err != nil {
 		return nil, err
 	}
 	return share, nil

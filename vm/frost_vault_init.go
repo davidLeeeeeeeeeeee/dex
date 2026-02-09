@@ -1,5 +1,5 @@
 // vm/frost_vault_init.go
-// Frost Vault 初始化：VaultConfig 和 VaultState 的链上初始化逻辑
+// Frost Vault 鍒濆鍖栵細VaultConfig 鍜?VaultState 鐨勯摼涓婂垵濮嬪寲閫昏緫
 package vm
 
 import (
@@ -13,14 +13,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// InitVaultConfig 初始化链级别的 VaultConfig
-// 通常在系统启动时或通过治理交易调用
+// InitVaultConfig 鍒濆鍖栭摼绾у埆鐨?VaultConfig
+// 閫氬父鍦ㄧ郴缁熷惎鍔ㄦ椂鎴栭€氳繃娌荤悊浜ゆ槗璋冪敤
 func InitVaultConfig(sv StateView, chain string, cfg *pb.FrostVaultConfig) error {
 	if cfg == nil {
 		return errors.New("vault config is nil")
 	}
 
-	// 验证配置参数
+	// 楠岃瘉閰嶇疆鍙傛暟
 	if cfg.VaultCount == 0 {
 		return errors.New("vault_count must be greater than 0")
 	}
@@ -31,22 +31,22 @@ func InitVaultConfig(sv StateView, chain string, cfg *pb.FrostVaultConfig) error
 		return errors.New("threshold_ratio must be between 0 and 1")
 	}
 
-	// 检查是否已存在
+	// 妫€鏌ユ槸鍚﹀凡瀛樺湪
 	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
 	existingData, exists, err := sv.Get(vaultCfgKey)
 	if err != nil {
 		return fmt.Errorf("failed to check existing config: %w", err)
 	}
 	if exists && len(existingData) > 0 {
-		// 已存在，幂等返回
+		// 宸插瓨鍦紝骞傜瓑杩斿洖
 		// logs.Debug("[InitVaultConfig] config already exists for chain %s", chain)
 		return nil
 	}
 
-	// 设置 chain
+	// 璁剧疆 chain
 	cfg.Chain = chain
 
-	// 序列化并写入
+	// 搴忓垪鍖栧苟鍐欏叆
 	cfgData, err := proto.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal vault config: %w", err)
@@ -58,10 +58,10 @@ func InitVaultConfig(sv StateView, chain string, cfg *pb.FrostVaultConfig) error
 	return nil
 }
 
-// InitVaultStates 初始化所有 Vault 的初始状态
-// 从 Top10000 确定性分配到各 Vault，并创建初始 VaultState
+// InitVaultStates 鍒濆鍖栨墍鏈?Vault 鐨勫垵濮嬬姸鎬?
+// 浠?Top10000 纭畾鎬у垎閰嶅埌鍚?Vault锛屽苟鍒涘缓鍒濆 VaultState
 func InitVaultStates(sv StateView, chain string, epochID uint64) error {
-	// 1. 读取 VaultConfig
+	// 1. 璇诲彇 VaultConfig
 	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
 	cfgData, exists, err := sv.Get(vaultCfgKey)
 	if err != nil || !exists || len(cfgData) == 0 {
@@ -69,11 +69,11 @@ func InitVaultStates(sv StateView, chain string, epochID uint64) error {
 	}
 
 	var cfg pb.FrostVaultConfig
-	if err := proto.Unmarshal(cfgData, &cfg); err != nil {
+	if err := unmarshalProtoCompat(cfgData, &cfg); err != nil {
 		return fmt.Errorf("failed to parse vault config: %w", err)
 	}
 
-	// 2. 读取 Top10000
+	// 2. 璇诲彇 Top10000
 	top10000Key := keys.KeyFrostTop10000()
 	top10000Data, exists, err := sv.Get(top10000Key)
 	if err != nil || !exists || len(top10000Data) == 0 {
@@ -81,26 +81,26 @@ func InitVaultStates(sv StateView, chain string, epochID uint64) error {
 	}
 
 	var top10000 pb.FrostTop10000
-	if err := proto.Unmarshal(top10000Data, &top10000); err != nil {
+	if err := unmarshalProtoCompat(top10000Data, &top10000); err != nil {
 		return fmt.Errorf("failed to parse top10000: %w", err)
 	}
 
-	// 3. 确定性分配委员会到各 Vault
+	// 3. 纭畾鎬у垎閰嶅鍛樹細鍒板悇 Vault
 	seed := committee.ComputeSeed(epochID, chain)
 
-	// 提取矿工索引列表（Top10000 的 indices 已经是按 bit index 排序的）
+	// 鎻愬彇鐭垮伐绱㈠紩鍒楄〃锛圱op10000 鐨?indices 宸茬粡鏄寜 bit index 鎺掑簭鐨勶級
 	minerIndices := top10000.Indices
 	if len(minerIndices) == 0 {
 		return fmt.Errorf("top10000 has no miner indices")
 	}
 
-	// 排序（确保顺序）
+	// 鎺掑簭锛堢‘淇濋『搴忥級
 	sortedIndices := committee.SortByBitIndex(minerIndices)
 
-	// 分配到各 Vault
+	// 鍒嗛厤鍒板悇 Vault
 	vaultCommittees := committee.AssignToVaults(sortedIndices, seed, int(cfg.VaultCount), int(cfg.CommitteeSize))
 
-	// 4. 为每个 Vault 创建初始 VaultState
+	// 4. 涓烘瘡涓?Vault 鍒涘缓鍒濆 VaultState
 	for vaultID := uint32(0); vaultID < cfg.VaultCount; vaultID++ {
 		vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
 		existingData, exists, err := sv.Get(vaultStateKey)
@@ -109,17 +109,17 @@ func InitVaultStates(sv StateView, chain string, epochID uint64) error {
 			continue
 		}
 		if exists && len(existingData) > 0 {
-			// 已存在，跳过（幂等）
+			// 宸插瓨鍦紝璺宠繃锛堝箓绛夛級
 			logs.Debug("[InitVaultStates] vault state already exists for chain=%s vault=%d", chain, vaultID)
 			continue
 		}
 
-		// 获取该 Vault 的委员会成员
+		// 鑾峰彇璇?Vault 鐨勫鍛樹細鎴愬憳
 		var committeeMembers []string
 		if int(vaultID) < len(vaultCommittees) {
-			// 将 bit index 转换为地址（从 Top10000 的对应数组查找）
+			// 灏?bit index 杞崲涓哄湴鍧€锛堜粠 Top10000 鐨勫搴旀暟缁勬煡鎵撅級
 			for _, bitIndex := range vaultCommittees[vaultID] {
-				// 在 indices 中查找对应的地址
+				// 鍦?indices 涓煡鎵惧搴旂殑鍦板潃
 				for i, idx := range top10000.Indices {
 					if idx == bitIndex && i < len(top10000.Addresses) {
 						committeeMembers = append(committeeMembers, top10000.Addresses[i])
@@ -129,23 +129,23 @@ func InitVaultStates(sv StateView, chain string, epochID uint64) error {
 			}
 		}
 
-		// 创建初始 VaultState
+		// 鍒涘缓鍒濆 VaultState
 		vaultState := &pb.FrostVaultState{
 			VaultId:          vaultID,
 			Chain:            chain,
 			KeyEpoch:         epochID,
 			SignAlgo:         cfg.SignAlgo,
-			Status:           "PENDING", // 初始状态为 PENDING，等待 DKG 完成后变为 KEY_READY
+			Status:           "PENDING", // 鍒濆鐘舵€佷负 PENDING锛岀瓑寰?DKG 瀹屾垚鍚庡彉涓?KEY_READY
 			CommitteeMembers: committeeMembers,
 		}
 
-		// 如果配置中有 vault_refs，设置对应的 vault_ref
+		// 濡傛灉閰嶇疆涓湁 vault_refs锛岃缃搴旂殑 vault_ref
 		if int(vaultID) < len(cfg.VaultRefs) {
-			// vault_ref 可以是 BTC 地址或合约地址
-			// 这里简化处理，实际应该从 group_pubkey 派生
+			// vault_ref 鍙互鏄?BTC 鍦板潃鎴栧悎绾﹀湴鍧€
+			// 杩欓噷绠€鍖栧鐞嗭紝瀹為檯搴旇浠?group_pubkey 娲剧敓
 		}
 
-		// 序列化并写入
+		// 搴忓垪鍖栧苟鍐欏叆
 		stateData, err := proto.Marshal(vaultState)
 		if err != nil {
 			logs.Warn("[InitVaultStates] failed to marshal vault state for vault %d: %v", vaultID, err)
@@ -160,10 +160,10 @@ func InitVaultStates(sv StateView, chain string, epochID uint64) error {
 	return nil
 }
 
-// InitVaultTransitions 初始化 VaultTransitionState（用于启动初始 DKG）
-// 依赖 VaultConfig/VaultState/Top10000 已就绪，epochID 为目标 epoch
+// InitVaultTransitions 鍒濆鍖?VaultTransitionState锛堢敤浜庡惎鍔ㄥ垵濮?DKG锛?
+// 渚濊禆 VaultConfig/VaultState/Top10000 宸插氨缁紝epochID 涓虹洰鏍?epoch
 func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHeight uint64, commitWindow uint64, sharingWindow uint64, disputeWindow uint64) error {
-	// 1. 读取 VaultConfig
+	// 1. 璇诲彇 VaultConfig
 	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
 	cfgData, exists, err := sv.Get(vaultCfgKey)
 	if err != nil || !exists || len(cfgData) == 0 {
@@ -171,11 +171,11 @@ func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHei
 	}
 
 	var cfg pb.FrostVaultConfig
-	if err := proto.Unmarshal(cfgData, &cfg); err != nil {
+	if err := unmarshalProtoCompat(cfgData, &cfg); err != nil {
 		return fmt.Errorf("failed to parse vault config: %w", err)
 	}
 
-	// 2. 为每个 Vault 创建初始 transition（幂等）
+	// 2. 涓烘瘡涓?Vault 鍒涘缓鍒濆 transition锛堝箓绛夛級
 	for vaultID := uint32(0); vaultID < cfg.VaultCount; vaultID++ {
 		vaultKey := keys.KeyFrostVaultState(chain, vaultID)
 		vaultData, vaultExists, err := sv.Get(vaultKey)
@@ -186,7 +186,7 @@ func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHei
 
 		var vaultState pb.FrostVaultState
 		if vaultExists && len(vaultData) > 0 {
-			if err := proto.Unmarshal(vaultData, &vaultState); err != nil {
+			if err := unmarshalProtoCompat(vaultData, &vaultState); err != nil {
 				logs.Warn("[InitVaultTransitions] failed to parse vault state for chain=%s vault=%d: %v", chain, vaultID, err)
 			}
 		}
@@ -261,8 +261,8 @@ func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHei
 	return nil
 }
 
-// UpdateVaultStateAfterDKG 在 DKG 完成后更新 VaultState
-// 由 FrostVaultDkgValidationSignedTxHandler 调用
+// UpdateVaultStateAfterDKG 鍦?DKG 瀹屾垚鍚庢洿鏂?VaultState
+// 鐢?FrostVaultDkgValidationSignedTxHandler 璋冪敤
 func UpdateVaultStateAfterDKG(sv StateView, chain string, vaultID uint32, epochID uint64, groupPubkey []byte, signAlgo pb.SignAlgo, committeeMembers []string) error {
 	vaultKey := keys.KeyFrostVaultState(chain, vaultID)
 	vaultData, exists, err := sv.Get(vaultKey)
@@ -275,7 +275,7 @@ func UpdateVaultStateAfterDKG(sv StateView, chain string, vaultID uint32, epochI
 		vault, _ = unmarshalFrostVaultState(vaultData)
 	}
 	if vault == nil {
-		// 如果不存在，创建新的
+		// 濡傛灉涓嶅瓨鍦紝鍒涘缓鏂扮殑
 		vault = &pb.FrostVaultState{
 			VaultId:  vaultID,
 			Chain:    chain,
@@ -283,15 +283,15 @@ func UpdateVaultStateAfterDKG(sv StateView, chain string, vaultID uint32, epochI
 		}
 	}
 
-	// 更新状态
+	// 鏇存柊鐘舵€?
 	vault.KeyEpoch = epochID
 	vault.GroupPubkey = groupPubkey
-	vault.Status = "KEY_READY" // DKG 完成后进入 KEY_READY 状态
+	vault.Status = "KEY_READY" // DKG 瀹屾垚鍚庤繘鍏?KEY_READY 鐘舵€?
 	if len(committeeMembers) > 0 {
 		vault.CommitteeMembers = committeeMembers
 	}
 
-	// 序列化并写入
+	// 搴忓垪鍖栧苟鍐欏叆
 	updatedData, err := proto.Marshal(vault)
 	if err != nil {
 		return fmt.Errorf("failed to marshal vault state: %w", err)
