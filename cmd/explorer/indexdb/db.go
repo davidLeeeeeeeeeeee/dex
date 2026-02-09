@@ -1,6 +1,7 @@
 package indexdb
 
 import (
+	"dex/db"
 	"fmt"
 	"sync"
 
@@ -9,9 +10,10 @@ import (
 
 // IndexDB 是 Explorer 专用的索引数据库
 type IndexDB struct {
-	db   *badger.DB
-	path string
-	mu   sync.RWMutex
+	db     *badger.DB
+	path   string
+	mu     sync.RWMutex
+	nodeDB *db.Manager // 节点数据库引用（用于查询余额快照）
 }
 
 // New 创建新的索引数据库

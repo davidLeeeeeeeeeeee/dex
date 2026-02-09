@@ -41,15 +41,16 @@ func (w *WriteOp) IsDel() bool {
 
 // 记录执行结果
 type Receipt struct {
-	TxID        string
-	Status      string // "SUCCEED" or "FAILED"
-	Error       string
-	BlockHeight uint64
-	Timestamp   int64
-	GasUsed     uint64
-	Fee         string
-	Logs        []string
-	WriteCount  int
+	TxID           string
+	Status         string // "SUCCEED" or "FAILED"
+	Error          string
+	BlockHeight    uint64
+	Timestamp      int64
+	GasUsed        uint64
+	Fee            string
+	Logs           []string
+	WriteCount     int
+	FBBalanceAfter string // 执行后发送方的 FB 余额快照 (JSON)
 }
 
 // SpecResult 执行结果

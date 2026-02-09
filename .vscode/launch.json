@@ -27,6 +27,10 @@
             "program": "${workspaceFolder}/cmd/explorer",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "args": [
+                "--node-data-dir",
+                "./data/data_node_0"
+            ],
             "preLaunchTask": "Clean explorer_data directory"
         },
         {

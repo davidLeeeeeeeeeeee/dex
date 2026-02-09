@@ -22,6 +22,7 @@ import (
 	"dex/cmd/explorer/indexdb"
 	"dex/cmd/explorer/syncer"
 	"dex/config"
+	"dex/db"
 	"dex/logs"
 	"dex/pb"
 
@@ -40,6 +41,9 @@ type server struct {
 	// 索引数据库和同步器
 	indexDB *indexdb.IndexDB
 	syncer  *syncer.Syncer
+
+	// 节点数据库（只读，用于独立查询区块/交易/账户等）
+	nodeDB *db.Manager
 }
 
 type nodesResponse struct {
@@ -236,6 +240,7 @@ type accountInfo struct {
 
 type tokenBalance struct {
 	Balance               string `json:"balance"`
+	OrderFrozenBalance    string `json:"order_frozen_balance,omitempty"`
 	MinerLockedBalance    string `json:"miner_locked_balance,omitempty"`
 	LiquidLockedBalance   string `json:"liquid_locked_balance,omitempty"`
 	WitnessLockedBalance  string `json:"witness_locked_balance,omitempty"`
@@ -255,6 +260,7 @@ func main() {
 	dataDir := flag.String("data-dir", "./explorer_data", "Path to explorer index database")
 	syncNode := flag.String("sync-node", "127.0.0.1:6000", "Node to sync blocks from (e.g., 127.0.0.1:6000)")
 	syncInterval := flag.Duration("sync-interval", 5*time.Second, "Block sync interval")
+	nodeDataDir := flag.String("node-data-dir", "", "Path to node data directory for direct DB access (e.g., ./data/data_node_0)")
 	flag.Parse()
 
 	defaultNodes := buildNodes(*nodesFlag, *host, *basePort, *count)
@@ -273,6 +279,19 @@ func main() {
 	}
 	defer idb.Close()
 
+	// 初始化节点数据库（只读模式，用于独立查询）
+	var nodeDB *db.Manager
+	if *nodeDataDir != "" {
+		nodeDB, err = db.NewReadOnlyManager(*nodeDataDir, logs.NewNodeLogger("explorer-db", 100))
+		if err != nil {
+			log.Printf("⚠️  Warning: failed to open node database in read-only mode: %v", err)
+			log.Printf("   Explorer will rely on HTTP API for data access")
+		} else {
+			log.Printf("✅ Opened node database (read-only) from %s", *nodeDataDir)
+			defer nodeDB.Close()
+		}
+	}
+
 	// 确定同步节点
 	syncNodeAddr := *syncNode
 	if syncNodeAddr == "" && len(defaultNodes) > 0 {
@@ -283,12 +302,27 @@ func main() {
 	var blockSyncer *syncer.Syncer
 	if syncNodeAddr != "" {
 		blockSyncer = syncer.New(idb, "https://"+syncNodeAddr, *syncInterval)
+		// 如果有本地节点数据库，传递给同步器用于 fallback
+		if nodeDB != nil {
+			blockSyncer.SetNodeDB(nodeDB)
+		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		if err := blockSyncer.Start(ctx); err != nil {
 			log.Printf("Warning: failed to start syncer: %v", err)
 		} else {
 			log.Printf("Started block syncer, syncing from %s", syncNodeAddr)
+		}
+	} else if nodeDB != nil {
+		// 没有配置同步节点，但有本地数据库，创建纯本地同步器
+		blockSyncer = syncer.New(idb, "", *syncInterval)
+		blockSyncer.SetNodeDB(nodeDB)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if err := blockSyncer.Start(ctx); err != nil {
+			log.Printf("Warning: failed to start local syncer: %v", err)
+		} else {
+			log.Printf("Started block syncer (local DB mode)")
 		}
 	}
 
@@ -300,6 +334,7 @@ func main() {
 		count:        *count,
 		indexDB:      idb,
 		syncer:       blockSyncer,
+		nodeDB:       nodeDB,
 	}
 
 	mux := http.NewServeMux()
@@ -484,35 +519,47 @@ func (s *server) handleBlock(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, blockResponse{Error: "invalid request body"})
 		return
 	}
-	if req.Node == "" {
-		writeJSON(w, blockResponse{Error: "node is required"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
-	defer cancel()
 
 	var block *pb.Block
 	var fetchErr error
 
-	if req.Hash != "" {
-		// 按 hash 查询
-		block, fetchErr = s.fetchBlockByID(ctx, req.Node, req.Hash)
-	} else {
-		// 按高度查询
-		block, fetchErr = s.fetchBlockByHeight(ctx, req.Node, req.Height)
+	// 1. 优先通过 HTTP 从节点获取
+	if req.Node != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+		defer cancel()
+
+		if req.Hash != "" {
+			block, fetchErr = s.fetchBlockByID(ctx, req.Node, req.Hash)
+		} else {
+			block, fetchErr = s.fetchBlockByHeight(ctx, req.Node, req.Height)
+		}
 	}
 
-	if fetchErr != nil {
-		writeJSON(w, blockResponse{Error: fetchErr.Error()})
+	// 2. 如果节点不可用或未指定，fallback 到本地 nodeDB
+	if block == nil && s.nodeDB != nil {
+		if req.Hash != "" {
+			block, fetchErr = localGetBlockByID(s.nodeDB, req.Hash)
+		} else {
+			block, fetchErr = localGetBlockByHeight(s.nodeDB, req.Height)
+		}
+	}
+
+	if fetchErr != nil || block == nil {
+		errMsg := "block not found"
+		if fetchErr != nil {
+			errMsg = fetchErr.Error()
+		}
+		writeJSON(w, blockResponse{Error: errMsg})
 		return
 	}
 
 	info := convertBlockToInfo(block)
 
-	// 尝试获取最终化投票信息
-	if block != nil && block.Header != nil {
-		chits := s.fetchChits(ctx, req.Node, block.Header.Height)
+	// 尝试获取最终化投票信息（仅节点可用时）
+	if req.Node != "" && block != nil && block.Header != nil {
+		chitsCtx, chitsCancel := context.WithTimeout(r.Context(), s.timeout)
+		defer chitsCancel()
+		chits := s.fetchChits(chitsCtx, req.Node, block.Header.Height)
 		if chits != nil {
 			info.FinalizationChits = chits
 		}
@@ -556,10 +603,6 @@ func (s *server) handleRecentBlocks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, recentBlocksResponse{Error: "invalid request body"})
 		return
 	}
-	if req.Node == "" {
-		writeJSON(w, recentBlocksResponse{Error: "node is required"})
-		return
-	}
 
 	count := req.Count
 	if count <= 0 {
@@ -569,30 +612,67 @@ func (s *server) handleRecentBlocks(w http.ResponseWriter, r *http.Request) {
 		count = 100
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
-	defer cancel()
+	var blocks []blockHeaderInfo
+	var fetchErr error
 
-	// 使用 fetchRecentBlocks 获取区块列表
-	protoReq := &pb.GetRecentBlocksRequest{Count: int32(count)}
-	var protoResp pb.GetRecentBlocksResponse
+	// 1. 优先通过 HTTP 从节点获取
+	if req.Node != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+		defer cancel()
 
-	if err := s.fetchProto(ctx, req.Node, "/getrecentblocks", protoReq, &protoResp); err != nil {
-		writeJSON(w, recentBlocksResponse{Error: err.Error()})
+		protoReq := &pb.GetRecentBlocksRequest{Count: int32(count)}
+		var protoResp pb.GetRecentBlocksResponse
+
+		if err := s.fetchProto(ctx, req.Node, "/getrecentblocks", protoReq, &protoResp); err == nil {
+			blocks = make([]blockHeaderInfo, 0, len(protoResp.Blocks))
+			for _, h := range protoResp.Blocks {
+				blocks = append(blocks, blockHeaderInfo{
+					Height:      h.Height,
+					BlockHash:   h.BlockHash,
+					Miner:       h.Miner,
+					TxCount:     int(h.TxCount),
+					Accumulated: h.AccumulatedReward,
+					Window:      h.Window,
+					StateRoot:   h.StateRoot,
+				})
+			}
+		} else {
+			fetchErr = err
+		}
+	}
+
+	// 2. 如果节点不可用或未指定，fallback 到本地 nodeDB
+	if blocks == nil && s.nodeDB != nil {
+		localBlocks, err := localGetRecentBlocks(s.nodeDB, count)
+		if err == nil {
+			blocks = make([]blockHeaderInfo, 0, len(localBlocks))
+			for _, b := range localBlocks {
+				info := blockHeaderInfo{
+					Height:      b.Header.Height,
+					BlockHash:   b.BlockHash,
+					Miner:       b.Header.Miner,
+					TxCount:     len(b.Body),
+					Accumulated: b.AccumulatedReward,
+					Window:      b.Header.Window,
+				}
+				if len(b.Header.StateRoot) > 0 {
+					info.StateRoot = fmt.Sprintf("%x", b.Header.StateRoot)
+				}
+				blocks = append(blocks, info)
+			}
+			fetchErr = nil
+		} else {
+			fetchErr = err
+		}
+	}
+
+	if fetchErr != nil {
+		writeJSON(w, recentBlocksResponse{Error: fetchErr.Error()})
 		return
 	}
 
-	// 转换为响应格式
-	blocks := make([]blockHeaderInfo, 0, len(protoResp.Blocks))
-	for _, h := range protoResp.Blocks {
-		blocks = append(blocks, blockHeaderInfo{
-			Height:      h.Height,
-			BlockHash:   h.BlockHash,
-			Miner:       h.Miner,
-			TxCount:     int(h.TxCount),
-			Accumulated: h.AccumulatedReward,
-			Window:      h.Window,
-			StateRoot:   h.StateRoot,
-		})
+	if blocks == nil {
+		blocks = []blockHeaderInfo{}
 	}
 
 	writeJSON(w, recentBlocksResponse{Blocks: blocks})
@@ -608,17 +688,33 @@ func (s *server) handleTx(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, txResponse{Error: "invalid request body"})
 		return
 	}
-	if req.Node == "" || req.TxID == "" {
-		writeJSON(w, txResponse{Error: "node and tx_id are required"})
+	if req.TxID == "" {
+		writeJSON(w, txResponse{Error: "tx_id is required"})
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
-	defer cancel()
+	var anyTx *pb.AnyTx
+	var fetchErr error
 
-	anyTx, err := s.fetchTxByID(ctx, req.Node, req.TxID)
-	if err != nil {
-		writeJSON(w, txResponse{Error: err.Error()})
+	// 1. 优先通过 HTTP 从节点获取
+	if req.Node != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+		defer cancel()
+
+		anyTx, fetchErr = s.fetchTxByID(ctx, req.Node, req.TxID)
+	}
+
+	// 2. 如果节点不可用，fallback 到本地 nodeDB
+	if anyTx == nil && s.nodeDB != nil {
+		anyTx, fetchErr = localGetAnyTxByID(s.nodeDB, req.TxID)
+	}
+
+	if fetchErr != nil || anyTx == nil {
+		errMsg := "transaction not found"
+		if fetchErr != nil {
+			errMsg = fetchErr.Error()
+		}
+		writeJSON(w, txResponse{Error: errMsg})
 		return
 	}
 
@@ -626,15 +722,31 @@ func (s *server) handleTx(w http.ResponseWriter, r *http.Request) {
 
 	// 如果交易失败，尝试获取 Receipt 错误信息
 	if info.Status == "FAILED" || info.Status == "1" {
-		receipt, err := s.fetchReceipt(ctx, req.Node, req.TxID)
-		if err == nil && receipt != nil && receipt.Error != "" {
-			info.Error = receipt.Error
+		if req.Node != "" {
+			ctx2, cancel2 := context.WithTimeout(r.Context(), s.timeout)
+			defer cancel2()
+			receipt, err := s.fetchReceipt(ctx2, req.Node, req.TxID)
+			if err == nil && receipt != nil && receipt.Error != "" {
+				info.Error = receipt.Error
+			}
+		} else if s.nodeDB != nil {
+			receipt, err := localGetTxReceipt(s.nodeDB, req.TxID)
+			if err == nil && receipt != nil && receipt.Error != "" {
+				info.Error = receipt.Error
+			}
 		}
 	}
 
 	// 如果是 OrderTx，获取 token symbol 信息
 	if orderTx := anyTx.GetOrderTx(); orderTx != nil {
-		s.enrichTokenInfo(ctx, req.Node, info, orderTx.BaseToken, orderTx.QuoteToken)
+		if req.Node != "" {
+			ctx3, cancel3 := context.WithTimeout(r.Context(), s.timeout)
+			defer cancel3()
+			s.enrichTokenInfo(ctx3, req.Node, info, orderTx.BaseToken, orderTx.QuoteToken)
+		} else if s.nodeDB != nil {
+			// 从本地 DB 获取 token 信息
+			s.enrichTokenInfoLocal(info, orderTx.BaseToken, orderTx.QuoteToken)
+		}
 	}
 
 	writeJSON(w, txResponse{Transaction: info})
@@ -670,6 +782,33 @@ func (s *server) enrichTokenInfo(ctx context.Context, node string, info *txInfo,
 	// 获取 quote token 信息
 	if quoteTokenAddr != "" {
 		quoteToken, err := s.fetchToken(ctx, node, quoteTokenAddr)
+		if err == nil && quoteToken != nil {
+			info.Details["quote_token"] = map[string]string{
+				"address": quoteTokenAddr,
+				"symbol":  quoteToken.Symbol,
+			}
+		}
+	}
+}
+
+// enrichTokenInfoLocal 从本地 nodeDB 增强 token 信息
+func (s *server) enrichTokenInfoLocal(info *txInfo, baseTokenAddr, quoteTokenAddr string) {
+	if info == nil || info.Details == nil || s.nodeDB == nil {
+		return
+	}
+
+	if baseTokenAddr != "" {
+		baseToken, err := localGetToken(s.nodeDB, baseTokenAddr)
+		if err == nil && baseToken != nil {
+			info.Details["base_token"] = map[string]string{
+				"address": baseTokenAddr,
+				"symbol":  baseToken.Symbol,
+			}
+		}
+	}
+
+	if quoteTokenAddr != "" {
+		quoteToken, err := localGetToken(s.nodeDB, quoteTokenAddr)
 		if err == nil && quoteToken != nil {
 			info.Details["quote_token"] = map[string]string{
 				"address": quoteTokenAddr,
@@ -746,22 +885,42 @@ func (s *server) handleAddress(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, addressResponse{Error: "invalid request body"})
 		return
 	}
-	if req.Node == "" || req.Address == "" {
-		writeJSON(w, addressResponse{Error: "node and address are required"})
+	if req.Address == "" {
+		writeJSON(w, addressResponse{Error: "address is required"})
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
-	defer cancel()
+	var account *pb.Account
+	var balances map[string]*pb.TokenBalance
+	var fetchErr error
 
-	account, err := s.fetchAccountByAddress(ctx, req.Node, req.Address)
-	if err != nil {
-		writeJSON(w, addressResponse{Error: err.Error()})
-		return
+	// 1. 优先通过 HTTP 从节点获取
+	if req.Node != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+		defer cancel()
+
+		account, fetchErr = s.fetchAccountByAddress(ctx, req.Node, req.Address)
+		if fetchErr == nil {
+			balances = s.fetchAccountBalances(ctx, req.Node, req.Address)
+		}
 	}
 
-	// 从节点获取余额数据（余额已分离存储，需要独立 API 查询）
-	balances := s.fetchAccountBalances(ctx, req.Node, req.Address)
+	// 2. 如果节点不可用，fallback 到本地 nodeDB
+	if account == nil && s.nodeDB != nil {
+		account, fetchErr = localGetAccount(s.nodeDB, req.Address)
+		if fetchErr == nil {
+			balances = localGetAccountBalances(s.nodeDB, req.Address)
+		}
+	}
+
+	if fetchErr != nil || account == nil {
+		errMsg := "account not found"
+		if fetchErr != nil {
+			errMsg = fetchErr.Error()
+		}
+		writeJSON(w, addressResponse{Error: errMsg})
+		return
+	}
 
 	info := convertAccountToInfo(account, balances)
 	writeJSON(w, addressResponse{Account: info})
@@ -815,6 +974,7 @@ func convertAccountToInfo(account *pb.Account, balances map[string]*pb.TokenBala
 		if bal != nil {
 			info.Balances[token] = &tokenBalance{
 				Balance:               bal.Balance,
+				OrderFrozenBalance:    bal.OrderFrozenBalance,
 				MinerLockedBalance:    bal.MinerLockedBalance,
 				LiquidLockedBalance:   bal.LiquidLockedBalance,
 				WitnessLockedBalance:  bal.WitnessLockedBalance,
@@ -1619,7 +1779,7 @@ func (s *server) handleTxHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limitStr := r.URL.Query().Get("limit")
-	limit := 50
+	limit := 0 // 0 means no limit, return all
 	if limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
 			limit = l

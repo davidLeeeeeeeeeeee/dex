@@ -123,8 +123,12 @@ export async function fetchFrostDKGSessions(node: string): Promise<DKGSession[]>
 }
 
 // 获取地址交易历史
-export async function fetchTxHistory(address: string, limit: number = 50): Promise<TxHistoryResponse> {
-  const resp = await fetch(`/api/txhistory?address=${encodeURIComponent(address)}&limit=${limit}`)
+export async function fetchTxHistory(address: string, limit: number = 0): Promise<TxHistoryResponse> {
+  let url = `/api/txhistory?address=${encodeURIComponent(address)}`
+  if (limit > 0) {
+    url += `&limit=${limit}`
+  }
+  const resp = await fetch(url)
   return resp.json()
 }
 

@@ -455,6 +455,12 @@ func KeyVMBlockHeight(height uint64) string {
 	return withVer(fmt.Sprintf("vm_block_h_%d", height))
 }
 
+// KeyVMTxFBBalance 交易执行后的 FB 余额快照
+// 例：v1_vmtx_fbbal_<txID>
+func KeyVMTxFBBalance(txID string) string {
+	return withVer("vmtx_fbbal_" + txID)
+}
+
 // ===================== 节点/客户端信息 =====================
 
 // KeyNode 节点信息前缀

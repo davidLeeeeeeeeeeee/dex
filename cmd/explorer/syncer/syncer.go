@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"dex/cmd/explorer/indexdb"
+	"dex/db"
+	"dex/pb"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -19,6 +22,7 @@ type Syncer struct {
 	node       string        // 同步的目标节点
 	interval   time.Duration // 同步间隔
 	httpClient *http.Client
+	nodeDB     *db.Manager // 本地节点数据库（可选，用于 fallback）
 
 	mu       sync.RWMutex
 	running  bool
@@ -99,6 +103,17 @@ func (s *Syncer) SetNode(node string) {
 	s.indexDB.SetSyncNode(node)
 }
 
+// SetNodeDB 设置本地节点数据库（用于 HTTP fallback）
+func (s *Syncer) SetNodeDB(nodeDB *db.Manager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nodeDB = nodeDB
+	// 同时传递给 indexDB，用于余额快照查询
+	if s.indexDB != nil {
+		s.indexDB.SetNodeDB(nodeDB)
+	}
+}
+
 // GetNode 获取当前同步节点
 func (s *Syncer) GetNode() string {
 	s.mu.RLock()
@@ -139,13 +154,9 @@ func (s *Syncer) syncLoop(ctx context.Context) {
 func (s *Syncer) syncOnce(ctx context.Context) {
 	s.mu.Lock()
 	node := s.node
+	nodeDB := s.nodeDB
 	s.status = "syncing"
 	s.mu.Unlock()
-
-	if node == "" {
-		s.setStatus("no node configured")
-		return
-	}
 
 	// 获取当前同步高度
 	syncHeight, err := s.indexDB.GetSyncHeight()
@@ -154,15 +165,42 @@ func (s *Syncer) syncOnce(ctx context.Context) {
 		return
 	}
 
-	// 获取节点最新高度
-	latestHeight, err := s.getLatestHeight(ctx, node)
+	// 获取节点最新高度（优先 HTTP，fallback 到本地 DB）
+	var latestHeight uint64
+	useLocalDB := false
+
+	if node != "" {
+		latestHeight, err = s.getLatestHeight(ctx, node)
+	}
+	if err != nil || node == "" {
+		if nodeDB != nil {
+			latestHeight, err = nodeDB.GetLatestBlockHeight()
+			if err == nil {
+				useLocalDB = true
+			}
+		}
+	}
 	if err != nil {
 		s.setStatus(fmt.Sprintf("error getting latest height: %v", err))
 		return
 	}
 
+	if syncHeight >= latestHeight {
+		s.mu.Lock()
+		s.lastSync = time.Now()
+		s.status = fmt.Sprintf("up to date at %d", latestHeight)
+		s.mu.Unlock()
+		return
+	}
+
+	if useLocalDB {
+		log.Printf("[syncer] Using local nodeDB (height %d -> %d)", syncHeight, latestHeight)
+	}
+
 	// 同步缺失的区块
 	synced := 0
+	var lastSyncedHeight uint64
+
 	for height := syncHeight + 1; height <= latestHeight; height++ {
 		select {
 		case <-ctx.Done():
@@ -172,15 +210,36 @@ func (s *Syncer) syncOnce(ctx context.Context) {
 		default:
 		}
 
-		if err := s.syncBlock(ctx, node, height); err != nil {
-			s.setStatus(fmt.Sprintf("error syncing block %d: %v", height, err))
+		var block *pb.Block
+		var blockErr error
+
+		if useLocalDB && nodeDB != nil {
+			// 从本地 DB 读取
+			block, blockErr = nodeDB.GetBlock(height)
+		} else if node != "" {
+			// 从 HTTP 获取
+			block, blockErr = s.fetchBlock(ctx, node, height)
+		} else {
 			break
 		}
+
+		if blockErr != nil {
+			s.setStatus(fmt.Sprintf("error syncing block %d: %v", height, blockErr))
+			break
+		}
+
+		if err := s.indexDB.IndexBlock(block); err != nil {
+			s.setStatus(fmt.Sprintf("error indexing block %d: %v", height, err))
+			break
+		}
+		lastSyncedHeight = height
 		synced++
 	}
 
+	_ = lastSyncedHeight // 用于状态报告
+
 	s.mu.Lock()
 	s.lastSync = time.Now()
-	s.status = fmt.Sprintf("synced to %d (fetched %d blocks)", latestHeight, synced)
+	s.status = fmt.Sprintf("synced to %d (fetched %d blocks)", syncHeight+uint64(synced), synced)
 	s.mu.Unlock()
 }

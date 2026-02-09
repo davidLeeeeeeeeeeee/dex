@@ -44,3 +44,16 @@ func KeyTxDetail(txID string) string {
 func KeyAddressCount(address string) string {
 	return fmt.Sprintf("addr_count_%s", address)
 }
+
+// KeyBalanceSnapshot FB余额快照
+// 格式: bal_snap_<address>_<height(倒序补零)>
+// 使用倒序高度（max - height），让最新的快照排在前面
+func KeyBalanceSnapshot(address string, height uint64) string {
+	invertedHeight := ^height
+	return fmt.Sprintf("bal_snap_%s_%020d", address, invertedHeight)
+}
+
+// KeyBalanceSnapshotPrefix 余额快照前缀
+func KeyBalanceSnapshotPrefix(address string) string {
+	return fmt.Sprintf("bal_snap_%s_", address)
+}

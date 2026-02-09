@@ -353,6 +353,7 @@ export interface TxRecord {
   nonce?: number
   height: number
   tx_index: number
+  fb_balance_after?: string
 }
 
 // 交易历史响应

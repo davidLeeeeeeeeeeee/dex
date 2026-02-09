@@ -485,6 +485,47 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 		Category:    "acc_orders_item",
 	})
 
+	// 5. 计算并返还冻结及扣除的余额
+	var refundToken string
+	var refundAmount decimal.Decimal
+
+	if targetOrder.Side == pb.OrderSide_SELL {
+		refundToken = targetOrder.BaseToken
+		amount, _ := decimal.NewFromString(targetOrder.Amount)
+		refundAmount = amount
+	} else {
+		refundToken = targetOrder.QuoteToken
+		amount, _ := decimal.NewFromString(targetOrder.Amount)
+		price, _ := decimal.NewFromString(targetOrder.Price)
+		refundAmount = amount.Mul(price)
+	}
+
+	// loading balance using separated storage
+	bal := GetBalance(sv, ord.Base.FromAddress, refundToken)
+	current, _ := decimal.NewFromString(bal.Balance)
+	frozen, _ := decimal.NewFromString(bal.OrderFrozenBalance)
+
+	// Update balances
+	bal.Balance = current.Add(refundAmount).String()
+	if frozen.LessThan(refundAmount) {
+		bal.OrderFrozenBalance = "0"
+	} else {
+		bal.OrderFrozenBalance = frozen.Sub(refundAmount).String()
+	}
+
+	// Write back balance
+	SetBalance(sv, ord.Base.FromAddress, refundToken, bal)
+
+	// Generate Balance WriteOp
+	balKey := keys.KeyBalance(ord.Base.FromAddress, refundToken)
+	balData, _, _ := sv.Get(balKey)
+	ws = append(ws, WriteOp{
+		Key:         balKey,
+		Value:       balData,
+		SyncStateDB: true,
+		Category:    "balance",
+	})
+
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{

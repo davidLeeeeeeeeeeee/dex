@@ -8,6 +8,7 @@ import (
 	"dex/pb"
 	"dex/utils"
 	"dex/witness"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"sort"
@@ -265,6 +266,13 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 				// 使用区块时间戳而非本地时间，确保多节点确定性
 				rc.BlockHeight = b.Header.Height
 				rc.Timestamp = b.Header.Timestamp
+				// FAILED 交易也记录回滚后的余额快照
+				if base := getBaseMessage(tx); base != nil && base.FromAddress != "" {
+					fbBal := GetBalance(sv, base.FromAddress, "FB")
+					if fbBal != nil {
+						rc.FBBalanceAfter = balanceToJSON(fbBal)
+					}
+				}
 				receipts = append(receipts, rc)
 
 				logs.Info("[VM] Tx %s mark as FAILED in block %d: %v", rc.TxID, b.Header.Height, err)
@@ -302,6 +310,14 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 		if rc != nil {
 			rc.BlockHeight = b.Header.Height
 			rc.Timestamp = b.Header.Timestamp
+
+			// 捕获交易执行后的 FB 余额快照（从 StateView 中读取，反映当前 tx 执行后的真实状态）
+			if base := getBaseMessage(tx); base != nil && base.FromAddress != "" {
+				fbBal := GetBalance(sv, base.FromAddress, "FB")
+				if fbBal != nil {
+					rc.FBBalanceAfter = balanceToJSON(fbBal)
+				}
+			}
 		}
 		receipts = append(receipts, rc)
 	}
@@ -565,6 +581,12 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		// 记录交易所在的高度
 		heightKey := keys.KeyVMTxHeight(rc.TxID)
 		x.DB.EnqueueSet(heightKey, fmt.Sprintf("%d", b.Header.Height))
+
+		// 保存交易级 FB 余额快照
+		if rc.FBBalanceAfter != "" {
+			fbKey := keys.KeyVMTxFBBalance(rc.TxID)
+			x.DB.EnqueueSet(fbKey, rc.FBBalanceAfter)
+		}
 	}
 
 	// ========== 第四步补充：更新区块交易状态并保存原文 ==========
@@ -985,4 +1007,27 @@ func getBaseMessage(tx *pb.AnyTx) *pb.BaseMessage {
 		return v.FrostVaultTransitionSignedTx.Base
 	}
 	return nil
+}
+
+// balanceToJSON 将 TokenBalance 序列化为 JSON 字符串（用于 Receipt 快照）
+func balanceToJSON(bal *pb.TokenBalance) string {
+	if bal == nil {
+		return ""
+	}
+	type snap struct {
+		Balance       string `json:"balance"`
+		MinerLocked   string `json:"miner_locked,omitempty"`
+		WitnessLocked string `json:"witness_locked,omitempty"`
+		OrderFrozen   string `json:"order_frozen,omitempty"`
+		LiquidLocked  string `json:"liquid_locked,omitempty"`
+	}
+	s := snap{
+		Balance:       bal.Balance,
+		MinerLocked:   bal.MinerLockedBalance,
+		WitnessLocked: bal.WitnessLockedBalance,
+		OrderFrozen:   bal.OrderFrozenBalance,
+		LiquidLocked:  bal.LiquidLockedBalance,
+	}
+	data, _ := json.Marshal(s)
+	return string(data)
 }

@@ -1,24 +1,37 @@
 package indexdb
 
 import (
+	"dex/db"
+	"dex/keys"
 	"dex/pb"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // TxRecord 交易记录（存储在索引中的简化版本）
 type TxRecord struct {
-	TxID        string `json:"tx_id"`
-	TxType      string `json:"tx_type"`
-	FromAddress string `json:"from_address"`
-	ToAddress   string `json:"to_address,omitempty"`
-	Value       string `json:"value,omitempty"`
-	Status      string `json:"status"`
-	Fee         string `json:"fee,omitempty"`
-	Nonce       uint64 `json:"nonce,omitempty"`
-	Height      uint64 `json:"height"`
-	TxIndex     int    `json:"tx_index"`
+	TxID           string `json:"tx_id"`
+	TxType         string `json:"tx_type"`
+	FromAddress    string `json:"from_address"`
+	ToAddress      string `json:"to_address,omitempty"`
+	Value          string `json:"value,omitempty"`
+	Status         string `json:"status"`
+	Fee            string `json:"fee,omitempty"`
+	Nonce          uint64 `json:"nonce,omitempty"`
+	Height         uint64 `json:"height"`
+	TxIndex        int    `json:"tx_index"`
+	FBBalanceAfter string `json:"fb_balance_after,omitempty"`
+}
+
+// SetNodeDB 设置节点数据库引用（用于查询余额快照）
+func (idb *IndexDB) SetNodeDB(nodeDB *db.Manager) {
+	idb.mu.Lock()
+	defer idb.mu.Unlock()
+	idb.nodeDB = nodeDB
 }
 
 // IndexBlock 索引一个区块的所有交易
@@ -48,6 +61,18 @@ func (idb *IndexDB) indexTransaction(tx *pb.AnyTx, height uint64, txIndex int) e
 		return nil
 	}
 
+	// 尝试从 nodeDB 读取交易级 FB 余额快照
+	idb.mu.RLock()
+	ndb := idb.nodeDB
+	idb.mu.RUnlock()
+	if ndb != nil && record.TxID != "" {
+		// key 格式: v1_vmtx_fbbal_<txID>
+		fbKey := fmt.Sprintf("v1_vmtx_fbbal_%s", record.TxID)
+		if data, err := ndb.Get(fbKey); err == nil && data != nil && len(data) > 0 {
+			record.FBBalanceAfter = string(data)
+		}
+	}
+
 	// 序列化记录
 	data, err := json.Marshal(record)
 	if err != nil {
@@ -66,7 +91,6 @@ func (idb *IndexDB) indexTransaction(tx *pb.AnyTx, height uint64, txIndex int) e
 		if err := idb.Set(key, record.TxID); err != nil {
 			return err
 		}
-		// 更新地址交易计数
 		idb.incrementAddressCount(record.FromAddress)
 	}
 
@@ -132,4 +156,86 @@ func (idb *IndexDB) GetAddressTxCount(address string) (int, error) {
 		return 0, nil
 	}
 	return strconv.Atoi(val)
+}
+
+// CollectBlockAddresses 收集区块中涉及的所有地址
+func CollectBlockAddresses(block *pb.Block) map[string]struct{} {
+	addressSet := make(map[string]struct{})
+	if block == nil {
+		return addressSet
+	}
+	for _, tx := range block.Body {
+		if tx == nil {
+			continue
+		}
+		if base := tx.GetBase(); base != nil && base.FromAddress != "" {
+			addressSet[base.FromAddress] = struct{}{}
+		}
+		if to, _ := extractToAndValue(tx); to != "" {
+			addressSet[to] = struct{}{}
+		}
+	}
+	return addressSet
+}
+
+// SnapshotBalancesForHeight 为指定高度的地址集合存储 FB 余额快照
+// 应在确认 nodeDB 状态与该高度一致时调用
+func (idb *IndexDB) SnapshotBalancesForHeight(addressSet map[string]struct{}, height uint64) {
+	idb.mu.RLock()
+	nodeDB := idb.nodeDB
+	idb.mu.RUnlock()
+
+	if nodeDB == nil || len(addressSet) == 0 {
+		return
+	}
+
+	for addr := range addressSet {
+		balJSON := idb.queryFBBalanceJSON(nodeDB, addr)
+		if balJSON == "" {
+			continue
+		}
+		key := KeyBalanceSnapshot(addr, height)
+		if err := idb.Set(key, balJSON); err != nil {
+			log.Printf("[indexdb] failed to save balance snapshot for %s at height %d: %v", addr, height, err)
+		}
+	}
+}
+
+// BalanceSnapshot FB余额快照（JSON结构）
+type BalanceSnapshot struct {
+	Balance       string `json:"balance"`
+	MinerLocked   string `json:"miner_locked,omitempty"`
+	WitnessLocked string `json:"witness_locked,omitempty"`
+	OrderFrozen   string `json:"order_frozen,omitempty"`
+	LiquidLocked  string `json:"liquid_locked,omitempty"`
+}
+
+// queryFBBalanceJSON 从 nodeDB 查询地址的 FB 余额，返回 JSON
+func (idb *IndexDB) queryFBBalanceJSON(nodeDB *db.Manager, addr string) string {
+	balKey := keys.KeyBalance(addr, "FB")
+	data, err := nodeDB.Get(balKey)
+	if err != nil || data == nil || len(data) == 0 {
+		return ""
+	}
+
+	var record pb.TokenBalanceRecord
+	if err := proto.Unmarshal(data, &record); err != nil {
+		return ""
+	}
+	if record.Balance == nil {
+		return ""
+	}
+
+	snap := BalanceSnapshot{
+		Balance:       record.Balance.Balance,
+		MinerLocked:   record.Balance.MinerLockedBalance,
+		WitnessLocked: record.Balance.WitnessLockedBalance,
+		OrderFrozen:   record.Balance.OrderFrozenBalance,
+		LiquidLocked:  record.Balance.LiquidLockedBalance,
+	}
+	jsonData, err := json.Marshal(snap)
+	if err != nil {
+		return ""
+	}
+	return string(jsonData)
 }

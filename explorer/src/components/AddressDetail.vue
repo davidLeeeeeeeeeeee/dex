@@ -22,7 +22,7 @@ async function loadTxHistory() {
   txLoading.value = true
   txError.value = ''
   try {
-    const resp = await fetchTxHistory(props.account.address, 50)
+    const resp = await fetchTxHistory(props.account.address)
     txHistory.value = resp.txs || []
     txTotalCount.value = resp.total_count || 0
   } catch (e: any) {
@@ -59,6 +59,69 @@ function statusInfo(status?: string) {
   if (s === 'SUCCEED' || s === 'SUCCESS') return { class: 'sc-good', label: 'Success' }
   if (s === 'FAILED' || s === 'FAIL') return { class: 'sc-bad', label: 'Failed' }
   return { class: 'sc-warn', label: 'Processing' }
+}
+
+// 解析 FB 余额 JSON 字符串
+interface FBBalanceSnap {
+  balance: string
+  miner_locked?: string
+  order_frozen?: string
+  witness_locked?: string
+  liquid_locked?: string
+}
+
+function parseFBBalanceObj(balStr?: string): FBBalanceSnap | null {
+  if (!balStr) return null
+  try {
+    return JSON.parse(balStr) as FBBalanceSnap
+  } catch {
+    // 兼容旧格式（纯数字或“6 (miner:xxx)”格式）
+    const numPart = balStr.split(' ')[0]
+    return { balance: numPart }
+  }
+}
+
+function parseFBBalance(balStr?: string): bigint | null {
+  const obj = parseFBBalanceObj(balStr)
+  if (!obj || !obj.balance) return null
+  try {
+    // 处理小数点的情况，只取整数部分
+    const intPart = obj.balance.split('.')[0]
+    return BigInt(intPart)
+  } catch {
+    return null
+  }
+}
+
+// 计算余额变化的方向（与下一笔交易对比，因为列表是倒序的）
+function balanceChangeClass(index: number): string {
+  if (txHistory.value.length <= 1) return ''
+  const current = parseFBBalance(txHistory.value[index]?.fb_balance_after)
+  // 与下一条（更早的交易）对比
+  const prev = index < txHistory.value.length - 1
+    ? parseFBBalance(txHistory.value[index + 1]?.fb_balance_after)
+    : null
+  if (current === null || prev === null) return ''
+  if (current > prev) return 'bal-up'
+  if (current < prev) return 'bal-down'
+  return ''
+}
+
+function getFBBalanceDisplay(balStr?: string): string {
+  const obj = parseFBBalanceObj(balStr)
+  if (!obj) return '-'
+  return formatBalance(obj.balance)
+}
+
+function getFBBalanceTooltip(balStr?: string): string {
+  const obj = parseFBBalanceObj(balStr)
+  if (!obj) return ''
+  const parts: string[] = []
+  if (obj.miner_locked && obj.miner_locked !== '0') parts.push(`Miner: ${formatBalance(obj.miner_locked)}`)
+  if (obj.order_frozen && obj.order_frozen !== '0') parts.push(`Order: ${formatBalance(obj.order_frozen)}`)
+  if (obj.witness_locked && obj.witness_locked !== '0') parts.push(`Witness: ${formatBalance(obj.witness_locked)}`)
+  if (obj.liquid_locked && obj.liquid_locked !== '0') parts.push(`Liquid: ${formatBalance(obj.liquid_locked)}`)
+  return parts.length > 0 ? `Locked: ${parts.join(', ')}` : ''
 }
 </script>
 
@@ -155,17 +218,20 @@ function statusInfo(status?: string) {
             <tr>
               <th class="pl-6 w-32">Tx Hash</th>
               <th>Type</th>
+              <th>Block</th>
               <th>From / To</th>
               <th class="text-right">Amount</th>
+              <th class="text-right">FB Balance</th>
               <th class="text-right pr-6">Status</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="tx in txHistory" :key="tx.tx_id" @click="emit('txClick', tx.tx_id)" class="table-row">
+            <tr v-for="(tx, idx) in txHistory" :key="tx.tx_id" @click="emit('txClick', tx.tx_id)" class="table-row">
               <td class="pl-6">
                 <code class="mono text-indigo-400">{{ truncateHash(tx.tx_id, 6) }}</code>
               </td>
               <td><span class="type-pill">{{ tx.tx_type }}</span></td>
+              <td><span class="mono text-gray-500" style="font-size: 0.7rem">#{{ tx.height }}</span></td>
               <td>
                 <div class="counterparty">
                   <div class="dir-icon" :class="tx.from_address === account.address ? 'out' : 'in'">
@@ -179,6 +245,14 @@ function statusInfo(status?: string) {
               </td>
               <td class="text-right">
                 <span class="mono font-bold">{{ tx.value || '0' }}</span>
+              </td>
+              <td class="text-right">
+                <div v-if="tx.fb_balance_after" :class="['fb-bal', balanceChangeClass(idx)]" :title="getFBBalanceTooltip(tx.fb_balance_after)">
+                  {{ getFBBalanceDisplay(tx.fb_balance_after) }}
+                  <span v-if="balanceChangeClass(idx) === 'bal-up'" class="change-arrow">↑</span>
+                  <span v-else-if="balanceChangeClass(idx) === 'bal-down'" class="change-arrow">↓</span>
+                </div>
+                <span v-else class="text-gray-600">-</span>
               </td>
               <td class="text-right pr-6">
                 <div :class="['status-chip', statusInfo(tx.status).class]">
@@ -283,6 +357,12 @@ function statusInfo(status?: string) {
 
 .empty-state-mini { text-align: center; padding: 40px 0; color: #334155; }
 .mono { font-family: 'JetBrains Mono', monospace; }
+
+.fb-bal { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; font-weight: 600; color: #94a3b8; white-space: nowrap; }
+.fb-bal.bal-up { color: #10b981; }
+.fb-bal.bal-down { color: #ef4444; }
+.change-arrow { font-size: 0.65rem; margin-left: 2px; }
+
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }

@@ -6,12 +6,7 @@ import (
 
 // GetAddressTxHistory 获取地址的交易历史（按时间倒序）
 func (idb *IndexDB) GetAddressTxHistory(address string, limit int) ([]*TxRecord, error) {
-	if limit <= 0 {
-		limit = 50 // 默认返回50条
-	}
-	if limit > 500 {
-		limit = 500 // 最多500条
-	}
+	// limit <= 0 means no limit (return all records)
 
 	prefix := KeyAddressTxPrefix(address)
 	// 使用正向扫描，因为 key 中的高度已经是倒序的
