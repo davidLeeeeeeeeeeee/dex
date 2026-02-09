@@ -90,20 +90,22 @@ func (s *VersionedBadgerStore) getLatest(txn *badger.Txn, key []byte, result *[]
 	defer it.Close()
 
 	seekKey := s.encodeVersionedKey(key, ^Version(0))
-	it.Seek(seekKey)
-
-	if !it.Valid() {
-		return ErrNotFound
-	}
-
-	item := it.Item()
-	return item.Value(func(val []byte) error {
-		if len(val) == 1 && val[0] == 0xFF {
-			return ErrNotFound
+	exactLen := len(fullKey) + 8
+	for it.Seek(seekKey); it.ValidForPrefix(fullKey); it.Next() {
+		item := it.Item()
+		if len(item.Key()) != exactLen {
+			// 避免把“更长 key 的前缀命中”误当成当前 key。
+			continue
 		}
-		*result = append([]byte(nil), val...)
-		return nil
-	})
+		return item.Value(func(val []byte) error {
+			if len(val) == 1 && val[0] == 0xFF {
+				return ErrNotFound
+			}
+			*result = append([]byte(nil), val...)
+			return nil
+		})
+	}
+	return ErrNotFound
 }
 
 // getExactVersion 获取精确版本
@@ -134,26 +136,29 @@ func (s *VersionedBadgerStore) getAtVersion(txn *badger.Txn, key []byte, version
 
 	opts := badger.DefaultIteratorOptions
 	opts.Reverse = true
-	opts.Prefix = s.encodeKey(key)
+	fullKey := s.encodeKey(key)
+	opts.Prefix = fullKey
 
 	it := txn.NewIterator(opts)
 	defer it.Close()
 
 	seekKey := s.encodeVersionedKey(key, version)
-	it.Seek(seekKey)
-
-	if !it.Valid() {
-		return ErrVersionNotFound
-	}
-
-	item := it.Item()
-	return item.Value(func(val []byte) error {
-		if len(val) == 1 && val[0] == 0xFF {
-			return ErrNotFound
+	exactLen := len(fullKey) + 8
+	for it.Seek(seekKey); it.ValidForPrefix(fullKey); it.Next() {
+		item := it.Item()
+		if len(item.Key()) != exactLen {
+			// 跳过同前缀但不是同一个 key 的记录。
+			continue
 		}
-		*result = append([]byte(nil), val...)
-		return nil
-	})
+		return item.Value(func(val []byte) error {
+			if len(val) == 1 && val[0] == 0xFF {
+				return ErrNotFound
+			}
+			*result = append([]byte(nil), val...)
+			return nil
+		})
+	}
+	return ErrVersionNotFound
 }
 
 // Set 设置指定版本的值
@@ -308,10 +313,25 @@ func (s *VersionedBadgerStore) WriteBatch(entries []BatchEntry) error {
 
 	wb := s.db.NewWriteBatch()
 	defer wb.Cancel()
+	latestVersionByKey := make(map[string]Version, len(entries))
 
 	for _, e := range entries {
 		versionedKey := s.encodeVersionedKey(e.Key, e.Version)
 		if err := wb.Set(versionedKey, e.Value); err != nil {
+			return err
+		}
+		k := string(e.Key)
+		if cur, ok := latestVersionByKey[k]; !ok || e.Version > cur {
+			latestVersionByKey[k] = e.Version
+		}
+	}
+
+	// 同步更新 latest-version 元数据，确保后续 GetKV/GetLatest 命中最新版本。
+	for k, ver := range latestVersionByKey {
+		metaKey := s.encodeLatestMetaKey([]byte(k))
+		verBuf := make([]byte, 8)
+		binary.BigEndian.PutUint64(verBuf, uint64(ver))
+		if err := wb.Set(metaKey, verBuf); err != nil {
 			return err
 		}
 	}

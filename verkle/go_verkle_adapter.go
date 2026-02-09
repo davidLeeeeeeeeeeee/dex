@@ -52,6 +52,7 @@ func (p *VerkleProof) IsMembershipProof() bool {
 // VerkleTree 使用 go-verkle 库的 Verkle Tree 包装器
 type VerkleTree struct {
 	mu           sync.RWMutex
+	flushMu      sync.Mutex
 	root         gverkle.VerkleNode
 	store        VersionedStore
 	version      Version
@@ -198,7 +199,7 @@ func (t *VerkleTree) GetWithSession(sess VersionedStoreSession, key []byte, vers
 	}
 
 	verkleKey := ToVerkleKey(key)
-	data, err := t.root.Get(verkleKey[:], t.nodeResolver())
+	data, err := t.root.Get(verkleKey[:], t.nodeResolverWithSession(sess))
 	if err != nil || data == nil || len(data) == 0 {
 		return nil, ErrNotFound
 	}
@@ -424,9 +425,15 @@ func (t *VerkleTree) collectAndFlushToMemory(version Version) {
 // FlushPendingNodes 使用 WriteBatch 原子写入待处理的节点数据
 // WriteBatch 没有事务大小限制，可以一次性写入所有节点
 func (t *VerkleTree) FlushPendingNodes() error {
+	t.flushMu.Lock()
+	defer t.flushMu.Unlock()
+
 	t.mu.Lock()
-	nodes := t.pendingNodes
-	t.pendingNodes = nil
+	if len(t.pendingNodes) == 0 {
+		t.mu.Unlock()
+		return nil
+	}
+	nodes := append([]pendingNodeData(nil), t.pendingNodes...)
 	t.mu.Unlock()
 
 	if len(nodes) == 0 {
@@ -435,33 +442,46 @@ func (t *VerkleTree) FlushPendingNodes() error {
 
 	// 获取底层 BadgerStore 以使用 WriteBatch
 	badgerStore, ok := t.store.(*VersionedBadgerStore)
+	var flushErr error
 	if !ok {
 		// 如果不是 BadgerStore，回退到简单实现（测试用）
-		return t.flushPendingNodesSimple(nodes)
-	}
-
-	// 收集所有要写入的条目
-	entries := make([]BatchEntry, 0, len(nodes)*2)
-	for _, nd := range nodes {
-		// 使用 commitment 作为 key
-		entries = append(entries, BatchEntry{
-			Key:     nodeKey(nd.key),
-			Value:   nd.data,
-			Version: nd.version,
-		})
-
-		// 同时使用 path 作为 key
-		if len(nd.path) > 0 {
+		flushErr = t.flushPendingNodesSimple(nodes)
+	} else {
+		// 收集所有要写入的条目
+		entries := make([]BatchEntry, 0, len(nodes)*2)
+		for _, nd := range nodes {
+			// 使用 commitment 作为 key
 			entries = append(entries, BatchEntry{
-				Key:     nodeKey(nd.path),
+				Key:     nodeKey(nd.key),
 				Value:   nd.data,
 				Version: nd.version,
 			})
+
+			// 同时使用 path 作为 key
+			if len(nd.path) > 0 {
+				entries = append(entries, BatchEntry{
+					Key:     nodeKey(nd.path),
+					Value:   nd.data,
+					Version: nd.version,
+				})
+			}
 		}
+		// 原子写入所有节点数据
+		flushErr = badgerStore.WriteBatch(entries)
+	}
+	if flushErr != nil {
+		return flushErr
 	}
 
-	// 原子写入所有节点数据
-	return badgerStore.WriteBatch(entries)
+	// 仅在写入成功后移除本次快照中的 pending，失败时保留以便后续重试
+	t.mu.Lock()
+	if len(t.pendingNodes) <= len(nodes) {
+		t.pendingNodes = nil
+	} else {
+		t.pendingNodes = append([]pendingNodeData(nil), t.pendingNodes[len(nodes):]...)
+	}
+	t.mu.Unlock()
+	return nil
 }
 
 // flushPendingNodesSimple 简单实现（用于非 BadgerStore 的测试场景）
@@ -519,7 +539,35 @@ func (t *VerkleTree) Delete(key []byte, newVersion Version) ([]byte, error) {
 
 // DeleteWithSession 在会话中删除
 func (t *VerkleTree) DeleteWithSession(sess VersionedStoreSession, key []byte, newVersion Version) ([]byte, error) {
-	return t.Delete(key, newVersion)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	verkleKey := ToVerkleKey(key)
+	if _, err := t.root.Delete(verkleKey[:], t.nodeResolverWithSession(sess)); err != nil {
+		return nil, err
+	}
+
+	t.root.Commit()
+	rootCommitment := t.root.Commitment().Bytes()
+
+	t.version = newVersion
+	t.rootHistory[newVersion] = rootCommitment[:]
+
+	if err := sess.Set(rootKey(newVersion), rootCommitment[:], newVersion); err != nil {
+		return nil, err
+	}
+
+	rootData, err := t.root.Serialize()
+	if err == nil && len(rootData) >= 65 {
+		if err := sess.Set(nodeKey(rootCommitment[:]), rootData, newVersion); err != nil {
+			return nil, err
+		}
+	}
+
+	t.collectAndFlushToMemory(newVersion)
+	t.pruneHistory(newVersion)
+
+	return rootCommitment[:], nil
 }
 
 // ============================================

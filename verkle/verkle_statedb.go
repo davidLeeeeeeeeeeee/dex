@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -314,9 +315,18 @@ func (s *VerkleStateDBSession) Commit() error {
 	if err := s.sess.Commit(); err != nil {
 		return err
 	}
-	// 主事务提交后，分批写入待处理的节点数据
-	// 这些独立事务不会与已提交的主事务冲突
-	return s.db.tree.FlushPendingNodes()
+	// 主事务提交后，分批写入待处理的节点数据。
+	// 这里做短重试，降低高负载下瞬时写失败导致的偶发问题。
+	const maxFlushRetries = 3
+	var flushErr error
+	for i := 0; i < maxFlushRetries; i++ {
+		flushErr = s.db.tree.FlushPendingNodes()
+		if flushErr == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(i+1) * 10 * time.Millisecond)
+	}
+	return fmt.Errorf("failed to flush pending verkle nodes after %d retries: %w", maxFlushRetries, flushErr)
 }
 
 func (s *VerkleStateDBSession) Rollback() error {
@@ -350,10 +360,10 @@ func (s *VerkleStateDBSession) Root() []byte {
 // ============================================
 
 func (s *VerkleStateDB) rootKey(version Version) []byte {
-	result := make([]byte, len(s.prefix)+6+8)
-	copy(result, s.prefix)
-	copy(result[len(s.prefix):], "root:v")
-	vOffset := len(s.prefix) + 6
+	// 注意：不要在这里拼接 store 前缀，底层 VersionedStore 会自动加前缀。
+	result := make([]byte, 6+8)
+	copy(result, "root:v")
+	vOffset := 6
 	result[vOffset] = byte(version >> 56)
 	result[vOffset+1] = byte(version >> 48)
 	result[vOffset+2] = byte(version >> 40)
