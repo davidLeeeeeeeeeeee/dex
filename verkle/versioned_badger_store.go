@@ -14,15 +14,26 @@ import (
 
 // VersionedBadgerStore 实现 VersionedStore 接口，使用 BadgerDB 作为后端
 type VersionedBadgerStore struct {
-	db     *badger.DB
-	prefix []byte // 命名空间前缀
+	disableVersioning bool
+	db                *badger.DB
+	prefix            []byte // 命名空间前缀
+}
+
+type VersionedBadgerStoreOptions struct {
+	// DisableVersioning=true 时，忽略 height 版本号，仅保留每个 key 的最新值。
+	DisableVersioning bool
 }
 
 // NewVersionedBadgerStore 创建新的 BadgerDB 版本化存储
 func NewVersionedBadgerStore(db *badger.DB, prefix []byte) *VersionedBadgerStore {
+	return NewVersionedBadgerStoreWithOptions(db, prefix, VersionedBadgerStoreOptions{})
+}
+
+func NewVersionedBadgerStoreWithOptions(db *badger.DB, prefix []byte, opts VersionedBadgerStoreOptions) *VersionedBadgerStore {
 	return &VersionedBadgerStore{
-		db:     db,
-		prefix: prefix,
+		db:                db,
+		prefix:            prefix,
+		disableVersioning: opts.DisableVersioning,
 	}
 }
 
@@ -76,6 +87,20 @@ func (s *VersionedBadgerStore) getInternal(txn *badger.Txn, key []byte, version 
 
 // getLatest 获取最新版本的值
 func (s *VersionedBadgerStore) getLatest(txn *badger.Txn, key []byte, result *[]byte) error {
+	if s.disableVersioning {
+		item, err := txn.Get(s.encodeKey(key))
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			if len(val) == 1 && val[0] == 0xFF {
+				return ErrNotFound
+			}
+			*result = append([]byte(nil), val...)
+			return nil
+		})
+	}
+
 	latestVer, err := s.getLatestVersionInternal(txn, key)
 	if err == nil {
 		return s.getExactVersion(txn, key, latestVer, result)
@@ -110,6 +135,10 @@ func (s *VersionedBadgerStore) getLatest(txn *badger.Txn, key []byte, result *[]
 
 // getExactVersion 获取精确版本
 func (s *VersionedBadgerStore) getExactVersion(txn *badger.Txn, key []byte, version Version, result *[]byte) error {
+	if s.disableVersioning {
+		return s.getLatest(txn, key, result)
+	}
+
 	versionedKey := s.encodeVersionedKey(key, version)
 	item, err := txn.Get(versionedKey)
 	if err != nil {
@@ -126,6 +155,10 @@ func (s *VersionedBadgerStore) getExactVersion(txn *badger.Txn, key []byte, vers
 
 // getAtVersion 获取指定版本或之前最近版本的值
 func (s *VersionedBadgerStore) getAtVersion(txn *badger.Txn, key []byte, version Version, result *[]byte) error {
+	if s.disableVersioning {
+		return s.getLatest(txn, key, result)
+	}
+
 	err := s.getExactVersion(txn, key, version, result)
 	if err == nil {
 		return nil
@@ -180,6 +213,9 @@ func (s *VersionedBadgerStore) setInternal(txn *badger.Txn, key []byte, value []
 	if err := txn.Set(versionedKey, value); err != nil {
 		return err
 	}
+	if s.disableVersioning {
+		return nil
+	}
 	return s.updateLatestVersionMetadata(txn, key, version)
 }
 
@@ -188,10 +224,17 @@ func (s *VersionedBadgerStore) deleteInternal(txn *badger.Txn, key []byte, versi
 	if err := txn.Set(versionedKey, []byte{0xFF}); err != nil {
 		return err
 	}
+	if s.disableVersioning {
+		return nil
+	}
 	return s.updateLatestVersionMetadata(txn, key, version)
 }
 
 func (s *VersionedBadgerStore) updateLatestVersionMetadata(txn *badger.Txn, key []byte, version Version) error {
+	if s.disableVersioning {
+		return nil
+	}
+
 	currentLatest, err := s.getLatestVersionInternal(txn, key)
 	if err == nil && version < currentLatest {
 		return nil
@@ -218,6 +261,10 @@ func (s *VersionedBadgerStore) GetLatestVersion(key []byte) (Version, error) {
 }
 
 func (s *VersionedBadgerStore) getLatestVersionInternal(txn *badger.Txn, key []byte) (Version, error) {
+	if s.disableVersioning {
+		return 0, nil
+	}
+
 	metaKey := s.encodeLatestMetaKey(key)
 	item, err := txn.Get(metaKey)
 	if err != nil {
@@ -236,6 +283,10 @@ func (s *VersionedBadgerStore) getLatestVersionInternal(txn *badger.Txn, key []b
 
 // Prune 删除指定版本之前的所有旧版本，但始终保留每个 Key 的最新版本
 func (s *VersionedBadgerStore) Prune(version Version) error {
+	if s.disableVersioning {
+		return nil
+	}
+
 	var keysToDelete [][]byte
 
 	err := s.db.View(func(txn *badger.Txn) error {
@@ -313,26 +364,33 @@ func (s *VersionedBadgerStore) WriteBatch(entries []BatchEntry) error {
 
 	wb := s.db.NewWriteBatch()
 	defer wb.Cancel()
-	latestVersionByKey := make(map[string]Version, len(entries))
+	var latestVersionByKey map[string]Version
+	if !s.disableVersioning {
+		latestVersionByKey = make(map[string]Version, len(entries))
+	}
 
 	for _, e := range entries {
 		versionedKey := s.encodeVersionedKey(e.Key, e.Version)
 		if err := wb.Set(versionedKey, e.Value); err != nil {
 			return err
 		}
-		k := string(e.Key)
-		if cur, ok := latestVersionByKey[k]; !ok || e.Version > cur {
-			latestVersionByKey[k] = e.Version
+		if !s.disableVersioning {
+			k := string(e.Key)
+			if cur, ok := latestVersionByKey[k]; !ok || e.Version > cur {
+				latestVersionByKey[k] = e.Version
+			}
 		}
 	}
 
-	// 同步更新 latest-version 元数据，确保后续 GetKV/GetLatest 命中最新版本。
-	for k, ver := range latestVersionByKey {
-		metaKey := s.encodeLatestMetaKey([]byte(k))
-		verBuf := make([]byte, 8)
-		binary.BigEndian.PutUint64(verBuf, uint64(ver))
-		if err := wb.Set(metaKey, verBuf); err != nil {
-			return err
+	if !s.disableVersioning {
+		// 同步更新 latest-version 元数据，确保后续 GetKV/GetLatest 命中最新版本。
+		for k, ver := range latestVersionByKey {
+			metaKey := s.encodeLatestMetaKey([]byte(k))
+			verBuf := make([]byte, 8)
+			binary.BigEndian.PutUint64(verBuf, uint64(ver))
+			if err := wb.Set(metaKey, verBuf); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -351,6 +409,10 @@ func (s *VersionedBadgerStore) encodeKey(key []byte) []byte {
 }
 
 func (s *VersionedBadgerStore) encodeVersionedKey(key []byte, version Version) []byte {
+	if s.disableVersioning {
+		return s.encodeKey(key)
+	}
+
 	result := make([]byte, len(s.prefix)+len(key)+8)
 	copy(result, s.prefix)
 	copy(result[len(s.prefix):], key)

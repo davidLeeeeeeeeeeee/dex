@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -279,6 +280,26 @@ func LoadFromFile(path string) (*Config, error) {
 		cfg.Witness = witnessCfg
 		fmt.Println("📜 Loaded witness config from config/witness_default.json")
 	}
+
+	configPath := strings.TrimSpace(path)
+	if configPath == "" {
+		configPath = "config/config.json"
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		// If default path is missing, keep defaults.
+		if os.IsNotExist(err) && strings.TrimSpace(path) == "" {
+			return cfg, nil
+		}
+		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
+	}
+
+	// File values override defaults.
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
+	}
+	fmt.Printf("Loaded config from %s\n", configPath)
 
 	return cfg, nil
 }

@@ -85,7 +85,9 @@ func NewVerkleStateDBWithDB(db *badger.DB, cfg VerkleConfig) (*VerkleStateDB, er
 		prefix = []byte("verkle:")
 	}
 
-	store := NewVersionedBadgerStore(db, prefix)
+	store := NewVersionedBadgerStoreWithOptions(db, prefix, VersionedBadgerStoreOptions{
+		DisableVersioning: true,
+	})
 	tree := NewVerkleTree(store)
 
 	// 尝试恢复最新版本

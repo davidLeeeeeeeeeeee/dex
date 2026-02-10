@@ -44,11 +44,19 @@ type Manager struct {
 	cachedBlocks   []*pb.Block
 	cachedBlocksMu sync.RWMutex
 	Logger         logs.Logger
+	cfg            *config.Config
 }
 
 // NewManager 创建一个新的 DBManager 实例
 func NewManager(path string, logger logs.Logger) (*Manager, error) {
-	cfg := config.DefaultConfig()
+	return NewManagerWithConfig(path, logger, nil)
+}
+
+// NewManagerWithConfig 创建 DBManager，可选注入整份 Config
+func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (*Manager, error) {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
 	opts := badger.DefaultOptions(path).WithLoggingLevel(badger.INFO)
 	// 应用调优参数
 	opts.ValueLogFileSize = cfg.Database.ValueLogFileSize
@@ -100,13 +108,17 @@ func NewManager(path string, logger logs.Logger) (*Manager, error) {
 		IndexMgr: indexMgr,
 		seq:      seq,
 		Logger:   logger,
+		cfg:      cfg,
 	}
 
 	return manager, nil
 }
 
 func (manager *Manager) InitWriteQueue(maxBatchSize int, flushInterval time.Duration) {
-	cfg := config.DefaultConfig()
+	cfg := manager.cfg
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
 	manager.maxBatchSize = maxBatchSize
 	manager.flushInterval = flushInterval
 	manager.writeQueueChan = make(chan WriteTask, cfg.Database.WriteQueueSize) // 缓冲区大小可酌情调大
@@ -442,7 +454,10 @@ func (manager *Manager) flushBatch(batch []WriteTask) {
 	if len(batch) == 0 {
 		return
 	}
-	cfg := config.DefaultConfig()
+	cfg := manager.cfg
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
 	// 保守软上限，留出 Badger 元数据开销余量
 	softLimitBytes := cfg.Database.WriteBatchSoftLimit // 8 MiB
 	maxCountPerTxn := cfg.Database.MaxCountPerTxn      // 也保留条数上限，双重保险

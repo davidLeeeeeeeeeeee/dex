@@ -57,14 +57,22 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	utils.Port = node.Port
 
 	// 3. 初始化数据库
-	dbManager, err := db.NewManager(node.DataPath, node.Logger)
+	dbManager, err := db.NewManagerWithConfig(node.DataPath, node.Logger, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to init db: %v", err)
 	}
 	node.DBManager = dbManager
 
 	// 初始化数据库写队列
-	dbManager.InitWriteQueue(100, 200*time.Millisecond)
+	maxBatchSize := cfg.Database.MaxBatchSize
+	if maxBatchSize <= 0 {
+		maxBatchSize = 100
+	}
+	flushInterval := cfg.Database.FlushInterval
+	if flushInterval <= 0 {
+		flushInterval = 200 * time.Millisecond
+	}
+	dbManager.InitWriteQueue(maxBatchSize, flushInterval)
 
 	// 4. 创建验证器
 	validator := &TestValidator{}

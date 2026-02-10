@@ -70,7 +70,10 @@ func (mgr *Manager) SaveBlock(block *pb.Block) error {
 		}
 	}
 	if !cacheFound {
-		cfg := config.DefaultConfig()
+		cfg := mgr.cfg
+		if cfg == nil {
+			cfg = config.DefaultConfig()
+		}
 		if len(mgr.cachedBlocks) >= cfg.Database.BlockCacheSize {
 			mgr.cachedBlocks = mgr.cachedBlocks[1:]
 		}
