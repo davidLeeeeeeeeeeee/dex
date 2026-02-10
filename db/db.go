@@ -370,6 +370,100 @@ func (manager *Manager) ScanKVWithLimitReverse(prefix string, limit int) (map[st
 	return result, nil
 }
 
+func extractPriceKeyFromIndexKey(indexKey string) (string, bool) {
+	priceMarker := "|price:"
+	orderIDMarker := "|order_id:"
+
+	priceStart := strings.Index(indexKey, priceMarker)
+	if priceStart < 0 {
+		return "", false
+	}
+	priceStart += len(priceMarker)
+
+	rest := indexKey[priceStart:]
+	priceEndOffset := strings.Index(rest, orderIDMarker)
+	if priceEndOffset < 0 {
+		return "", false
+	}
+
+	return rest[:priceEndOffset], true
+}
+
+func (manager *Manager) ScanOrderPriceIndexRange(
+	pair string,
+	side pb.OrderSide,
+	isFilled bool,
+	minPriceKey67 string,
+	maxPriceKey67 string,
+	limit int,
+	reverse bool,
+) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+	if minPriceKey67 == "" || maxPriceKey67 == "" {
+		return result, nil
+	}
+	if minPriceKey67 > maxPriceKey67 {
+		return result, nil
+	}
+
+	prefix := keys.KeyOrderPriceIndexPrefix(pair, side, isFilled)
+	prefixBytes := []byte(prefix)
+	lowSeek := []byte(fmt.Sprintf("%sprice:%s|order_id:", prefix, minPriceKey67))
+	highSeek := []byte(fmt.Sprintf("%sprice:%s|order_id:%c", prefix, maxPriceKey67, 0xFF))
+
+	err := manager.Db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Reverse = reverse
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		if reverse {
+			it.Seek(highSeek)
+		} else {
+			it.Seek(lowSeek)
+		}
+
+		count := 0
+		for ; it.ValidForPrefix(prefixBytes); it.Next() {
+			if limit > 0 && count >= limit {
+				break
+			}
+
+			item := it.Item()
+			k := string(item.KeyCopy(nil))
+			priceKey, ok := extractPriceKeyFromIndexKey(k)
+			if !ok {
+				continue
+			}
+
+			if priceKey < minPriceKey67 {
+				if reverse {
+					break
+				}
+				continue
+			}
+			if priceKey > maxPriceKey67 {
+				if !reverse {
+					break
+				}
+				continue
+			}
+
+			v, err := item.ValueCopy(nil)
+			if err != nil {
+				continue
+			}
+			result[k] = v
+			count++
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // ScanOrdersByPairs 一次性扫描多个交易对的未成交订单
 // 返回：map[pair]map[indexKey][]byte
 func (manager *Manager) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {
@@ -721,6 +815,46 @@ func (manager *Manager) GetKV(key string) ([]byte, error) {
 		return nil, err
 	}
 	return value, nil
+}
+
+func (manager *Manager) GetKVs(keys []string) (map[string][]byte, error) {
+	result := make(map[string][]byte, len(keys))
+	if len(keys) == 0 {
+		return result, nil
+	}
+
+	manager.mu.RLock()
+	db := manager.Db
+	manager.mu.RUnlock()
+
+	if db == nil {
+		return nil, fmt.Errorf("database is not initialized or closed")
+	}
+
+	err := db.View(func(txn *badger.Txn) error {
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			item, err := txn.Get([]byte(key))
+			if err != nil {
+				if err == badger.ErrKeyNotFound {
+					continue
+				}
+				return err
+			}
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			result[key] = val
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // 将 db.Transaction 序列化为 [][]byte

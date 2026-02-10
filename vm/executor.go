@@ -1,6 +1,7 @@
 package vm
 
 import (
+	dbpkg "dex/db"
 	iface "dex/interfaces"
 	"dex/keys"
 	"dex/logs"
@@ -18,6 +19,41 @@ import (
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
 )
+
+const orderBookRebuildSideLimit = 5000
+
+var (
+	orderPriceMinKey67 = strings.Repeat("0", 67)
+	orderPriceMaxKey67 = strings.Repeat("9", 67)
+)
+
+type pairOrderPriceBounds struct {
+	hasBuy          bool
+	maxBuyPriceKey  string
+	hasSell         bool
+	minSellPriceKey string
+}
+
+type orderPriceRangeScanner interface {
+	ScanOrderPriceIndexRange(
+		pair string,
+		side pb.OrderSide,
+		isFilled bool,
+		minPriceKey67 string,
+		maxPriceKey67 string,
+		limit int,
+		reverse bool,
+	) (map[string][]byte, error)
+}
+
+type kvBatchGetter interface {
+	GetKVs(keys []string) (map[string][]byte, error)
+}
+
+type indexedOrderCandidate struct {
+	orderID   string
+	indexData []byte
+}
 
 // Executor VM执行器
 type Executor struct {
@@ -196,9 +232,10 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 
 	// Step 1: 预扫描区块，收集所有交易对
 	pairs := collectPairsFromBlock(b)
+	pairOrderBounds := collectOrderPriceBoundsFromBlock(b)
 
 	// Step 2 & 3: 一次性重建所有订单簿
-	pairBooks, err := x.rebuildOrderBooksForPairs(pairs, sv)
+	pairBooks, err := x.rebuildOrderBooksForPairs(pairs, pairOrderBounds)
 	if err != nil {
 		return &SpecResult{
 			BlockID:  b.BlockHash,
@@ -847,70 +884,186 @@ func collectPairsFromBlock(b *pb.Block) []string {
 	return pairs
 }
 
+func collectOrderPriceBoundsFromBlock(b *pb.Block) map[string]pairOrderPriceBounds {
+	result := make(map[string]pairOrderPriceBounds)
+	if b == nil {
+		return result
+	}
+
+	for _, anyTx := range b.Body {
+		orderTx := anyTx.GetOrderTx()
+		if orderTx == nil || orderTx.Op != pb.OrderOp_ADD {
+			continue
+		}
+
+		priceKey67, err := dbpkg.PriceToKey128(orderTx.Price)
+		if err != nil {
+			continue
+		}
+
+		pair := utils.GeneratePairKey(orderTx.BaseToken, orderTx.QuoteToken)
+		bounds := result[pair]
+		switch orderTx.Side {
+		case pb.OrderSide_BUY:
+			if !bounds.hasBuy || priceKey67 > bounds.maxBuyPriceKey {
+				bounds.maxBuyPriceKey = priceKey67
+			}
+			bounds.hasBuy = true
+		case pb.OrderSide_SELL:
+			if !bounds.hasSell || priceKey67 < bounds.minSellPriceKey {
+				bounds.minSellPriceKey = priceKey67
+			}
+			bounds.hasSell = true
+		}
+		result[pair] = bounds
+	}
+
+	return result
+}
+
 // rebuildOrderBooksForPairs 为给定的交易对重建内存订单簿
-func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[string]*matching.OrderBook, error) {
+func (x *Executor) rebuildOrderBooksForPairs(
+	pairs []string,
+	pairBounds map[string]pairOrderPriceBounds,
+) (map[string]*matching.OrderBook, error) {
 	if len(pairs) == 0 {
 		return make(map[string]*matching.OrderBook), nil
 	}
 
-	pairBooks := make(map[string]*matching.OrderBook)
+	pairBooks := make(map[string]*matching.OrderBook, len(pairs))
 
 	for _, pair := range pairs {
 		ob := matching.NewOrderBookWithSink(nil)
+		bounds := pairBounds[pair]
+		candidates := make([]indexedOrderCandidate, 0, orderBookRebuildSideLimit*2)
 
 		// 2. 加载该交易对的活跃限价单 (未完全成交)
 		// 2. 分别加载买盘和卖盘的未成交订单 (is_filled:false)
-		buyPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_BUY, false)
-		buyOrders, err := x.DB.ScanKVWithLimitReverse(buyPrefix, 500)
-		if err == nil {
-			// 将 keys 排序，确保处理顺序一致
-			buyKeys := make([]string, 0, len(buyOrders))
-			for k := range buyOrders {
-				buyKeys = append(buyKeys, k)
+		if !bounds.hasBuy && !bounds.hasSell {
+			if buyOrders, err := x.scanOrderIndexesForSide(
+				pair, pb.OrderSide_BUY, "", "", orderBookRebuildSideLimit, true,
+			); err == nil {
+				candidates = appendOrderCandidates(candidates, buyOrders)
 			}
-			sort.Strings(buyKeys)
-			for _, indexKey := range buyKeys {
-				data := buyOrders[indexKey]
-				orderID := extractOrderIDFromIndexKey(indexKey)
-				if orderID == "" {
-					continue
+			if sellOrders, err := x.scanOrderIndexesForSide(
+				pair, pb.OrderSide_SELL, "", "", orderBookRebuildSideLimit, false,
+			); err == nil {
+				candidates = appendOrderCandidates(candidates, sellOrders)
+			}
+		} else {
+			if bounds.hasSell {
+				if buyOrders, err := x.scanOrderIndexesForSide(
+					pair, pb.OrderSide_BUY, bounds.minSellPriceKey, "", orderBookRebuildSideLimit, true,
+				); err == nil {
+					candidates = appendOrderCandidates(candidates, buyOrders)
 				}
-				x.loadOrderToBook(orderID, data, ob, sv)
+			}
+			if bounds.hasBuy {
+				if sellOrders, err := x.scanOrderIndexesForSide(
+					pair, pb.OrderSide_SELL, "", bounds.maxBuyPriceKey, orderBookRebuildSideLimit, false,
+				); err == nil {
+					candidates = appendOrderCandidates(candidates, sellOrders)
+				}
 			}
 		}
-
-		// 加载卖盘 Top 500
-		sellPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_SELL, false)
-		sellOrders, err := x.DB.ScanKVWithLimit(sellPrefix, 500)
-		if err == nil {
-			// 将 keys 排序，确保处理顺序一致
-			sellKeys := make([]string, 0, len(sellOrders))
-			for k := range sellOrders {
-				sellKeys = append(sellKeys, k)
-			}
-			sort.Strings(sellKeys)
-			for _, indexKey := range sellKeys {
-				data := sellOrders[indexKey]
-				orderID := extractOrderIDFromIndexKey(indexKey)
-				if orderID == "" {
-					continue
-				}
-				x.loadOrderToBook(orderID, data, ob, sv)
-			}
+		stateByOrderID := x.batchLoadOrderStates(candidates)
+		for _, candidate := range candidates {
+			x.loadOrderToBook(candidate.orderID, candidate.indexData, stateByOrderID[candidate.orderID], ob)
 		}
-
 		pairBooks[pair] = ob
 	}
 
 	return pairBooks, nil
 }
 
-// loadOrderToBook 将单个订单加载到撮合引擎的订单簿中
-func (x *Executor) loadOrderToBook(orderID string, indexData []byte, ob *matching.OrderBook, sv StateView) {
-	// 1. 尝试从 OrderState 读取最新的订单动态信息
-	orderStateKey := keys.KeyOrderState(orderID)
-	orderStateData, err := x.DB.GetKV(orderStateKey)
-	if err == nil && len(orderStateData) > 0 {
+// scanOrderIndexesForSide scans order-price index keys for a side, optionally by price range.
+func (x *Executor) scanOrderIndexesForSide(
+	pair string,
+	side pb.OrderSide,
+	minPriceKey67 string,
+	maxPriceKey67 string,
+	limit int,
+	reverse bool,
+) (map[string][]byte, error) {
+	if rangeScanner, ok := x.DB.(orderPriceRangeScanner); ok {
+		minKey := minPriceKey67
+		maxKey := maxPriceKey67
+		if minKey == "" {
+			minKey = orderPriceMinKey67
+		}
+		if maxKey == "" {
+			maxKey = orderPriceMaxKey67
+		}
+		return rangeScanner.ScanOrderPriceIndexRange(pair, side, false, minKey, maxKey, limit, reverse)
+	}
+	prefix := keys.KeyOrderPriceIndexPrefix(pair, side, false)
+	if reverse {
+		return x.DB.ScanKVWithLimitReverse(prefix, limit)
+	}
+	return x.DB.ScanKVWithLimit(prefix, limit)
+}
+func appendOrderCandidates(
+	dst []indexedOrderCandidate,
+	indexOrders map[string][]byte,
+) []indexedOrderCandidate {
+	keysInOrder := make([]string, 0, len(indexOrders))
+	for k := range indexOrders {
+		keysInOrder = append(keysInOrder, k)
+	}
+	sort.Strings(keysInOrder)
+	for _, indexKey := range keysInOrder {
+		orderID := extractOrderIDFromIndexKey(indexKey)
+		if orderID == "" {
+			continue
+		}
+		dst = append(dst, indexedOrderCandidate{
+			orderID:   orderID,
+			indexData: indexOrders[indexKey],
+		})
+	}
+	return dst
+}
+func (x *Executor) batchLoadOrderStates(candidates []indexedOrderCandidate) map[string][]byte {
+	stateByOrderID := make(map[string][]byte, len(candidates))
+	if len(candidates) == 0 {
+		return stateByOrderID
+	}
+	stateKeys := make([]string, 0, len(candidates))
+	keyToOrderID := make(map[string]string, len(candidates))
+	seenOrderID := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if _, ok := seenOrderID[candidate.orderID]; ok {
+			continue
+		}
+		seenOrderID[candidate.orderID] = struct{}{}
+		stateKey := keys.KeyOrderState(candidate.orderID)
+		stateKeys = append(stateKeys, stateKey)
+		keyToOrderID[stateKey] = candidate.orderID
+	}
+	if batchGetter, ok := x.DB.(kvBatchGetter); ok {
+		if kvs, err := batchGetter.GetKVs(stateKeys); err == nil {
+			for key, val := range kvs {
+				if len(val) == 0 {
+					continue
+				}
+				if orderID, exists := keyToOrderID[key]; exists {
+					stateByOrderID[orderID] = val
+				}
+			}
+			return stateByOrderID
+		}
+	}
+	for _, stateKey := range stateKeys {
+		orderID := keyToOrderID[stateKey]
+		orderStateData, err := x.DB.GetKV(stateKey)
+		if err == nil && len(orderStateData) > 0 {
+			stateByOrderID[orderID] = orderStateData
+		}
+	}
+	return stateByOrderID
+}
+func (x *Executor) loadOrderToBook(orderID string, indexData []byte, orderStateData []byte, ob *matching.OrderBook) {
+	if len(orderStateData) > 0 {
 		var orderState pb.OrderState
 		if err := unmarshalProtoCompat(orderStateData, &orderState); err == nil {
 			matchOrder, _ := convertOrderStateToMatchingOrder(&orderState)
@@ -920,8 +1073,6 @@ func (x *Executor) loadOrderToBook(orderID string, indexData []byte, ob *matchin
 			}
 		}
 	}
-
-	// 2. 如果没有动态状态（旧订单），从索引数据或 StateView 恢复
 	var orderTx pb.OrderTx
 	if err := unmarshalProtoCompat(indexData, &orderTx); err == nil {
 		matchOrder, _ := convertToMatchingOrderLegacy(&orderTx)
@@ -930,8 +1081,6 @@ func (x *Executor) loadOrderToBook(orderID string, indexData []byte, ob *matchin
 		}
 	}
 }
-
-// extractOrderIDFromIndexKey 从价格索引 key 中解析出原始的 orderID
 func extractOrderIDFromIndexKey(indexKey string) string {
 	parts := strings.Split(indexKey, "|order_id:")
 	if len(parts) != 2 {
