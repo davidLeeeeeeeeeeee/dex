@@ -8,9 +8,35 @@ import (
 )
 
 // 触发后台批量写并等待其完成
-func flushAndWait(mgr *Manager) {
-	mgr.ForceFlush()
-	time.Sleep(50 * time.Millisecond) // 让 flushBatch 有时间跑完
+func flushAndWait(t *testing.T, mgr *Manager) {
+	t.Helper()
+	if err := mgr.ForceFlush(); err != nil {
+		t.Fatalf("force flush: %v", err)
+	}
+}
+
+func TestForceFlushIsSynchronous(t *testing.T) {
+	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
+	if err != nil {
+		t.Fatalf("open badger: %v", err)
+	}
+
+	mgr := &Manager{Db: db}
+	mgr.InitWriteQueue(1_000, time.Hour)
+	t.Cleanup(func() { mgr.Close() })
+
+	mgr.EnqueueSet("sync:test:key", "sync-value")
+	if err := mgr.ForceFlush(); err != nil {
+		t.Fatalf("force flush: %v", err)
+	}
+
+	got, err := mgr.GetKV("sync:test:key")
+	if err != nil {
+		t.Fatalf("read after force flush: %v", err)
+	}
+	if string(got) != "sync-value" {
+		t.Fatalf("expected sync-value, got %q", string(got))
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -40,7 +66,7 @@ func TestIndexAllocator(t *testing.T) {
 	for _, w := range tasks {
 		mgr.writeQueueChan <- w
 	}
-	flushAndWait(mgr)
+	flushAndWait(t, mgr)
 
 	// ---------- idx2 ----------
 	idx2, tasks, err := getNewIndex(mgr)
@@ -53,11 +79,11 @@ func TestIndexAllocator(t *testing.T) {
 	for _, w := range tasks {
 		mgr.writeQueueChan <- w
 	}
-	flushAndWait(mgr)
+	flushAndWait(t, mgr)
 
 	// ---------- 回收 idx1 ----------
 	mgr.writeQueueChan <- removeIndex(idx1)
-	flushAndWait(mgr)
+	flushAndWait(t, mgr)
 
 	// ---------- idx3 - 应复用 idx1 ----------
 	idx3, tasks, err := getNewIndex(mgr)
@@ -70,7 +96,7 @@ func TestIndexAllocator(t *testing.T) {
 	for _, w := range tasks {
 		mgr.writeQueueChan <- w
 	}
-	flushAndWait(mgr)
+	flushAndWait(t, mgr)
 
 	// ---------- idx4 - 新增应为 3 ----------
 	idx4, tasks, err := getNewIndex(mgr)
@@ -83,7 +109,7 @@ func TestIndexAllocator(t *testing.T) {
 	for _, w := range tasks {
 		mgr.writeQueueChan <- w
 	}
-	flushAndWait(mgr)
+	flushAndWait(t, mgr)
 
 	mgr.Close()
 }
@@ -116,7 +142,7 @@ func TestIndexAllocatorPerformance(t *testing.T) {
 		for _, w := range tasks {
 			mgr.writeQueueChan <- w
 		}
-		flushAndWait(mgr) // 保证 meta:max_index 立刻可见
+		flushAndWait(t, mgr) // 保证 meta:max_index 立刻可见
 	}
 	dur := time.Since(start)
 	t.Logf("allocated %d indexes in %s (%.2f µs/idx)", n, dur, float64(dur.Microseconds())/float64(n))

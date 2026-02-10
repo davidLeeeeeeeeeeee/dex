@@ -66,11 +66,11 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	// 初始化数据库写队列
 	maxBatchSize := cfg.Database.MaxBatchSize
 	if maxBatchSize <= 0 {
-		maxBatchSize = 100
+		maxBatchSize = 1000
 	}
 	flushInterval := cfg.Database.FlushInterval
 	if flushInterval <= 0 {
-		flushInterval = 200 * time.Millisecond
+		flushInterval = 500 * time.Millisecond
 	}
 	dbManager.InitWriteQueue(maxBatchSize, flushInterval)
 

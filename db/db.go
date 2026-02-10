@@ -9,6 +9,7 @@ import (
 	"dex/stats"
 	"dex/utils"
 	"dex/verkle"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -29,7 +30,7 @@ type Manager struct {
 	// 队列通道，批量写的 goroutine 用它来取写请求
 	writeQueueChan chan WriteTask
 	// 强制刷盘通道
-	forceFlushChan chan struct{}
+	forceFlushChan chan flushRequest
 	// 用于通知写队列 goroutine 停止
 	stopChan chan struct{}
 
@@ -45,6 +46,10 @@ type Manager struct {
 	cachedBlocksMu sync.RWMutex
 	Logger         logs.Logger
 	cfg            *config.Config
+}
+
+type flushRequest struct {
+	done chan error
 }
 
 // NewManager 创建一个新的 DBManager 实例
@@ -124,7 +129,7 @@ func (manager *Manager) InitWriteQueue(maxBatchSize int, flushInterval time.Dura
 	manager.writeQueueChan = make(chan WriteTask, cfg.Database.WriteQueueSize) // 缓冲区大小可酌情调大
 
 	// 新建 forceFlushChan
-	manager.forceFlushChan = make(chan struct{}, 1)
+	manager.forceFlushChan = make(chan flushRequest, 1)
 
 	manager.stopChan = make(chan struct{})
 
@@ -144,11 +149,22 @@ func (manager *Manager) runWriteQueue() {
 	ticker := time.NewTicker(manager.flushInterval)
 	defer ticker.Stop()
 
+	flushCurrentBatch := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		err := manager.flushBatch(batch)
+		batch = batch[:0]
+		return err
+	}
+
 	for {
 		select {
 		case <-manager.stopChan:
-			// 收到停止信号，先把手头的 batch flush 一下再退出
-			manager.flushBatch(batch)
+			// 退出前先排空队列，再刷掉最后一批
+			batch = manager.drainWriteQueue(batch)
+			err := flushCurrentBatch()
+			manager.resolvePendingForceFlush(err)
 			return
 
 		case task := <-manager.writeQueueChan:
@@ -156,36 +172,99 @@ func (manager *Manager) runWriteQueue() {
 			batch = append(batch, task)
 			if len(batch) >= manager.maxBatchSize {
 				// 超过阈值，立即 flush
-				manager.flushBatch(batch)
-				// flush 完要重置 batch
-				batch = batch[:0]
+				if err := flushCurrentBatch(); err != nil {
+					logs.Error("[runWriteQueue] flush by size failed: %v", err)
+				}
 			}
 
 		case <-ticker.C:
 			// 到了时间间隔，也要 flush
-			if len(batch) > 0 {
-				manager.flushBatch(batch)
-				batch = batch[:0]
+			if err := flushCurrentBatch(); err != nil {
+				logs.Error("[runWriteQueue] flush by ticker failed: %v", err)
 			}
 
-		case <-manager.forceFlushChan:
-			// 收到"强制刷盘"请求
-			if len(batch) > 0 {
-				manager.flushBatch(batch)
-				batch = batch[:0]
+		case req := <-manager.forceFlushChan:
+			// 同步 flush：排空已入队写请求并等待落盘完成
+			batch = manager.drainWriteQueue(batch)
+			err := flushCurrentBatch()
+			manager.finishForceFlush(req, err)
+
+			// 依次处理已排队的其他 force flush 请求，保持强一致语义
+			for {
+				select {
+				case req = <-manager.forceFlushChan:
+					batch = manager.drainWriteQueue(batch)
+					err = flushCurrentBatch()
+					manager.finishForceFlush(req, err)
+				default:
+					goto doneForceFlush
+				}
 			}
+		doneForceFlush:
 		}
 	}
 }
 
 // ForceFlush triggers a batch queue flush
 func (manager *Manager) ForceFlush() error {
-	select {
-	case manager.forceFlushChan <- struct{}{}:
-	default:
-		// 如果通道已满，不阻塞
+	if manager.forceFlushChan == nil {
+		return nil
 	}
-	return nil
+
+	req := flushRequest{done: make(chan error, 1)}
+
+	if manager.stopChan != nil {
+		select {
+		case manager.forceFlushChan <- req:
+		case <-manager.stopChan:
+			return fmt.Errorf("write queue already stopped")
+		}
+	} else {
+		manager.forceFlushChan <- req
+	}
+
+	if manager.stopChan != nil {
+		select {
+		case err := <-req.done:
+			return err
+		case <-manager.stopChan:
+			select {
+			case err := <-req.done:
+				return err
+			default:
+			}
+			return fmt.Errorf("write queue stopped before flush completed")
+		}
+	}
+
+	return <-req.done
+}
+
+func (manager *Manager) drainWriteQueue(batch []WriteTask) []WriteTask {
+	for {
+		select {
+		case task := <-manager.writeQueueChan:
+			batch = append(batch, task)
+		default:
+			return batch
+		}
+	}
+}
+
+func (manager *Manager) finishForceFlush(req flushRequest, err error) {
+	req.done <- err
+	close(req.done)
+}
+
+func (manager *Manager) resolvePendingForceFlush(err error) {
+	for {
+		select {
+		case req := <-manager.forceFlushChan:
+			manager.finishForceFlush(req, err)
+		default:
+			return
+		}
+	}
 }
 
 // NewSession 创建一个新的数据库会话
@@ -468,6 +547,7 @@ func (manager *Manager) ScanOrderPriceIndexRange(
 // 返回：map[pair]map[indexKey][]byte
 func (manager *Manager) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {
 	result := make(map[string]map[string][]byte)
+	unfilledMarker := "|is_filled:false|"
 
 	// 单个 txn 内完成所有扫描
 	err := manager.Db.View(func(txn *badger.Txn) error {
@@ -484,6 +564,9 @@ func (manager *Manager) ScanOrdersByPairs(pairs []string) (map[string]map[string
 			for it.Seek(p); it.ValidForPrefix(p); it.Next() {
 				item := it.Item()
 				k := item.KeyCopy(nil)
+				if !strings.Contains(string(k), unfilledMarker) {
+					continue
+				}
 				v, err := item.ValueCopy(nil)
 				if err != nil {
 					it.Close()
@@ -543,10 +626,10 @@ func (manager *Manager) EnqueueDel(key string) {
 	manager.EnqueueDelete(key)
 }
 
-// 这里 flushBatch 就是把 batch 里所有请求一次性地在一个事务中提交到 BadgerDB。
-func (manager *Manager) flushBatch(batch []WriteTask) {
+// 这里 flushBatch 会把 batch 分段后提交到 BadgerDB。
+func (manager *Manager) flushBatch(batch []WriteTask) error {
 	if len(batch) == 0 {
-		return
+		return nil
 	}
 	cfg := manager.cfg
 	if cfg == nil {
@@ -577,71 +660,108 @@ func (manager *Manager) flushBatch(batch []WriteTask) {
 		subRanges = append(subRanges, sliceRange{curStart, len(batch)})
 	}
 
+	var firstErr error
+
 	// 2) 提交每个 sub-batch；若仍报过大，二分退让
 	for _, r := range subRanges {
-		i, j := r.i, r.j
-		for i < j {
-			ok := manager.tryFlushRange(batch, i, j)
-			if ok {
-				break // 这个范围提交成功
-			}
-			// 失败：把范围二分
-			mid := i + (j-i)/2
-			// 先尝试左半
-			if !manager.tryFlushRange(batch, i, mid) {
-				// 左半都太大：继续缩左半
-				j = mid
-				continue
-			}
-			// 左半成功，再提交右半（循环下一轮处理右半）
-			i = mid
+		if err := manager.flushRangeWithSplit(batch, r.i, r.j); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
+
+	return firstErr
 }
 
-// 返回是否提交成功；如果整个范围是一条但仍然过大，会打印明确错误并返回false
-func (manager *Manager) tryFlushRange(batch []WriteTask, start, end int) bool {
+func (manager *Manager) flushRangeWithSplit(batch []WriteTask, start, end int) error {
+	type sliceRange struct{ i, j int }
+
+	stack := []sliceRange{{i: start, j: end}}
+	var firstErr error
+
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if cur.i >= cur.j {
+			continue
+		}
+
+		ok, err := manager.tryFlushRange(batch, cur.i, cur.j)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if ok {
+			continue
+		}
+
+		if cur.j-cur.i <= 1 {
+			continue
+		}
+
+		mid := cur.i + (cur.j-cur.i)/2
+		stack = append(stack, sliceRange{i: mid, j: cur.j}, sliceRange{i: cur.i, j: mid})
+	}
+
+	return firstErr
+}
+
+// 返回是否提交成功；若返回 false，调用方应继续拆分范围重试。
+func (manager *Manager) tryFlushRange(batch []WriteTask, start, end int) (bool, error) {
 	if start >= end {
-		return true
+		return true, nil
 	}
 	sub := batch[start:end]
 
-	err := manager.Db.Update(func(txn *badger.Txn) error {
-		for _, task := range sub {
-			switch task.Op {
-			case OpSet:
-				if e := txn.Set(task.Key, task.Value); e != nil {
-					return e
-				}
-			case OpDelete:
-				if e := txn.Delete(task.Key); e != nil {
-					return e
-				}
-			}
+	wb := manager.Db.NewWriteBatch()
+	defer wb.Cancel()
+
+	for _, task := range sub {
+		var err error
+		switch task.Op {
+		case OpSet:
+			err = wb.Set(task.Key, task.Value)
+		case OpDelete:
+			err = wb.Delete(task.Key)
 		}
-		return nil
-	})
+		if err != nil {
+			// ErrTxnTooBig 时交给外层继续切分
+			if errors.Is(err, badger.ErrTxnTooBig) || strings.Contains(err.Error(), "Txn is too big") {
+				if end-start == 1 {
+					key := string(sub[0].Key)
+					valSz := len(sub[0].Value)
+					msg := fmt.Errorf("single entry too big for badger: key=%q size=%d bytes", key, valSz)
+					manager.Logger.Error("[flushBatch] %v; consider compressing, chunking, or storing out-of-DB", msg)
+					return true, msg
+				}
+				return false, nil
+			}
+			logs.Error("[flushBatch] subBatch [%d:%d] set/delete error: %v", start, end, err)
+			return true, err
+		}
+	}
+
+	err := wb.Flush()
 	if err == nil {
-		return true
+		return true, nil
 	}
 
 	// Badger 的典型报错文案里包含 "Txn is too big"
-	if strings.Contains(err.Error(), "Txn is too big") {
+	if errors.Is(err, badger.ErrTxnTooBig) || strings.Contains(err.Error(), "Txn is too big") {
 		if end-start == 1 {
 			// 单条仍过大：给出清晰提示
 			key := string(sub[0].Key)
 			valSz := len(sub[0].Value)
-			manager.Logger.Error("[flushBatch] single entry still too big: key=%q size=%d bytes; "+
-				"consider compressing, chunking, or storing out-of-DB", key, valSz)
-			return false
+			msg := fmt.Errorf("single entry still too big: key=%q size=%d bytes", key, valSz)
+			manager.Logger.Error("[flushBatch] %v; consider compressing, chunking, or storing out-of-DB", msg)
+			return true, msg
 		}
 		// 交给上层继续二分
-		return false
+		return false, nil
 	}
 
 	// 其他错误：记录并继续
 	logs.Error("[flushBatch] subBatch [%d:%d] error: %v", start, end, err)
-	return true // 避免卡死：把它当“已处理”，不中断后续
+	return true, err // 避免卡死：把它当“已处理”，不中断后续
 }
 
 func (manager *Manager) View(fn func(txn *TransactionView) error) error {
@@ -679,15 +799,27 @@ func (manager *Manager) EnqueueDelete(key string) {
 }
 
 func (manager *Manager) Close() {
-	// 1. 通知写队列 goroutine 停止
-	if manager.stopChan != nil {
-		close(manager.stopChan)
+	// 1. 先做一次同步 flush，确保已经入队的写请求全部落盘
+	if err := manager.ForceFlush(); err != nil {
+		logs.Error("[db.Close] force flush failed: %v", err)
 	}
 
-	// 2. 等待 goroutine 退出
-	manager.wg.Wait()
+	// 2. 通知写队列 goroutine 停止
+	if manager.stopChan != nil {
+		select {
+		case <-manager.stopChan:
+			// already closed
+		default:
+			close(manager.stopChan)
+		}
+	}
 
-	// 3. 这时所有队列里的数据都已经flush完了，可以安全关闭DB
+	// 3. 等待 goroutine 退出
+	manager.wg.Wait()
+	manager.stopChan = nil
+	manager.forceFlushChan = nil
+
+	// 4. 这时所有队列里的数据都已经flush完了，可以安全关闭DB
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 

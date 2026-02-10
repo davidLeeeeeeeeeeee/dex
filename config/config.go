@@ -186,8 +186,8 @@ func DefaultConfig() *Config {
 			ValueLogFileSize:    64 << 20,
 			BaseTableSize:       16 << 20, // 恢复到 16MB 以匹配 ValueThreshold
 			MemTableSize:        8 << 20,  // 设置为 8MB
-			MaxBatchSize:        100,
-			FlushInterval:       200 * time.Millisecond,
+			MaxBatchSize:        1000,
+			FlushInterval:       500 * time.Millisecond,
 			WriteQueueSize:      100000,
 			WriteBatchSoftLimit: 8 * 1024 * 1024,
 			MaxCountPerTxn:      500,
