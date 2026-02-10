@@ -521,44 +521,44 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	for i := range res.Diff {
 		w := &res.Diff[i] // 使用指针，因为 WriteOp 的方法是指针接收器
-		// 濡偓濞村澶勯幋閿嬫纯閺傚府绱欓悽銊ょ艾閺囧瓨???stake index???
+		// 第一步：如果是账户更新，标记为需要更新 stake index
 		if !w.Del && (w.Category == "account" || strings.HasPrefix(w.Key, "v1_account_")) {
 			accountUpdates = append(accountUpdates, w)
 		}
 
-		// 閸愭瑥鍙嗛崚?DB
+		// 第二步：写入数据库
 		if w.Del {
 			x.DB.EnqueueDel(w.Key)
 		} else {
 			x.DB.EnqueueSet(w.Key, string(w.Value))
 		}
 
-		// 婵″倹鐏夐棁鈧憰浣告倱濮濄儱???StateDB閿涘矁顔囪ぐ鏇氱瑓???
+		// 第三步：如果是同步 StateDB 的，记录下来
 		if w.SyncStateDB {
 			stateDBUpdates = append(stateDBUpdates, w)
 		}
 	}
 
-	// ========== 缁楊兛绗佸銉窗閺囧瓨???Stake Index ==========
+	// ========== 更新 Stake Index ==========
 	// ========== 第三步：更新 Stake Index ==========
 	if len(accountUpdates) > 0 {
-		// 鐏忔繆鐦亸?DBManager 鏉烆剚宕叉稉鍝勫徔???UpdateStakeIndex 閺傝纭堕惃鍕???
+		// 检查 DBManager 是否实现了 UpdateStakeIndex 接口
 		type StakeIndexUpdater interface {
 			UpdateStakeIndex(oldStake, newStake decimal.Decimal, address string) error
 		}
 		if updater, ok := x.DB.(StakeIndexUpdater); ok {
 			for _, w := range accountUpdates {
-				// ???key 娑擃厽褰侀崣鏍ф勾閸р偓閿涘牊鐗稿蹇ョ窗v1_account_<address>???
+				// 从账户 key 中提取地址 (v1_account_<address>)
 				address := extractAddressFromAccountKey(w.Key)
 				if address == "" {
 					continue
 				}
 
-				// 娴ｈ法鏁ら崚鍡欘瀲鐎涙ê鍋嶉惃鍕稇妫版繆顓哥粻?stake
+				// 计算更新前后的质押量 (stake)
 				// 使用分离存储的余额计算 stake
 				// 注意：这里需要从 StateDB 或 WriteOps 中读取 FB 余额
 
-				// 鐠侊紕鐣婚弮?stake閿涘牅???StateDB session 鐠囪褰囬敍?
+				// 获取旧的 stake (从 StateDB session 中读取)
 				oldStake := decimal.Zero
 				if fbBalData, err := sess.Get(keys.KeyBalance(address, "FB")); err == nil && fbBalData != nil {
 					var balRecord pb.TokenBalanceRecord
@@ -567,8 +567,8 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 					}
 				}
 
-				// 鐠侊紕鐣婚弬?stake閿涘牅绮犺ぐ鎾冲 WriteOps 娑擃厽鐓￠幍鎯ь嚠鎼存梻娈戞担娆擃杺閺囧瓨鏌婇敍?
-				newStake := oldStake				// 计算新 stake（从当前 WriteOps 中查找对应的余额更新）
+				// 获取新的 stake (通过在 WriteOps 中查找对应的余额更新)
+				newStake := oldStake // 计算新 stake（从当前 WriteOps 中查找对应的余额更新）
 				balanceKey := keys.KeyBalance(address, "FB")
 				for _, wop := range stateDBUpdates {
 					if wop.Key == balanceKey && !wop.Del {
@@ -580,10 +580,10 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 					}
 				}
 
-				// 婵″倹???stake 閸欐垹鏁撻崣妯哄閿涘本娲块弬?stake index
+				// 如果 stake 发生变化，更新 stake index
 				if !oldStake.Equal(newStake) {
 					if err := updater.UpdateStakeIndex(oldStake, newStake, address); err != nil {
-						// 鐠佹澘缍嶉柨娆掝嚖娴ｅ棔绗夋稉顓熸焽閹绘劒???
+						// 记录更新索引失败的警告
 						fmt.Printf("[VM] Warning: failed to update stake index for %s: %v\n", address, err)
 					}
 				}
@@ -591,7 +591,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		}
 	}
 
-	// ========== 缁楊剙娲撳銉窗閸氬本顒為崚?StateDB ==========
+	// ========== 同步到 StateDB ==========
 	// ========== 第四步：同步到 StateDB ==========
 	// 统一处理所有需要同步到 StateDB 的数据
 	// 即使没有更新，也调用 ApplyStateUpdate 以确认当前高度的状态根
@@ -606,31 +606,29 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		b.Header.StateRoot = stateRoot
 	}
 
-	// ========== 缁楊剙娲撳銉窗閸愭瑥鍙嗘禍銈嗘婢跺嫮鎮婇悩鑸碘偓?==========
 	// ========== 第四步：写入交易处理状态 ==========
 	for _, rc := range res.Receipts {
-		// 娴溿倖妲楅悩鑸碘偓?
+		// 写入交易成功/失败状态
 		statusKey := keys.KeyVMAppliedTx(rc.TxID)
 		x.DB.EnqueueSet(statusKey, rc.Status)
 
-		// 娴溿倖妲楅柨娆掝嚖娣団剝浼呴敍鍫濐洤閺嬫粍婀侀敍?
+		// 写入具体的错误信息（如果有）
 		if rc.Error != "" {
 			errorKey := keys.KeyVMTxError(rc.TxID)
 			x.DB.EnqueueSet(errorKey, rc.Error)
 		}
 
-		// 鐠佹澘缍嶆禍銈嗘閹碘偓閸︺劎娈戞妯哄
+		// 写入交易所属的区块高度
 		heightKey := keys.KeyVMTxHeight(rc.TxID)
 		x.DB.EnqueueSet(heightKey, fmt.Sprintf("%d", b.Header.Height))
 
-		// 娣囨繂鐡ㄦ禍銈嗘???FB 娴ｆ瑩顤傝箛顐ゅ弾
+		// 写入交易执行后的 FB 余额快照
 		if rc.FBBalanceAfter != "" {
 			fbKey := keys.KeyVMTxFBBalance(rc.TxID)
 			x.DB.EnqueueSet(fbKey, rc.FBBalanceAfter)
 		}
 	}
 
-	// ========== 缁楊剙娲撳銉ㄋ夐崗鍜冪窗閺囧瓨鏌婇崠鍝勬健娴溿倖妲楅悩鑸碘偓浣歌嫙娣囨繂鐡ㄩ崢鐔告瀮 ==========
 	// ========== 第四步补充：更新区块交易状态并保存原文 ==========
 	receiptMap := make(map[string]*Receipt, len(res.Receipts))
 	for _, rc := range res.Receipts {
@@ -638,7 +636,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 	processedStatusTxs := make(map[string]struct{}, len(receiptMap))
 
-	// 1. 閸忓牊娲块弬鏉垮隘閸фぞ鑵戦幍鈧張澶夋唉閺勬挾娈戦悩鑸碘偓浣告嫲閹笛嗩攽妤傛ê???
+	// 1. 先更新区块中所有交易的状态和执行高度，用于后续展示或索引
 	// 1. 先更新区块中所有交易的状态和执行高度
 	for _, tx := range b.Body {
 		if tx == nil {
@@ -652,9 +650,9 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 			continue
 		}
 
-		// 缂佺喍绔村▔銊ュ弳閹笛嗩攽妤傛ê???
+		// 已处理状态，跳过
 
-		// 閺嶈宓侀幍褑顢戦弨鑸靛祦閺囧瓨鏌婇悩鑸碘偓?
+		// 根据 receipt 结果设置交易最终状态
 		rc, ok := receiptMap[base.TxId]
 		if !ok {
 			continue
@@ -668,7 +666,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		}
 	}
 
-	// 2. 鐏忓棙娲块弬鏉挎倵閻ㄥ嫪姘﹂弰鎾冲斧閺傚洣绻氱€涙ê鍩岄弫鐗堝祦鎼存搫绱欐稉宥呭讲閸欐﹫绱氶敍灞间簰娓氬灝鎮楃紒顓熺叀???
+	// 2. 将更新后的交易原文保存到数据库（不可变），以便后续查询
 	// 2. 将更新后的交易原文保存到数据库（不可变），以便后续查询
 	// 订单簿状态（订单状态、价格索引等）全部由 Diff 中的 WriteOp 控制
 	type txRawSaver interface {
@@ -690,39 +688,38 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 			if _, executedThisBlock := receiptMap[txID]; !executedThisBlock {
 				continue
 			}
-			// 娣囨繂鐡ㄦ禍銈嗘閸樼喐鏋冮敍鍫濆嚒閺囧瓨???Status ???ExecutedHeight???
+			// 如果保存原文失败，记录警告
 			if err := saver.SaveTxRaw(tx); err != nil {
-				// 鐠佹澘缍嶉柨娆掝嚖娴ｅ棔绗夋稉顓熸焽閹绘劒???
+				// 记录更新索引失败的警告
 				fmt.Printf("[VM] Warning: failed to save tx raw %s: %v\n", txID, err)
 			}
 			savedRawTxs[txID] = struct{}{}
 		}
 	}
 
-	// ========== 缁楊兛绨插銉窗閸愭瑥鍙嗛崠鍝勬健閹绘劒姘﹂弽鍥唶 ==========
 	// ========== 第五步：写入区块提交标记 ==========
 	commitKey := keys.KeyVMCommitHeight(b.Header.Height)
 	x.DB.EnqueueSet(commitKey, b.BlockHash)
 
-	// 閸栧搫娼℃妯哄缁便垹???
+	// 记录区块高度到哈希的映射
 	blockHeightKey := keys.KeyVMBlockHeight(b.Header.Height)
 	x.DB.EnqueueSet(blockHeightKey, b.BlockHash)
 
-	// ========== 缁楊剙鍙氬銉窗閹绘劒姘︽导姘崇樈楠炶泛鎮撳?==========
+	// ========== 提交数据库事务并强制刷新 ==========
 	if err := sess.Commit(); err != nil {
 		return fmt.Errorf("failed to commit db session: %v", err)
 	}
 
-	// 閺囧瓨鏌婇崘鍛摠娑擃厾娈戦悩鑸碘偓浣圭壌閿涘牏鈥樻穱婵嗘倵缂侇厽澧界悰宀冨厴閻鍩岄張鈧弬鎵閺堫剨???
+	// 在某些存储实现中，状态根需要在执行后显式提交或刷新
 	if b.Header.StateRoot != nil {
 		x.DB.CommitRoot(b.Header.Height, b.Header.StateRoot)
 	}
 
-	// 瀵搫鍩楅崚閿嬫煀閸掔増鏆熼幑顔肩氨閿涘牏鏁ゆ禍搴ㄦ姜閻樿埖鈧焦鏆熼幑顔炬畱 EnqueueSet???
+	// 强制刷盘，确保数据落盘成功后再返回给上层共识模块
 	return x.DB.ForceFlush()
 }
 
-// IsBlockCommitted 濡偓閺屻儱灏崸妤佹Ц閸氾箑鍑￠幓鎰唉
+// IsBlockCommitted 检查指定高度的区块是否已经提交过
 func (x *Executor) IsBlockCommitted(height uint64) (bool, string) {
 	key := keys.KeyVMCommitHeight(height)
 	blockID, err := x.DB.Get(key)
@@ -732,10 +729,9 @@ func (x *Executor) IsBlockCommitted(height uint64) (bool, string) {
 	return true, string(blockID)
 }
 
-// extractAddressFromAccountKey 娴犲氦澶勯幋?key 娑擃厽褰侀崣鏍ф勾閸р偓
 // extractAddressFromAccountKey 从账户 key 中提取地址
 func extractAddressFromAccountKey(key string) string {
-	// 缁夊娅庨悧鍫熸拱閸撳秶???
+	// 尝试匹配不同的账户前缀
 	prefixes := []string{"v1_account_", "account_"}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(key, prefix) {
@@ -745,8 +741,8 @@ func extractAddressFromAccountKey(key string) string {
 	return ""
 }
 
-// calcStake 鐠侊紕鐣荤拹锔藉煕???stake閿涘牅濞囬悽銊ュ瀻缁傝鐡ㄩ崒顭掔礆
-// CalcStake = FB.miner_locked_balance
+// calcStake 计算一个地址当前的有效质押量
+// 目前定义为：CalcStake = FB.miner_locked_balance
 func calcStake(sv StateView, addr string) (decimal.Decimal, error) {
 	fbBal := GetBalance(sv, addr, "FB")
 	ml, err := decimal.NewFromString(fbBal.MinerLockedBalance)
@@ -756,7 +752,7 @@ func calcStake(sv StateView, addr string) (decimal.Decimal, error) {
 	return ml, nil
 }
 
-// GetTransactionStatus 閼惧嘲褰囨禍銈嗘閻樿埖???
+// GetTransactionStatus 获取交易执行状态
 func (x *Executor) GetTransactionStatus(txID string) (string, error) {
 	key := keys.KeyVMAppliedTx(txID)
 	status, err := x.DB.Get(key)
@@ -781,7 +777,7 @@ func (x *Executor) isTxApplied(txID string) bool {
 	return true
 }
 
-// GetTransactionError 閼惧嘲褰囨禍銈嗘闁挎瑨顕ゆ穱鈩冧紖
+// GetTransactionError 获取交易具体的错误消息
 func (x *Executor) GetTransactionError(txID string) (string, error) {
 	key := keys.KeyVMTxError(txID)
 	errMsg, err := x.DB.Get(key)
@@ -794,15 +790,16 @@ func (x *Executor) GetTransactionError(txID string) (string, error) {
 	return string(errMsg), nil
 }
 
-// CleanupCache 濞撳懐鎮婄紓鎾崇摠
+// CleanupCache 清理缓存
 func (x *Executor) CleanupCache(finalizedHeight uint64) {
 	if finalizedHeight > 100 {
-		// 娣囨繄鏆€閺堚偓???00娑擃亪鐝惔锔炬畱缂傛挸???
+		// 清理 100 个区块高度之前的缓存
 		x.Cache.EvictBelow(finalizedHeight - 100)
 	}
 }
 
-// ValidateBlock 妤犲矁鐦夐崠鍝勬健閸╃儤婀版穱鈩冧紖
+// ValidateBlock 简单的区块结构校验
+
 func ValidateBlock(b *pb.Block) error {
 	if b == nil {
 		return ErrNilBlock
@@ -819,29 +816,28 @@ func ValidateBlock(b *pb.Block) error {
 	return nil
 }
 
-// collectPairsFromBlock 妫板嫭澹傞幓蹇撳隘閸ф绱濋弨鍫曟肠閹碘偓閺堝娓剁憰浣规尦閸氬牏娈戞禍銈嗘???
 // collectPairsFromBlock 预扫描区块，收集所有需要撮合的交易对
 func collectPairsFromBlock(b *pb.Block) []string {
 	pairSet := make(map[string]struct{})
 
 	for _, anyTx := range b.Body {
-		// 閸欘亜顦╅悶?OrderTx
+		// 仅处理 OrderTx
 		orderTx := anyTx.GetOrderTx()
 		if orderTx == nil {
 			continue
 		}
 
-		// 閸欘亜顦╅悶?ADD 閹垮秳???
+		// 仅处理 ADD 操作（新增挂单）
 		if orderTx.Op != pb.OrderOp_ADD {
 			continue
 		}
 
-		// 閻㈢喐鍨氭禍銈嗘???key
+		// 生成交易对的唯一标识 key
 		pair := utils.GeneratePairKey(orderTx.BaseToken, orderTx.QuoteToken)
 		pairSet[pair] = struct{}{}
 	}
 
-	// 鏉烆剚宕叉稉?slice 楠炶埖甯撴惔蹇ョ礉绾喕绻氱涵顔肩暰閹囦憾閸樺棝銆庢惔?
+	// 转化为 slice 并排序，确保多节点执行顺序一致
 	pairs := make([]string, 0, len(pairSet))
 	for pair := range pairSet {
 		pairs = append(pairs, pair)
@@ -851,9 +847,7 @@ func collectPairsFromBlock(b *pb.Block) []string {
 	return pairs
 }
 
-//	娑撯偓濞嗏剝鈧囧櫢瀵ょ儤澧嶉張澶夋唉閺勬挸顕惃鍕吂閸楁洜???
-//
-//
+// rebuildOrderBooksForPairs 为给定的交易对重建内存订单簿
 func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[string]*matching.OrderBook, error) {
 	if len(pairs) == 0 {
 		return make(map[string]*matching.OrderBook), nil
@@ -864,12 +858,12 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 	for _, pair := range pairs {
 		ob := matching.NewOrderBookWithSink(nil)
 
-		// 2. 閸掑棗鍩嗛崝鐘烘祰娑旀壆娲忛崪灞藉礌閻╂娈戦張顏呭灇娴溿倛顓归崡?(is_filled:false)
+		// 2. 加载该交易对的活跃限价单 (未完全成交)
 		// 2. 分别加载买盘和卖盘的未成交订单 (is_filled:false)
 		buyPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_BUY, false)
 		buyOrders, err := x.DB.ScanKVWithLimitReverse(buyPrefix, 500)
 		if err == nil {
-			// ???keys 閹烘帒绨禒銉р€樻穱婵堚€樼€规碍鈧囦憾閸樺棝銆庢惔?
+			// 将 keys 排序，确保处理顺序一致
 			buyKeys := make([]string, 0, len(buyOrders))
 			for k := range buyOrders {
 				buyKeys = append(buyKeys, k)
@@ -885,11 +879,11 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 			}
 		}
 
-		// 閸旂姾娴囬崡鏍磸 Top 500
+		// 加载卖盘 Top 500
 		sellPrefix := keys.KeyOrderPriceIndexPrefix(pair, pb.OrderSide_SELL, false)
 		sellOrders, err := x.DB.ScanKVWithLimit(sellPrefix, 500)
 		if err == nil {
-			// ???keys 閹烘帒绨禒銉р€樻穱婵堚€樼€规碍鈧囦憾閸樺棝銆庢惔?
+			// 将 keys 排序，确保处理顺序一致
 			sellKeys := make([]string, 0, len(sellOrders))
 			for k := range sellOrders {
 				sellKeys = append(sellKeys, k)
@@ -911,9 +905,9 @@ func (x *Executor) rebuildOrderBooksForPairs(pairs []string, sv StateView) (map[
 	return pairBooks, nil
 }
 
-// 鏉堝懎濮弬瑙勭《閿涙矮绮犻弫鐗堝祦閸旂姾娴囩拋銏犲礋閸掓媽顓归崡鏇犵勘
+// loadOrderToBook 将单个订单加载到撮合引擎的订单簿中
 func (x *Executor) loadOrderToBook(orderID string, indexData []byte, ob *matching.OrderBook, sv StateView) {
-	// 鐏忔繆鐦禒?OrderState 鐠囪褰囬敍鍫熸付閺傛壆濮搁幀渚婄礆
+	// 1. 尝试从 OrderState 读取最新的订单动态信息
 	orderStateKey := keys.KeyOrderState(orderID)
 	orderStateData, err := x.DB.GetKV(orderStateKey)
 	if err == nil && len(orderStateData) > 0 {
@@ -927,7 +921,7 @@ func (x *Executor) loadOrderToBook(orderID string, indexData []byte, ob *matchin
 		}
 	}
 
-	// 閸忕厧顔愰柅鏄忕帆閿涙矮???indexData ???sv 鐠囪???
+	// 2. 如果没有动态状态（旧订单），从索引数据或 StateView 恢复
 	var orderTx pb.OrderTx
 	if err := unmarshalProtoCompat(indexData, &orderTx); err == nil {
 		matchOrder, _ := convertToMatchingOrderLegacy(&orderTx)
@@ -937,7 +931,7 @@ func (x *Executor) loadOrderToBook(orderID string, indexData []byte, ob *matchin
 	}
 }
 
-// extractOrderIDFromIndexKey 娴犲簼鐜弽鑲╁偍???key 娑擃厽褰侀崣?orderID
+// extractOrderIDFromIndexKey 从价格索引 key 中解析出原始的 orderID
 func extractOrderIDFromIndexKey(indexKey string) string {
 	parts := strings.Split(indexKey, "|order_id:")
 	if len(parts) != 2 {
@@ -946,7 +940,7 @@ func extractOrderIDFromIndexKey(indexKey string) string {
 	return parts[1]
 }
 
-// convertOrderStateToMatchingOrder ???pb.OrderState 鏉烆剚宕叉稉?matching.Order
+// convertOrderStateToMatchingOrder 将 pb.OrderState 转换为撮合引擎所需的 Order 结构
 func convertOrderStateToMatchingOrder(state *pb.OrderState) (*matching.Order, error) {
 	if state == nil {
 		return nil, fmt.Errorf("invalid order state")
@@ -1000,8 +994,8 @@ func convertOrderStateToMatchingOrder(state *pb.OrderState) (*matching.Order, er
 	}, nil
 }
 
-// convertToMatchingOrderLegacy 鐏忓棙妫悧?pb.OrderTx 鏉烆剚宕叉稉?matching.Order閿涘牆鍚嬬€硅鈧嶇礆
-// 閺冄呭 OrderTx 濞屸剝???FilledBase/FilledQuote 鐎涙顔岄敍灞戒海鐠佹崘顓归崡鏇熸弓閹存劒???
+// convertToMatchingOrderLegacy 将旧版的 pb.OrderTx 转换为撮合引擎所需的 Order 结构
+// 注意：旧版 OrderTx 不包含 FilledBase/FilledQuote，因此假定其为全量未成交订单
 func convertToMatchingOrderLegacy(ord *pb.OrderTx) (*matching.Order, error) {
 	if ord == nil || ord.Base == nil {
 		return nil, fmt.Errorf("invalid order")
@@ -1032,7 +1026,7 @@ func convertToMatchingOrderLegacy(ord *pb.OrderTx) (*matching.Order, error) {
 	}, nil
 }
 
-// getBaseMessage 鏉堝懎濮崙鑺ユ殶閿涙矮???AnyTx 娑擃厽褰侀崣?BaseMessage
+// getBaseMessage 从统一封装的 AnyTx 中提取具体交易的基础元数据 BaseMessage
 func getBaseMessage(tx *pb.AnyTx) *pb.BaseMessage {
 	if tx == nil {
 		return nil
@@ -1080,7 +1074,7 @@ func getBaseMessage(tx *pb.AnyTx) *pb.BaseMessage {
 	return nil
 }
 
-// balanceToJSON ???TokenBalance 鎼村繐鍨崠鏍﹁礋 JSON 鐎涙顑佹稉璇х礄閻劋???Receipt 韫囶偆鍙庨敍?
+// balanceToJSON 将 TokenBalance 的关键快照字段转为 JSON 字符串供 Receipt 存储
 func balanceToJSON(bal *pb.TokenBalance) string {
 	if bal == nil {
 		return ""
