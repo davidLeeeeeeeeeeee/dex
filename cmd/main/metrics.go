@@ -1,6 +1,7 @@
 package main
 
 import (
+	"dex/logs"
 	"fmt"
 	"sort"
 	"strings"
@@ -172,5 +173,24 @@ func monitorProgress(nodes []*NodeInstance) {
 				node.ID, height, pref)
 		}
 		fmt.Println("==========================")
+	}
+}
+
+// monitorMinerParticipantsByEpoch refreshes in-memory miner snapshot when epoch advances.
+func monitorMinerParticipantsByEpoch(nodes []*NodeInstance) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		for _, node := range nodes {
+			if node == nil || node.DBManager == nil || node.ConsensusManager == nil {
+				continue
+			}
+
+			_, height := node.ConsensusManager.GetLastAccepted()
+			if err := node.DBManager.RefreshMinerParticipantsByHeight(height); err != nil {
+				logs.Debug("[MinerCacheMonitor] node=%d refresh failed: %v", node.ID, err)
+			}
+		}
 	}
 }

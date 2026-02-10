@@ -42,14 +42,15 @@ func NewMinerIndexManager(db *badger.DB, logger logs.Logger) (*MinerIndexManager
 // 在一次只读事务里迭代所有 "indexToAccount_*" 键，填充 bitmap。
 func (m *MinerIndexManager) RebuildBitmapFromDB() error {
 	prefix := []byte(NameOfKeyIndexToAccount())
+	rebuilt := roaring.New()
+	count := 0
 
-	return m.db.View(func(txn *badger.Txn) error {
+	err := m.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		count := 0
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			key := it.Item().Key()
 			idxBytes := key[len(prefix):]
@@ -57,12 +58,20 @@ func (m *MinerIndexManager) RebuildBitmapFromDB() error {
 			if err != nil {
 				continue
 			}
-			m.bitmap.Add(uint32(idx))
+			rebuilt.Add(uint32(idx))
 			count++
 		}
-		m.Logger.Info("[MinerIndexManager] rebuilt bitmap with %d miners", count)
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	m.bitmap = rebuilt
+	m.mu.Unlock()
+	m.Logger.Info("[MinerIndexManager] rebuilt bitmap with %d miners", count)
+	return nil
 }
 
 // ----------  运行时维护  ----------
@@ -77,6 +86,24 @@ func (m *MinerIndexManager) Remove(idx uint64) {
 	m.mu.Lock()
 	m.bitmap.Remove(uint32(idx))
 	m.mu.Unlock()
+}
+
+// SnapshotIndices returns all tracked miner indices from the in-memory bitmap.
+func (m *MinerIndexManager) SnapshotIndices() []uint64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	card := int(m.bitmap.GetCardinality())
+	if card == 0 {
+		return nil
+	}
+
+	indices := make([]uint64, 0, card)
+	it := m.bitmap.Iterator()
+	for it.HasNext() {
+		indices = append(indices, uint64(it.Next()))
+	}
+	return indices
 }
 
 // GetAddressByIndex 通过索引查找矿工地址

@@ -11,6 +11,7 @@ import (
 	"dex/verkle"
 	"errors"
 	"fmt"
+	"math/rand"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -46,6 +47,13 @@ type Manager struct {
 	cachedBlocksMu sync.RWMutex
 	Logger         logs.Logger
 	cfg            *config.Config
+	// Active miner snapshot cached in memory and refreshed by epoch.
+	minerCacheMu      sync.RWMutex
+	minerCacheEpoch   uint64
+	minerCacheReady   bool
+	minerParticipants []*pb.Account
+	minerSampleRand   *rand.Rand
+	minerSampleRandMu sync.Mutex
 }
 
 type flushRequest struct {
@@ -109,12 +117,13 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 	}
 
 	manager := &Manager{
-		Db:       db,
-		StateDB:  stateDB,
-		IndexMgr: indexMgr,
-		seq:      seq,
-		Logger:   logger,
-		cfg:      cfg,
+		Db:              db,
+		StateDB:         stateDB,
+		IndexMgr:        indexMgr,
+		seq:             seq,
+		Logger:          logger,
+		cfg:             cfg,
+		minerSampleRand: rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	return manager, nil

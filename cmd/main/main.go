@@ -360,6 +360,7 @@ ContinueWithConsensus:
 	go monitorMetrics(nodes)
 	// 监控进度
 	go monitorProgress(nodes)
+	go monitorMinerParticipantsByEpoch(nodes)
 
 	// 等待信号退出
 	sigChan := make(chan os.Signal, 1)

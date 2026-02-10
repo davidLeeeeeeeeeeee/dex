@@ -12,3 +12,4 @@ explorer/dist/
 explorer_data/
 *.exe~
 .gocache/
+sender/tx_data.jsonl

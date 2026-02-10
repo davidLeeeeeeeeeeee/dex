@@ -142,6 +142,9 @@ func registerAllNodes(nodes []*NodeInstance, frostCfg config.FrostConfig) {
 		if err := node.DBManager.IndexMgr.RebuildBitmapFromDB(); err != nil {
 			logs.Error("Failed to rebuild bitmap: %v", err)
 		}
+		if err := node.DBManager.RefreshMinerParticipantsForEpoch(0); err != nil {
+			logs.Warn("Failed to init miner cache for node %d: %v", node.ID, err)
+		}
 	}
 }
 
