@@ -32,6 +32,15 @@ const (
 	MaxMemoryDepth = 1
 )
 
+// VerkleTreeOptions 控制 VerkleTree 行为（用于调试/压测场景）
+type VerkleTreeOptions struct {
+	// DisableRootCommit 统一开关：
+	// 1) 跳过根承诺计算（t.root.Commit）
+	// 2) 跳过 Verkle 树写入（Insert/Delete/节点持久化）
+	// 仅用于性能/内存定位。
+	DisableRootCommit bool
+}
+
 // VerkleProof Verkle Tree 的证明结构
 type VerkleProof struct {
 	// Commitments 从叶子到根的承诺路径
@@ -51,13 +60,15 @@ func (p *VerkleProof) IsMembershipProof() bool {
 
 // VerkleTree 使用 go-verkle 库的 Verkle Tree 包装器
 type VerkleTree struct {
-	mu           sync.RWMutex
-	flushMu      sync.Mutex
-	root         gverkle.VerkleNode
-	store        VersionedStore
-	version      Version
-	rootHistory  map[Version][]byte
-	pendingNodes []pendingNodeData // 待写入的节点数据（主事务提交后写入）
+	mu          sync.RWMutex
+	flushMu     sync.Mutex
+	root        gverkle.VerkleNode
+	store       VersionedStore
+	version     Version
+	rootHistory map[Version][]byte
+	// disableRootCommit 为统一开关：跳过根承诺计算并跳过 Verkle 写路径。
+	disableRootCommit bool
+	pendingNodes      []pendingNodeData // 待写入的节点数据（主事务提交后写入）
 }
 
 // pendingNodeData 待写入的节点数据
@@ -70,11 +81,17 @@ type pendingNodeData struct {
 
 // NewVerkleTree 创建新的 Verkle Tree 包装器 (v0.2.2 兼容)
 func NewVerkleTree(store VersionedStore) *VerkleTree {
+	return NewVerkleTreeWithOptions(store, VerkleTreeOptions{})
+}
+
+// NewVerkleTreeWithOptions 创建新的 Verkle Tree 包装器并应用可选配置。
+func NewVerkleTreeWithOptions(store VersionedStore, opts VerkleTreeOptions) *VerkleTree {
 	return &VerkleTree{
-		root:        gverkle.New(),
-		store:       store,
-		version:     0,
-		rootHistory: make(map[Version][]byte),
+		root:              gverkle.New(),
+		store:             store,
+		version:           0,
+		rootHistory:       make(map[Version][]byte),
+		disableRootCommit: opts.DisableRootCommit,
 	}
 }
 
@@ -153,6 +170,32 @@ func (t *VerkleTree) resolveNodeWithSession(sess VersionedStoreSession, hash []b
 // ============================================
 // 核心操作
 // ============================================
+
+// computeRootCommitmentLocked 计算（或读取）当前根承诺。
+// 调用方必须持有 t.mu（读锁或写锁均可）。
+func (t *VerkleTree) computeRootCommitmentLocked() []byte {
+	if t.root == nil {
+		return make([]byte, CommitmentSize)
+	}
+	if !t.disableRootCommit {
+		t.root.Commit()
+	}
+	point := t.root.Commitment()
+	if point == nil {
+		return make([]byte, CommitmentSize)
+	}
+	commitment := point.Bytes()
+	root := make([]byte, CommitmentSize)
+	copy(root, commitment[:])
+	return root
+}
+
+// WriteDisabled 返回当前是否禁用 Verkle 写路径。
+func (t *VerkleTree) WriteDisabled() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.disableRootCommit
+}
 
 // Get 获取指定版本的值
 func (t *VerkleTree) Get(key []byte, version Version) ([]byte, error) {
@@ -233,6 +276,14 @@ func (t *VerkleTree) Update(keys [][]byte, values [][]byte, newVersion Version) 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	// 统一开关：禁用 Verkle 写路径（仅更新版本/根缓存）
+	if t.disableRootCommit {
+		rootCommitment := t.computeRootCommitmentLocked()
+		t.version = newVersion
+		t.rootHistory[newVersion] = rootCommitment
+		return rootCommitment, nil
+	}
+
 	for i := 0; i < len(keys); i++ {
 		verkleKey := ToVerkleKey(keys[i])
 		if err := t.root.Insert(verkleKey[:], values[i], t.nodeResolver()); err != nil {
@@ -241,18 +292,17 @@ func (t *VerkleTree) Update(keys [][]byte, values [][]byte, newVersion Version) 
 	}
 
 	// 计算并返回根承诺
-	t.root.Commit()
-	rootCommitment := t.root.Commitment().Bytes()
+	rootCommitment := t.computeRootCommitmentLocked()
 
 	t.version = newVersion
-	t.rootHistory[newVersion] = rootCommitment[:]
+	t.rootHistory[newVersion] = rootCommitment
 
 	// 保存到存储
-	if err := t.store.Set(rootKey(newVersion), rootCommitment[:], newVersion); err != nil {
+	if err := t.store.Set(rootKey(newVersion), rootCommitment, newVersion); err != nil {
 		return nil, err
 	}
 
-	return rootCommitment[:], nil
+	return rootCommitment, nil
 }
 
 // UpdateWithSession 在会话中批量更新（支持大值分片存储）
@@ -264,6 +314,15 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	// 统一开关：禁用 Verkle 写路径（仅更新版本/根缓存）
+	if t.disableRootCommit {
+		rootCommitment := t.computeRootCommitmentLocked()
+		t.version = newVersion
+		t.rootHistory[newVersion] = rootCommitment
+		t.pruneHistory(newVersion)
+		return rootCommitment, nil
+	}
 
 	// ========== 第一阶段：收集并分批写入大值 ==========
 	// 大值使用独立事务写入，避免主事务过大
@@ -348,22 +407,21 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 	}
 
 	// 计算根承诺
-	t.root.Commit()
-	rootCommitment := t.root.Commitment().Bytes()
+	rootCommitment := t.computeRootCommitmentLocked()
 
 	t.version = newVersion
-	t.rootHistory[newVersion] = rootCommitment[:]
+	t.rootHistory[newVersion] = rootCommitment
 
 	// ========== 第三阶段：保存根承诺和根节点 ==========
 	// 这些是小数据，可以在主事务中处理
-	if err := sess.Set(rootKey(newVersion), rootCommitment[:], newVersion); err != nil {
+	if err := sess.Set(rootKey(newVersion), rootCommitment, newVersion); err != nil {
 		return nil, err
 	}
 
 	// 根节点序列化保存
 	rootData, err := t.root.Serialize()
 	if err == nil && len(rootData) >= 65 {
-		if err := sess.Set(nodeKey(rootCommitment[:]), rootData, newVersion); err != nil {
+		if err := sess.Set(nodeKey(rootCommitment), rootData, newVersion); err != nil {
 			return nil, err
 		}
 	}
@@ -376,7 +434,7 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 	// 清理过旧的历史版本缓存
 	t.pruneHistory(newVersion)
 
-	return rootCommitment[:], nil
+	return rootCommitment, nil
 }
 
 // pruneHistory 清理过旧的根承诺历史缓存（保留最近 100 个版本）
@@ -412,7 +470,11 @@ func (t *VerkleTree) collectAndFlushToMemory(version Version) {
 		if err != nil || len(data) < 65 {
 			return
 		}
-		commitment := node.Commitment().Bytes()
+		point := node.Commitment()
+		if point == nil {
+			return
+		}
+		commitment := point.Bytes()
 		t.pendingNodes = append(t.pendingNodes, pendingNodeData{
 			key:     commitment[:],
 			data:    data,
@@ -519,22 +581,29 @@ func (t *VerkleTree) Delete(key []byte, newVersion Version) ([]byte, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	// 统一开关：禁用 Verkle 写路径（仅更新版本/根缓存）
+	if t.disableRootCommit {
+		rootCommitment := t.computeRootCommitmentLocked()
+		t.version = newVersion
+		t.rootHistory[newVersion] = rootCommitment
+		return rootCommitment, nil
+	}
+
 	verkleKey := ToVerkleKey(key)
 	if _, err := t.root.Delete(verkleKey[:], nil); err != nil {
 		return nil, err
 	}
 
-	t.root.Commit()
-	rootCommitment := t.root.Commitment().Bytes()
+	rootCommitment := t.computeRootCommitmentLocked()
 
 	t.version = newVersion
-	t.rootHistory[newVersion] = rootCommitment[:]
+	t.rootHistory[newVersion] = rootCommitment
 
-	if err := t.store.Set(rootKey(newVersion), rootCommitment[:], newVersion); err != nil {
+	if err := t.store.Set(rootKey(newVersion), rootCommitment, newVersion); err != nil {
 		return nil, err
 	}
 
-	return rootCommitment[:], nil
+	return rootCommitment, nil
 }
 
 // DeleteWithSession 在会话中删除
@@ -542,24 +611,32 @@ func (t *VerkleTree) DeleteWithSession(sess VersionedStoreSession, key []byte, n
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	// 统一开关：禁用 Verkle 写路径（仅更新版本/根缓存）
+	if t.disableRootCommit {
+		rootCommitment := t.computeRootCommitmentLocked()
+		t.version = newVersion
+		t.rootHistory[newVersion] = rootCommitment
+		t.pruneHistory(newVersion)
+		return rootCommitment, nil
+	}
+
 	verkleKey := ToVerkleKey(key)
 	if _, err := t.root.Delete(verkleKey[:], t.nodeResolverWithSession(sess)); err != nil {
 		return nil, err
 	}
 
-	t.root.Commit()
-	rootCommitment := t.root.Commitment().Bytes()
+	rootCommitment := t.computeRootCommitmentLocked()
 
 	t.version = newVersion
-	t.rootHistory[newVersion] = rootCommitment[:]
+	t.rootHistory[newVersion] = rootCommitment
 
-	if err := sess.Set(rootKey(newVersion), rootCommitment[:], newVersion); err != nil {
+	if err := sess.Set(rootKey(newVersion), rootCommitment, newVersion); err != nil {
 		return nil, err
 	}
 
 	rootData, err := t.root.Serialize()
 	if err == nil && len(rootData) >= 65 {
-		if err := sess.Set(nodeKey(rootCommitment[:]), rootData, newVersion); err != nil {
+		if err := sess.Set(nodeKey(rootCommitment), rootData, newVersion); err != nil {
 			return nil, err
 		}
 	}
@@ -567,7 +644,7 @@ func (t *VerkleTree) DeleteWithSession(sess VersionedStoreSession, key []byte, n
 	t.collectAndFlushToMemory(newVersion)
 	t.pruneHistory(newVersion)
 
-	return rootCommitment[:], nil
+	return rootCommitment, nil
 }
 
 // ============================================
@@ -826,7 +903,9 @@ func (t *VerkleTree) restoreNodeRecursiveWithSession(sess VersionedStoreSession,
 func (t *VerkleTree) Commit() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.root.Commit()
+	if !t.disableRootCommit {
+		t.root.Commit()
+	}
 	return nil
 }
 

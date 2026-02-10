@@ -96,8 +96,9 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 
 	// 初始化 Verkle StateDB
 	verkleCfg := verkle.VerkleConfig{
-		DataDir: filepath.Join(path, "verkle_state"),
-		Prefix:  []byte("verkle:"),
+		DataDir:           filepath.Join(path, "verkle_state"),
+		Prefix:            []byte("verkle:"),
+		DisableRootCommit: cfg.Database.VerkleDisableRootCommit,
 	}
 
 	stateDB, err := verkle.NewVerkleStateDB(verkleCfg)

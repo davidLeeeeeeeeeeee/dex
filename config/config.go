@@ -62,10 +62,11 @@ type DatabaseConfig struct {
 	SequenceBandwidth uint64 // 1000
 
 	// 内存限制配置（新增）
-	IndexCacheSize   int64 // 索引缓存大小（字节），限制 Ristretto 缓存
-	BlockCacheSizeDB int64 // 块缓存大小（字节），限制数据块缓存
-	NumMemtables     int   // MemTable 数量，减少内存占用
-	NumCompactors    int   // 后台压缩线程数，设为 1 可平抑内存峰值
+	IndexCacheSize          int64 // 索引缓存大小（字节），限制 Ristretto 缓存
+	BlockCacheSizeDB        int64 // 块缓存大小（字节），限制数据块缓存
+	NumMemtables            int   // MemTable 数量，减少内存占用
+	NumCompactors           int   // 后台压缩线程数，设为 1 可平抑内存峰值
+	VerkleDisableRootCommit bool  // 统一开关：禁用 Verkle 根承诺计算并跳过 Verkle 树写入（仅用于排查）
 }
 
 // NetworkConfig 网络配置
@@ -197,10 +198,11 @@ func DefaultConfig() *Config {
 			// 内存限制配置
 			// 适配模拟器多实例环境（20节点 * 2实例 = 40个数据库）
 			// 必须大幅调低单实例缓存，否则总内存会爆炸
-			IndexCacheSize:   16 << 20, // 降低到 16MB
-			BlockCacheSizeDB: 32 << 20, // 降低到 32MB
-			NumMemtables:     3,        // 减少 MemTable 数量
-			NumCompactors:    2,
+			IndexCacheSize:          16 << 20, // 降低到 16MB
+			BlockCacheSizeDB:        32 << 20, // 降低到 32MB
+			NumMemtables:            3,        // 减少 MemTable 数量
+			NumCompactors:           2,
+			VerkleDisableRootCommit: true,
 		},
 		Network: NetworkConfig{
 			BasePort:           6000,

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,8 +29,9 @@ type KVUpdate struct {
 
 // VerkleConfig Verkle StateDB 配置
 type VerkleConfig struct {
-	DataDir string // BadgerDB 目录
-	Prefix  []byte // 命名空间前缀，默认 "verkle:"
+	DataDir           string // BadgerDB 目录
+	Prefix            []byte // 命名空间前缀，默认 "verkle:"
+	DisableRootCommit bool   // 统一开关：跳过根承诺计算并跳过 Verkle 树写入（仅用于压测/排障）
 }
 
 // VerkleStateDB 提供与 JMT StateDB 兼容的接口
@@ -88,7 +90,13 @@ func NewVerkleStateDBWithDB(db *badger.DB, cfg VerkleConfig) (*VerkleStateDB, er
 	store := NewVersionedBadgerStoreWithOptions(db, prefix, VersionedBadgerStoreOptions{
 		DisableVersioning: true,
 	})
-	tree := NewVerkleTree(store)
+	disableRootCommit := cfg.DisableRootCommit || envBool("VERKLE_DISABLE_ROOT_COMMIT")
+	tree := NewVerkleTreeWithOptions(store, VerkleTreeOptions{
+		DisableRootCommit: disableRootCommit,
+	})
+	if disableRootCommit {
+		fmt.Println("[Verkle] WARNING: root commitment and verkle tree writes are disabled (DisableRootCommit/VERKLE_DISABLE_ROOT_COMMIT)")
+	}
 
 	// 尝试恢复最新版本
 	if err := recoverLatestVersion(db, prefix, tree); err != nil {
@@ -158,6 +166,16 @@ func recoverLatestVersion(db *badger.DB, prefix []byte, tree *VerkleTree) error 
 		return fmt.Errorf("failed to restore memory layers: %w", err)
 	}
 	return nil
+}
+
+func envBool(name string) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	switch v {
+	case "1", "true", "yes", "on", "y":
+		return true
+	default:
+		return false
+	}
 }
 
 // ============================================
@@ -302,6 +320,10 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 		s.writeKVLog(height, sortedKeys, sortedVals, deletedKeys)
 	}
 
+	if s.db.tree.WriteDisabled() {
+		return nil
+	}
+
 	// 保存根承诺到 BadgerDB
 	err := s.sess.Set(s.db.rootKey(Version(height)), s.lastRoot, Version(height))
 	if err != nil {
@@ -316,6 +338,9 @@ func (s *VerkleStateDBSession) Commit() error {
 	// 先提交主事务
 	if err := s.sess.Commit(); err != nil {
 		return err
+	}
+	if s.db.tree.WriteDisabled() {
+		return nil
 	}
 	// 主事务提交后，分批写入待处理的节点数据。
 	// 这里做短重试，降低高负载下瞬时写失败导致的偶发问题。
