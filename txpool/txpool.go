@@ -41,6 +41,10 @@ type TxPool struct {
 	address  string
 	stopChan chan struct{}
 	wg       sync.WaitGroup
+
+	// DB 持久化队列（固定 worker + 有界队列，避免每 tx 起 goroutine）
+	pendingSaveQueue   chan *pb.AnyTx
+	pendingSaveWorkers int
 }
 
 // NewTxPool 创建新的TxPool实例（替代GetInstance）
@@ -55,6 +59,11 @@ func NewTxPool(dbManager *db.Manager, validator TxValidator, address string, log
 	shortTxCache, _ := lru.New(cfg.TxPool.ShortTxCacheSize)
 
 	net := network.NewNetwork(dbManager)
+	pendingSaveQueueSize := cfg.TxPool.MessageQueueSize
+	if pendingSaveQueueSize <= 0 {
+		pendingSaveQueueSize = 10000
+	}
+	pendingSaveWorkers := 4
 
 	tp := &TxPool{
 		dbManager:              dbManager,
@@ -67,6 +76,8 @@ func NewTxPool(dbManager *db.Manager, validator TxValidator, address string, log
 		shortTxCache:           shortTxCache,
 		validator:              validator,
 		stopChan:               make(chan struct{}),
+		pendingSaveQueue:       make(chan *pb.AnyTx, pendingSaveQueueSize),
+		pendingSaveWorkers:     pendingSaveWorkers,
 	}
 
 	// 创建内部队列
@@ -83,6 +94,10 @@ func (tp *TxPool) Start() error {
 	// 启动内部队列处理
 	tp.wg.Add(1)
 	go tp.Queue.runLoop()
+	for i := 0; i < tp.pendingSaveWorkers; i++ {
+		tp.wg.Add(1)
+		go tp.runPendingSaveWorker(i)
+	}
 
 	logs.Info("[TxPool] Started")
 	return nil
@@ -237,14 +252,55 @@ func (tp *TxPool) storeAnyTx(anyTx *pb.AnyTx) error {
 
 	tp.mu.Unlock()
 
-	// 2. 异步写入 DB（不阻塞共识流程）
-	go func() {
-		if err := tp.dbManager.SavePendingAnyTx(anyTx); err != nil {
-			tp.Logger.Debug("[TxPool] Async DB save failed for tx %s: %v", txID, err)
-		}
-	}()
+	// 2. 入队由固定 worker 异步写 DB（有界队列，满时反压）
+	if err := tp.enqueuePendingSave(anyTx); err != nil {
+		tp.Logger.Debug("[TxPool] enqueue pending save failed for tx %s: %v", txID, err)
+		return err
+	}
 
 	return nil
+}
+
+func (tp *TxPool) enqueuePendingSave(anyTx *pb.AnyTx) error {
+	if anyTx == nil {
+		return fmt.Errorf("nil transaction")
+	}
+	select {
+	case tp.pendingSaveQueue <- anyTx:
+		return nil
+	case <-tp.stopChan:
+		return fmt.Errorf("txpool is stopping")
+	}
+}
+
+func (tp *TxPool) runPendingSaveWorker(workerID int) {
+	defer tp.wg.Done()
+	for {
+		select {
+		case <-tp.stopChan:
+			// 停止前尽量排空队列，避免丢最后一批待落盘交易
+			for {
+				select {
+				case anyTx := <-tp.pendingSaveQueue:
+					tp.persistPendingAnyTx(anyTx, workerID)
+				default:
+					return
+				}
+			}
+		case anyTx := <-tp.pendingSaveQueue:
+			tp.persistPendingAnyTx(anyTx, workerID)
+		}
+	}
+}
+
+func (tp *TxPool) persistPendingAnyTx(anyTx *pb.AnyTx, workerID int) {
+	if anyTx == nil {
+		return
+	}
+	txID := anyTx.GetTxId()
+	if err := tp.dbManager.SavePendingAnyTx(anyTx); err != nil {
+		tp.Logger.Debug("[TxPool] pending save worker=%d failed for tx %s: %v", workerID, txID, err)
+	}
 }
 
 // loadFromDB 从数据库加载"pending_tx_"记录到内存

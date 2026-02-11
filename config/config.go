@@ -50,9 +50,12 @@ type DatabaseConfig struct {
 	MemTableSize     int64         // 内存表大小
 	MaxBatchSize     int           // 100
 	FlushInterval    time.Duration // 200 * time.Millisecond
+	// 最终化落盘策略：不再每块都强制 flush，而是按块数/时间窗口触发
+	FinalizationForceFlushEveryN   int           // 0=关闭按块数触发；1=每块强刷（旧行为）
+	FinalizationForceFlushInterval time.Duration // 0=关闭按时间触发
 
 	// 写队列配置
-	WriteQueueSize      int   // 100000
+	WriteQueueSize      int
 	WriteBatchSoftLimit int64 // 8 * 1024 * 1024 (8MB)
 	MaxCountPerTxn      int   // 500
 	PerEntryOverhead    int   // 32
@@ -184,17 +187,19 @@ func DefaultConfig() *Config {
 			TLSSessionCacheSize: 128,
 		},
 		Database: DatabaseConfig{
-			ValueLogFileSize:    64 << 20,
-			BaseTableSize:       16 << 20, // 恢复到 16MB 以匹配 ValueThreshold
-			MemTableSize:        8 << 20,  // 设置为 8MB
-			MaxBatchSize:        1000,
-			FlushInterval:       500 * time.Millisecond,
-			WriteQueueSize:      100000,
-			WriteBatchSoftLimit: 8 * 1024 * 1024,
-			MaxCountPerTxn:      500,
-			PerEntryOverhead:    32,
-			BlockCacheSize:      10,
-			SequenceBandwidth:   1000,
+			ValueLogFileSize:               16 << 20,
+			BaseTableSize:                  16 << 20, // 恢复到 16MB 以匹配 ValueThreshold
+			MemTableSize:                   8 << 20,  // 设置为 8MB
+			MaxBatchSize:                   1000,
+			FlushInterval:                  500 * time.Millisecond,
+			FinalizationForceFlushEveryN:   3,
+			FinalizationForceFlushInterval: 10 * time.Second,
+			WriteQueueSize:                 5000,
+			WriteBatchSoftLimit:            8 * 1024 * 1024,
+			MaxCountPerTxn:                 500,
+			PerEntryOverhead:               32,
+			BlockCacheSize:                 10,
+			SequenceBandwidth:              1000,
 			// 内存限制配置
 			// 适配模拟器多实例环境（20节点 * 2实例 = 40个数据库）
 			// 必须大幅调低单实例缓存，否则总内存会爆炸

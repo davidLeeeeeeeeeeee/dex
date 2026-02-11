@@ -45,6 +45,13 @@ type RealBlockStore struct {
 
 	// VRF 签名集合（共识证据）
 	signatureSets map[uint64]*pb.ConsensusSignatureSet
+
+	// 最终化强制刷盘策略（用于降低每块同步刷盘带来的尾延迟）
+	forceFlushMu            sync.Mutex
+	forceFlushEveryN        int
+	forceFlushMaxInterval   time.Duration
+	finalizedSinceLastFlush uint64
+	lastForceFlushAt        time.Time
 }
 
 // 创建真实的区块存储
@@ -102,7 +109,22 @@ func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots 
 		nodeID:            nodeID, // 记录节点ID
 		finalizationChits: make(map[uint64]*types.FinalizationChits),
 		signatureSets:     make(map[uint64]*pb.ConsensusSignatureSet),
+		// 默认保持保守：每块强刷
+		forceFlushEveryN:      1,
+		forceFlushMaxInterval: 0,
+		lastForceFlushAt:      time.Now(),
 	}
+
+	if cfg != nil {
+		store.forceFlushEveryN = cfg.Database.FinalizationForceFlushEveryN
+		store.forceFlushMaxInterval = cfg.Database.FinalizationForceFlushInterval
+	}
+
+	logs.Info(
+		"[RealBlockStore] Finalization flush policy: everyN=%d, interval=%v",
+		store.forceFlushEveryN,
+		store.forceFlushMaxInterval,
+	)
 
 	// 初始化创世区块
 	genesis := &types.Block{
@@ -449,7 +471,7 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 			if err := s.dbManager.SaveBlock(pbBlock); err != nil {
 				logs.Error("[RealBlockStore] Failed to save finalized block: %v", err)
 			} else {
-				s.dbManager.ForceFlush() // 最终化时强制刷盘，保证数据持久性
+				s.maybeForceFlushAfterFinalize()
 			}
 
 			if duration := time.Since(commitStart); duration > 200*time.Millisecond {
@@ -813,10 +835,49 @@ func (s *RealBlockStore) finalizeBlockWithTxs(block *types.Block) {
 		// 保存最终化的区块
 		if err := s.dbManager.SaveBlock(cachedBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save finalized block: %v", err)
+		} else {
+			s.maybeForceFlushAfterFinalize()
 		}
 
 		logs.Info("[RealBlockStore] Finalized block %s with %d txs", block.ID, len(cachedBlock.Body))
 	}
+}
+
+func (s *RealBlockStore) maybeForceFlushAfterFinalize() {
+	if s.dbManager == nil {
+		return
+	}
+
+	s.forceFlushMu.Lock()
+	defer s.forceFlushMu.Unlock()
+
+	s.finalizedSinceLastFlush++
+
+	// 安全兜底：若两个触发器都关闭，回退到每块强刷。
+	if s.forceFlushEveryN <= 0 && s.forceFlushMaxInterval <= 0 {
+		if err := s.dbManager.ForceFlush(); err != nil {
+			logs.Error("[RealBlockStore] ForceFlush failed (fallback): %v", err)
+			return
+		}
+		s.finalizedSinceLastFlush = 0
+		s.lastForceFlushAt = time.Now()
+		return
+	}
+
+	countTrigger := s.forceFlushEveryN > 0 && s.finalizedSinceLastFlush >= uint64(s.forceFlushEveryN)
+	intervalTrigger := s.forceFlushMaxInterval > 0 && time.Since(s.lastForceFlushAt) >= s.forceFlushMaxInterval
+	if !countTrigger && !intervalTrigger {
+		return
+	}
+
+	pending := s.finalizedSinceLastFlush
+	if err := s.dbManager.ForceFlush(); err != nil {
+		logs.Error("[RealBlockStore] ForceFlush failed: pending=%d err=%v", pending, err)
+		return
+	}
+
+	s.finalizedSinceLastFlush = 0
+	s.lastForceFlushAt = time.Now()
 }
 
 func (s *RealBlockStore) saveSnapshotToDB(snapshot *types.Snapshot) {

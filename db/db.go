@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -34,6 +35,19 @@ type Manager struct {
 	forceFlushChan chan flushRequest
 	// 用于通知写队列 goroutine 停止
 	stopChan chan struct{}
+	// 写队列运行统计（用于观测吞吐与背压）
+	writeQueueEnqueueTotal         uint64
+	writeQueueEnqueueSetTotal      uint64
+	writeQueueEnqueueDeleteTotal   uint64
+	writeQueueEnqueueBlockedCount  uint64
+	writeQueueEnqueueBlockedNs     uint64
+	writeQueueDequeuedTotal        uint64
+	writeQueueFlushBatchTotal      uint64
+	writeQueueFlushedTaskTotal     uint64
+	writeQueueFlushErrTotal        uint64
+	writeQueueFlushDurationNsTotal uint64
+	writeQueueForceFlushTotal      uint64
+	writeQueueMaxDepth             uint64
 
 	// 还可以增加两个参数，用来控制"写多少/多长时间"就落库
 	maxBatchSize  int                // 累计多少条就写一次
@@ -58,6 +72,21 @@ type Manager struct {
 
 type flushRequest struct {
 	done chan error
+}
+
+type writeQueueMetricsSnapshot struct {
+	enqueueTotal         uint64
+	enqueueSetTotal      uint64
+	enqueueDeleteTotal   uint64
+	enqueueBlockedCount  uint64
+	enqueueBlockedNs     uint64
+	dequeuedTotal        uint64
+	flushBatchTotal      uint64
+	flushedTaskTotal     uint64
+	flushErrTotal        uint64
+	flushDurationNsTotal uint64
+	forceFlushTotal      uint64
+	maxDepth             uint64
 }
 
 // NewManager 创建一个新的 DBManager 实例
@@ -136,6 +165,7 @@ func (manager *Manager) InitWriteQueue(maxBatchSize int, flushInterval time.Dura
 	}
 	manager.maxBatchSize = maxBatchSize
 	manager.flushInterval = flushInterval
+	manager.resetWriteQueueMetrics()
 	manager.writeQueueChan = make(chan WriteTask, cfg.Database.WriteQueueSize) // 缓冲区大小可酌情调大
 
 	// 新建 forceFlushChan
@@ -145,6 +175,101 @@ func (manager *Manager) InitWriteQueue(maxBatchSize int, flushInterval time.Dura
 
 	manager.wg.Add(1)
 	go manager.runWriteQueue()
+}
+
+func (manager *Manager) resetWriteQueueMetrics() {
+	manager.writeQueueEnqueueTotal = 0
+	manager.writeQueueEnqueueSetTotal = 0
+	manager.writeQueueEnqueueDeleteTotal = 0
+	manager.writeQueueEnqueueBlockedCount = 0
+	manager.writeQueueEnqueueBlockedNs = 0
+	manager.writeQueueDequeuedTotal = 0
+	manager.writeQueueFlushBatchTotal = 0
+	manager.writeQueueFlushedTaskTotal = 0
+	manager.writeQueueFlushErrTotal = 0
+	manager.writeQueueFlushDurationNsTotal = 0
+	manager.writeQueueForceFlushTotal = 0
+	manager.writeQueueMaxDepth = 0
+}
+
+func (manager *Manager) observeQueueDepth() {
+	q := len(manager.writeQueueChan)
+	for {
+		old := atomic.LoadUint64(&manager.writeQueueMaxDepth)
+		if uint64(q) <= old {
+			return
+		}
+		if atomic.CompareAndSwapUint64(&manager.writeQueueMaxDepth, old, uint64(q)) {
+			return
+		}
+	}
+}
+
+func (manager *Manager) snapshotWriteQueueMetrics() writeQueueMetricsSnapshot {
+	return writeQueueMetricsSnapshot{
+		enqueueTotal:         atomic.LoadUint64(&manager.writeQueueEnqueueTotal),
+		enqueueSetTotal:      atomic.LoadUint64(&manager.writeQueueEnqueueSetTotal),
+		enqueueDeleteTotal:   atomic.LoadUint64(&manager.writeQueueEnqueueDeleteTotal),
+		enqueueBlockedCount:  atomic.LoadUint64(&manager.writeQueueEnqueueBlockedCount),
+		enqueueBlockedNs:     atomic.LoadUint64(&manager.writeQueueEnqueueBlockedNs),
+		dequeuedTotal:        atomic.LoadUint64(&manager.writeQueueDequeuedTotal),
+		flushBatchTotal:      atomic.LoadUint64(&manager.writeQueueFlushBatchTotal),
+		flushedTaskTotal:     atomic.LoadUint64(&manager.writeQueueFlushedTaskTotal),
+		flushErrTotal:        atomic.LoadUint64(&manager.writeQueueFlushErrTotal),
+		flushDurationNsTotal: atomic.LoadUint64(&manager.writeQueueFlushDurationNsTotal),
+		forceFlushTotal:      atomic.LoadUint64(&manager.writeQueueForceFlushTotal),
+		maxDepth:             atomic.LoadUint64(&manager.writeQueueMaxDepth),
+	}
+}
+
+func (manager *Manager) logWriteQueueStats(prev writeQueueMetricsSnapshot, interval time.Duration) writeQueueMetricsSnapshot {
+	cur := manager.snapshotWriteQueueMetrics()
+	seconds := interval.Seconds()
+	if seconds <= 0 {
+		seconds = 1
+	}
+
+	enqDelta := cur.enqueueTotal - prev.enqueueTotal
+	setDelta := cur.enqueueSetTotal - prev.enqueueSetTotal
+	delDelta := cur.enqueueDeleteTotal - prev.enqueueDeleteTotal
+	deqDelta := cur.dequeuedTotal - prev.dequeuedTotal
+	flushBatchDelta := cur.flushBatchTotal - prev.flushBatchTotal
+	flushedTaskDelta := cur.flushedTaskTotal - prev.flushedTaskTotal
+	flushErrDelta := cur.flushErrTotal - prev.flushErrTotal
+	flushDurationDeltaNs := cur.flushDurationNsTotal - prev.flushDurationNsTotal
+	forceFlushDelta := cur.forceFlushTotal - prev.forceFlushTotal
+	blockedDelta := cur.enqueueBlockedCount - prev.enqueueBlockedCount
+	blockedNsDelta := cur.enqueueBlockedNs - prev.enqueueBlockedNs
+
+	avgBatch := 0.0
+	avgFlushMs := 0.0
+	if flushBatchDelta > 0 {
+		avgBatch = float64(flushedTaskDelta) / float64(flushBatchDelta)
+		avgFlushMs = float64(flushDurationDeltaNs) / float64(flushBatchDelta) / float64(time.Millisecond)
+	}
+
+	avgBlockMs := 0.0
+	if blockedDelta > 0 {
+		avgBlockMs = float64(blockedNsDelta) / float64(blockedDelta) / float64(time.Millisecond)
+	}
+
+	qLen := len(manager.writeQueueChan)
+	qCap := cap(manager.writeQueueChan)
+	msg := fmt.Sprintf(
+		"[DBQueue] 10s stats q=%d/%d max=%d enq=%d(%.1f/s,set=%d,del=%d) deq=%d(%.1f/s) flushTasks=%d batches=%d avgBatch=%.1f avgFlush=%.2fms flushErr=%d forceFlush=%d blocked=%d avgBlock=%.2fms",
+		qLen, qCap, cur.maxDepth,
+		enqDelta, float64(enqDelta)/seconds, setDelta, delDelta,
+		deqDelta, float64(deqDelta)/seconds,
+		flushedTaskDelta, flushBatchDelta, avgBatch, avgFlushMs,
+		flushErrDelta, forceFlushDelta, blockedDelta, avgBlockMs,
+	)
+	if manager.Logger != nil {
+		manager.Logger.Info(msg)
+	} else {
+		logs.Info(msg)
+	}
+
+	return cur
 }
 
 // 写队列的核心 goroutine 逻辑
@@ -158,12 +283,24 @@ func (manager *Manager) runWriteQueue() {
 	// 定时器：到了 flushInterval 就要提交
 	ticker := time.NewTicker(manager.flushInterval)
 	defer ticker.Stop()
+	metricsTicker := time.NewTicker(10 * time.Second)
+	defer metricsTicker.Stop()
+	lastMetricsAt := time.Now()
+	metricsPrev := manager.snapshotWriteQueueMetrics()
 
 	flushCurrentBatch := func() error {
 		if len(batch) == 0 {
 			return nil
 		}
+		count := len(batch)
+		start := time.Now()
 		err := manager.flushBatch(batch)
+		atomic.AddUint64(&manager.writeQueueFlushBatchTotal, 1)
+		atomic.AddUint64(&manager.writeQueueFlushedTaskTotal, uint64(count))
+		atomic.AddUint64(&manager.writeQueueFlushDurationNsTotal, uint64(time.Since(start)))
+		if err != nil {
+			atomic.AddUint64(&manager.writeQueueFlushErrTotal, 1)
+		}
 		batch = batch[:0]
 		return err
 	}
@@ -179,6 +316,7 @@ func (manager *Manager) runWriteQueue() {
 
 		case task := <-manager.writeQueueChan:
 			// 收到一条写请求，加入 batch
+			atomic.AddUint64(&manager.writeQueueDequeuedTotal, 1)
 			batch = append(batch, task)
 			if len(batch) >= manager.maxBatchSize {
 				// 超过阈值，立即 flush
@@ -188,13 +326,20 @@ func (manager *Manager) runWriteQueue() {
 			}
 
 		case <-ticker.C:
+			// 定时触发时先排空当前队列积压，避免频繁小批次 flush
+			batch = manager.drainWriteQueue(batch)
 			// 到了时间间隔，也要 flush
 			if err := flushCurrentBatch(); err != nil {
 				logs.Error("[runWriteQueue] flush by ticker failed: %v", err)
 			}
 
+		case <-metricsTicker.C:
+			metricsPrev = manager.logWriteQueueStats(metricsPrev, time.Since(lastMetricsAt))
+			lastMetricsAt = time.Now()
+
 		case req := <-manager.forceFlushChan:
 			// 同步 flush：排空已入队写请求并等待落盘完成
+			atomic.AddUint64(&manager.writeQueueForceFlushTotal, 1)
 			batch = manager.drainWriteQueue(batch)
 			err := flushCurrentBatch()
 			manager.finishForceFlush(req, err)
@@ -203,6 +348,7 @@ func (manager *Manager) runWriteQueue() {
 			for {
 				select {
 				case req = <-manager.forceFlushChan:
+					atomic.AddUint64(&manager.writeQueueForceFlushTotal, 1)
 					batch = manager.drainWriteQueue(batch)
 					err = flushCurrentBatch()
 					manager.finishForceFlush(req, err)
@@ -254,6 +400,7 @@ func (manager *Manager) drainWriteQueue(batch []WriteTask) []WriteTask {
 	for {
 		select {
 		case task := <-manager.writeQueueChan:
+			atomic.AddUint64(&manager.writeQueueDequeuedTotal, 1)
 			batch = append(batch, task)
 		default:
 			return batch
@@ -794,18 +941,36 @@ func (tv *TransactionView) NewIterator() *badger.Iterator {
 // 提供"投递写请求"的方法（替换原先的 Write/WriteBatch）
 
 func (manager *Manager) EnqueueSet(key, value string) {
+	start := time.Now()
 	manager.writeQueueChan <- WriteTask{
 		Key:   []byte(key),
 		Value: []byte(value),
 		Op:    OpSet,
 	}
+	atomic.AddUint64(&manager.writeQueueEnqueueTotal, 1)
+	atomic.AddUint64(&manager.writeQueueEnqueueSetTotal, 1)
+	blocked := time.Since(start)
+	if blocked > 100*time.Microsecond {
+		atomic.AddUint64(&manager.writeQueueEnqueueBlockedCount, 1)
+		atomic.AddUint64(&manager.writeQueueEnqueueBlockedNs, uint64(blocked))
+	}
+	manager.observeQueueDepth()
 }
 
 func (manager *Manager) EnqueueDelete(key string) {
+	start := time.Now()
 	manager.writeQueueChan <- WriteTask{
 		Key: []byte(key),
 		Op:  OpDelete,
 	}
+	atomic.AddUint64(&manager.writeQueueEnqueueTotal, 1)
+	atomic.AddUint64(&manager.writeQueueEnqueueDeleteTotal, 1)
+	blocked := time.Since(start)
+	if blocked > 100*time.Microsecond {
+		atomic.AddUint64(&manager.writeQueueEnqueueBlockedCount, 1)
+		atomic.AddUint64(&manager.writeQueueEnqueueBlockedNs, uint64(blocked))
+	}
+	manager.observeQueueDepth()
 }
 
 func (manager *Manager) Close() {
