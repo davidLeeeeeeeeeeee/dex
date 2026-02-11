@@ -20,7 +20,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const orderBookRebuildSideLimit = 5000
+const orderBookRebuildSideLimit = 500
 
 var (
 	orderPriceMinKey67 = strings.Repeat("0", 67)
