@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // BenchmarkJMTWithBadgerHyperBatch 测试大批次下的性能表现

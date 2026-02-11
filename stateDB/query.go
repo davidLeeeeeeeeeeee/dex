@@ -2,7 +2,7 @@
 package statedb
 
 import (
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // Get 从 StateDB 读取单个 key 的值

@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 func TestVerkleFlushCorruption(t *testing.T) {
@@ -14,7 +14,7 @@ func TestVerkleFlushCorruption(t *testing.T) {
 	os.RemoveAll(dbPath)
 	defer os.RemoveAll(dbPath)
 
-	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestVerklePruneMetadata(t *testing.T) {
 	os.RemoveAll(dbPath)
 	defer os.RemoveAll(dbPath)
 
-	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestVerklePruneSafety(t *testing.T) {
 	os.RemoveAll(dbPath)
 	defer os.RemoveAll(dbPath)
 
-	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

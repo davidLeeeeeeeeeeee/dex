@@ -5,7 +5,7 @@ import (
 	"dex/keys"
 	"encoding/binary"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // ---- 外部调用：管理更新 ----

@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // BenchmarkTransactionOverhead 展示真实 BadgerDB 存储下的 JMT 表现
@@ -18,7 +18,7 @@ func BenchmarkBigDataBadgerOverhead(b *testing.B) {
 	}
 	defer os.RemoveAll(dir)
 
-	opts := badger.DefaultOptions(dir).WithLoggingLevel(badger.ERROR)
+	opts := badger.DefaultOptions(dir).WithLogger(nil)
 	db, err := badger.Open(opts)
 	if err != nil {
 		b.Fatal(err)

@@ -3,9 +3,10 @@ package indexdb
 import (
 	"dex/db"
 	"fmt"
+	"os"
 	"sync"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // IndexDB 是 Explorer 专用的索引数据库
@@ -19,11 +20,13 @@ type IndexDB struct {
 // New 创建新的索引数据库
 func New(path string) (*IndexDB, error) {
 	opts := badger.DefaultOptions(path)
-	opts.Logger = nil              // 禁用 badger 日志
-	opts.IndexCacheSize = 32 << 20 // 32MB 索引缓存
-	opts.BlockCacheSize = 64 << 20 // 64MB 块缓存
-	opts.NumCompactors = 2         // 设为最小支持值 2
+	opts.Logger = nil // 禁用 badger 日志
+	opts.NumCompactors = 2
 
+	// badger v2 不自动创建父目录
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create indexdb dir: %w", err)
+	}
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open indexdb: %w", err)

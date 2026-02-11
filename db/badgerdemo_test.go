@@ -3,7 +3,7 @@ package db
 import (
 	"testing"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // 读取：在一个普通只读事务里遍历该 key 的全部版本，挑选 “<= readTs 的最大版本”

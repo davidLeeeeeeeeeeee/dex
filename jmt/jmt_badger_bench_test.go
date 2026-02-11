@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // BenchmarkJMTWithBadger 对比真实 BadgerDB 环境下使用 Session 和不使用 Session 的性能

@@ -106,21 +106,18 @@ func (tq *txPoolQueue) handleAddTx(incoming *pb.AnyTx, ip string, onAdded OnTxAd
 	}
 
 	if isKnown {
-		// 已知节点：先广播后验证
+		// 已知节点：先验证并入池，再触发广播回调，避免“先广播后入池”造成的重复广播窗口
+		if err := tq.validator.CheckAnyTx(incoming); err != nil {
+			tq.pool.Logger.Debug("[TxPoolQueue] known node, tx=%s invalid: %v", txID, err)
+			return
+		}
+		if err := tq.pool.storeAnyTx(incoming); err != nil {
+			tq.pool.Logger.Debug("[TxPoolQueue] known node => store tx=%s fail: %v", txID, err)
+			return
+		}
 		if onAdded != nil {
 			onAdded(txID)
 		}
-
-		// 异步校验 & 入池
-		go func(tx *pb.AnyTx) {
-			if err := tq.validator.CheckAnyTx(tx); err != nil {
-				return
-			}
-			if err := tq.pool.storeAnyTx(tx); err != nil {
-				tq.pool.Logger.Debug("[TxPoolQueue] StoreAnyTx fail: %v", err)
-			}
-		}(incoming)
-
 	} else {
 		// 未知节点：先验证后广播
 		if err := tq.validator.CheckAnyTx(incoming); err != nil {

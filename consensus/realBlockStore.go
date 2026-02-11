@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -142,9 +143,6 @@ func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots 
 	store.lastAcceptedHeight = 0
 	store.finalizedBlocks[0] = genesis
 
-	// 将创世区块保存到数据库
-	store.saveBlockToDB(genesis)
-
 	// 从数据库加载已有区块
 	store.loadFromDB()
 
@@ -221,7 +219,6 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 	s.mu.Lock()
 	if block.Header.Height > s.maxHeight {
 		s.maxHeight = block.Header.Height
-		s.dbManager.EnqueueSet(db.KeyLatestHeight(), strconv.FormatUint(block.Header.Height, 10))
 	}
 	s.mu.Unlock()
 
@@ -777,34 +774,135 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 }
 
 func (s *RealBlockStore) loadFromDB() {
-	// 加载最新高度
-	height, err := s.dbManager.GetLatestBlockHeight()
-	if err == nil {
-		s.maxHeight = height
+	// 尝试读取 latest key（可能因为历史竞态出现偏大或偏小）
+	heightFromLatest := uint64(0)
+	hasLatestKey := false
+	if h, err := s.dbManager.GetLatestBlockHeight(); err == nil {
+		heightFromLatest = h
+		hasLatestKey = true
+	}
 
-		// 加载最近的一些区块到缓存
-		startHeight := uint64(0)
-		if height > 100 {
-			startHeight = height - 100
+	// 扫描真实存在的 height_<h>_blocks 键，作为恢复兜底
+	heightFromScan, hasScannedHeight := s.findMaxPersistedHeightKey()
+
+	// 计算恢复时的有效 tip：优先使用真实存在的最高高度
+	effectiveTip := uint64(0)
+	hasPersistedTip := false
+	if hasLatestKey {
+		effectiveTip = heightFromLatest
+		hasPersistedTip = true
+	}
+	if hasScannedHeight && (!hasPersistedTip || heightFromScan > effectiveTip) {
+		if hasLatestKey && heightFromScan != heightFromLatest {
+			logs.Warn("[RealBlockStore] latest height key=%d, but scanned max persisted height=%d, using scanned tip",
+				heightFromLatest, heightFromScan)
 		}
+		effectiveTip = heightFromScan
+		hasPersistedTip = true
+	}
 
-		for h := startHeight; h <= height; h++ {
-			if dbBlock, err := s.dbManager.GetBlock(h); err == nil && dbBlock != nil {
-				block := s.convertDBBlockToTypes(dbBlock)
-				if block != nil {
-					s.blockCache[block.ID] = block
-					s.heightIndex[h] = []*types.Block{block}
-					s.finalizedBlocks[h] = block // 修复：恢复内存中的最终化映射
-					if h == height {
-						s.lastAccepted = block
-						s.lastAcceptedHeight = h
-					}
-				}
+	if !hasPersistedTip {
+		// 全新数据库：首次启动时将创世块持久化
+		if s.lastAccepted != nil {
+			s.saveBlockToDB(s.lastAccepted)
+		}
+		logs.Info("[RealBlockStore] No persisted tip found, initialized with genesis")
+		return
+	}
+
+	// 加载最近的一些区块到缓存
+	startHeight := uint64(0)
+	if effectiveTip > 100 {
+		startHeight = effectiveTip - 100
+	}
+
+	var loadedTip *types.Block
+	var loadedTipHeight uint64
+
+	for h := startHeight; h <= effectiveTip; h++ {
+		if dbBlock, err := s.dbManager.GetBlock(h); err == nil && dbBlock != nil {
+			block := s.convertDBBlockToTypes(dbBlock)
+			if block == nil {
+				continue
+			}
+			s.blockCache[block.ID] = block
+			s.heightIndex[h] = []*types.Block{block}
+			s.finalizedBlocks[h] = block // 恢复内存中的最终化映射
+
+			if loadedTip == nil || h > loadedTipHeight {
+				loadedTip = block
+				loadedTipHeight = h
 			}
 		}
-
-		logs.Info("[RealBlockStore] Loaded blocks from DB, latest height: %d", height)
 	}
+
+	if loadedTip != nil {
+		s.lastAccepted = loadedTip
+		s.lastAcceptedHeight = loadedTipHeight
+		s.maxHeight = loadedTipHeight
+
+		if hasLatestKey && loadedTipHeight != heightFromLatest {
+			logs.Warn("[RealBlockStore] latest height key=%d but highest loadable block=%d, using loadable tip",
+				heightFromLatest, loadedTipHeight)
+		}
+
+		logs.Info("[RealBlockStore] Loaded blocks from DB, tip height: %d (latest key: %d, scanned max: %d)",
+			loadedTipHeight, heightFromLatest, heightFromScan)
+		return
+	}
+
+	// latest key 存在但按高度找不到区块，回退到创世并修复基础键
+	s.maxHeight = 0
+	s.lastAcceptedHeight = 0
+	if genesis, exists := s.blockCache["genesis"]; exists {
+		s.lastAccepted = genesis
+		s.finalizedBlocks[0] = genesis
+	}
+	if _, err := s.dbManager.GetBlock(0); err != nil && s.lastAccepted != nil {
+		s.saveBlockToDB(s.lastAccepted)
+	}
+	logs.Warn("[RealBlockStore] persisted tip metadata exists but no blocks loadable (latest=%d, scanned=%d), fallback to genesis",
+		heightFromLatest, heightFromScan)
+}
+
+func (s *RealBlockStore) findMaxPersistedHeightKey() (uint64, bool) {
+	if s.dbManager == nil {
+		return 0, false
+	}
+
+	const (
+		prefix = "v1_height_"
+		suffix = "_blocks"
+	)
+
+	records, err := s.dbManager.Scan(prefix)
+	if err != nil {
+		return 0, false
+	}
+
+	var (
+		maxHeight uint64
+		found     bool
+	)
+
+	for key := range records {
+		if !strings.HasSuffix(key, suffix) {
+			continue
+		}
+
+		raw := strings.TrimSuffix(strings.TrimPrefix(key, prefix), suffix)
+		h, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			continue
+		}
+
+		if !found || h > maxHeight {
+			maxHeight = h
+			found = true
+		}
+	}
+
+	return maxHeight, found
 }
 
 func (s *RealBlockStore) convertDBBlockToTypes(dbBlock *pb.Block) *types.Block {

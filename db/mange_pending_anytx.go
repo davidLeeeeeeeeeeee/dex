@@ -4,7 +4,7 @@ import (
 	"dex/pb"
 	"fmt"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 	"google.golang.org/protobuf/proto"
 )
 

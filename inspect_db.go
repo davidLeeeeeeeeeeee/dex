@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 	"google.golang.org/protobuf/proto"
 )
 
 func main() {
 	dbPath := "./data/data_node_0"
-	opts := badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR)
+	opts := badger.DefaultOptions(dbPath).WithLogger(nil)
 	store, err := badger.Open(opts)
 	if err != nil {
 		fmt.Printf("Failed to open DB: %v\n", err)

@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // ====== StateDB 主体 ======
@@ -54,6 +54,10 @@ func New(cfg Config) (*DB, error) {
 		WithSyncWrites(false).
 		WithLogger(nil) // 你工程里可接自己的 logger
 
+	// badger v2 不自动创建父目录
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		return nil, err
+	}
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, err

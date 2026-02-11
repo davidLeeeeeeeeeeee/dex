@@ -12,7 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
+	badgerOpts "github.com/dgraph-io/badger/v2/options"
 )
 
 // ============================================
@@ -32,6 +33,7 @@ type VerkleConfig struct {
 	DataDir           string // BadgerDB 目录
 	Prefix            []byte // 命名空间前缀，默认 "verkle:"
 	DisableRootCommit bool   // 统一开关：跳过根承诺计算并跳过 Verkle 树写入（仅用于压测/排障）
+	Database          *config.DatabaseConfig
 }
 
 // VerkleStateDB 提供与 JMT StateDB 兼容的接口
@@ -52,20 +54,35 @@ func NewVerkleStateDB(cfg VerkleConfig) (*VerkleStateDB, error) {
 	}
 
 	cfgDefault := config.DefaultConfig()
+	dbCfg := cfg.Database
+	if dbCfg == nil {
+		dbCfg = &cfgDefault.Database
+	}
+
 	opts := badger.DefaultOptions(cfg.DataDir).
 		WithNumVersionsToKeep(10).
 		WithSyncWrites(false).
 		WithLogger(nil)
 
-	opts.ValueLogFileSize = cfgDefault.Database.ValueLogFileSize
-	opts.BaseTableSize = cfgDefault.Database.BaseTableSize
-	opts.MemTableSize = cfgDefault.Database.MemTableSize
-	// 应用内存限制配置
-	opts.IndexCacheSize = cfgDefault.Database.IndexCacheSize
-	opts.BlockCacheSize = cfgDefault.Database.BlockCacheSizeDB
-	opts.NumMemtables = cfgDefault.Database.NumMemtables
-	opts.NumCompactors = cfgDefault.Database.NumCompactors
+	opts.ValueLogFileSize = dbCfg.ValueLogFileSize
+	// Badger v2 没有独立 MemTableSize 选项，MaxTableSize 是最接近的可调参数。
+	if dbCfg.MemTableSize > 0 {
+		opts.MaxTableSize = dbCfg.MemTableSize
+	} else {
+		opts.MaxTableSize = dbCfg.BaseTableSize
+	}
+	opts.NumMemtables = dbCfg.NumMemtables
+	opts.NumCompactors = dbCfg.NumCompactors
+	opts.BlockCacheSize = dbCfg.BlockCacheSizeDB
+	opts.IndexCacheSize = dbCfg.IndexCacheSize
+	// 使用 FileIO 模式减少 mmap 内存占用
+	opts.TableLoadingMode = badgerOpts.FileIO
+	opts.ValueLogLoadingMode = badgerOpts.FileIO
 
+	// badger v2 不自动创建父目录
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create db dir: %w", err)
+	}
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badger db: %w", err)

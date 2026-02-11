@@ -87,7 +87,7 @@ func DefaultConfig() *Config {
 			CheckInterval:      30 * time.Second, // 降频作为兜底（事件驱动为主）
 			BehindThreshold:    2,
 			BatchSize:          50,              // 增大批量以加速追赶
-			Timeout:            3 * time.Second, // 缩短超时减少等待
+			Timeout:            10 * time.Second, // 覆盖高负载下 finalization 抖动，减少无效重试
 			SnapshotThreshold:  100,
 			ShortSyncThreshold: 20,              // 落后<=20块用ShortTxs，>20块用完整区块
 			ParallelPeers:      3,               // 并行向3个节点请求不同高度范围

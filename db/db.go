@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,7 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
+	"github.com/dgraph-io/badger/v2/options"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -99,20 +101,28 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
-	opts := badger.DefaultOptions(path).WithLoggingLevel(badger.INFO)
+	opts := badger.DefaultOptions(path).WithLogger(nil)
 	// 应用调优参数
 	opts.ValueLogFileSize = cfg.Database.ValueLogFileSize
-	opts.BaseTableSize = cfg.Database.BaseTableSize
-	opts.MemTableSize = cfg.Database.MemTableSize
-	// 应用内存限制配置（新增）
-	opts.IndexCacheSize = cfg.Database.IndexCacheSize
-	opts.BlockCacheSize = cfg.Database.BlockCacheSizeDB
+	// Badger v2 没有独立 MemTableSize 选项，MaxTableSize 是最接近的可调参数。
+	if cfg.Database.MemTableSize > 0 {
+		opts.MaxTableSize = cfg.Database.MemTableSize
+	} else {
+		opts.MaxTableSize = cfg.Database.BaseTableSize
+	}
 	opts.NumMemtables = cfg.Database.NumMemtables
 	opts.NumCompactors = cfg.Database.NumCompactors
-	// 如果依然想用 mmap，可以保持默认 (MemoryMap) 或自己设 WithValueLogLoadingMode(options.MemoryMap)
-	// .WithValueLogLoadingMode(options.MemoryMap)
+	opts.BlockCacheSize = cfg.Database.BlockCacheSizeDB
+	opts.IndexCacheSize = cfg.Database.IndexCacheSize
+	// 使用 FileIO 模式减少 mmap 内存占用
+	opts.TableLoadingMode = options.FileIO
+	opts.ValueLogLoadingMode = options.FileIO
 	//
 	// 可选：让Badger启动时自动截断不完整的日志，能避免某些不一致问题
+	// badger v2 不自动创建父目录，需要手动创建
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create db dir: %w", err)
+	}
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badger db: %w", err)
@@ -136,6 +146,7 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 		DataDir:           filepath.Join(path, "verkle_state"),
 		Prefix:            []byte("verkle:"),
 		DisableRootCommit: cfg.Database.VerkleDisableRootCommit,
+		Database:          &cfg.Database,
 	}
 
 	stateDB, err := verkle.NewVerkleStateDB(verkleCfg)

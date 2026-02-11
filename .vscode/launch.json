@@ -17,7 +17,10 @@
             "program": "${workspaceFolder}/cmd/main",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "preLaunchTask": "Clean data directory"
+            "env": {
+                "GOMEMLIMIT": "6GiB",
+                "GOGC": "80"
+            }
         },
         {
             "name": "Run cmd/explorer",
@@ -47,6 +50,10 @@
             "program": "${workspaceFolder}/simulateMain/tes.go",
             "type": "go",
             "console": "integratedTerminal",
+            "env": {
+                "GOMEMLIMIT": "6GiB",
+                "GOGC": "80"
+            },
             "mode": "auto"
         }
     ]

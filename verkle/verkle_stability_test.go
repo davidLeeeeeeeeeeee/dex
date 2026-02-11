@@ -9,7 +9,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // ============================================
@@ -31,7 +31,7 @@ func TestVerkleRootDeterminism_SameKV(t *testing.T) {
 		dbPath := fmt.Sprintf("test_db_determinism_%d_%d", os.Getpid(), i)
 		os.RemoveAll(dbPath)
 
-		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 		if err != nil {
 			t.Fatalf("Iteration %d: failed to open db: %v", i, err)
 		}
@@ -118,7 +118,7 @@ func TestVerkleRootDeterminism_MultiVersion(t *testing.T) {
 		dbPath := fmt.Sprintf("test_db_multiversion_%d_%d", os.Getpid(), iter)
 		os.RemoveAll(dbPath)
 
-		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 		if err != nil {
 			t.Fatalf("Failed to open db: %v", err)
 		}
@@ -205,7 +205,7 @@ func TestVerkleRootDeterminism_WithRestart(t *testing.T) {
 	// === 阶段 1：初始写入 ===
 	var root1 []byte
 	{
-		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 		if err != nil {
 			t.Fatalf("Phase 1: failed to open db: %v", err)
 		}
@@ -235,7 +235,7 @@ func TestVerkleRootDeterminism_WithRestart(t *testing.T) {
 	// === 阶段 2：重启并恢复 ===
 	var root2 []byte
 	{
-		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 		if err != nil {
 			t.Fatalf("Phase 2: failed to reopen db: %v", err)
 		}
@@ -305,7 +305,7 @@ func TestVerkleRootDeterminism_LargeDataset(t *testing.T) {
 		dbPath := fmt.Sprintf("test_db_large_%d_%d", os.Getpid(), i)
 		os.RemoveAll(dbPath)
 
-		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 		if err != nil {
 			t.Fatalf("Failed to open db: %v", err)
 		}
@@ -376,7 +376,7 @@ func TestVerkleRootDeterminism_ValueSizeVariation(t *testing.T) {
 		dbPath := fmt.Sprintf("test_db_valuesize_%d_%d", os.Getpid(), i)
 		os.RemoveAll(dbPath)
 
-		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+		db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 		if err != nil {
 			t.Fatalf("Failed to open db: %v", err)
 		}
@@ -479,7 +479,7 @@ func runVerkleWithOrder(t *testing.T, data []kvData, reverse bool, label string)
 	os.RemoveAll(dbPath)
 	defer os.RemoveAll(dbPath)
 
-	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLoggingLevel(badger.ERROR))
+	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
 	if err != nil {
 		t.Fatalf("Failed to open db for %s: %v", label, err)
 	}

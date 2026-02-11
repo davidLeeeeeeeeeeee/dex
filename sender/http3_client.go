@@ -11,7 +11,11 @@ import (
 )
 
 // 创建非单例的 HTTP/3 客户端
-func createHttp3Client() *http.Client {
+func createHttp3Client(cfg *config.Config) *http.Client {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+
 	tlsCfg := &tls.Config{
 		InsecureSkipVerify: true,
 		MinVersion:         tls.VersionTLS13,
@@ -31,7 +35,6 @@ func createHttp3Client() *http.Client {
 		},
 	}
 
-	cfg := config.DefaultConfig()
 	return &http.Client{
 		Transport: tr,
 		Timeout:   cfg.Network.ConnectionTimeout,

@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
+	"github.com/dgraph-io/badger/v2/options"
 )
 
 // NewReadOnlyManager 创建一个只读的 DBManager 实例
@@ -13,13 +14,13 @@ import (
 // 注意：Windows 不支持 BadgerDB 的 ReadOnly 模式，所以用 BypassLockGuard 代替
 // Explorer 不初始化写队列，因此不会写入任何数据
 func NewReadOnlyManager(path string, logger logs.Logger) (*Manager, error) {
-	opts := badger.DefaultOptions(path).WithLoggingLevel(badger.WARNING)
+	opts := badger.DefaultOptions(path).WithLogger(nil)
 	// Windows 不支持 ReadOnly，使用 BypassLockGuard 允许多进程打开同一数据库
 	opts.BypassLockGuard = true
-	// 使用较小的缓存，作为只读不需要太多内存
-	opts.IndexCacheSize = 16 << 20 // 16MB
-	opts.BlockCacheSize = 32 << 20 // 32MB
-	opts.NumCompactors = 0         // 不做压缩
+	// 使用 FileIO 模式减少内存占用
+	opts.TableLoadingMode = options.FileIO
+	opts.ValueLogLoadingMode = options.FileIO
+	opts.NumCompactors = 0 // 不做压缩
 
 	db, err := badger.Open(opts)
 	if err != nil {

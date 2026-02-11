@@ -48,6 +48,7 @@ type SendQueue struct {
 	stopChan           chan struct{}
 	wg                 sync.WaitGroup
 	httpClient         *http.Client
+	cfg                *config.Config
 	nodeID             int              // 只用作log,不参与业务逻辑
 	address            string           // 节点地址
 	Logger             logs.Logger      // 注入的 Logger
@@ -58,7 +59,18 @@ type SendQueue struct {
 // 创建新的发送队列（双队列模式）
 // controlWorkers: 控制面 worker 数量（处理共识消息）
 // dataWorkers: 数据面 worker 数量（处理交易/同步）
-func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client, nodeID int, address string, logger logs.Logger) *SendQueue {
+func NewSendQueue(
+	workerCount, queueCapacity int,
+	httpClient *http.Client,
+	nodeID int,
+	address string,
+	logger logs.Logger,
+	cfg *config.Config,
+) *SendQueue {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+
 	// 分配 worker：控制面占 1/3，数据面占 2/3，最少各 1 个
 	controlWorkers := workerCount / 3
 	if controlWorkers < 1 {
@@ -87,6 +99,7 @@ func NewSendQueue(workerCount, queueCapacity int, httpClient *http.Client, nodeI
 		dataChan:           make(chan *SendTask, dataCapacity),
 		stopChan:           make(chan struct{}),
 		httpClient:         httpClient,
+		cfg:                cfg,
 		InflightMap:        make(map[string]int32),
 	}
 	sq.Start()
@@ -192,7 +205,7 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 // workerLoop 逐个获取队列任务并执行
 func (sq *SendQueue) workerLoop(workerID int, taskChan chan *SendTask, queueType string) {
 	defer sq.wg.Done()
-	cfg := config.DefaultConfig()
+	cfg := sq.cfg
 
 	for {
 		select {
@@ -261,7 +274,7 @@ func (sq *SendQueue) doSend(task *SendTask, workerID int, queueType string) erro
 
 func (sq *SendQueue) handleRetry(task *SendTask, sendErr error) {
 	task.RetryCount++
-	cfg := config.DefaultConfig()
+	cfg := sq.cfg
 
 	// 检查是否超过最大重试次数
 	if task.RetryCount > task.MaxRetries {

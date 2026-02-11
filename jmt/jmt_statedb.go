@@ -5,9 +5,10 @@ import (
 	"dex/config"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // ============================================
@@ -57,9 +58,12 @@ func NewJMTStateDB(cfg JMTConfig) (*JMTStateDB, error) {
 
 	// 直接设置字段，因为该版本的 Badger 可能没有这些 WithXXX 方法
 	opts.ValueLogFileSize = cfg_default.Database.ValueLogFileSize
-	opts.BaseTableSize = cfg_default.Database.BaseTableSize
-	opts.MemTableSize = cfg_default.Database.MemTableSize
+	opts.MaxTableSize = cfg_default.Database.BaseTableSize
 
+	// badger v2 不自动创建父目录
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create db dir: %w", err)
+	}
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badger db: %w", err)

@@ -8,7 +8,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // GetRandomMinersFast samples active miners directly from in-memory snapshot.

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // 触发后台批量写并等待其完成

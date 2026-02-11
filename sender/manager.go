@@ -26,6 +26,7 @@ type SenderManager struct {
 	address    string     // 本节点地址
 	SendQueue  *SendQueue // 持有SendQueue实例
 	httpClient *http.Client
+	cfg        *config.Config
 	nodeID     int // 只用作log,不参与业务逻辑
 	Logger     logs.Logger
 }
@@ -43,12 +44,30 @@ type pullTxMessage struct {
 }
 
 // 创建新的发送管理器
-func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, nodeID int, logger logs.Logger) *SenderManager {
+func NewSenderManager(
+	dbMgr *db.Manager,
+	address string,
+	pool *txpool.TxPool,
+	nodeID int,
+	logger logs.Logger,
+	cfg *config.Config,
+) *SenderManager {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+
 	// 创建 HTTP/3 客户端
-	httpClient := createHttp3Client()
-	cfg := config.DefaultConfig()
+	httpClient := createHttp3Client(cfg)
 	// 创建SendQueue实例，传入 httpClient
-	queue := NewSendQueue(cfg.Sender.WorkerCount, cfg.Sender.QueueCapacity, httpClient, nodeID, address, logger)
+	queue := NewSendQueue(
+		cfg.Sender.WorkerCount,
+		cfg.Sender.QueueCapacity,
+		httpClient,
+		nodeID,
+		address,
+		logger,
+		cfg,
+	)
 
 	return &SenderManager{
 		dbManager:  dbMgr,
@@ -56,8 +75,16 @@ func NewSenderManager(dbMgr *db.Manager, address string, pool *txpool.TxPool, no
 		address:    address,
 		SendQueue:  queue,
 		httpClient: httpClient,
+		cfg:        cfg,
 		Logger:     logger,
 	}
+}
+
+func (sm *SenderManager) controlMaxRetries(defaultValue int) int {
+	if sm == nil || sm.cfg == nil {
+		return defaultValue
+	}
+	return sm.cfg.Sender.ControlMaxRetries
 }
 
 // BroadcastTx 广播交易
@@ -510,7 +537,7 @@ func (sm *SenderManager) SendHeightQuery(targetAddress string, onSuccess func(*p
 		Target:     ip,
 		Message:    msg,
 		RetryCount: 0,
-		MaxRetries: 2,
+		MaxRetries: sm.controlMaxRetries(2),
 		SendFunc:   doSendHeightQuery,
 		Priority:   PriorityControl,
 	}
@@ -546,8 +573,9 @@ func (sm *SenderManager) SendSyncRequest(targetAddress string, fromHeight, toHei
 		Target:     ip,
 		Message:    msg,
 		RetryCount: 0,
-		MaxRetries: 2,
+		MaxRetries: 0,
 		SendFunc:   doSendSyncRequest,
+		Priority:   PriorityControl, // 同步请求属于追赶控制流，避免被交易数据面淹没
 	}
 	sm.SendQueue.Enqueue(task)
 	return nil

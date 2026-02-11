@@ -8,7 +8,7 @@ import (
 
 	"dex/config"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v2"
 )
 
 // BenchmarkParallelUpdate 对比并行与串行更新的性能
@@ -22,8 +22,7 @@ func BenchmarkParallelUpdate(b *testing.B) {
 
 			cfg_default := config.DefaultConfig()
 			opts := badger.DefaultOptions(tmpDir).WithLogger(nil).WithSyncWrites(false)
-			opts.BaseTableSize = cfg_default.Database.BaseTableSize
-			opts.MemTableSize = cfg_default.Database.MemTableSize
+			opts.MaxTableSize = cfg_default.Database.BaseTableSize
 			db, _ := badger.Open(opts)
 			defer db.Close()
 
@@ -59,8 +58,7 @@ func BenchmarkParallelUpdate(b *testing.B) {
 
 			cfg_default := config.DefaultConfig()
 			opts := badger.DefaultOptions(tmpDir).WithLogger(nil).WithSyncWrites(false)
-			opts.BaseTableSize = cfg_default.Database.BaseTableSize
-			opts.MemTableSize = cfg_default.Database.MemTableSize
+			opts.MaxTableSize = cfg_default.Database.BaseTableSize
 			db, _ := badger.Open(opts)
 			defer db.Close()
 

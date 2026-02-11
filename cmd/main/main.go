@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,8 +26,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// 全局创世配置
-var genesisConfig *config.GenesisConfig
+var (
+	// 全局创世配置
+	genesisConfig *config.GenesisConfig
+	// 恢复开关：false=每次清理 data 从 0 开始；true=尝试复用已有数据继续模拟
+	resumeFromExistingProgress = true
+)
 
 func main() {
 	// 加载配置
@@ -83,8 +88,10 @@ func main() {
 			DataPath:   fmt.Sprintf("./data/data_node_%d", i),
 		}
 
-		// 清理旧数据
-		os.RemoveAll(node.DataPath)
+		// 根据开关决定是否清理旧数据
+		if !resumeFromExistingProgress {
+			os.RemoveAll(node.DataPath)
+		}
 
 		// 第一步：创建该节点的私有 Logger (using the correct address)
 		node.Logger = logs.NewNodeLogger(node.Address, 2000)
@@ -102,9 +109,24 @@ func main() {
 	// 等待一下让所有数据库完成初始化
 	time.Sleep(2 * time.Second)
 
-	// 第二阶段：注册所有节点到数据库（让节点互相知道）
-	fmt.Println("🔗 Phase 2: Registering all nodes...")
-	registerAllNodes(nodes, cfg.Frost)
+	// 第二阶段：注册节点（让节点互相知道）
+	shouldBootstrap := true
+	if resumeFromExistingProgress {
+		hasPersistedProgress, maxHeight := detectPersistedProgress(nodes)
+		if hasPersistedProgress {
+			shouldBootstrap = false
+			fmt.Printf("♻️  Resume mode enabled: detected persisted progress (max height=%d), skip bootstrap writes.\n", maxHeight)
+			registerNodeLogMappings(nodes)
+		} else {
+			fmt.Println("⚠️  Resume mode enabled but no persisted progress detected, fallback to fresh bootstrap.")
+		}
+	}
+	if shouldBootstrap {
+		fmt.Println("🔗 Phase 2: Registering all nodes...")
+		registerAllNodes(nodes, cfg.Frost)
+	} else {
+		fmt.Println("🔗 Phase 2: Reusing existing node/account state from local data")
+	}
 
 	// 第三阶段：启动所有HTTP服务器
 	fmt.Println("🌐 Phase 3: Starting HTTP servers...")
@@ -364,17 +386,43 @@ ContinueWithConsensus:
 
 	// 等待信号退出
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	fmt.Println("\n✅ All nodes started! Press Ctrl+C to stop...")
 	fmt.Println("📊 Monitoring consensus progress...")
 
-	<-sigChan
+	sig := <-sigChan
 
 	// 优雅关闭
-	fmt.Println("\n🛑 Shutting down all nodes...")
+	fmt.Printf("\n🛑 Received signal %s, shutting down all nodes...\n", sig)
 	shutdownAllNodes(nodes)
 
 	wg.Wait()
 	fmt.Println("👋 All nodes stopped. Goodbye!")
+}
+
+func detectPersistedProgress(nodes []*NodeInstance) (bool, uint64) {
+	var maxHeight uint64
+	for _, node := range nodes {
+		if node == nil || node.ConsensusManager == nil {
+			continue
+		}
+		_, height := node.ConsensusManager.GetLastAccepted()
+		if height > maxHeight {
+			maxHeight = height
+		}
+	}
+	return maxHeight > 0, maxHeight
+}
+
+func registerNodeLogMappings(nodes []*NodeInstance) {
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		logs.RegisterNodeMapping(strconv.Itoa(node.ID), node.Address)
+		logs.RegisterNodeMapping(node.Port, node.Address)
+		logs.RegisterNodeMapping(fmt.Sprintf("127.0.0.1:%s", node.Port), node.Address)
+		logs.RegisterNodeMapping(node.Address, node.Address)
+	}
 }

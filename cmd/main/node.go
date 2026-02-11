@@ -15,10 +15,12 @@ import (
 	"dex/types"
 	"dex/utils"
 	"dex/witness"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/pprof"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -32,7 +34,9 @@ type NodeInstance struct {
 	Address          string
 	Port             string
 	DataPath         string
-	Server           *http.Server
+	Server           *http.Server  // TCP TLS server
+	HTTP3Server      *http3.Server // QUIC HTTP/3 server
+	PProfServer      *http.Server  // Optional pprof plain HTTP server
 	ConsensusManager *consensus.ConsensusNodeManager
 	DBManager        *db.Manager
 	Cancel           context.CancelFunc
@@ -88,7 +92,7 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	node.TxPool = txPool
 
 	// 6. 创建发送管理器
-	senderManager := sender.NewSenderManager(dbManager, node.Address, txPool, node.ID, node.Logger)
+	senderManager := sender.NewSenderManager(dbManager, node.Address, txPool, node.ID, node.Logger, cfg)
 	node.SenderManager = senderManager
 
 	// 7. 初始化共识系统
@@ -206,11 +210,7 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 		TLSConfig:  tlsConfig,
 		QUICConfig: quicConfig,
 	}
-
-	node.Server = &http.Server{
-		Addr:    ":" + node.Port,
-		Handler: handler,
-	}
+	node.HTTP3Server = server
 
 	// 创建QUIC监听器
 	listener, err := quic.ListenAddr(":"+node.Port, tlsConfig, quicConfig)
@@ -230,6 +230,7 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 		Handler:   handler,
 		TLSConfig: tlsConfig,
 	}
+	node.Server = tcpServer
 	go func() {
 		if err := tcpServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 			logs.Error("Node %d: TCP TLS Server error: %v", node.ID, err)
@@ -254,6 +255,7 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 			Addr:    fmt.Sprintf(":%d", pprofPort),
 			Handler: pprofMux,
 		}
+		node.PProfServer = pprofServer
 		go func() {
 			logs.Info("Node %d: Starting pprof HTTP server on port %d", node.ID, pprofPort)
 			if err := pprofServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -264,6 +266,9 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 
 	// 启动服务器（这是阻塞调用）
 	if err := server.ServeListener(listener); err != nil {
+		if isServerClosedErr(err) {
+			return nil
+		}
 		logs.Error("Node %d: HTTP/3 Server error: %v", node.ID, err)
 		return err
 	}
@@ -295,9 +300,23 @@ func shutdownAllNodes(nodes []*NodeInstance) {
 		}
 
 		// 4. 关闭 HTTP 服务器
+		if node.HTTP3Server != nil {
+			if err := node.HTTP3Server.Close(); err != nil && !isServerClosedErr(err) {
+				node.Logger.Warn("Node %d: failed to close HTTP/3 server: %v", node.ID, err)
+			}
+		}
 		if node.Server != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			node.Server.Shutdown(ctx)
+			if err := node.Server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				node.Logger.Warn("Node %d: failed to shutdown TCP server: %v", node.ID, err)
+			}
+			cancel()
+		}
+		if node.PProfServer != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := node.PProfServer.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				node.Logger.Warn("Node %d: failed to shutdown pprof server: %v", node.ID, err)
+			}
 			cancel()
 		}
 
@@ -313,4 +332,17 @@ func shutdownAllNodes(nodes []*NodeInstance) {
 
 		node.Logger.Info("Node %d stopped.", node.ID)
 	}
+}
+
+func isServerClosedErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, http.ErrServerClosed) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "server closed") ||
+		strings.Contains(msg, "closed network connection") ||
+		strings.Contains(msg, "use of closed network connection")
 }
