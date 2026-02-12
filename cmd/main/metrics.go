@@ -1,7 +1,9 @@
 package main
 
 import (
+	"dex/consensus"
 	"dex/logs"
+	"dex/stats"
 	"fmt"
 	"sort"
 	"strings"
@@ -106,6 +108,79 @@ func monitorMetrics(nodes []*NodeInstance) {
 
 		printAPICallStatistics()
 	}
+}
+
+// 每 10s 打印所有队列状态（发送侧 + 接收侧 + 相关队列模块）
+func monitorQueueStats(nodes []*NodeInstance) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		fmt.Printf("\n========== Queue Status @ %s ==========\n", time.Now().Format("15:04:05"))
+		for _, node := range nodes {
+			if node == nil {
+				continue
+			}
+
+			channelStats := collectNodeQueueStats(node)
+			sort.Slice(channelStats, func(i, j int) bool {
+				if channelStats[i].Module != channelStats[j].Module {
+					return channelStats[i].Module < channelStats[j].Module
+				}
+				return channelStats[i].Name < channelStats[j].Name
+			})
+
+			fmt.Printf("[Queue] Node %d (%s)\n", node.ID, node.Address)
+			if len(channelStats) == 0 {
+				fmt.Println("  (no queue stats available)")
+				continue
+			}
+
+			for _, cs := range channelStats {
+				fmt.Printf("  %-10s %-16s len=%5d cap=%5d usage=%6.2f%%\n",
+					cs.Module, cs.Name, cs.Len, cs.Cap, cs.Usage*100)
+			}
+
+			// 额外打印发送侧在途请求数（非 channel，但对队列拥堵定位很关键）
+			if node.SenderManager != nil && node.SenderManager.SendQueue != nil {
+				sq := node.SenderManager.SendQueue
+				sq.InflightMutex.RLock()
+				inflightTargets := len(sq.InflightMap)
+				totalInflight := int32(0)
+				for _, v := range sq.InflightMap {
+					totalInflight += v
+				}
+				sq.InflightMutex.RUnlock()
+				fmt.Printf("  %-10s %-16s total=%5d targets=%5d\n",
+					"SendQueue", "inflight", totalInflight, inflightTargets)
+			}
+		}
+		fmt.Println("========================================")
+	}
+}
+
+func collectNodeQueueStats(node *NodeInstance) []stats.ChannelStat {
+	var result []stats.ChannelStat
+	if node == nil {
+		return result
+	}
+
+	if node.SenderManager != nil && node.SenderManager.SendQueue != nil {
+		result = append(result, node.SenderManager.SendQueue.GetChannelStats()...)
+	}
+	if node.ConsensusManager != nil && node.ConsensusManager.Transport != nil {
+		if rt, ok := node.ConsensusManager.Transport.(*consensus.RealTransport); ok {
+			result = append(result, rt.GetChannelStats()...)
+		}
+	}
+	if node.TxPool != nil {
+		result = append(result, node.TxPool.GetChannelStats()...)
+	}
+	if node.DBManager != nil {
+		result = append(result, node.DBManager.GetChannelStats()...)
+	}
+
+	return result
 }
 
 // 打印API调用统计

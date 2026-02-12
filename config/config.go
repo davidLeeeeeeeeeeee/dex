@@ -241,7 +241,7 @@ func DefaultConfig() *Config {
 		},
 		Sender: SenderConfig{
 			WorkerCount:         64,
-			QueueCapacity:       10000,
+			QueueCapacity:       200,
 			DefaultMaxRetries:   0, // 不重试，依赖 QueryManager 周期性发起新 Query
 			ControlMaxRetries:   0, // 共识消息不重试
 			DataMaxRetries:      0, // 数据消息不重试

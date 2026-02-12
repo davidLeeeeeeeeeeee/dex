@@ -474,7 +474,7 @@ func (sm *SenderManager) SendChits(targetAddress string, chits *pb.Chits) error 
 		Target:     ip,
 		Message:    msg,
 		RetryCount: 0,
-		MaxRetries: 2,
+		MaxRetries: 0,
 		SendFunc:   doSendChits,
 		Priority:   PriorityControl,
 	}

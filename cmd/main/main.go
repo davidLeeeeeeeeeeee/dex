@@ -380,6 +380,8 @@ ContinueWithConsensus:
 	}
 	// 启动指标监控
 	go monitorMetrics(nodes)
+	// 队列状态监控（每 10s 打印一次）
+	go monitorQueueStats(nodes)
 	// 监控进度
 	go monitorProgress(nodes)
 	go monitorMinerParticipantsByEpoch(nodes)
