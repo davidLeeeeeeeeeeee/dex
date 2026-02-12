@@ -79,6 +79,18 @@ type pendingNodeData struct {
 	version Version
 }
 
+// largeValueEntry 表示一个待写入的大值条目（vlarge:*）。
+type largeValueEntry struct {
+	key []byte
+	val []byte
+}
+
+// processedEntry 表示已转换为 Verkle 插入格式的 KV。
+type processedEntry struct {
+	verkleKey [32]byte
+	treeVal   []byte
+}
+
 // NewVerkleTree 创建新的 Verkle Tree 包装器 (v0.2.2 兼容)
 func NewVerkleTree(store VersionedStore) *VerkleTree {
 	return NewVerkleTreeWithOptions(store, VerkleTreeOptions{})
@@ -305,39 +317,18 @@ func (t *VerkleTree) Update(keys [][]byte, values [][]byte, newVersion Version) 
 	return rootCommitment, nil
 }
 
-// UpdateWithSession 在会话中批量更新（支持大值分片存储）
-// 使用分批写入策略：大值使用独立事务分批写入，主事务只处理小数据
-func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte, values [][]byte, newVersion Version) ([]byte, error) {
+// prepareProcessedEntries 预处理输入键值：
+// 1) 将任意 key 转为 32 字节 Verkle key
+// 2) 将 value 转为树内存储格式（直存或间接引用）
+// 3) 收集去重后的大值写入列表（同一块内相同大值只写一次）
+func (t *VerkleTree) prepareProcessedEntries(keys [][]byte, values [][]byte) ([]processedEntry, []largeValueEntry, error) {
 	if len(keys) != len(values) {
-		return nil, errors.New("keys and values must have the same length")
+		return nil, nil, errors.New("keys and values must have the same length")
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// 统一开关：禁用 Verkle 写路径（仅更新版本/根缓存）
-	if t.disableRootCommit {
-		rootCommitment := t.computeRootCommitmentLocked()
-		t.version = newVersion
-		t.rootHistory[newVersion] = rootCommitment
-		t.pruneHistory(newVersion)
-		return rootCommitment, nil
-	}
-
-	// ========== 第一阶段：收集并分批写入大值 ==========
-	// 大值使用独立事务写入，避免主事务过大
-	type largeValueEntry struct {
-		key []byte
-		val []byte
-	}
-	var largeValues []largeValueEntry
-
-	// 预处理：收集所有值，大值记录下来后续分批写入
-	type processedEntry struct {
-		verkleKey [32]byte
-		treeVal   []byte
-	}
 	processedEntries := make([]processedEntry, 0, len(keys))
+	largeValues := make([]largeValueEntry, 0)
+	seenLargeValueKey := make(map[string]struct{}, len(keys))
 
 	for i := 0; i < len(keys); i++ {
 		verkleKey := ToVerkleKey(keys[i])
@@ -353,12 +344,16 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 			// 大值：存储引用 [0x01] + hash[:31]
 			h := sha256.Sum256(val)
 			hashPart := h[:31]
+			lvKey := largeValueKey(hashPart)
 
-			// 收集大值，后续分批写入
-			largeValues = append(largeValues, largeValueEntry{
-				key: largeValueKey(hashPart),
-				val: val,
-			})
+			// 块内去重：相同 hash 的大值只写一次。
+			if _, ok := seenLargeValueKey[string(lvKey)]; !ok {
+				largeValues = append(largeValues, largeValueEntry{
+					key: lvKey,
+					val: val,
+				})
+				seenLargeValueKey[string(lvKey)] = struct{}{}
+			}
 
 			treeVal = make([]byte, 32)
 			treeVal[0] = markerIndirect
@@ -371,7 +366,15 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 		})
 	}
 
-	// 分批写入大值（每批最多 100 个，使用独立事务）
+	return processedEntries, largeValues, nil
+}
+
+// writeLargeValues 分批写入大值（独立事务）。
+func (t *VerkleTree) writeLargeValues(largeValues []largeValueEntry, newVersion Version) error {
+	if len(largeValues) == 0 {
+		return nil
+	}
+
 	const largeValueBatchSize = 100
 	for i := 0; i < len(largeValues); i += largeValueBatchSize {
 		end := i + largeValueBatchSize
@@ -382,24 +385,41 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 
 		batchSess, err := t.store.NewSession()
 		if err != nil {
-			return nil, fmt.Errorf("failed to create large value batch session: %w", err)
+			return fmt.Errorf("failed to create large value batch session: %w", err)
 		}
 
 		for _, lv := range batch {
 			if err := batchSess.Set(lv.key, lv.val, newVersion); err != nil {
 				batchSess.Close()
-				return nil, fmt.Errorf("failed to set large value: %w", err)
+				return fmt.Errorf("failed to set large value: %w", err)
 			}
 		}
 
 		if err := batchSess.Commit(); err != nil {
 			batchSess.Close()
-			return nil, fmt.Errorf("failed to commit large value batch %d-%d: %w", i, end, err)
+			return fmt.Errorf("failed to commit large value batch %d-%d: %w", i, end, err)
 		}
 		batchSess.Close()
 	}
 
-	// ========== 第二阶段：更新树结构（内存操作） ==========
+	return nil
+}
+
+// updateWithSessionProcessed 在会话中应用已预处理好的树写入。
+func (t *VerkleTree) updateWithSessionProcessed(sess VersionedStoreSession, processedEntries []processedEntry, newVersion Version) ([]byte, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// 统一开关：禁用 Verkle 写路径（仅更新版本/根缓存）
+	if t.disableRootCommit {
+		rootCommitment := t.computeRootCommitmentLocked()
+		t.version = newVersion
+		t.rootHistory[newVersion] = rootCommitment
+		t.pruneHistory(newVersion)
+		return rootCommitment, nil
+	}
+
+	// 更新树结构（内存操作）
 	for _, entry := range processedEntries {
 		if err := t.root.Insert(entry.verkleKey[:], entry.treeVal, t.nodeResolverWithSession(sess)); err != nil {
 			return nil, err
@@ -412,13 +432,11 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 	t.version = newVersion
 	t.rootHistory[newVersion] = rootCommitment
 
-	// ========== 第三阶段：保存根承诺和根节点 ==========
-	// 这些是小数据，可以在主事务中处理
+	// 保存根承诺和根节点（主事务）
 	if err := sess.Set(rootKey(newVersion), rootCommitment, newVersion); err != nil {
 		return nil, err
 	}
 
-	// 根节点序列化保存
 	rootData, err := t.root.Serialize()
 	if err == nil && len(rootData) >= 65 {
 		if err := sess.Set(nodeKey(rootCommitment), rootData, newVersion); err != nil {
@@ -426,15 +444,23 @@ func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte
 		}
 	}
 
-	// ========== 第四阶段：收集并释放深层节点内存 ==========
-	// 注意：节点数据的持久化在主事务提交后通过 FlushPendingNodes 完成
-	// 这里只做内存释放（转换为 HashedNode）
+	// 收集并释放深层节点内存，持久化由主事务提交后 FlushPendingNodes 完成。
 	t.collectAndFlushToMemory(newVersion)
-
-	// 清理过旧的历史版本缓存
 	t.pruneHistory(newVersion)
-
 	return rootCommitment, nil
+}
+
+// UpdateWithSession 在会话中批量更新（支持大值分片存储）
+// 使用分批写入策略：先写大值，再在主事务中更新树和根。
+func (t *VerkleTree) UpdateWithSession(sess VersionedStoreSession, keys [][]byte, values [][]byte, newVersion Version) ([]byte, error) {
+	processedEntries, largeValues, err := t.prepareProcessedEntries(keys, values)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.writeLargeValues(largeValues, newVersion); err != nil {
+		return nil, err
+	}
+	return t.updateWithSessionProcessed(sess, processedEntries, newVersion)
 }
 
 // pruneHistory 清理过旧的根承诺历史缓存（保留最近 100 个版本）

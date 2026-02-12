@@ -546,13 +546,6 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 // applyResult 应用执行结果到数据库（统一提交入口）
 // 这是唯一的最终化提交点，所有状态变化都在这里处理
 func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
-	// 开启数据库会话
-	sess, err := x.DB.NewSession()
-	if err != nil {
-		return fmt.Errorf("failed to open db session: %v", err)
-	}
-	defer sess.Close()
-
 	// ========== 第一步：检查幂等性 ==========
 	// 防止同一区块被重复提交
 	if committed, blockHash := x.IsBlockCommitted(b.Header.Height); committed {
@@ -607,9 +600,9 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 				// 使用分离存储的余额计算 stake
 				// 注意：这里需要从 StateDB 或 WriteOps 中读取 FB 余额
 
-				// 获取旧的 stake (从 StateDB session 中读取)
+				// 获取旧的 stake（非事务读，避免扩大主事务读集合）
 				oldStake := decimal.Zero
-				if fbBalData, err := sess.Get(keys.KeyBalance(address, "FB")); err == nil && fbBalData != nil {
+				if fbBalData, err := x.DB.Get(keys.KeyBalance(address, "FB")); err == nil && fbBalData != nil {
 					var balRecord pb.TokenBalanceRecord
 					if err := unmarshalProtoCompat(fbBalData, &balRecord); err == nil && balRecord.Balance != nil {
 						oldStake, _ = decimal.NewFromString(balRecord.Balance.MinerLockedBalance)
@@ -644,6 +637,12 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	// ========== 第四步：同步到 StateDB ==========
 	// 统一处理所有需要同步到 StateDB 的数据
 	// 即使没有更新，也调用 ApplyStateUpdate 以确认当前高度的状态根
+	sess, err := x.DB.NewSession()
+	if err != nil {
+		return fmt.Errorf("failed to open db session: %v", err)
+	}
+	defer sess.Close()
+
 	stateDBUpdatesIface := make([]interface{}, len(stateDBUpdates))
 	for i, w := range stateDBUpdates {
 		stateDBUpdatesIface[i] = w
@@ -738,7 +737,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	// ========== 提交数据库事务并强制刷新 ==========
 	if err := sess.Commit(); err != nil {
-		
+
 		return fmt.Errorf("failed to commit db session: %v", err)
 	}
 

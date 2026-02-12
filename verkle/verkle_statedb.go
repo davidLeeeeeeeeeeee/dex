@@ -288,10 +288,6 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 	for _, kv := range kvs {
 		if kv.Deleted {
 			deletedKeys = append(deletedKeys, kv.Key)
-			_, err := s.db.tree.DeleteWithSession(s.sess, []byte(kv.Key), Version(height))
-			if err != nil && !errors.Is(err, ErrNotFound) {
-				return err
-			}
 			continue
 		}
 		keys = append(keys, []byte(kv.Key))
@@ -301,6 +297,7 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 	var sortedKeys [][]byte
 	var sortedVals [][]byte
 
+	var processedEntries []processedEntry
 	if len(keys) > 0 {
 		// 对 keys 排序以确保确定性顺序
 		type kvPair struct {
@@ -321,8 +318,31 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 			sortedKeys[i] = p.key
 			sortedVals[i] = p.val
 		}
+	}
 
-		newRoot, err := s.db.tree.UpdateWithSession(s.sess, sortedKeys, sortedVals, Version(height))
+	// 先完成大值独立落库，再触碰主事务，降低 Badger 乐观冲突概率。
+	if len(sortedKeys) > 0 {
+		var largeValues []largeValueEntry
+		var err error
+		processedEntries, largeValues, err = s.db.tree.prepareProcessedEntries(sortedKeys, sortedVals)
+		if err != nil {
+			return err
+		}
+		if err := s.db.tree.writeLargeValues(largeValues, Version(height)); err != nil {
+			return fmt.Errorf("failed to prewrite large values: %w", err)
+		}
+	}
+
+	// 删除操作在主事务内执行，保持原有语义（先删后设）。
+	for _, deletedKey := range deletedKeys {
+		_, err := s.db.tree.DeleteWithSession(s.sess, []byte(deletedKey), Version(height))
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
+
+	if len(sortedKeys) > 0 {
+		newRoot, err := s.db.tree.updateWithSessionProcessed(s.sess, processedEntries, Version(height))
 		if err != nil {
 			return err
 		}
