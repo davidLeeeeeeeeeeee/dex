@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"dex/config"
 	"dex/interfaces"
 	"dex/keys"
@@ -636,6 +637,19 @@ func extractPriceKeyFromIndexKey(indexKey string) (string, bool) {
 	return rest[:priceEndOffset], true
 }
 
+func extractOrderIDFromIndexKeyBytes(indexKey []byte) (string, bool) {
+	const marker = "|order_id:"
+	idx := bytes.Index(indexKey, []byte(marker))
+	if idx < 0 {
+		return "", false
+	}
+	start := idx + len(marker)
+	if start >= len(indexKey) {
+		return "", false
+	}
+	return string(indexKey[start:]), true
+}
+
 func (manager *Manager) ScanOrderPriceIndexRange(
 	pair string,
 	side pb.OrderSide,
@@ -708,6 +722,87 @@ func (manager *Manager) ScanOrderPriceIndexRange(
 	if err != nil {
 		return nil, err
 	}
+	return result, nil
+}
+
+// ScanOrderPriceIndexRangeOrdered 扫描订单价格索引，按底层迭代器顺序返回有序结果。
+// 该接口避免 map + sort 的额外分配，提供确定性顺序供 VM 直接消费。
+func (manager *Manager) ScanOrderPriceIndexRangeOrdered(
+	pair string,
+	side pb.OrderSide,
+	isFilled bool,
+	minPriceKey67 string,
+	maxPriceKey67 string,
+	limit int,
+	reverse bool,
+) ([]interfaces.OrderIndexEntry, error) {
+	result := make([]interfaces.OrderIndexEntry, 0, limit)
+	if minPriceKey67 == "" || maxPriceKey67 == "" {
+		return result, nil
+	}
+	if minPriceKey67 > maxPriceKey67 {
+		return result, nil
+	}
+
+	prefix := keys.KeyOrderPriceIndexPrefix(pair, side, isFilled)
+	prefixBytes := []byte(prefix)
+	lowSeek := []byte(fmt.Sprintf("%sprice:%s|order_id:", prefix, minPriceKey67))
+	highSeek := []byte(fmt.Sprintf("%sprice:%s|order_id:%c", prefix, maxPriceKey67, 0xFF))
+
+	err := manager.Db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Reverse = reverse
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		if reverse {
+			it.Seek(highSeek)
+		} else {
+			it.Seek(lowSeek)
+		}
+
+		count := 0
+		for ; it.ValidForPrefix(prefixBytes); it.Next() {
+			if limit > 0 && count >= limit {
+				break
+			}
+
+			item := it.Item()
+			keyBytes := item.Key()
+
+			// Key 格式是固定的，使用低/高边界直接裁剪，避免逐条解析 price 字段。
+			if reverse {
+				if bytes.Compare(keyBytes, lowSeek) < 0 {
+					break
+				}
+			} else {
+				if bytes.Compare(keyBytes, highSeek) > 0 {
+					break
+				}
+			}
+
+			orderID, ok := extractOrderIDFromIndexKeyBytes(keyBytes)
+			if !ok {
+				continue
+			}
+
+			val, err := item.ValueCopy(nil)
+			if err != nil {
+				continue
+			}
+
+			result = append(result, interfaces.OrderIndexEntry{
+				OrderID:   orderID,
+				IndexData: val,
+			})
+			count++
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return result, nil
 }
 

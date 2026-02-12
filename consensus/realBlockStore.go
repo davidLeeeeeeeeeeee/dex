@@ -22,6 +22,7 @@ import (
 // RealBlockStore 使用数据库的真实区块存储实现
 type RealBlockStore struct {
 	mu         sync.RWMutex
+	finalizeMu sync.Mutex // 串行化最终化流程，避免同节点并发提交导致 DB 事务冲突
 	dbManager  *db.Manager
 	pool       *txpool.TxPool
 	adapter    *ConsensusAdapter
@@ -388,9 +389,28 @@ func (s *RealBlockStore) GetCurrentHeight() uint64 {
 }
 
 // 设置区块为最终化状态（内部使用）
-func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
+// 原子语义：只有 VM 提交 + 区块持久化成功后，才推进内存 finalized/lastAccepted。
+func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
+	// 同一节点内串行化最终化，避免并发 SetFinalized 触发 Badger 事务冲突。
+	s.finalizeMu.Lock()
+	defer s.finalizeMu.Unlock()
+
 	// 第一步：获取区块并验证（短暂持锁）
 	s.mu.Lock()
+
+	// 幂等处理：若该高度已经最终化为同一 block，直接 no-op。
+	if finalized, ok := s.finalizedBlocks[height]; ok && finalized != nil {
+		if finalized.ID == blockID {
+			s.mu.Unlock()
+			logs.Debug("[RealBlockStore] Skip duplicate finalization: height=%d block=%s", height, blockID)
+			return nil
+		}
+		s.mu.Unlock()
+		err := fmt.Errorf("height %d already finalized by %s", height, finalized.ID)
+		logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: %v", blockID, height, err)
+		return err
+	}
+
 	block, exists := s.blockCache[blockID]
 	if !exists {
 		// 从数据库通过ID加载
@@ -402,8 +422,9 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 
 	if block == nil {
 		s.mu.Unlock()
-		logs.Error("[RealBlockStore] Cannot finalize block %s: block not found", blockID)
-		return
+		err := fmt.Errorf("block not found")
+		logs.Error("[RealBlockStore] Cannot finalize block %s: %v", blockID, err)
+		return err
 	}
 
 	// 关键安全检查：验证父区块链接
@@ -412,19 +433,73 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 		parentBlock, parentExists := s.finalizedBlocks[height-1]
 		if !parentExists {
 			s.mu.Unlock()
-			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: parent at height %d not finalized",
-				blockID, height, height-1)
-			return
+			err := fmt.Errorf("parent at height %d not finalized", height-1)
+			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: %v", blockID, height, err)
+			return err
 		}
 		if block.Header.ParentID != parentBlock.ID {
 			s.mu.Unlock()
-			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: parent mismatch (expected %s, got %s)",
-				blockID, height, parentBlock.ID, block.Header.ParentID)
-			return
+			err := fmt.Errorf("parent mismatch (expected %s, got %s)", parentBlock.ID, block.Header.ParentID)
+			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: %v", blockID, height, err)
+			return err
 		}
 	}
 
-	// 更新内存状态
+	// 获取事件总线引用（提交后异步发布）
+	events := s.events
+	s.mu.Unlock()
+
+	// 第二步：先做持久化提交（不持锁，这是耗时操作）
+	// 注意：提交成功前不推进 finalized，保证「共识 finalized」与「状态已落盘」一致。
+	commitStart := time.Now()
+	var txCount int
+	// 优先使用完整的 pb.Block（包含交易）
+	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
+		if err := s.vmExecutor.CommitFinalizedBlock(pbBlock); err != nil {
+			logs.Error("[RealBlockStore] VM CommitFinalizedBlock failed for block %s: %v", block.ID, err)
+			return fmt.Errorf("vm commit failed: %w", err)
+		}
+		txCount = len(pbBlock.Body)
+		logs.Info("[RealBlockStore] VM committed finalized block %s with %d txs at height %d",
+			block.ID, txCount, height)
+
+		// 从交易池移除已执行的交易
+		// 注意：交易原文的保存已由 VM 的 applyResult 统一处理（使用 SaveTxRaw）
+		// 区块存储层不再保存交易，避免重复写入和索引混乱
+		for _, tx := range pbBlock.Body {
+			if base := tx.GetBase(); base != nil {
+				s.pool.RemoveAnyTx(base.TxId)
+			}
+		}
+
+		// 保存区块元数据与正文（用于 /getblock、sync 等按 blockID 查询）
+		if err := s.dbManager.SaveBlock(pbBlock); err != nil {
+			logs.Error("[RealBlockStore] Failed to save finalized block %s: %v", block.ID, err)
+			return fmt.Errorf("save finalized block failed: %w", err)
+		}
+		// 强一致要求：SaveBlock 入队后必须立即刷盘，避免 finalized 后短时间查不到 block。
+		if err := s.dbManager.ForceFlush(); err != nil {
+			logs.Error("[RealBlockStore] ForceFlush after SaveBlock failed for block %s: %v", block.ID, err)
+			return fmt.Errorf("force flush after save block failed: %w", err)
+		}
+	} else {
+		// 兜底：若缓存缺失，至少确认区块已在 DB 中可见；否则不能推进 finalized。
+		if _, err := s.dbManager.GetBlockByID(blockID); err != nil {
+			logs.Error("[RealBlockStore] Cannot finalize block %s at height %d: missing cached pb.Block and not persisted: %v",
+				blockID, height, err)
+			return fmt.Errorf("no cached pb.Block and block not persisted: %w", err)
+		}
+		if block.Header.Height > 0 {
+			logs.Debug("[RealBlockStore] No cached pb.Block for %s; finalized using already-persisted block", block.ID)
+		}
+	}
+
+	if duration := time.Since(commitStart); duration > 200*time.Millisecond {
+		logs.Info("[RealBlockStore] SLOW Finalization: block=%s, txs=%d, duration=%v", block.ID, txCount, duration)
+	}
+
+	// 第三步：持久化成功后再推进内存最终化状态
+	s.mu.Lock()
 	s.finalizedBlocks[height] = block
 	s.lastAccepted = block
 	s.lastAcceptedHeight = height
@@ -439,53 +514,11 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 		}
 	}
 	s.heightIndex[height] = newBlocks
-
-	// 获取事件总线引用
-	events := s.events
 	s.mu.Unlock()
-
-	// 第二步：VM提交（不持锁，这是耗时操作）
-	commitStart := time.Now()
-	// 获取完整的 pb.Block（包含交易）
-	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
-		// 调用 VM 提交最终化区块
-		if err := s.vmExecutor.CommitFinalizedBlock(pbBlock); err != nil {
-			logs.Error("[RealBlockStore] VM CommitFinalizedBlock failed for block %s: %v", block.ID, err)
-		} else {
-			logs.Info("[RealBlockStore] VM committed finalized block %s with %d txs at height %d",
-				block.ID, len(pbBlock.Body), height)
-
-			// 从交易池移除已执行的交易
-			// 注意：交易原文的保存已由 VM 的 applyResult 统一处理（使用 SaveTxRaw）
-			// 区块存储层不再保存交易，避免重复写入和索引混乱
-			for _, tx := range pbBlock.Body {
-				if base := tx.GetBase(); base != nil {
-					s.pool.RemoveAnyTx(base.TxId)
-				}
-			}
-
-			// 保存最终化的区块
-			if err := s.dbManager.SaveBlock(pbBlock); err != nil {
-				logs.Error("[RealBlockStore] Failed to save finalized block: %v", err)
-			} else {
-				s.maybeForceFlushAfterFinalize()
-			}
-
-			if duration := time.Since(commitStart); duration > 200*time.Millisecond {
-				logs.Info("[RealBlockStore] SLOW Finalization: block=%s, txs=%d, duration=%v", block.ID, len(pbBlock.Body), duration)
-			}
-		}
-	} else {
-		// 如果是创世区块或没有交易的区块，使用旧的方式
-		if block.Header.Height > 0 {
-			logs.Debug("[RealBlockStore] No cached pb.Block for %s, using legacy finalization", block.ID)
-		}
-		s.finalizeBlockWithTxs(block)
-	}
 
 	logs.Info("[RealBlockStore] Finalized block %s at height %d", blockID, height)
 
-	// 第三步：清理旧的缓存数据（避免内存泄漏）
+	// 第四步：清理旧的缓存数据（避免内存泄漏）
 	// 保留最近 20 个高度的数据
 	const keepRecentHeights = 20
 	if height > keepRecentHeights {
@@ -508,13 +541,14 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) {
 		}
 	}
 
-	// 第四步：发布事件（不持锁）
+	// 第五步：发布事件（不持锁）
 	if events != nil {
 		events.PublishAsync(types.BaseEvent{
 			EventType: types.EventBlockFinalized,
 			EventData: block,
 		})
 	}
+	return nil
 }
 
 // CreateSnapshot 创建快照

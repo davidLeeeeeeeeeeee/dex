@@ -337,6 +337,65 @@ func TestIdempotency(t *testing.T) {
 	t.Logf("✅ Idempotency check working: second commit returned nil (already committed)")
 }
 
+// TestCommitFinalizedBlockDoesNotMutateInputTxStatus verifies commit path does not
+// mutate tx status in the caller-provided block object.
+func TestCommitFinalizedBlockDoesNotMutateInputTxStatus(t *testing.T) {
+	db := NewEnhancedMockDB()
+
+	aliceAddr := "alice_input_immutable"
+	account := &pb.Account{Address: aliceAddr}
+	accountData, _ := proto.Marshal(account)
+	db.data[keys.KeyAccount(aliceAddr)] = accountData
+
+	bal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            "1000",
+			MinerLockedBalance: "0",
+		},
+	}
+	balData, _ := proto.Marshal(bal)
+	db.data[keys.KeyBalance(aliceAddr, "FB")] = balData
+
+	registry := vm.NewHandlerRegistry()
+	if err := vm.RegisterDefaultHandlers(registry); err != nil {
+		t.Fatal(err)
+	}
+	cache := vm.NewSpecExecLRU(100)
+	executor := vm.NewExecutor(db, registry, cache)
+
+	tx := &pb.AnyTx{
+		Content: &pb.AnyTx_Transaction{
+			Transaction: &pb.Transaction{
+				Base: &pb.BaseMessage{
+					TxId:        "tx_input_immutable_001",
+					FromAddress: aliceAddr,
+					Status:      pb.Status_PENDING,
+				},
+				To:           "bob_input_immutable",
+				TokenAddress: "FB",
+				Amount:       "10",
+			},
+		},
+	}
+
+	block := &pb.Block{
+		BlockHash: "block_input_immutable_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: []*pb.AnyTx{tx},
+	}
+
+	if err := executor.CommitFinalizedBlock(block); err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+
+	if got := tx.GetBase().GetStatus(); got != pb.Status_PENDING {
+		t.Fatalf("input tx status mutated, want %v got %v", pb.Status_PENDING, got)
+	}
+}
+
 // TestReplayTxInLaterBlockShouldNotReapply tests that already-applied txs are skipped
 // when they appear again in later blocks, preventing repeated balance deduction.
 func TestReplayTxInLaterBlockShouldNotReapply(t *testing.T) {

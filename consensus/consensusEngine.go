@@ -316,7 +316,10 @@ func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string, chits *type
 		logs.Warn("[Engine] Finalize skipped: block %s not found at height %d", blockID, height)
 		return
 	}
-	e.store.SetFinalized(height, blockID)
+	if err := e.store.SetFinalized(height, blockID); err != nil {
+		logs.Warn("[Engine] Finalize failed: block %s at height %d: %v", blockID, height, err)
+		return
+	}
 
 	// 存储 chits 和签名集合到 RealBlockStore（如果支持）
 	if realStore, ok := e.store.(*RealBlockStore); ok {

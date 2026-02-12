@@ -207,7 +207,7 @@ func DefaultConfig() *Config {
 			BlockCacheSizeDB:        32 << 20, // 降低到 32MB
 			NumMemtables:            3,        // 减少 MemTable 数量
 			NumCompactors:           2,
-			VerkleDisableRootCommit: true,
+			VerkleDisableRootCommit: false,
 		},
 		Network: NetworkConfig{
 			BasePort:           6000,

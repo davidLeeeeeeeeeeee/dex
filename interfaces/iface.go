@@ -27,7 +27,7 @@ type BlockStore interface {
 	GetLatestSnapshot() (*types.Snapshot, bool)
 	GetSnapshotAtHeight(height uint64) (*types.Snapshot, bool)
 
-	SetFinalized(height uint64, blockID string)
+	SetFinalized(height uint64, blockID string) error
 }
 
 type ConsensusEngine interface {
@@ -128,6 +128,13 @@ type EventHandler func(Event)
 // ============================================
 // 数据库层接口 (收敛至此以解决循环依赖)
 // ============================================
+
+// OrderIndexEntry 表示订单价格索引扫描返回的一条有序记录。
+// 顺序由底层数据库迭代器决定，作为共识执行的确定性输入。
+type OrderIndexEntry struct {
+	OrderID   string
+	IndexData []byte
+}
 
 // DBSession 数据库会话接口
 type DBSession interface {

@@ -46,6 +46,18 @@ type orderPriceRangeScanner interface {
 	) (map[string][]byte, error)
 }
 
+type orderPriceRangeScannerOrdered interface {
+	ScanOrderPriceIndexRangeOrdered(
+		pair string,
+		side pb.OrderSide,
+		isFilled bool,
+		minPriceKey67 string,
+		maxPriceKey67 string,
+		limit int,
+		reverse bool,
+	) ([]iface.OrderIndexEntry, error)
+}
+
 type kvBatchGetter interface {
 	GetKVs(keys []string) (map[string][]byte, error)
 }
@@ -671,40 +683,9 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	for _, rc := range res.Receipts {
 		receiptMap[rc.TxID] = rc
 	}
-	processedStatusTxs := make(map[string]struct{}, len(receiptMap))
 
-	// 1. 先更新区块中所有交易的状态和执行高度，用于后续展示或索引
-	// 1. 先更新区块中所有交易的状态和执行高度
-	for _, tx := range b.Body {
-		if tx == nil {
-			continue
-		}
-		base := tx.GetBase()
-		if base == nil || base.TxId == "" {
-			continue
-		}
-		if _, done := processedStatusTxs[base.TxId]; done {
-			continue
-		}
-
-		// 已处理状态，跳过
-
-		// 根据 receipt 结果设置交易最终状态
-		rc, ok := receiptMap[base.TxId]
-		if !ok {
-			continue
-		}
-		processedStatusTxs[base.TxId] = struct{}{}
-		base.ExecutedHeight = b.Header.Height
-		if rc.Status == "SUCCEED" || rc.Status == "" {
-			base.Status = pb.Status_SUCCEED
-		} else {
-			base.Status = pb.Status_FAILED
-		}
-	}
-
-	// 2. 将更新后的交易原文保存到数据库（不可变），以便后续查询
-	// 2. 将更新后的交易原文保存到数据库（不可变），以便后续查询
+	// 将更新后的交易原文保存到数据库（不可变），以便后续查询。
+	// 注意：不要原地修改 b.Body 里的交易对象，避免多节点共享同一 *pb.Block 时产生状态污染。
 	// 订单簿状态（订单状态、价格索引等）全部由 Diff 中的 WriteOp 控制
 	type txRawSaver interface {
 		SaveTxRaw(tx *pb.AnyTx) error
@@ -725,8 +706,21 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 			if _, executedThisBlock := receiptMap[txID]; !executedThisBlock {
 				continue
 			}
+			rc := receiptMap[txID]
+
+			// 仅在副本上写执行结果，确保输入区块对象保持只读语义。
+			txForSave := proto.Clone(tx).(*pb.AnyTx)
+			if base := txForSave.GetBase(); base != nil {
+				base.ExecutedHeight = b.Header.Height
+				if rc.Status == "SUCCEED" || rc.Status == "" {
+					base.Status = pb.Status_SUCCEED
+				} else {
+					base.Status = pb.Status_FAILED
+				}
+			}
+
 			// 如果保存原文失败，记录警告
-			if err := saver.SaveTxRaw(tx); err != nil {
+			if err := saver.SaveTxRaw(txForSave); err != nil {
 				// 记录更新索引失败的警告
 				fmt.Printf("[VM] Warning: failed to save tx raw %s: %v\n", txID, err)
 			}
@@ -744,6 +738,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	// ========== 提交数据库事务并强制刷新 ==========
 	if err := sess.Commit(); err != nil {
+		
 		return fmt.Errorf("failed to commit db session: %v", err)
 	}
 
@@ -943,26 +938,26 @@ func (x *Executor) rebuildOrderBooksForPairs(
 			if buyOrders, err := x.scanOrderIndexesForSide(
 				pair, pb.OrderSide_BUY, "", "", orderBookRebuildSideLimit, true,
 			); err == nil {
-				candidates = appendOrderCandidates(candidates, buyOrders)
+				candidates = append(candidates, buyOrders...)
 			}
 			if sellOrders, err := x.scanOrderIndexesForSide(
 				pair, pb.OrderSide_SELL, "", "", orderBookRebuildSideLimit, false,
 			); err == nil {
-				candidates = appendOrderCandidates(candidates, sellOrders)
+				candidates = append(candidates, sellOrders...)
 			}
 		} else {
 			if bounds.hasSell {
 				if buyOrders, err := x.scanOrderIndexesForSide(
 					pair, pb.OrderSide_BUY, bounds.minSellPriceKey, "", orderBookRebuildSideLimit, true,
 				); err == nil {
-					candidates = appendOrderCandidates(candidates, buyOrders)
+					candidates = append(candidates, buyOrders...)
 				}
 			}
 			if bounds.hasBuy {
 				if sellOrders, err := x.scanOrderIndexesForSide(
 					pair, pb.OrderSide_SELL, "", bounds.maxBuyPriceKey, orderBookRebuildSideLimit, false,
 				); err == nil {
-					candidates = appendOrderCandidates(candidates, sellOrders)
+					candidates = append(candidates, sellOrders...)
 				}
 			}
 		}
@@ -984,23 +979,56 @@ func (x *Executor) scanOrderIndexesForSide(
 	maxPriceKey67 string,
 	limit int,
 	reverse bool,
-) (map[string][]byte, error) {
+) ([]indexedOrderCandidate, error) {
+	minKey := minPriceKey67
+	maxKey := maxPriceKey67
+	if minKey == "" {
+		minKey = orderPriceMinKey67
+	}
+	if maxKey == "" {
+		maxKey = orderPriceMaxKey67
+	}
+
+	if orderedScanner, ok := x.DB.(orderPriceRangeScannerOrdered); ok {
+		entries, err := orderedScanner.ScanOrderPriceIndexRangeOrdered(
+			pair, side, false, minKey, maxKey, limit, reverse,
+		)
+		if err != nil {
+			return nil, err
+		}
+		candidates := make([]indexedOrderCandidate, 0, len(entries))
+		for _, entry := range entries {
+			if entry.OrderID == "" {
+				continue
+			}
+			candidates = append(candidates, indexedOrderCandidate{
+				orderID:   entry.OrderID,
+				indexData: entry.IndexData,
+			})
+		}
+		return candidates, nil
+	}
+
+	// 兼容旧接口：仍允许下游返回 map，兜底做确定性排序。
 	if rangeScanner, ok := x.DB.(orderPriceRangeScanner); ok {
-		minKey := minPriceKey67
-		maxKey := maxPriceKey67
-		if minKey == "" {
-			minKey = orderPriceMinKey67
+		indexOrders, err := rangeScanner.ScanOrderPriceIndexRange(pair, side, false, minKey, maxKey, limit, reverse)
+		if err != nil {
+			return nil, err
 		}
-		if maxKey == "" {
-			maxKey = orderPriceMaxKey67
-		}
-		return rangeScanner.ScanOrderPriceIndexRange(pair, side, false, minKey, maxKey, limit, reverse)
+		return appendOrderCandidates(make([]indexedOrderCandidate, 0, len(indexOrders)), indexOrders), nil
 	}
 	prefix := keys.KeyOrderPriceIndexPrefix(pair, side, false)
+	var indexOrders map[string][]byte
+	var err error
 	if reverse {
-		return x.DB.ScanKVWithLimitReverse(prefix, limit)
+		indexOrders, err = x.DB.ScanKVWithLimitReverse(prefix, limit)
+	} else {
+		indexOrders, err = x.DB.ScanKVWithLimit(prefix, limit)
 	}
-	return x.DB.ScanKVWithLimit(prefix, limit)
+	if err != nil {
+		return nil, err
+	}
+	return appendOrderCandidates(make([]indexedOrderCandidate, 0, len(indexOrders)), indexOrders), nil
 }
 func appendOrderCandidates(
 	dst []indexedOrderCandidate,

@@ -145,7 +145,7 @@ func (s *MemoryBlockStore) GetCurrentHeight() uint64 {
 	return s.maxHeight
 }
 
-func (s *MemoryBlockStore) SetFinalized(height uint64, blockID string) {
+func (s *MemoryBlockStore) SetFinalized(height uint64, blockID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -164,7 +164,9 @@ func (s *MemoryBlockStore) SetFinalized(height uint64, blockID string) {
 			}
 		}
 		s.heightIndex[height] = newBlocks
+		return nil
 	}
+	return fmt.Errorf("block %s not found", blockID)
 }
 
 // 创建快照

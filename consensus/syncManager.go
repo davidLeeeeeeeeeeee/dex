@@ -951,8 +951,11 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 			}
 		}
 
-		// 尝试最终化该高度（RealBlockStore 内部会做父链接安全检查；失败会保持 lastAccepted 不变）
-		sm.store.SetFinalized(nextHeight, chosen.ID)
+		// 尝试最终化该高度（失败会保持 lastAccepted 不变）
+		if err := sm.store.SetFinalized(nextHeight, chosen.ID); err != nil {
+			logs.Warn("[SyncManager] Failed to finalize block %s at height %d: %v", chosen.ID, nextHeight, err)
+			break
+		}
 
 		newAcceptedID, newAcceptedHeight := sm.store.GetLastAccepted()
 		if newAcceptedHeight != nextHeight || newAcceptedID != chosen.ID {
