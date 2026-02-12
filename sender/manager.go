@@ -294,7 +294,7 @@ func (sm *SenderManager) BroadcastGossipToTarget(targetAddr string, payload *typ
 		Target:     targetAddr,
 		Message:    data,
 		RetryCount: 0,
-		MaxRetries: 3,
+		MaxRetries: 0,
 		SendFunc:   doSendToOnePeer,
 		Priority:   PriorityData, // 数据面：gossip 广播
 	}
