@@ -347,7 +347,7 @@ func (sm *SenderManager) PullQuery(peerAddr string, pq *pb.PullQuery) {
 	task := &SendTask{
 		Target:     ip,
 		Message:    msg,
-		MaxRetries: 2,
+		MaxRetries: 0,
 		SendFunc:   doSendPullQuery,
 		Priority:   PriorityControl, // 控制面优先级
 	}

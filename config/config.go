@@ -126,6 +126,12 @@ type SenderConfig struct {
 	WorkerCount   int // 100
 	QueueCapacity int // 10000
 
+	// 按目标并发限流（<=0 表示不限制）
+	ControlMaxInflightPerTarget   int           // 控制面每目标最大在途请求
+	DataMaxInflightPerTarget      int           // 数据面每目标最大在途请求
+	ImmediateMaxInflightPerTarget int           // 紧急面每目标最大在途请求
+	InflightRequeueDelay          time.Duration // 因目标过载而回队的基础延迟
+
 	// 重试配置
 	DefaultMaxRetries int           // 3
 	ControlMaxRetries int           // 2
@@ -240,17 +246,21 @@ func DefaultConfig() *Config {
 			TxExpirationTime:        24 * time.Hour,
 		},
 		Sender: SenderConfig{
-			WorkerCount:         64,
-			QueueCapacity:       200,
-			DefaultMaxRetries:   0, // 不重试，依赖 QueryManager 周期性发起新 Query
-			ControlMaxRetries:   0, // 共识消息不重试
-			DataMaxRetries:      0, // 数据消息不重试
-			JitterFactor:        0.3,
-			TaskExpireTimeout:   10 * time.Second, // 超过 10s 的任务直接丢弃
-			BaseRetryDelay:      100 * time.Millisecond,
-			MaxRetryDelay:       2 * time.Second,
-			ControlTaskTimeout:  180 * time.Millisecond,
-			DataTaskDropTimeout: 0,
+			WorkerCount:                   64,
+			QueueCapacity:                 200,
+			ControlMaxInflightPerTarget:   3,
+			DataMaxInflightPerTarget:      6,
+			ImmediateMaxInflightPerTarget: 2,
+			InflightRequeueDelay:          25 * time.Millisecond,
+			DefaultMaxRetries:             0, // 不重试，依赖 QueryManager 周期性发起新 Query
+			ControlMaxRetries:             0, // 共识消息不重试
+			DataMaxRetries:                0, // 数据消息不重试
+			JitterFactor:                  0.3,
+			TaskExpireTimeout:             10 * time.Second, // 超过 10s 的任务直接丢弃
+			BaseRetryDelay:                100 * time.Millisecond,
+			MaxRetryDelay:                 2 * time.Second,
+			ControlTaskTimeout:            180 * time.Millisecond,
+			DataTaskDropTimeout:           0,
 		},
 		Auth: AuthConfig{
 			AuthEnabled:     false,

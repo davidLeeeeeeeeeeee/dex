@@ -208,7 +208,7 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 		config:        config,
 		events:        events,
 		Logger:        logger,
-		queryCooldown: 100 * time.Millisecond, // 默认 100ms 最小间隔
+		queryCooldown: 250 * time.Millisecond, // 降低查询风暴，避免控制面过载
 	}
 
 	events.Subscribe(types.EventQueryComplete, func(e interfaces.Event) {
@@ -233,8 +233,8 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 
 		if (data.Reason == "timeout" || data.Reason == "parent_missing") && len(data.QueryKeys) > 0 {
 			// 添加退避延迟，避免超时或因缺数据失败后立即重发导致自激荡
-			// 使用 200-500ms 随机退避 + jitter
-			backoff := 200*time.Millisecond + time.Duration(rand.Int63n(300))*time.Millisecond
+			// 使用 300-700ms 随机退避 + jitter
+			backoff := 300*time.Millisecond + time.Duration(rand.Int63n(400))*time.Millisecond
 			logs.Debug("[QueryManager] Query %s, will retry after %v (count=%d)", data.Reason, backoff, len(data.QueryKeys))
 			time.AfterFunc(backoff, func() {
 				qm.tryIssueQuery()

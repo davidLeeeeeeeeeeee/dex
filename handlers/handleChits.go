@@ -39,11 +39,23 @@ func (hm *HandlerManager) HandleChits(w http.ResponseWriter, r *http.Request) {
 		from := types.NodeID(senderAddress)
 		msg := hm.adapter.ChitsToConsensusMessage(&chits, from)
 
+		// 迟到 Chits（对应高度已过去）直接忽略，减少接收侧无效负载。
+		if hm.consensusManager != nil {
+			_, localAcceptedHeight := hm.consensusManager.GetLastAccepted()
+			if chits.GetPreferredBlockAtHeight() > 0 &&
+				chits.GetPreferredBlockAtHeight() <= localAcceptedHeight &&
+				chits.GetAcceptedHeight() <= localAcceptedHeight {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+		}
+
 		// 如果是RealTransport，使用队列方式处理
 		if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 			if err := rt.EnqueueReceivedMessage(msg); err != nil {
 				logs.Warn("[Handler] Failed to enqueue chits message: %v", err)
 				// 控制面消息入队失败，返回 503
+				w.Header().Set("Retry-After", "1")
 				http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
 				return
 			}

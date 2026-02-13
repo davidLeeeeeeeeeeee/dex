@@ -76,7 +76,7 @@ func DefaultConfig() *Config {
 			Alpha:                14,
 			Beta:                 15,
 			QueryTimeout:         4 * time.Second,
-			MaxConcurrentQueries: 20,
+			MaxConcurrentQueries: 8,
 			NumHeights:           10,
 			BlocksPerHeight:      5,
 		},
@@ -86,7 +86,7 @@ func DefaultConfig() *Config {
 		Sync: SyncConfig{
 			CheckInterval:      30 * time.Second, // 降频作为兜底（事件驱动为主）
 			BehindThreshold:    2,
-			BatchSize:          50,              // 增大批量以加速追赶
+			BatchSize:          50,               // 增大批量以加速追赶
 			Timeout:            10 * time.Second, // 覆盖高负载下 finalization 抖动，减少无效重试
 			SnapshotThreshold:  100,
 			ShortSyncThreshold: 20,              // 落后<=20块用ShortTxs，>20块用完整区块

@@ -231,24 +231,83 @@ func (sq *SendQueue) workerLoop(workerID int, taskChan chan *SendTask, queueType
 				time.Sleep(sleepDur)
 			}
 
-			sq.InflightMutex.Lock()
-			sq.InflightMap[task.Target]++
-			sq.InflightMutex.Unlock()
+			if !sq.tryAcquireInflight(task.Target, queueType) {
+				sq.requeueForTargetOverload(task, queueType)
+				continue
+			}
 
 			err := sq.doSend(task, workerID, queueType)
 
-			sq.InflightMutex.Lock()
-			sq.InflightMap[task.Target]--
-			if sq.InflightMap[task.Target] <= 0 {
-				delete(sq.InflightMap, task.Target)
-			}
-			sq.InflightMutex.Unlock()
+			sq.releaseInflight(task.Target)
 
 			if err != nil {
 				sq.handleRetry(task, err)
 			}
 		}
 	}
+}
+
+func (sq *SendQueue) maxInflightPerTarget(queueType string) int {
+	if sq == nil || sq.cfg == nil {
+		return 0
+	}
+	switch queueType {
+	case "control":
+		return sq.cfg.Sender.ControlMaxInflightPerTarget
+	case "immediate":
+		return sq.cfg.Sender.ImmediateMaxInflightPerTarget
+	default:
+		return sq.cfg.Sender.DataMaxInflightPerTarget
+	}
+}
+
+func (sq *SendQueue) tryAcquireInflight(target, queueType string) bool {
+	limit := sq.maxInflightPerTarget(queueType)
+
+	sq.InflightMutex.Lock()
+	defer sq.InflightMutex.Unlock()
+
+	current := sq.InflightMap[target]
+	if limit > 0 && int(current) >= limit {
+		return false
+	}
+	sq.InflightMap[target] = current + 1
+	return true
+}
+
+func (sq *SendQueue) releaseInflight(target string) {
+	sq.InflightMutex.Lock()
+	defer sq.InflightMutex.Unlock()
+
+	sq.InflightMap[target]--
+	if sq.InflightMap[target] <= 0 {
+		delete(sq.InflightMap, target)
+	}
+}
+
+func (sq *SendQueue) requeueForTargetOverload(task *SendTask, queueType string) {
+	if task == nil {
+		return
+	}
+	cfg := sq.cfg
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	if time.Since(task.CreatedAt) > cfg.Sender.TaskExpireTimeout {
+		sq.Logger.Debug("[SendQueue][%s] Drop stale overloaded task: age=%v target=%s func=%s",
+			queueType, time.Since(task.CreatedAt), task.Target, task.FuncName())
+		return
+	}
+
+	delay := cfg.Sender.InflightRequeueDelay
+	if delay <= 0 {
+		delay = 25 * time.Millisecond
+	}
+	// 轻微抖动，避免大量任务同一时刻回灌
+	jitterRange := float64(delay) * 0.2
+	jitter := time.Duration(jitterRange * (rand.Float64()*2 - 1))
+	task.NextAttempt = time.Now().Add(delay + jitter)
+	sq.Enqueue(task)
 }
 
 func (sq *SendQueue) doSend(task *SendTask, workerID int, queueType string) error {

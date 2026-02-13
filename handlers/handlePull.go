@@ -6,6 +6,7 @@ import (
 	"dex/types"
 	"io"
 	"net/http"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -24,6 +25,11 @@ func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Invalid PullQuery proto", http.StatusBadRequest)
 		return
 	}
+	// 过期查询直接忽略，返回 200 避免触发对端重试风暴。
+	if pullQuery.GetDeadline() > 0 && time.Now().UnixNano() > int64(pullQuery.GetDeadline()) {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	// 构造消息并尝试入队
 	msg := types.Message{
@@ -37,6 +43,7 @@ func (hm *HandlerManager) HandlePullQuery(w http.ResponseWriter, r *http.Request
 	if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 		if err := rt.EnqueueReceivedMessage(msg); err != nil {
 			hm.Logger.Warn("[Handler] Failed to enqueue PullQuery: %v", err)
+			w.Header().Set("Retry-After", "1")
 			http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
