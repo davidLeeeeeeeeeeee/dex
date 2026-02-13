@@ -4,7 +4,9 @@ import (
 	"context"
 	"dex/interfaces"
 	"dex/logs"
+	"dex/stats"
 	"dex/types"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,23 +15,33 @@ import (
 // ============================================
 
 type Node struct {
-	ID              types.NodeID
-	IsByzantine     bool
-	transport       interfaces.Transport
-	store           interfaces.BlockStore
-	engine          interfaces.ConsensusEngine
-	events          interfaces.EventBus
-	messageHandler  *MessageHandler
-	queryManager    *QueryManager
-	gossipManager   *GossipManager
-	SyncManager     *SyncManager
-	snapshotManager *SnapshotManager
-	proposalManager *ProposalManager
-	ctx             context.Context
-	cancel          context.CancelFunc
-	Logger          logs.Logger
-	config          *Config
-	Stats           *NodeStats
+	ID                types.NodeID
+	IsByzantine       bool
+	transport         interfaces.Transport
+	store             interfaces.BlockStore
+	engine            interfaces.ConsensusEngine
+	events            interfaces.EventBus
+	messageHandler    *MessageHandler
+	queryManager      *QueryManager
+	gossipManager     *GossipManager
+	SyncManager       *SyncManager
+	snapshotManager   *SnapshotManager
+	proposalManager   *ProposalManager
+	ctx               context.Context
+	cancel            context.CancelFunc
+	Logger            logs.Logger
+	config            *Config
+	Stats             *NodeStats
+	handleMsgSemInUse atomic.Int64
+	handleMsgSemPeak  atomic.Int64
+	handleMsgSemCap   atomic.Int64
+	handleMsgLatency  *stats.LatencyRecorder
+}
+
+type HandleMsgRuntimeStats struct {
+	SemInUse    int64
+	SemCapacity int64
+	SemPeak     int64
 }
 
 func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, byzantine bool, config *Config, logger logs.Logger) *Node {
@@ -43,17 +55,18 @@ func NewNodeWithSigner(id types.NodeID, transport interfaces.Transport, store in
 	engine := NewSnowmanEngine(id, store, &config.Consensus, events, logger)
 
 	node := &Node{
-		ID:          id,
-		IsByzantine: byzantine,
-		transport:   transport,
-		store:       store,
-		engine:      engine,
-		events:      events,
-		ctx:         ctx,
-		cancel:      cancel,
-		Logger:      logger,
-		config:      config,
-		Stats:       NewNodeStats(events),
+		ID:               id,
+		IsByzantine:      byzantine,
+		transport:        transport,
+		store:            store,
+		engine:           engine,
+		events:           events,
+		ctx:              ctx,
+		cancel:           cancel,
+		Logger:           logger,
+		config:           config,
+		Stats:            NewNodeStats(events),
+		handleMsgLatency: stats.NewLatencyRecorder(4096),
 	}
 
 	messageHandler := NewMessageHandler(id, byzantine, transport, store, engine, events, &config.Consensus, logger)
@@ -109,17 +122,14 @@ func (n *Node) Start() {
 		// 允许最高 2000 个并发处理 (考虑到 I/O 等待)
 		const maxConcurrency = 2000
 		sem := make(chan struct{}, maxConcurrency)
+		n.handleMsgSemCap.Store(int64(maxConcurrency))
 
 		for {
 			// 1. 最高优先级：紧急消息（区块补全）
 			if immCh != nil {
 				select {
 				case msg := <-immCh:
-					sem <- struct{}{}
-					go func(m types.Message) {
-						defer func() { <-sem }()
-						n.messageHandler.HandleMsg(m)
-					}(msg)
+					n.dispatchMessageWithSem(sem, msg)
 					continue
 				default:
 				}
@@ -129,11 +139,7 @@ func (n *Node) Start() {
 			if dataCh != nil {
 				select {
 				case msg := <-dataCh:
-					sem <- struct{}{}
-					go func(m types.Message) {
-						defer func() { <-sem }()
-						n.messageHandler.HandleMsg(m)
-					}(msg)
+					n.dispatchMessageWithSem(sem, msg)
 					continue
 				default:
 				}
@@ -144,23 +150,11 @@ func (n *Node) Start() {
 			case <-n.ctx.Done():
 				return
 			case msg := <-immCh:
-				sem <- struct{}{}
-				go func(m types.Message) {
-					defer func() { <-sem }()
-					n.messageHandler.HandleMsg(m)
-				}(msg)
+				n.dispatchMessageWithSem(sem, msg)
 			case msg := <-dataCh:
-				sem <- struct{}{}
-				go func(m types.Message) {
-					defer func() { <-sem }()
-					n.messageHandler.HandleMsg(m)
-				}(msg)
+				n.dispatchMessageWithSem(sem, msg)
 			case msg := <-controlCh:
-				sem <- struct{}{}
-				go func(m types.Message) {
-					defer func() { <-sem }()
-					n.messageHandler.HandleMsg(m)
-				}(msg)
+				n.dispatchMessageWithSem(sem, msg)
 			}
 		}
 	}()
@@ -230,4 +224,57 @@ func (n *Node) ResetProposalTimer() {
 	if n.proposalManager != nil {
 		n.proposalManager.ResetProposalTimer()
 	}
+}
+
+func (n *Node) dispatchMessageWithSem(sem chan struct{}, msg types.Message) {
+	waitStart := time.Now()
+	sem <- struct{}{}
+	if n.handleMsgLatency != nil {
+		n.handleMsgLatency.Record("node.handle_msg.sem_wait", time.Since(waitStart))
+	}
+	n.incHandleMsgSemInUse()
+
+	go func(m types.Message) {
+		start := time.Now()
+		defer func() {
+			if n.handleMsgLatency != nil {
+				n.handleMsgLatency.Record("node.handle_msg.total", time.Since(start))
+			}
+			n.decHandleMsgSemInUse()
+			<-sem
+		}()
+		n.messageHandler.HandleMsg(m)
+	}(msg)
+}
+
+func (n *Node) incHandleMsgSemInUse() {
+	current := n.handleMsgSemInUse.Add(1)
+	for {
+		peak := n.handleMsgSemPeak.Load()
+		if current <= peak {
+			return
+		}
+		if n.handleMsgSemPeak.CompareAndSwap(peak, current) {
+			return
+		}
+	}
+}
+
+func (n *Node) decHandleMsgSemInUse() {
+	n.handleMsgSemInUse.Add(-1)
+}
+
+func (n *Node) GetRuntimeStats() HandleMsgRuntimeStats {
+	return HandleMsgRuntimeStats{
+		SemInUse:    n.handleMsgSemInUse.Load(),
+		SemCapacity: n.handleMsgSemCap.Load(),
+		SemPeak:     n.handleMsgSemPeak.Load(),
+	}
+}
+
+func (n *Node) GetHandleMsgLatencyStats(reset bool) map[string]stats.LatencySummary {
+	if n == nil || n.handleMsgLatency == nil {
+		return nil
+	}
+	return n.handleMsgLatency.Snapshot(reset)
 }

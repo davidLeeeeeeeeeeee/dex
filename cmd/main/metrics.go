@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+type latencyEntry struct {
+	Name    string
+	Summary stats.LatencySummary
+}
+
 // 接口调用统计结构体
 type APICallStats struct {
 	sync.RWMutex
@@ -153,6 +158,54 @@ func monitorQueueStats(nodes []*NodeInstance) {
 				sq.InflightMutex.RUnlock()
 				fmt.Printf("  %-10s %-16s total=%5d targets=%5d\n",
 					"SendQueue", "inflight", totalInflight, inflightTargets)
+
+				runtimeStats := sq.GetRuntimeStats()
+				fmt.Printf("  %-10s %-16s timer=%5d sleep=%5d\n",
+					"SendQueue", "nextAttempt",
+					runtimeStats.DelayedTimerBacklog, runtimeStats.NextAttemptSleeping)
+				fmt.Printf("  %-10s %-16s control=%5d data=%5d immediate=%5d\n",
+					"SendQueue", "drop.queueFull",
+					runtimeStats.DropControlFull, runtimeStats.DropDataFull, runtimeStats.DropImmediateFull)
+				fmt.Printf("  %-10s %-16s stale=%5d overload=%5d requeue=%5d\n",
+					"SendQueue", "drop/requeue",
+					runtimeStats.DropStaleWorker, runtimeStats.DropStaleOverload, runtimeStats.InflightRequeue)
+				fmt.Printf("  %-10s %-16s exhausted=%5d expired=%5d\n",
+					"SendQueue", "retry.giveup",
+					runtimeStats.RetryExhausted, runtimeStats.RetryExpired)
+				fmt.Printf("  %-10s %-16s ok=%5d err=%5d timeout=%5d\n",
+					"SendQueue", "send.result",
+					runtimeStats.SendSuccess, runtimeStats.SendError, runtimeStats.SendTimeout)
+
+				printLatencyTopN("SendQueue", sq.GetLatencyStats(true), 3, "sendqueue.do_send")
+			}
+
+			if node.ConsensusManager != nil && node.ConsensusManager.Node != nil {
+				runtimeStats := node.ConsensusManager.Node.GetRuntimeStats()
+				usage := 0.0
+				if runtimeStats.SemCapacity > 0 {
+					usage = float64(runtimeStats.SemInUse) / float64(runtimeStats.SemCapacity) * 100
+				}
+				fmt.Printf("  %-10s %-16s inUse=%5d cap=%5d peak=%5d usage=%6.2f%%\n",
+					"HandleMsg", "sem",
+					runtimeStats.SemInUse, runtimeStats.SemCapacity, runtimeStats.SemPeak, usage)
+
+				printLatencyTopN("HandleMsg", node.ConsensusManager.Node.GetHandleMsgLatencyStats(true), 3, "node.handle_msg")
+			}
+
+			if node.ConsensusManager != nil && node.ConsensusManager.Transport != nil {
+				if rt, ok := node.ConsensusManager.Transport.(*consensus.RealTransport); ok {
+					runtimeStats := rt.GetRuntimeStats()
+					fmt.Printf("  %-10s %-16s controlTimeout=%5d dataFull=%5d inboxTimeout=%5d invalid=%5d\n",
+						"Transport", "drop",
+						runtimeStats.ControlEnqueueTimeoutDrops,
+						runtimeStats.DataEnqueueFullDrops,
+						runtimeStats.InboxForwardTimeoutDrops,
+						runtimeStats.PreprocessInvalidDrops)
+				}
+			}
+
+			if node.HandlerManager != nil && node.HandlerManager.Stats != nil {
+				printLatencyTopN("Handler", node.HandlerManager.Stats.GetLatencyStats(true), 5, "handler")
 			}
 		}
 		fmt.Println("========================================")
@@ -181,6 +234,53 @@ func collectNodeQueueStats(node *NodeInstance) []stats.ChannelStat {
 	}
 
 	return result
+}
+
+func printLatencyTopN(module string, summary map[string]stats.LatencySummary, topN int, prefix string) {
+	top := selectTopLatency(summary, topN, prefix)
+	if len(top) == 0 {
+		return
+	}
+	for _, item := range top {
+		fmt.Printf("  %-10s %-16s key=%s count=%5d p95=%-10v p99=%-10v max=%v\n",
+			module, "latency",
+			item.Name, item.Summary.Count, item.Summary.P95, item.Summary.P99, item.Summary.Max)
+	}
+}
+
+func selectTopLatency(summary map[string]stats.LatencySummary, topN int, prefix string) []latencyEntry {
+	if len(summary) == 0 || topN <= 0 {
+		return nil
+	}
+
+	entries := make([]latencyEntry, 0, len(summary))
+	for name, s := range summary {
+		if s.Count == 0 {
+			continue
+		}
+		if prefix != "" && !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		entries = append(entries, latencyEntry{Name: name, Summary: s})
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Summary.P95 != entries[j].Summary.P95 {
+			return entries[i].Summary.P95 > entries[j].Summary.P95
+		}
+		if entries[i].Summary.P99 != entries[j].Summary.P99 {
+			return entries[i].Summary.P99 > entries[j].Summary.P99
+		}
+		return entries[i].Name < entries[j].Name
+	})
+
+	if len(entries) > topN {
+		entries = entries[:topN]
+	}
+	return entries
 }
 
 // 打印API调用统计

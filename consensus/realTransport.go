@@ -15,6 +15,7 @@ import (
 	"math/rand"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -41,6 +42,18 @@ type RealTransport struct {
 	maxLatency     time.Duration // 最大延迟
 	nodeIPCache    map[types.NodeID]string
 	cacheMu        sync.RWMutex
+
+	controlEnqueueTimeoutDrops atomic.Uint64
+	dataEnqueueFullDrops       atomic.Uint64
+	inboxForwardTimeoutDrops   atomic.Uint64
+	preprocessInvalidDrops     atomic.Uint64
+}
+
+type RealTransportRuntimeStats struct {
+	ControlEnqueueTimeoutDrops uint64
+	DataEnqueueFullDrops       uint64
+	InboxForwardTimeoutDrops   uint64
+	PreprocessInvalidDrops     uint64
 }
 
 type NodeInfo struct {
@@ -383,6 +396,7 @@ func (t *RealTransport) EnqueueReceivedMessage(msg types.Message) error {
 		case t.receiveQueue <- msg:
 			return nil
 		case <-time.After(50 * time.Millisecond):
+			t.controlEnqueueTimeoutDrops.Add(1)
 			logs.Warn("[RealTransport] Control message queue full, dropping from %s", msg.From)
 			return fmt.Errorf("receive queue full for control message")
 		}
@@ -392,6 +406,7 @@ func (t *RealTransport) EnqueueReceivedMessage(msg types.Message) error {
 		case t.receiveQueue <- msg:
 			return nil
 		default:
+			t.dataEnqueueFullDrops.Add(1)
 			logs.Debug("[RealTransport] Data message queue full, dropping from %s", msg.From)
 			return fmt.Errorf("receive queue full for data message")
 		}
@@ -471,6 +486,7 @@ func (t *RealTransport) receiveWorker(workerID int) {
 			return
 		case msg := <-t.receiveQueue:
 			if err := t.preprocessMessage(&msg); err != nil {
+				t.preprocessInvalidDrops.Add(1)
 				logs.Debug("[RealTransport] Worker %d: Invalid message from %s: %v",
 					workerID, msg.From, err)
 				continue
@@ -481,6 +497,7 @@ func (t *RealTransport) receiveWorker(workerID int) {
 				logs.Trace("[RealTransport] Worker %d: Processed message type %d from %s",
 					workerID, msg.Type, msg.From)
 			case <-time.After(5 * time.Second):
+				t.inboxForwardTimeoutDrops.Add(1)
 				logs.Warn("[RealTransport] Worker %d: Timeout sending to inbox, dropping message from %s",
 					workerID, msg.From)
 			case <-t.stopChan:
@@ -508,4 +525,16 @@ func (t *RealTransport) Close() {
 		close(t.inbox)
 		logs.Info("[RealTransport] Closed")
 	})
+}
+
+func (t *RealTransport) GetRuntimeStats() RealTransportRuntimeStats {
+	if t == nil {
+		return RealTransportRuntimeStats{}
+	}
+	return RealTransportRuntimeStats{
+		ControlEnqueueTimeoutDrops: t.controlEnqueueTimeoutDrops.Load(),
+		DataEnqueueFullDrops:       t.dataEnqueueFullDrops.Load(),
+		InboxForwardTimeoutDrops:   t.inboxForwardTimeoutDrops.Load(),
+		PreprocessInvalidDrops:     t.preprocessInvalidDrops.Load(),
+	}
 }

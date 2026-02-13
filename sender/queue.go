@@ -4,14 +4,18 @@ import (
 	"dex/config"
 	"dex/logs"
 	"dex/stats"
+	"errors"
 	"fmt"
 	"log"
 	"math"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -54,6 +58,22 @@ type SendQueue struct {
 	Logger             logs.Logger      // 注入的 Logger
 	InflightMap        map[string]int32 // 目标->在途请求数
 	InflightMutex      sync.RWMutex
+	latency            *stats.LatencyRecorder
+
+	// 发送侧关键计数（用于定位 hidden backlog / drop / timeout）
+	delayedTimerBacklog atomic.Int64
+	nextAttemptSleeping atomic.Int64
+	dropImmediateFull   atomic.Uint64
+	dropControlFull     atomic.Uint64
+	dropDataFull        atomic.Uint64
+	dropStaleWorker     atomic.Uint64
+	dropStaleOverload   atomic.Uint64
+	inflightRequeue     atomic.Uint64
+	retryExhausted      atomic.Uint64
+	retryExpired        atomic.Uint64
+	sendSuccess         atomic.Uint64
+	sendError           atomic.Uint64
+	sendTimeout         atomic.Uint64
 }
 
 // 创建新的发送队列（双队列模式）
@@ -101,6 +121,7 @@ func NewSendQueue(
 		httpClient:         httpClient,
 		cfg:                cfg,
 		InflightMap:        make(map[string]int32),
+		latency:            stats.NewLatencyRecorder(4096),
 	}
 	sq.Start()
 	return sq
@@ -153,7 +174,9 @@ func (sq *SendQueue) Enqueue(task *SendTask) {
 	if task.NextAttempt.After(now) {
 		// 未到执行时间：先等到 NextAttempt，再真正入队
 		delay := time.Until(task.NextAttempt)
+		sq.delayedTimerBacklog.Add(1)
 		go func(t *SendTask, d time.Duration) {
+			defer sq.delayedTimerBacklog.Add(-1)
 			timer := time.NewTimer(d)
 			defer timer.Stop()
 			select {
@@ -177,6 +200,7 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 			return
 		default:
 			// 如果紧急队列满了，强制丢弃老的，塞入新的（此处不实现复杂逻辑，仅快速失败记录）
+			sq.dropImmediateFull.Add(1)
 			sq.Logger.Warn("[SendQueue] Immediate task DROPPED: queue full target=%s", task.Target)
 			return
 		}
@@ -186,6 +210,7 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 		case sq.controlChan <- task:
 			return
 		default:
+			sq.dropControlFull.Add(1)
 			sq.Logger.Warn("[SendQueue] Control queue FULL, dropping task target=%s func=%s len=%d",
 				task.Target, task.FuncName(), len(sq.controlChan))
 			return
@@ -196,6 +221,7 @@ func (sq *SendQueue) enqueueNow(task *SendTask) {
 		case sq.dataChan <- task:
 			// 成功入队
 		default:
+			sq.dropDataFull.Add(1)
 			sq.Logger.Debug("[SendQueue] Data task dropped: queue full len=%d, target=%s",
 				len(sq.dataChan), task.Target)
 		}
@@ -220,6 +246,7 @@ func (sq *SendQueue) workerLoop(workerID int, taskChan chan *SendTask, queueType
 			// 过期阈值 = QueryTimeout (3s)，避免发送已经无意义的请求
 			taskAge := time.Since(task.CreatedAt)
 			if taskAge > cfg.Sender.TaskExpireTimeout {
+				sq.dropStaleWorker.Add(1)
 				sq.Logger.Debug("[SendQueue][%s] Dropping stale task: age=%v target=%s func=%s",
 					queueType, taskAge, task.Target, task.FuncName())
 				continue
@@ -228,7 +255,9 @@ func (sq *SendQueue) workerLoop(workerID int, taskChan chan *SendTask, queueType
 			now := time.Now()
 			if task.NextAttempt.After(now) {
 				sleepDur := task.NextAttempt.Sub(now)
+				sq.nextAttemptSleeping.Add(1)
 				time.Sleep(sleepDur)
+				sq.nextAttemptSleeping.Add(-1)
 			}
 
 			if !sq.tryAcquireInflight(task.Target, queueType) {
@@ -294,6 +323,7 @@ func (sq *SendQueue) requeueForTargetOverload(task *SendTask, queueType string) 
 		cfg = config.DefaultConfig()
 	}
 	if time.Since(task.CreatedAt) > cfg.Sender.TaskExpireTimeout {
+		sq.dropStaleOverload.Add(1)
 		sq.Logger.Debug("[SendQueue][%s] Drop stale overloaded task: age=%v target=%s func=%s",
 			queueType, time.Since(task.CreatedAt), task.Target, task.FuncName())
 		return
@@ -307,6 +337,7 @@ func (sq *SendQueue) requeueForTargetOverload(task *SendTask, queueType string) 
 	jitterRange := float64(delay) * 0.2
 	jitter := time.Duration(jitterRange * (rand.Float64()*2 - 1))
 	task.NextAttempt = time.Now().Add(delay + jitter)
+	sq.inflightRequeue.Add(1)
 	sq.Enqueue(task)
 }
 
@@ -320,11 +351,22 @@ func (sq *SendQueue) doSend(task *SendTask, workerID int, queueType string) erro
 	start := time.Now()
 	err := task.SendFunc(task, sq.httpClient)
 	elapsed := time.Since(start)
+	if sq.latency != nil {
+		sq.latency.Record("sendqueue.do_send."+queueType, elapsed)
+		if funcName := compactFuncName(task.FuncName()); funcName != "" {
+			sq.latency.Record("sendqueue.do_send.func."+funcName, elapsed)
+		}
+	}
 
 	if err != nil {
+		sq.sendError.Add(1)
+		if isTimeoutSendError(err) {
+			sq.sendTimeout.Add(1)
+		}
 		sq.Logger.Error("[SendQueue][%s] worker=%d,%s send to %s FAILED after %v: %v",
 			queueType, workerID, task.FuncName(), task.Target, elapsed, err)
 	} else {
+		sq.sendSuccess.Add(1)
 		sq.Logger.Trace("[SendQueue][%s] worker=%d,%s send to %s success in %v",
 			queueType, workerID, task.FuncName(), task.Target, elapsed)
 	}
@@ -337,6 +379,7 @@ func (sq *SendQueue) handleRetry(task *SendTask, sendErr error) {
 
 	// 检查是否超过最大重试次数
 	if task.RetryCount > task.MaxRetries {
+		sq.retryExhausted.Add(1)
 		sq.Logger.Debug("[SendQueue] Exceed max retries(%d) target=%s func=%s, giving up",
 			task.MaxRetries, task.Target, task.FuncName())
 		return
@@ -344,6 +387,7 @@ func (sq *SendQueue) handleRetry(task *SendTask, sendErr error) {
 
 	// 检查任务是否已过期（即使还有重试次数，过期也放弃）
 	if time.Since(task.CreatedAt) > cfg.Sender.TaskExpireTimeout {
+		sq.retryExpired.Add(1)
 		sq.Logger.Debug("[SendQueue] Task expired after %v, giving up retry target=%s func=%s",
 			time.Since(task.CreatedAt), task.Target, task.FuncName())
 		return
@@ -369,6 +413,46 @@ func (sq *SendQueue) handleRetry(task *SendTask, sendErr error) {
 	sq.Logger.Debug("[SendQueue] Retry %d/%d after %v for %s (err=%v)",
 		task.RetryCount, task.MaxRetries, backoff, task.Target, sendErr)
 }
+
+func isTimeoutSendError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "timeout") || strings.Contains(low, "deadline exceeded")
+}
+
+func compactFuncName(full string) string {
+	if full == "" {
+		return ""
+	}
+	// e.g. dex/sender.doSendPullQuery -> sender.doSendPullQuery
+	if idx := strings.LastIndex(full, "/"); idx >= 0 && idx < len(full)-1 {
+		return full[idx+1:]
+	}
+	return full
+}
+
+type SendQueueRuntimeStats struct {
+	DelayedTimerBacklog int64
+	NextAttemptSleeping int64
+	DropImmediateFull   uint64
+	DropControlFull     uint64
+	DropDataFull        uint64
+	DropStaleWorker     uint64
+	DropStaleOverload   uint64
+	InflightRequeue     uint64
+	RetryExhausted      uint64
+	RetryExpired        uint64
+	SendSuccess         uint64
+	SendError           uint64
+	SendTimeout         uint64
+}
+
 func (task *SendTask) FuncName() string {
 	if task.SendFunc == nil {
 		return ""
@@ -410,4 +494,32 @@ func (sq *SendQueue) GetChannelStats() []stats.ChannelStat {
 		stats.NewChannelStat("immediateChan", "SendQueue", len(sq.immediateChan), cap(sq.immediateChan)),
 		stats.NewChannelStat("dataChan", "SendQueue", len(sq.dataChan), cap(sq.dataChan)),
 	}
+}
+
+func (sq *SendQueue) GetRuntimeStats() SendQueueRuntimeStats {
+	if sq == nil {
+		return SendQueueRuntimeStats{}
+	}
+	return SendQueueRuntimeStats{
+		DelayedTimerBacklog: sq.delayedTimerBacklog.Load(),
+		NextAttemptSleeping: sq.nextAttemptSleeping.Load(),
+		DropImmediateFull:   sq.dropImmediateFull.Load(),
+		DropControlFull:     sq.dropControlFull.Load(),
+		DropDataFull:        sq.dropDataFull.Load(),
+		DropStaleWorker:     sq.dropStaleWorker.Load(),
+		DropStaleOverload:   sq.dropStaleOverload.Load(),
+		InflightRequeue:     sq.inflightRequeue.Load(),
+		RetryExhausted:      sq.retryExhausted.Load(),
+		RetryExpired:        sq.retryExpired.Load(),
+		SendSuccess:         sq.sendSuccess.Load(),
+		SendError:           sq.sendError.Load(),
+		SendTimeout:         sq.sendTimeout.Load(),
+	}
+}
+
+func (sq *SendQueue) GetLatencyStats(reset bool) map[string]stats.LatencySummary {
+	if sq == nil || sq.latency == nil {
+		return nil
+	}
+	return sq.latency.Snapshot(reset)
 }

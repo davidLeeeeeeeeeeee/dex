@@ -48,6 +48,38 @@ type NodeInstance struct {
 	Logger           logs.Logger
 }
 
+type statusCodeRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (r *statusCodeRecorder) WriteHeader(code int) {
+	r.statusCode = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// wrapHandlerWithLatencyMetrics 统一记录 HTTP 路由耗时分位（按 path 维度）
+func wrapHandlerWithLatencyMetrics(node *NodeInstance, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusCodeRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		if node == nil || node.HandlerManager == nil || node.HandlerManager.Stats == nil {
+			return
+		}
+		path := r.URL.Path
+		if path == "" {
+			path = "/unknown"
+		}
+		metric := "handler" + path
+		if rec.statusCode >= 500 {
+			metric += ".5xx"
+		}
+		node.HandlerManager.Stats.RecordLatency(metric, time.Since(start))
+	})
+}
+
 // 初始化单个节点
 func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	// 1. 初始化密钥管理器
@@ -169,7 +201,7 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// 应用中间件
-	handler := middleware.RateLimit(mux)
+	handler := middleware.RateLimit(wrapHandlerWithLatencyMetrics(node, mux))
 
 	// 生成自签名证书
 	certFile := fmt.Sprintf("server_%d.crt", node.ID)
