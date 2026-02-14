@@ -43,6 +43,14 @@ type SyncManager struct {
 	pendingBlockBuffer    *PendingBlockBuffer  // 待处理区块缓冲区（用于补课）
 	consecutiveStallCount uint32               // 连续同步停滞计数（高风险修复：死循环保护）
 	InFlightSyncRanges    map[string]time.Time // 新增：正在进行的同步高度范围（去重）
+
+	// Chits-trigger debounce state.
+	chitPending          bool
+	chitPendingHeight    uint64
+	chitPendingFrom      types.NodeID
+	chitPendingFirstSeen time.Time
+	chitTimerArmed       bool
+	lastChitTriggerAt    time.Time
 }
 
 func NewSyncManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, snapshotConfig *SnapshotConfig, events interfaces.EventBus, logger logs.Logger) *SyncManager {
@@ -303,31 +311,197 @@ func (sm *SyncManager) checkAndSync() {
 	sm.Mu.Unlock()
 }
 
-// TriggerSyncFromChit 由 Chits 消息驱动的同步触发入口（事件驱动模式）
-// 无需复杂的采样验证，因为 Chits 本身就是共识采样的一部分
-func (sm *SyncManager) TriggerSyncFromChit(peerAcceptedHeight uint64, from types.NodeID) {
-	sm.Mu.Lock()
+func (sm *SyncManager) chitSoftGap() uint64 {
+	if sm == nil || sm.config == nil || sm.config.ChitSoftGap == 0 {
+		return 1
+	}
+	return sm.config.ChitSoftGap
+}
 
-	// 更新 PeerHeights
-	if peerAcceptedHeight > sm.PeerHeights[from] {
-		sm.PeerHeights[from] = peerAcceptedHeight
+func (sm *SyncManager) chitHardGap() uint64 {
+	if sm == nil || sm.config == nil || sm.config.ChitHardGap == 0 {
+		return 3
+	}
+	soft := sm.chitSoftGap()
+	if sm.config.ChitHardGap < soft {
+		return soft
+	}
+	return sm.config.ChitHardGap
+}
+
+func (sm *SyncManager) chitGracePeriod() time.Duration {
+	if sm == nil || sm.config == nil || sm.config.ChitGracePeriod <= 0 {
+		return time.Second
+	}
+	return sm.config.ChitGracePeriod
+}
+
+func (sm *SyncManager) chitCooldown() time.Duration {
+	if sm == nil || sm.config == nil || sm.config.ChitCooldown < 0 {
+		return 0
+	}
+	return sm.config.ChitCooldown
+}
+
+func (sm *SyncManager) chitMinConfirmPeers() int {
+	if sm == nil || sm.config == nil || sm.config.ChitMinConfirmPeers < 0 {
+		return 0
+	}
+	return sm.config.ChitMinConfirmPeers
+}
+
+func (sm *SyncManager) resetStaleSyncStateLocked() bool {
+	if !sm.Syncing && !sm.sampling {
+		return false
+	}
+	if len(sm.SyncRequests) > 0 {
+		return true
+	}
+	logs.Debug("[SyncManager] Chit trigger: resetting stale sync state (Requests=0)")
+	sm.Syncing = false
+	sm.sampling = false
+	return false
+}
+
+func (sm *SyncManager) triggerCooldownRemainingLocked(now time.Time) time.Duration {
+	cooldown := sm.chitCooldown()
+	if cooldown <= 0 || sm.lastChitTriggerAt.IsZero() {
+		return 0
+	}
+	elapsed := now.Sub(sm.lastChitTriggerAt)
+	if elapsed >= cooldown {
+		return 0
+	}
+	return cooldown - elapsed
+}
+
+func (sm *SyncManager) markPendingChitLocked(height uint64, from types.NodeID) {
+	now := time.Now()
+	if !sm.chitPending {
+		sm.chitPending = true
+		sm.chitPendingHeight = height
+		sm.chitPendingFrom = from
+		sm.chitPendingFirstSeen = now
+		return
+	}
+	if height > sm.chitPendingHeight {
+		sm.chitPendingHeight = height
+		sm.chitPendingFrom = from
+		sm.chitPendingFirstSeen = now
+	}
+}
+
+func (sm *SyncManager) clearPendingChitLocked() {
+	sm.chitPending = false
+	sm.chitPendingHeight = 0
+	sm.chitPendingFrom = ""
+	sm.chitPendingFirstSeen = time.Time{}
+}
+
+func (sm *SyncManager) countPeerConfirmationsLocked(targetHeight uint64, exclude types.NodeID) int {
+	minConfirmedHeight := targetHeight
+	if minConfirmedHeight > 0 {
+		minConfirmedHeight--
+	}
+	confirmations := 0
+	for peerID, h := range sm.PeerHeights {
+		if peerID == exclude {
+			continue
+		}
+		if h >= minConfirmedHeight {
+			confirmations++
+		}
+	}
+	return confirmations
+}
+
+func (sm *SyncManager) scheduleChitEvaluationLocked(delay time.Duration) {
+	if !sm.chitPending {
+		return
+	}
+	if delay <= 0 {
+		delay = 50 * time.Millisecond
+	}
+	if sm.chitTimerArmed {
+		return
+	}
+	sm.chitTimerArmed = true
+	go func(wait time.Duration) {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		<-timer.C
+		sm.evaluatePendingChitTrigger()
+	}(delay)
+}
+
+func (sm *SyncManager) evaluatePendingChitTrigger() {
+	sm.Mu.Lock()
+	sm.chitTimerArmed = false
+	if !sm.chitPending {
+		sm.Mu.Unlock()
+		return
 	}
 
-	// 智能判定是否需要新一轮同步：
-	// 若已忙碌，则检查当前是否有正在进行的请求。如果所有请求都超时了，允许继续。
-	if sm.Syncing || sm.sampling {
-		if len(sm.SyncRequests) > 0 {
-			// 有在途请求，等待完成
+	targetHeight := sm.chitPendingHeight
+	from := sm.chitPendingFrom
+	firstSeen := sm.chitPendingFirstSeen
+	_, localAccepted := sm.store.GetLastAccepted()
+	if targetHeight <= localAccepted {
+		sm.clearPendingChitLocked()
+		sm.Mu.Unlock()
+		return
+	}
+
+	if sm.resetStaleSyncStateLocked() {
+		sm.scheduleChitEvaluationLocked(200 * time.Millisecond)
+		sm.Mu.Unlock()
+		return
+	}
+
+	now := time.Now()
+	if remain := sm.triggerCooldownRemainingLocked(now); remain > 0 {
+		sm.scheduleChitEvaluationLocked(remain)
+		sm.Mu.Unlock()
+		return
+	}
+
+	grace := sm.chitGracePeriod()
+	if elapsed := now.Sub(firstSeen); elapsed < grace {
+		sm.scheduleChitEvaluationLocked(grace - elapsed)
+		sm.Mu.Unlock()
+		return
+	}
+
+	minConfirm := sm.chitMinConfirmPeers()
+	if minConfirm > 0 {
+		confirmed := sm.countPeerConfirmationsLocked(targetHeight, from)
+		if confirmed < minConfirm {
+			recheck := grace / 2
+			if recheck <= 0 {
+				recheck = 200 * time.Millisecond
+			}
+			sm.scheduleChitEvaluationLocked(recheck)
 			sm.Mu.Unlock()
 			return
 		}
-		// P0 修复：Syncing=true 但 SyncRequests 为空 → 上一轮同步已实质结束
-		// （可能是响应丢包、超时清理后遗留的脏状态）。
-		// 必须重置 Syncing，否则后续的 requestSync/requestSyncParallel
-		// 会检查 Syncing=true 后直接 return，导致同步永久卡死。
-		logs.Info("[SyncManager] TriggerSyncFromChit: resetting stale Syncing flag (Requests=0)")
-		sm.Syncing = false
-		sm.sampling = false
+	}
+
+	sm.clearPendingChitLocked()
+	sm.lastChitTriggerAt = now
+	sm.Mu.Unlock()
+
+	heightDiff := targetHeight - localAccepted
+	logs.Debug("[SyncManager] TriggerSyncFromChit: delayed trigger peer=%s peerHeight=%d localAccepted=%d diff=%d",
+		from, targetHeight, localAccepted, heightDiff)
+	sm.performTriggeredSync(targetHeight, localAccepted, heightDiff)
+}
+
+// TriggerSyncFromChit is an event-driven sync trigger path with delay, threshold, and debounce.
+func (sm *SyncManager) TriggerSyncFromChit(peerAcceptedHeight uint64, from types.NodeID) {
+	sm.Mu.Lock()
+
+	if peerAcceptedHeight > sm.PeerHeights[from] {
+		sm.PeerHeights[from] = peerAcceptedHeight
 	}
 
 	_, localAccepted := sm.store.GetLastAccepted()
@@ -337,56 +511,47 @@ func (sm *SyncManager) TriggerSyncFromChit(peerAcceptedHeight uint64, from types
 	}
 
 	heightDiff := peerAcceptedHeight - localAccepted
-	sm.Mu.Unlock()
+	now := time.Now()
 
-	logs.Debug("[SyncManager] TriggerSyncFromChit: peer=%s peerHeight=%d localAccepted=%d diff=%d",
-		from, peerAcceptedHeight, localAccepted, heightDiff)
-
-	// 中风险修复：轻量级高度采样验证
-	// 采样 2 个随机节点（不包括发送者）来交叉确认高度。
-	// 这能防止被单个恶意或故障节点拉入错误的同步轨道。
-	go func() {
-		logs.Debug("[SyncManager] Starting lightweight safety sampling for TriggerSyncFromChit (target=%d)", peerAcceptedHeight)
-
-		peers := sm.transport.SamplePeers(sm.nodeID, 2)
-		// 如果网络太小没法采样，则信任该 Chit（此时共识安全性由 BFT 保证）
-		if len(peers) <= 1 {
-			sm.performTriggeredSync(peerAcceptedHeight, localAccepted, heightDiff)
+	// Hard gap path: trigger fast, still respecting stale-state guard and cooldown debounce.
+	if heightDiff >= sm.chitHardGap() {
+		if sm.resetStaleSyncStateLocked() {
+			sm.markPendingChitLocked(peerAcceptedHeight, from)
+			sm.scheduleChitEvaluationLocked(200 * time.Millisecond)
+			sm.Mu.Unlock()
+			return
+		}
+		if remain := sm.triggerCooldownRemainingLocked(now); remain > 0 {
+			sm.markPendingChitLocked(peerAcceptedHeight, from)
+			sm.scheduleChitEvaluationLocked(remain)
+			sm.Mu.Unlock()
 			return
 		}
 
-		// 发起高度查询
-		for _, p := range peers {
-			if p == from {
-				continue
-			}
-			sm.transport.Send(p, types.Message{
-				Type: types.MsgHeightQuery,
-				From: sm.nodeID,
-			})
-		}
+		sm.clearPendingChitLocked()
+		sm.lastChitTriggerAt = now
+		sm.Mu.Unlock()
 
-		// 等待 300ms 观察响应（通过 HandleHeightResponse 更新 PeerHeights）
-		time.Sleep(300 * time.Millisecond)
+		logs.Debug("[SyncManager] TriggerSyncFromChit: hard trigger peer=%s peerHeight=%d localAccepted=%d diff=%d",
+			from, peerAcceptedHeight, localAccepted, heightDiff)
+		sm.performTriggeredSync(peerAcceptedHeight, localAccepted, heightDiff)
+		return
+	}
 
-		// 检查是否有其他节点也达到了该高度附近
-		sm.Mu.RLock()
-		maxOtherPeerHeight := uint64(0)
-		for pID, h := range sm.PeerHeights {
-			if pID != from && h > maxOtherPeerHeight {
-				maxOtherPeerHeight = h
-			}
-		}
-		sm.Mu.RUnlock()
+	// Soft gap path: collect and wait for grace period + confirmations.
+	if heightDiff < sm.chitSoftGap() {
+		sm.Mu.Unlock()
+		return
+	}
 
-		// 安全阈值：只要有任何一个其他节点也处于类似高度（或更高），即认为安全
-		if maxOtherPeerHeight >= peerAcceptedHeight-1 {
-			sm.performTriggeredSync(peerAcceptedHeight, localAccepted, heightDiff)
-		} else {
-			logs.Warn("[SyncManager] 🛡️ Lightweight sampling failed: no other peer confirmed height %d (maxOther=%d). Sync cancelled.",
-				peerAcceptedHeight, maxOtherPeerHeight)
-		}
-	}()
+	sm.markPendingChitLocked(peerAcceptedHeight, from)
+	grace := sm.chitGracePeriod()
+	if elapsed := now.Sub(sm.chitPendingFirstSeen); elapsed >= grace {
+		sm.scheduleChitEvaluationLocked(10 * time.Millisecond)
+	} else {
+		sm.scheduleChitEvaluationLocked(grace - elapsed)
+	}
+	sm.Mu.Unlock()
 }
 
 // performTriggeredSync 执行被触发的同步动作

@@ -2,24 +2,21 @@ package consensus
 
 import "time"
 
-// ============================================
-// 配置管理
-// ============================================
-
+// Config groups all consensus-related runtime settings.
 type Config struct {
 	Network   NetworkConfig
 	Consensus ConsensusConfig
 	Node      NodeConfig
 	Sync      SyncConfig
 	Gossip    GossipConfig
-	Snapshot  SnapshotConfig // 新增
+	Snapshot  SnapshotConfig
 }
 
 type NetworkConfig struct {
 	NumNodes          int
 	NumByzantineNodes int
 	NetworkLatency    time.Duration
-	PacketLossRate    float64 //丢包率，范围 0.0 到 1.0
+	PacketLossRate    float64
 }
 
 type ConsensusConfig struct {
@@ -37,18 +34,23 @@ type NodeConfig struct {
 }
 
 type SyncConfig struct {
-	CheckInterval      time.Duration
-	BehindThreshold    uint64
-	BatchSize          uint64
-	Timeout            time.Duration
-	SnapshotThreshold  uint64        // 落后多少高度时使用快照
-	ShortSyncThreshold uint64        // 短期落后阈值（低于此值用ShortTxs，高于此值用完整区块）
-	ParallelPeers      int           // 分片并行请求的节点数（默认 3）
-	SampleSize         int           // 采样节点数量（默认 15）
-	QuorumRatio        float64       // Quorum 比例（默认 0.67，即 67%）
-	SampleTimeout      time.Duration // 采样超时时间
-	SyncAlpha          int           // 同步验证：每轮最少签名数（默认跟随共识 Alpha）
-	SyncBeta           int           // 同步验证：最少轮次数（默认跟随共识 Beta）
+	CheckInterval       time.Duration
+	BehindThreshold     uint64
+	BatchSize           uint64
+	Timeout             time.Duration
+	SnapshotThreshold   uint64
+	ShortSyncThreshold  uint64
+	ParallelPeers       int
+	SampleSize          int
+	QuorumRatio         float64
+	SampleTimeout       time.Duration
+	SyncAlpha           int
+	SyncBeta            int
+	ChitSoftGap         uint64
+	ChitHardGap         uint64
+	ChitGracePeriod     time.Duration
+	ChitCooldown        time.Duration
+	ChitMinConfirmPeers int
 }
 
 type GossipConfig struct {
@@ -56,11 +58,10 @@ type GossipConfig struct {
 	Interval time.Duration
 }
 
-// 新增：快照配置
 type SnapshotConfig struct {
-	Interval     uint64 // 每多少个区块创建一次快照
-	MaxSnapshots int    // 最多保留多少个快照
-	Enabled      bool   // 是否启用快照功能
+	Interval     uint64
+	MaxSnapshots int
+	Enabled      bool
 }
 
 func DefaultConfig() *Config {
@@ -69,7 +70,7 @@ func DefaultConfig() *Config {
 			NumNodes:          100,
 			NumByzantineNodes: 10,
 			NetworkLatency:    100 * time.Millisecond,
-			PacketLossRate:    0.1, // 10% 丢包率
+			PacketLossRate:    0.1,
 		},
 		Consensus: ConsensusConfig{
 			K:                    20,
@@ -84,27 +85,32 @@ func DefaultConfig() *Config {
 			ProposalInterval: 3000 * time.Millisecond,
 		},
 		Sync: SyncConfig{
-			CheckInterval:      30 * time.Second, // 降频作为兜底（事件驱动为主）
-			BehindThreshold:    2,
-			BatchSize:          50,               // 增大批量以加速追赶
-			Timeout:            10 * time.Second, // 覆盖高负载下 finalization 抖动，减少无效重试
-			SnapshotThreshold:  100,
-			ShortSyncThreshold: 20,              // 落后<=20块用ShortTxs，>20块用完整区块
-			ParallelPeers:      3,               // 并行向3个节点请求不同高度范围
-			SampleSize:         15,              // 采样 15 个节点
-			QuorumRatio:        0.67,            // 67% 拜占庭容错
-			SampleTimeout:      2 * time.Second, // 2 秒采样超时
-			SyncAlpha:          14,              // 同步签名验证：每轮至少 14 个签名
-			SyncBeta:           15,              // 同步签名验证：至少 15 轮
+			CheckInterval:       30 * time.Second,
+			BehindThreshold:     2,
+			BatchSize:           50,
+			Timeout:             10 * time.Second,
+			SnapshotThreshold:   100,
+			ShortSyncThreshold:  20,
+			ParallelPeers:       3,
+			SampleSize:          15,
+			QuorumRatio:         0.67,
+			SampleTimeout:       2 * time.Second,
+			SyncAlpha:           14,
+			SyncBeta:            15,
+			ChitSoftGap:         1,
+			ChitHardGap:         3,
+			ChitGracePeriod:     1 * time.Second,
+			ChitCooldown:        1500 * time.Millisecond,
+			ChitMinConfirmPeers: 2,
 		},
 		Gossip: GossipConfig{
 			Fanout:   15,
 			Interval: 50 * time.Millisecond,
 		},
 		Snapshot: SnapshotConfig{
-			Interval:     100,  // 每100个区块一个快照
-			MaxSnapshots: 10,   // 最多保留10个快照
-			Enabled:      true, // 启用快照
+			Interval:     100,
+			MaxSnapshots: 10,
+			Enabled:      true,
 		},
 	}
 }

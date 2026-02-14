@@ -344,7 +344,7 @@ func (s *TxSimulator) runOrderScenario() {
 		}
 
 		// 每次生成 10-20 笔订单
-		orderCount := 10 + mrand.Intn(50)
+		orderCount := 10 + mrand.Intn(300)
 		for i := 0; i < orderCount; i++ {
 			// 随机选择一个节点
 			nodeIdx := mrand.Intn(len(s.nodes))
