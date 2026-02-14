@@ -37,6 +37,9 @@ type QueryManager struct {
 	// VRF 确定性采样
 	seqID    uint32 // 当前采样批次号，alpha 失败时递增，seed 变化时归零
 	lastSeed []byte // 上次使用的 VRF 种子，用于检测 seed 变化
+	// Sender 背压感知：控制面拥塞时暂停发新查询
+	lastControlDropSeen uint64
+	controlBackoffUntil time.Time
 }
 
 type Poll struct {
@@ -154,7 +157,8 @@ func (qm *QueryManager) issueQuery() {
 	}
 
 	allPeers := qm.transport.GetAllPeers(qm.nodeID)
-	peers := samplePeersDeterministic(vrfSeed, qm.seqID, qm.config.K, allPeers)
+	fanout := qm.adaptiveQueryFanoutLocked()
+	peers := samplePeersDeterministic(vrfSeed, qm.seqID, fanout, allPeers)
 
 	// 判断自己是否是该区块的提议者
 	isProposer := (block.Header.Proposer == string(qm.nodeID))
@@ -302,11 +306,108 @@ func (qm *QueryManager) tryIssueQuery() {
 		return
 	}
 
+	// 2.1 控制面背压：队列拥塞时暂停发新查询，优先释放 chits
+	if qm.shouldBackoffForSenderPressureLocked() {
+		return
+	}
+
 	qm.lastIssueTime = time.Now()
 	qm.issueQuery()
 }
 
 // 返回 [0, 2^32-1] 范围内的安全随机 uint32
+func (qm *QueryManager) shouldBackoffForSenderPressureLocked() bool {
+	now := time.Now()
+	controlLen, controlCap, dropControl, ok := qm.senderControlQueueState()
+	if !ok {
+		return false
+	}
+
+	if dropControl > qm.lastControlDropSeen {
+		qm.lastControlDropSeen = dropControl
+		until := now.Add(2 * time.Second)
+		if until.After(qm.controlBackoffUntil) {
+			qm.controlBackoffUntil = until
+		}
+	}
+
+	if controlCap <= 0 {
+		controlCap = 64
+	}
+	usage := float64(controlLen) / float64(controlCap)
+	if usage >= 0.75 {
+		pause := 700 * time.Millisecond
+		if usage >= 0.9 {
+			pause = 1200 * time.Millisecond
+		}
+		until := now.Add(pause)
+		if until.After(qm.controlBackoffUntil) {
+			qm.controlBackoffUntil = until
+		}
+	}
+
+	return now.Before(qm.controlBackoffUntil)
+}
+
+func (qm *QueryManager) adaptiveQueryFanoutLocked() int {
+	k := qm.config.K
+	if k < 1 {
+		k = 1
+	}
+
+	controlLen, controlCap, _, ok := qm.senderControlQueueState()
+	if !ok {
+		return k
+	}
+	if controlCap <= 0 {
+		controlCap = 64
+	}
+
+	now := time.Now()
+	if now.Before(qm.controlBackoffUntil) {
+		if k > 4 {
+			return 4
+		}
+		return k
+	}
+
+	usage := float64(controlLen) / float64(controlCap)
+	switch {
+	case usage >= 0.9:
+		if k > 3 {
+			return 3
+		}
+	case usage >= 0.75:
+		if k > 5 {
+			return 5
+		}
+	case usage >= 0.5:
+		if k > 8 {
+			return 8
+		}
+	}
+	return k
+}
+
+func (qm *QueryManager) senderControlQueueState() (controlLen int, controlCap int, dropControl uint64, ok bool) {
+	rt, isReal := qm.transport.(*RealTransport)
+	if !isReal || rt == nil || rt.senderManager == nil || rt.senderManager.SendQueue == nil {
+		return 0, 0, 0, false
+	}
+
+	sq := rt.senderManager.SendQueue
+	controlLen = sq.ControlQueueLen()
+	controlCap = 64
+	for _, ch := range sq.GetChannelStats() {
+		if ch.Name == "controlChan" {
+			controlCap = ch.Cap
+			break
+		}
+	}
+	dropControl = sq.GetRuntimeStats().DropControlFull
+	return controlLen, controlCap, dropControl, true
+}
+
 func secureRandUint32() (uint32, error) {
 	var b [4]byte
 	if _, err := cryptorand.Read(b[:]); err != nil {

@@ -5,6 +5,7 @@ import (
 	"dex/logs"
 	"dex/stats"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -14,6 +15,20 @@ import (
 type latencyEntry struct {
 	Name    string
 	Summary stats.LatencySummary
+}
+
+type gcSnapshot struct {
+	takenAt       time.Time
+	numGC         uint32
+	pauseTotalNs  uint64
+	totalAlloc    uint64
+	heapAlloc     uint64
+	heapInuse     uint64
+	heapObjects   uint64
+	nextGC        uint64
+	mallocs       uint64
+	frees         uint64
+	gcCPUFraction float64
 }
 
 // 接口调用统计结构体
@@ -31,7 +46,13 @@ var globalAPIStats = &APICallStats{
 	NodeCallCounts: make(map[int]map[string]uint64),
 }
 
+var gcMonitorOnce sync.Once
+
 func monitorMetrics(nodes []*NodeInstance) {
+	gcMonitorOnce.Do(func() {
+		go monitorGCStats()
+	})
+
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
@@ -209,6 +230,71 @@ func monitorQueueStats(nodes []*NodeInstance) {
 			}
 		}
 		fmt.Println("========================================")
+	}
+}
+
+func captureGCSnapshot() gcSnapshot {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	return gcSnapshot{
+		takenAt:       time.Now(),
+		numGC:         ms.NumGC,
+		pauseTotalNs:  ms.PauseTotalNs,
+		totalAlloc:    ms.TotalAlloc,
+		heapAlloc:     ms.HeapAlloc,
+		heapInuse:     ms.HeapInuse,
+		heapObjects:   ms.HeapObjects,
+		nextGC:        ms.NextGC,
+		mallocs:       ms.Mallocs,
+		frees:         ms.Frees,
+		gcCPUFraction: ms.GCCPUFraction,
+	}
+}
+
+// monitorGCStats prints process-level GC pressure every 10s.
+func monitorGCStats() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	prev := captureGCSnapshot()
+	for range ticker.C {
+		cur := captureGCSnapshot()
+
+		seconds := cur.takenAt.Sub(prev.takenAt).Seconds()
+		if seconds <= 0 {
+			seconds = 1
+		}
+
+		allocRateMBs := float64(cur.totalAlloc-prev.totalAlloc) / seconds / (1024 * 1024)
+		heapAllocMB := float64(cur.heapAlloc) / (1024 * 1024)
+		heapInuseMB := float64(cur.heapInuse) / (1024 * 1024)
+		nextGCMB := float64(cur.nextGC) / (1024 * 1024)
+		heapDeltaMB := float64(int64(cur.heapAlloc)-int64(prev.heapAlloc)) / (1024 * 1024)
+		objDelta := int64(cur.heapObjects) - int64(prev.heapObjects)
+		mallocRate := float64(cur.mallocs-prev.mallocs) / seconds
+		freeRate := float64(cur.frees-prev.frees) / seconds
+		gcDelta := cur.numGC - prev.numGC
+		pauseDeltaMs := float64(cur.pauseTotalNs-prev.pauseTotalNs) / float64(time.Millisecond)
+
+		logs.Info(
+			"[GC] 10s alloc=%.1fMB/s heap=%.1fMB(inuse=%.1fMB,delta=%+.1fMB) objs=%d(delta=%+d) malloc=%.0f/s free=%.0f/s gc=%d pause=%.2fms nextGC=%.1fMB gcCPU=%.2f%% goroutines=%d",
+			allocRateMBs,
+			heapAllocMB, heapInuseMB, heapDeltaMB,
+			cur.heapObjects, objDelta,
+			mallocRate, freeRate,
+			gcDelta, pauseDeltaMs,
+			nextGCMB, cur.gcCPUFraction*100,
+			runtime.NumGoroutine(),
+		)
+
+		if allocRateMBs >= 256 || gcDelta >= 5 || pauseDeltaMs >= 200 {
+			logs.Warn(
+				"[GC] pressure alloc=%.1fMB/s gc=%d pause=%.2fms heap=%.1fMB objsDelta=%+d",
+				allocRateMBs, gcDelta, pauseDeltaMs, heapAllocMB, objDelta,
+			)
+		}
+
+		prev = cur
 	}
 }
 

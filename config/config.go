@@ -69,6 +69,7 @@ type DatabaseConfig struct {
 	BlockCacheSizeDB        int64 // 块缓存大小（字节），限制数据块缓存
 	NumMemtables            int   // MemTable 数量，减少内存占用
 	NumCompactors           int   // 后台压缩线程数，设为 1 可平抑内存峰值
+	VerkleKVLogEnabled      bool  // 是否启用 Verkle 每高度全量 KV 日志（高开销，仅排障使用）
 	VerkleDisableRootCommit bool  // 统一开关：禁用 Verkle 根承诺计算并跳过 Verkle 树写入（仅用于排查）
 }
 
@@ -212,7 +213,8 @@ func DefaultConfig() *Config {
 			IndexCacheSize:          16 << 20, // 降低到 16MB
 			BlockCacheSizeDB:        32 << 20, // 降低到 32MB
 			NumMemtables:            3,        // 减少 MemTable 数量
-			NumCompactors:           2,
+			NumCompactors:           0,
+			VerkleKVLogEnabled:      false,
 			VerkleDisableRootCommit: false,
 		},
 		Network: NetworkConfig{

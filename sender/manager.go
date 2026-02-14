@@ -324,7 +324,7 @@ func (sm *SenderManager) PushQuery(peerAddr string, pq *pb.PushQuery) {
 		Message:    msg,
 		MaxRetries: 2,
 		SendFunc:   doSendPushQuery,
-		Priority:   PriorityData, // 数据面优先级：PushQuery 携带完整区块，体积大
+		Priority:   PriorityImmediate, // 提升优先级，避免被 data 队列拥塞淹没
 	}
 	sm.SendQueue.Enqueue(task)
 }

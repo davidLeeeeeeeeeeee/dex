@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"context"
+	"errors"
 	"dex/interfaces"
 	"dex/logs"
 	"dex/pb"
@@ -1118,6 +1119,10 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 
 		// 尝试最终化该高度（失败会保持 lastAccepted 不变）
 		if err := sm.store.SetFinalized(nextHeight, chosen.ID); err != nil {
+			if errors.Is(err, ErrAlreadyFinalized) {
+				acceptedID, acceptedHeight = sm.store.GetLastAccepted()
+				continue
+			}
 			logs.Warn("[SyncManager] Failed to finalize block %s at height %d: %v", chosen.ID, nextHeight, err)
 			break
 		}

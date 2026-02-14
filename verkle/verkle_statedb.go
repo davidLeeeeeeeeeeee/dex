@@ -32,6 +32,7 @@ type KVUpdate struct {
 type VerkleConfig struct {
 	DataDir           string // BadgerDB 目录
 	Prefix            []byte // 命名空间前缀，默认 "verkle:"
+	EnableKVLog       bool   // 是否启用每高度全量 KV 日志（默认关闭）
 	DisableRootCommit bool   // 统一开关：跳过根承诺计算并跳过 Verkle 树写入（仅用于压测/排障）
 	Database          *config.DatabaseConfig
 }
@@ -44,7 +45,9 @@ type VerkleStateDB struct {
 	ownsDB  bool // 是否由本实例管理 DB 生命周期
 	prefix  []byte
 	dataDir string // 数据目录，用于存储 KV 日志
-	mu      sync.RWMutex
+	// Full KV logs are extremely allocation-heavy; keep disabled unless explicitly requested.
+	enableKVLog bool
+	mu          sync.RWMutex
 }
 
 // NewVerkleStateDB 创建 Verkle 状态存储（自己管理 BadgerDB）
@@ -72,7 +75,8 @@ func NewVerkleStateDB(cfg VerkleConfig) (*VerkleStateDB, error) {
 		opts.MaxTableSize = dbCfg.BaseTableSize
 	}
 	opts.NumMemtables = dbCfg.NumMemtables
-	opts.NumCompactors = dbCfg.NumCompactors
+	// Real node path: disable compactor workers to reduce background CPU spikes.
+	opts.NumCompactors = 0
 	opts.BlockCacheSize = dbCfg.BlockCacheSizeDB
 	opts.IndexCacheSize = dbCfg.IndexCacheSize
 	// 使用 FileIO 模式减少 mmap 内存占用
@@ -108,6 +112,7 @@ func NewVerkleStateDBWithDB(db *badger.DB, cfg VerkleConfig) (*VerkleStateDB, er
 		DisableVersioning: true,
 	})
 	disableRootCommit := cfg.DisableRootCommit || envBool("VERKLE_DISABLE_ROOT_COMMIT")
+	enableKVLog := cfg.EnableKVLog || envBool("VERKLE_ENABLE_KV_LOG")
 	tree := NewVerkleTreeWithOptions(store, VerkleTreeOptions{
 		DisableRootCommit: disableRootCommit,
 	})
@@ -121,12 +126,13 @@ func NewVerkleStateDBWithDB(db *badger.DB, cfg VerkleConfig) (*VerkleStateDB, er
 	}
 
 	return &VerkleStateDB{
-		tree:    tree,
-		store:   store,
-		db:      db,
-		ownsDB:  false,
-		prefix:  prefix,
-		dataDir: cfg.DataDir,
+		tree:        tree,
+		store:       store,
+		db:          db,
+		ownsDB:      false,
+		prefix:      prefix,
+		dataDir:     cfg.DataDir,
+		enableKVLog: enableKVLog,
 	}, nil
 }
 
@@ -353,7 +359,7 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 
 	// ========== KV 日志记录 ==========
 	// 将每个高度提交的完整 KV list 存储为 txt 文件，用于排查多节点状态不一致
-	if s.db.dataDir != "" {
+	if s.db.enableKVLog && s.db.dataDir != "" {
 		s.writeKVLog(height, sortedKeys, sortedVals, deletedKeys)
 	}
 

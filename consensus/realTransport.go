@@ -418,7 +418,15 @@ func (t *RealTransport) Receive() <-chan types.Message {
 }
 
 func (t *RealTransport) Broadcast(msg types.Message, peers []types.NodeID) {
+	// 共识查询消息改为同步发起，给发送端提供自然背压，避免每个 peer 启 goroutine 造成风暴。
+	isConsensusQuery := msg.Type == types.MsgPullQuery || msg.Type == types.MsgPushQuery
 	for _, peer := range peers {
+		if isConsensusQuery {
+			if err := t.Send(peer, msg); err != nil {
+				logs.Debug("[RealTransport] Failed to send to peer %s: %v", peer, err)
+			}
+			continue
+		}
 		go func(p types.NodeID) {
 			logs.SetThreadNodeContext(string(t.nodeID))
 			if err := t.Send(p, msg); err != nil {

@@ -112,7 +112,8 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 		opts.MaxTableSize = cfg.Database.BaseTableSize
 	}
 	opts.NumMemtables = cfg.Database.NumMemtables
-	opts.NumCompactors = cfg.Database.NumCompactors
+	// Real node path: disable compactor workers to reduce background CPU spikes.
+	opts.NumCompactors = 0
 	opts.BlockCacheSize = cfg.Database.BlockCacheSizeDB
 	opts.IndexCacheSize = cfg.Database.IndexCacheSize
 	// 使用 FileIO 模式减少 mmap 内存占用
@@ -146,6 +147,7 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 	verkleCfg := verkle.VerkleConfig{
 		DataDir:           filepath.Join(path, "verkle_state"),
 		Prefix:            []byte("verkle:"),
+		EnableKVLog:       cfg.Database.VerkleKVLogEnabled,
 		DisableRootCommit: cfg.Database.VerkleDisableRootCommit,
 		Database:          &cfg.Database,
 	}

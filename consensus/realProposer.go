@@ -29,7 +29,7 @@ type RealBlockProposer struct {
 func NewRealBlockProposer(dbManager *db.Manager, pool *txpool.TxPool) interfaces.BlockProposer {
 	cfg := config.DefaultConfig()
 	return &RealBlockProposer{
-		maxBlocksPerHeight:  3,
+		maxBlocksPerHeight:  2,
 		maxTxsPerBlock:      cfg.TxPool.MaxTxsPerBlock,
 		maxTxsLimitPerBlock: cfg.TxPool.MaxTxsLimitPerBlock,
 		pool:                pool, // 使用注入的实例
@@ -43,15 +43,17 @@ func NewRealBlockProposer(dbManager *db.Manager, pool *txpool.TxPool) interfaces
 func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, proposer types.NodeID, window int) (*types.Block, error) {
 	// 1. 从TxPool获取待打包的交易
 	pendingTxs := p.pool.GetPendingTxs()
+	pendingCount := len(pendingTxs)
 	// 如果没有交易，且当前window较小，不生成区块（除非强制出空块维持活性）
 	// 这里我们在ShouldPropose已经做了控制，如果进了这里说明 permitted to propose empty block
-	if len(pendingTxs) == 0 {
+	if pendingCount == 0 {
 		logs.Debug("[RealBlockProposer] Generating empty block at height %d window %d", height, window)
 	}
 
 	// 限制交易数量，最高 5000 笔
-	if len(pendingTxs) > p.maxTxsLimitPerBlock {
-		pendingTxs = pendingTxs[:p.maxTxsLimitPerBlock]
+	effectiveLimit := p.adaptiveTxLimit(pendingCount)
+	if pendingCount > effectiveLimit {
+		pendingTxs = pendingTxs[:effectiveLimit]
 	}
 
 	// 2. 计算交易哈希（提案者决定交易顺序，不再排序）
@@ -145,6 +147,13 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, curre
 
 	// 检查TxPool中是否有足够的待处理交易
 	pendingCount := len(p.pool.GetPendingAnyTx())
+	maxTxsPerBlock := p.maxTxsPerBlock
+	if maxTxsPerBlock <= 0 {
+		maxTxsPerBlock = 2500
+	}
+	if currentBlocks > 0 && window > 0 && pendingCount >= maxTxsPerBlock {
+		return false
+	}
 	// 策略修改：
 	// 1. 如果有交易，任何window都可以出块
 	// 2. 如果没交易，只有在 window >= 4 时才允许出空块（维持活性）
@@ -208,6 +217,34 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, curre
 }
 
 // cacheBlock 临时缓存区块，等待最终化
+func (p *RealBlockProposer) adaptiveTxLimit(pendingCount int) int {
+	limit := p.maxTxsLimitPerBlock
+	if p.maxTxsPerBlock > 0 && (limit <= 0 || p.maxTxsPerBlock < limit) {
+		limit = p.maxTxsPerBlock
+	}
+	if limit <= 0 {
+		limit = 2500
+	}
+
+	floor := 256
+	switch {
+	case pendingCount >= limit*4:
+		limit = maxInt(limit/4, floor)
+	case pendingCount >= limit*2:
+		limit = maxInt(limit/2, floor)
+	case pendingCount >= (limit*3)/2:
+		limit = maxInt((limit*3)/4, floor)
+	}
+	return limit
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 var blockCache = make(map[string]*pb.Block)
 var blockCacheHeights = make(map[string]uint64) // 记录每个区块的高度，用于清理
 var blockCacheMu sync.RWMutex

@@ -6,6 +6,7 @@ import (
 	"dex/logs"
 	"dex/pb"
 	"dex/types"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -317,6 +318,9 @@ func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string, chits *type
 		return
 	}
 	if err := e.store.SetFinalized(height, blockID); err != nil {
+		if errors.Is(err, ErrAlreadyFinalized) {
+			return
+		}
 		logs.Warn("[Engine] Finalize failed: block %s at height %d: %v", blockID, height, err)
 		return
 	}

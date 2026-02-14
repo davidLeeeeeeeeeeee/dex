@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
@@ -26,6 +28,111 @@ var (
 	orderPriceMinKey67 = strings.Repeat("0", 67)
 	orderPriceMaxKey67 = strings.Repeat("9", 67)
 )
+
+const (
+	vmProbeReportInterval  = 10 * time.Second
+	vmProbeSlowPreExecute  = 1500 * time.Millisecond
+	vmProbeSlowCommitBlock = 1500 * time.Millisecond
+	vmProbeSlowApplyResult = 1200 * time.Millisecond
+)
+
+type vmExecutorProbeStats struct {
+	preBlocks         atomic.Uint64
+	preTxSeen         atomic.Uint64
+	preTxExecuted     atomic.Uint64
+	prePairs          atomic.Uint64
+	preDiffOps        atomic.Uint64
+	preWSOps          atomic.Uint64
+	preDryRunErrors   atomic.Uint64
+	preTotalNs        atomic.Uint64
+	preRebuildNs      atomic.Uint64
+	preAppliedCheckNs atomic.Uint64
+	preDryRunNs       atomic.Uint64
+	preApplyWSNs      atomic.Uint64
+	preWitnessNs      atomic.Uint64
+	preRewardsNs      atomic.Uint64
+	preDiffNs         atomic.Uint64
+
+	commitCalls    atomic.Uint64
+	commitTotalNs  atomic.Uint64
+	commitReexecNs atomic.Uint64
+	commitApplyNs  atomic.Uint64
+
+	applyCalls      atomic.Uint64
+	applyWriteOps   atomic.Uint64
+	applyAccountOps atomic.Uint64
+	applyStateOps   atomic.Uint64
+	applyTotalNs    atomic.Uint64
+	applyDiffNs     atomic.Uint64
+	applyStakeNs    atomic.Uint64
+	applySyncNs     atomic.Uint64
+	applyFlushNs    atomic.Uint64
+
+	lastReportAtNs atomic.Int64
+}
+
+var vmProbe vmExecutorProbeStats
+
+func addProbeDuration(dst *atomic.Uint64, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	dst.Add(uint64(d))
+}
+
+func avgProbeDuration(totalNs, count uint64) time.Duration {
+	if count == 0 {
+		return 0
+	}
+	return time.Duration(totalNs / count)
+}
+
+func maybeLogVMProbeSummary(now time.Time) {
+	nowNs := now.UnixNano()
+	last := vmProbe.lastReportAtNs.Load()
+	if last != 0 && nowNs-last < int64(vmProbeReportInterval) {
+		return
+	}
+	if !vmProbe.lastReportAtNs.CompareAndSwap(last, nowNs) {
+		return
+	}
+
+	preBlocks := vmProbe.preBlocks.Load()
+	commitCalls := vmProbe.commitCalls.Load()
+	applyCalls := vmProbe.applyCalls.Load()
+
+	logs.Info(
+		"[VM][Probe] pre{blocks=%d avg=%s rebuild=%s applied=%s dryrun=%s applyWS=%s witness=%s rewards=%s diff=%s txSeen=%d txExec=%d pairs=%d wsOps=%d diffOps=%d dryErr=%d} commit{calls=%d avg=%s reexec=%s apply=%s} apply{calls=%d avg=%s diffLoop=%s stake=%s sync=%s flush=%s writeOps=%d accountOps=%d stateOps=%d}",
+		preBlocks,
+		avgProbeDuration(vmProbe.preTotalNs.Load(), preBlocks),
+		avgProbeDuration(vmProbe.preRebuildNs.Load(), preBlocks),
+		avgProbeDuration(vmProbe.preAppliedCheckNs.Load(), preBlocks),
+		avgProbeDuration(vmProbe.preDryRunNs.Load(), preBlocks),
+		avgProbeDuration(vmProbe.preApplyWSNs.Load(), preBlocks),
+		avgProbeDuration(vmProbe.preWitnessNs.Load(), preBlocks),
+		avgProbeDuration(vmProbe.preRewardsNs.Load(), preBlocks),
+		avgProbeDuration(vmProbe.preDiffNs.Load(), preBlocks),
+		vmProbe.preTxSeen.Load(),
+		vmProbe.preTxExecuted.Load(),
+		vmProbe.prePairs.Load(),
+		vmProbe.preWSOps.Load(),
+		vmProbe.preDiffOps.Load(),
+		vmProbe.preDryRunErrors.Load(),
+		commitCalls,
+		avgProbeDuration(vmProbe.commitTotalNs.Load(), commitCalls),
+		avgProbeDuration(vmProbe.commitReexecNs.Load(), commitCalls),
+		avgProbeDuration(vmProbe.commitApplyNs.Load(), commitCalls),
+		applyCalls,
+		avgProbeDuration(vmProbe.applyTotalNs.Load(), applyCalls),
+		avgProbeDuration(vmProbe.applyDiffNs.Load(), applyCalls),
+		avgProbeDuration(vmProbe.applyStakeNs.Load(), applyCalls),
+		avgProbeDuration(vmProbe.applySyncNs.Load(), applyCalls),
+		avgProbeDuration(vmProbe.applyFlushNs.Load(), applyCalls),
+		vmProbe.applyWriteOps.Load(),
+		vmProbe.applyAccountOps.Load(),
+		vmProbe.applyStateOps.Load(),
+	)
+}
 
 type pairOrderPriceBounds struct {
 	hasBuy          bool
@@ -218,7 +325,68 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 	return x.preExecuteBlock(b, true)
 }
 
-func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, error) {
+func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult, err error) {
+	startAt := time.Now()
+	var (
+		durRebuild      time.Duration
+		durAppliedCheck time.Duration
+		durDryRun       time.Duration
+		durApplyWS      time.Duration
+		durWitness      time.Duration
+		durRewards      time.Duration
+		durDiff         time.Duration
+		txSeen          int
+		txExecuted      int
+		wsOps           int
+		dryRunErrors    int
+		diffOps         int
+		pairCount       int
+	)
+	defer func() {
+		total := time.Since(startAt)
+		height := uint64(0)
+		hash := ""
+		valid := false
+		reason := ""
+		if b != nil {
+			height = b.Header.Height
+			hash = b.BlockHash
+		}
+		if res != nil {
+			valid = res.Valid
+			reason = res.Reason
+			diffOps = len(res.Diff)
+		}
+		if err != nil {
+			reason = err.Error()
+		}
+
+		vmProbe.preBlocks.Add(1)
+		vmProbe.preTxSeen.Add(uint64(txSeen))
+		vmProbe.preTxExecuted.Add(uint64(txExecuted))
+		vmProbe.prePairs.Add(uint64(pairCount))
+		vmProbe.preDiffOps.Add(uint64(diffOps))
+		vmProbe.preWSOps.Add(uint64(wsOps))
+		vmProbe.preDryRunErrors.Add(uint64(dryRunErrors))
+		addProbeDuration(&vmProbe.preTotalNs, total)
+		addProbeDuration(&vmProbe.preRebuildNs, durRebuild)
+		addProbeDuration(&vmProbe.preAppliedCheckNs, durAppliedCheck)
+		addProbeDuration(&vmProbe.preDryRunNs, durDryRun)
+		addProbeDuration(&vmProbe.preApplyWSNs, durApplyWS)
+		addProbeDuration(&vmProbe.preWitnessNs, durWitness)
+		addProbeDuration(&vmProbe.preRewardsNs, durRewards)
+		addProbeDuration(&vmProbe.preDiffNs, durDiff)
+
+		if total >= vmProbeSlowPreExecute {
+			logs.Warn(
+				"[VM][Probe][SlowPreExecute] height=%d hash=%s total=%s rebuild=%s applied=%s dryrun=%s applyWS=%s witness=%s rewards=%s diff=%s txSeen=%d txExec=%d pairs=%d wsOps=%d diffOps=%d dryErr=%d valid=%v reason=%s",
+				height, hash, total, durRebuild, durAppliedCheck, durDryRun, durApplyWS, durWitness, durRewards, durDiff,
+				txSeen, txExecuted, pairCount, wsOps, diffOps, dryRunErrors, valid, reason,
+			)
+		}
+		maybeLogVMProbeSummary(time.Now())
+	}()
+
 	if b == nil {
 		return nil, ErrNilBlock
 	}
@@ -244,10 +412,13 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 
 	// Step 1: 预扫描区块，收集所有交易对
 	pairs := collectPairsFromBlock(b)
+	pairCount = len(pairs)
 	pairOrderBounds := collectOrderPriceBoundsFromBlock(b)
 
 	// Step 2 & 3: 一次性重建所有订单簿
+	rebuildAt := time.Now()
 	pairBooks, err := x.rebuildOrderBooksForPairs(pairs, pairOrderBounds)
+	durRebuild += time.Since(rebuildAt)
 	if err != nil {
 		return &SpecResult{
 			BlockID:  b.BlockHash,
@@ -263,6 +434,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		if tx == nil {
 			continue
 		}
+		txSeen++
 
 		txID := tx.GetTxId()
 		if txID != "" {
@@ -274,7 +446,9 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 
 			applied, ok := appliedCache[txID]
 			if !ok {
+				appliedCheckAt := time.Now()
 				applied = x.isTxApplied(txID)
+				durAppliedCheck += time.Since(appliedCheckAt)
 				appliedCache[txID] = applied
 			}
 			if applied {
@@ -282,6 +456,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 				continue
 			}
 		}
+		txExecuted++
 		// 提取交易类型
 		kind, err := x.KFn(tx)
 		if err != nil {
@@ -329,8 +504,11 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		snapshot := sv.Snapshot()
 
 		// 执行交易
+		dryRunAt := time.Now()
 		ws, rc, err := h.DryRun(tx, sv)
+		durDryRun += time.Since(dryRunAt)
 		if err != nil {
+			dryRunErrors++
 			// 如果 Handler 返回了 Receipt，说明是一个可以标记为失败的“业务错误”（如余额不足）
 			// 这种情况下不应挂掉整个区块，而是记录失败状态并继续
 			if rc != nil {
@@ -372,7 +550,9 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		}
 
 		// 将ws应用到overlay（如果DryRun没有直接写sv）
+		applyWSAt := time.Now()
 		for _, w := range ws {
+			wsOps++
 			if w.Del {
 				sv.Del(w.Key)
 			} else {
@@ -386,6 +566,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 				}
 			}
 		}
+		durApplyWS += time.Since(applyWSAt)
 		// 填充 Receipt 元数据
 		// 使用区块时间戳而非本地时间，确保多节点确定性
 		if rc != nil {
@@ -409,11 +590,15 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 		)
 	}
 
+	witnessAt := time.Now()
 	if err := x.applyWitnessFinalizedEvents(sv, b.Header.Height); err != nil {
+		durWitness += time.Since(witnessAt)
 		return nil, err
 	}
+	durWitness += time.Since(witnessAt)
 
 	// ========== 区块奖励与手续费分发 ==========
+	rewardAt := time.Now()
 	if b.Header.Miner != "" {
 		// 1. 计算区块基础奖励（系统增发）
 		blockReward := CalculateBlockReward(b.Header.Height, DefaultBlockRewardParams)
@@ -498,13 +683,18 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 	}
 
 	// 创建执行结果
-	res := &SpecResult{
+	durRewards += time.Since(rewardAt)
+
+	diffAt := time.Now()
+	diff := sv.Diff()
+	durDiff += time.Since(diffAt)
+	res = &SpecResult{
 		BlockID:  b.BlockHash,
 		ParentID: b.Header.PrevBlockHash,
 		Height:   b.Header.Height,
 		Valid:    true,
 		Receipts: receipts,
-		Diff:     sv.Diff(),
+		Diff:     diff,
 	}
 
 	// 缓存结果
@@ -513,7 +703,34 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (*SpecResult, err
 }
 
 // CommitFinalizedBlock 最终化提交（写入数据库）
-func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
+func (x *Executor) CommitFinalizedBlock(b *pb.Block) (err error) {
+	startAt := time.Now()
+	var (
+		durReexec time.Duration
+		durApply  time.Duration
+	)
+	defer func() {
+		total := time.Since(startAt)
+		height := uint64(0)
+		hash := ""
+		if b != nil {
+			height = b.Header.Height
+			hash = b.BlockHash
+		}
+		vmProbe.commitCalls.Add(1)
+		addProbeDuration(&vmProbe.commitTotalNs, total)
+		addProbeDuration(&vmProbe.commitReexecNs, durReexec)
+		addProbeDuration(&vmProbe.commitApplyNs, durApply)
+
+		if total >= vmProbeSlowCommitBlock {
+			logs.Warn(
+				"[VM][Probe][SlowCommit] height=%d hash=%s total=%s reexec=%s apply=%s err=%v",
+				height, hash, total, durReexec, durApply, err,
+			)
+		}
+		maybeLogVMProbeSummary(time.Now())
+	}()
+
 	if b == nil {
 		return ErrNilBlock
 	}
@@ -531,7 +748,9 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 	}
 
 	// 缓存缺失：重新执行
+	reexecAt := time.Now()
 	res, err := x.preExecuteBlock(b, false)
+	durReexec += time.Since(reexecAt)
 	if err != nil {
 		return fmt.Errorf("re-execute block failed: %v", err)
 	}
@@ -540,12 +759,51 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) error {
 		return fmt.Errorf("block invalid: %s", res.Reason)
 	}
 
-	return x.applyResult(res, b)
+	applyAt := time.Now()
+	err = x.applyResult(res, b)
+	durApply += time.Since(applyAt)
+	return err
 }
 
 // applyResult 应用执行结果到数据库（统一提交入口）
 // 这是唯一的最终化提交点，所有状态变化都在这里处理
 func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
+	startAt := time.Now()
+	var (
+		durDiffLoop  time.Duration
+		durStake     time.Duration
+		durStateSync time.Duration
+		durFlush     time.Duration
+		writeOps     int
+		accountOps   int
+		stateOps     int
+	)
+	defer func() {
+		total := time.Since(startAt)
+		height := uint64(0)
+		hash := ""
+		if b != nil {
+			height = b.Header.Height
+			hash = b.BlockHash
+		}
+		vmProbe.applyCalls.Add(1)
+		vmProbe.applyWriteOps.Add(uint64(writeOps))
+		vmProbe.applyAccountOps.Add(uint64(accountOps))
+		vmProbe.applyStateOps.Add(uint64(stateOps))
+		addProbeDuration(&vmProbe.applyTotalNs, total)
+		addProbeDuration(&vmProbe.applyDiffNs, durDiffLoop)
+		addProbeDuration(&vmProbe.applyStakeNs, durStake)
+		addProbeDuration(&vmProbe.applySyncNs, durStateSync)
+		addProbeDuration(&vmProbe.applyFlushNs, durFlush)
+
+		if total >= vmProbeSlowApplyResult {
+			logs.Warn(
+				"[VM][Probe][SlowApply] height=%d hash=%s total=%s diffLoop=%s stake=%s sync=%s flush=%s writeOps=%d accountOps=%d stateOps=%d err=%v",
+				height, hash, total, durDiffLoop, durStake, durStateSync, durFlush, writeOps, accountOps, stateOps, err,
+			)
+		}
+		maybeLogVMProbeSummary(time.Now())
+	}()
 	// ========== 第一步：检查幂等性 ==========
 	// 防止同一区块被重复提交
 	if committed, blockHash := x.IsBlockCommitted(b.Header.Height); committed {
@@ -561,6 +819,8 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	stateDBUpdates := make([]*WriteOp, 0) // 用于收集需要同步到 StateDB 的更新
 	accountUpdates := make([]*WriteOp, 0) // 用于收集账户更新，用于更新 stake index
 
+	writeOps = len(res.Diff)
+	diffLoopAt := time.Now()
 	for i := range res.Diff {
 		w := &res.Diff[i] // 使用指针，因为 WriteOp 的方法是指针接收器
 		// 第一步：如果是账户更新，标记为需要更新 stake index
@@ -583,6 +843,11 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	// ========== 更新 Stake Index ==========
 	// ========== 第三步：更新 Stake Index ==========
+	durDiffLoop += time.Since(diffLoopAt)
+	accountOps = len(accountUpdates)
+	stateOps = len(stateDBUpdates)
+
+	stakeAt := time.Now()
 	if len(accountUpdates) > 0 {
 		// 检查 DBManager 是否实现了 UpdateStakeIndex 接口
 		type StakeIndexUpdater interface {
@@ -632,13 +897,16 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 			}
 		}
 	}
+	durStake += time.Since(stakeAt)
 
 	// ========== 同步到 StateDB ==========
 	// ========== 第四步：同步到 StateDB ==========
 	// 统一处理所有需要同步到 StateDB 的数据
 	// 即使没有更新，也调用 ApplyStateUpdate 以确认当前高度的状态根
+	stateSyncAt := time.Now()
 	sess, err := x.DB.NewSession()
 	if err != nil {
+		durStateSync += time.Since(stateSyncAt)
 		return fmt.Errorf("failed to open db session: %v", err)
 	}
 	defer sess.Close()
@@ -653,6 +921,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	} else if stateRoot != nil {
 		b.Header.StateRoot = stateRoot
 	}
+	durStateSync += time.Since(stateSyncAt)
 
 	// ========== 第四步：写入交易处理状态 ==========
 	for _, rc := range res.Receipts {
@@ -747,7 +1016,10 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 
 	// 强制刷盘，确保数据落盘成功后再返回给上层共识模块
-	return x.DB.ForceFlush()
+	flushAt := time.Now()
+	err = x.DB.ForceFlush()
+	durFlush += time.Since(flushAt)
+	return err
 }
 
 // IsBlockCommitted 检查指定高度的区块是否已经提交过

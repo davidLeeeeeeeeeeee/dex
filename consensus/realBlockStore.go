@@ -12,12 +12,15 @@ import (
 	"dex/vm"
 	"dex/witness"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+var ErrAlreadyFinalized = errors.New("already finalized")
 
 // RealBlockStore 使用数据库的真实区块存储实现
 type RealBlockStore struct {
@@ -403,7 +406,7 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 		if finalized.ID == blockID {
 			s.mu.Unlock()
 			logs.Debug("[RealBlockStore] Skip duplicate finalization: height=%d block=%s", height, blockID)
-			return nil
+			return ErrAlreadyFinalized
 		}
 		s.mu.Unlock()
 		err := fmt.Errorf("height %d already finalized by %s", height, finalized.ID)
@@ -477,11 +480,8 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 			logs.Error("[RealBlockStore] Failed to save finalized block %s: %v", block.ID, err)
 			return fmt.Errorf("save finalized block failed: %w", err)
 		}
-		// 强一致要求：SaveBlock 入队后必须立即刷盘，避免 finalized 后短时间查不到 block。
-		if err := s.dbManager.ForceFlush(); err != nil {
-			logs.Error("[RealBlockStore] ForceFlush after SaveBlock failed for block %s: %v", block.ID, err)
-			return fmt.Errorf("force flush after save block failed: %w", err)
-		}
+		// 避免每块都强制刷盘导致共识主路径阻塞，改为按策略批量/间隔刷盘。
+		s.maybeForceFlushAfterFinalize()
 	} else {
 		// 兜底：若缓存缺失，至少确认区块已在 DB 中可见；否则不能推进 finalized。
 		if _, err := s.dbManager.GetBlockByID(blockID); err != nil {
