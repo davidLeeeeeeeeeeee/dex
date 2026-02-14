@@ -1,6 +1,7 @@
 package verkle
 
 import (
+	"bytes"
 	"dex/config"
 	"encoding/hex"
 	"errors"
@@ -277,7 +278,25 @@ func (s *VerkleStateDBSession) GetKV(key string) ([]byte, error) {
 	return s.sess.GetKV([]byte(key))
 }
 
-func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error {
+func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) (err error) {
+	startAt := time.Now()
+	var (
+		durSort     time.Duration
+		durPrepare  time.Duration
+		durLarge    time.Duration
+		durDelete   time.Duration
+		durTree     time.Duration
+		durRootSave time.Duration
+	)
+	defer func() {
+		total := time.Since(startAt)
+		if total >= 1200*time.Millisecond {
+			fmt.Printf(
+				"[Verkle][Probe][SlowApplyUpdate] height=%d total=%s sort=%s prepare=%s large=%s delete=%s tree=%s rootSave=%s kv=%d err=%v\n",
+				height, total, durSort, durPrepare, durLarge, durDelete, durTree, durRootSave, len(kvs), err,
+			)
+		}
+	}()
 	// ========== 设计变更说明 ==========
 	// 之前：每个区块执行前都尝试同步父区块状态（SyncFromStateRootWithSession）
 	//       问题：当树变大时，BadgerDB 事务过大导致同步失败，造成各节点内存树不一致
@@ -305,6 +324,7 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 
 	var processedEntries []processedEntry
 	if len(keys) > 0 {
+		sortAt := time.Now()
 		// 对 keys 排序以确保确定性顺序
 		type kvPair struct {
 			key []byte
@@ -315,7 +335,7 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 			pairs[i] = kvPair{key: keys[i], val: vals[i]}
 		}
 		sort.Slice(pairs, func(i, j int) bool {
-			return string(pairs[i].key) < string(pairs[j].key)
+			return bytes.Compare(pairs[i].key, pairs[j].key) < 0
 		})
 
 		sortedKeys = make([][]byte, len(pairs))
@@ -324,38 +344,49 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 			sortedKeys[i] = p.key
 			sortedVals[i] = p.val
 		}
+		durSort += time.Since(sortAt)
 	}
 
 	// 先完成大值独立落库，再触碰主事务，降低 Badger 乐观冲突概率。
 	if len(sortedKeys) > 0 {
 		var largeValues []largeValueEntry
-		var err error
+		prepareAt := time.Now()
 		processedEntries, largeValues, err = s.db.tree.prepareProcessedEntries(sortedKeys, sortedVals)
+		durPrepare += time.Since(prepareAt)
 		if err != nil {
 			return err
 		}
+		largeAt := time.Now()
 		if err := s.db.tree.writeLargeValues(largeValues, Version(height)); err != nil {
+			durLarge += time.Since(largeAt)
 			return fmt.Errorf("failed to prewrite large values: %w", err)
 		}
+		durLarge += time.Since(largeAt)
 	}
 
 	// 删除操作在主事务内执行，保持原有语义（先删后设）。
+	deleteAt := time.Now()
 	for _, deletedKey := range deletedKeys {
 		_, err := s.db.tree.DeleteWithSession(s.sess, []byte(deletedKey), Version(height))
 		if err != nil && !errors.Is(err, ErrNotFound) {
+			durDelete += time.Since(deleteAt)
 			return err
 		}
 	}
+	durDelete += time.Since(deleteAt)
 
+	treeAt := time.Now()
 	if len(sortedKeys) > 0 {
 		newRoot, err := s.db.tree.updateWithSessionProcessed(s.sess, processedEntries, Version(height))
 		if err != nil {
+			durTree += time.Since(treeAt)
 			return err
 		}
 		s.lastRoot = newRoot
 	} else {
 		s.lastRoot = s.db.tree.Root()
 	}
+	durTree += time.Since(treeAt)
 
 	// ========== KV 日志记录 ==========
 	// 将每个高度提交的完整 KV list 存储为 txt 文件，用于排查多节点状态不一致
@@ -368,10 +399,13 @@ func (s *VerkleStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error
 	}
 
 	// 保存根承诺到 BadgerDB
-	err := s.sess.Set(s.db.rootKey(Version(height)), s.lastRoot, Version(height))
+	rootSaveAt := time.Now()
+	err = s.sess.Set(s.db.rootKey(Version(height)), s.lastRoot, Version(height))
 	if err != nil {
+		durRootSave += time.Since(rootSaveAt)
 		return fmt.Errorf("failed to save root hash in session: %w", err)
 	}
+	durRootSave += time.Since(rootSaveAt)
 
 	return nil
 

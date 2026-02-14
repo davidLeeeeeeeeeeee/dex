@@ -391,10 +391,14 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 		return nil, ErrNilBlock
 	}
 
+	baseCommittedHeight, baseCommittedHash := x.resolveBaseCommittedState(b)
+
 	// 检查缓存
 	if useCache {
 		if cached, ok := x.Cache.Get(b.BlockHash); ok {
-			return cached, nil
+			if x.isCachedSpecUsable(b, cached) {
+				return cached, nil
+			}
 		}
 	}
 
@@ -407,6 +411,11 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 	receipts := make([]*Receipt, 0, len(b.Body))
 	seenTxIDs := make(map[string]struct{}, len(b.Body))
 	appliedCache := make(map[string]bool, len(b.Body))
+	appliedCheckAt := time.Now()
+	for txID, applied := range x.prefetchAppliedTxStatus(b) {
+		appliedCache[txID] = applied
+	}
+	durAppliedCheck += time.Since(appliedCheckAt)
 	skippedDupInBlock := 0
 	skippedApplied := 0
 
@@ -689,12 +698,14 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 	diff := sv.Diff()
 	durDiff += time.Since(diffAt)
 	res = &SpecResult{
-		BlockID:  b.BlockHash,
-		ParentID: b.Header.PrevBlockHash,
-		Height:   b.Header.Height,
-		Valid:    true,
-		Receipts: receipts,
-		Diff:     diff,
+		BlockID:             b.BlockHash,
+		ParentID:            b.Header.PrevBlockHash,
+		Height:              b.Header.Height,
+		BaseCommittedHeight: baseCommittedHeight,
+		BaseCommittedHash:   baseCommittedHash,
+		Valid:               true,
+		Receipts:            receipts,
+		Diff:                diff,
 	}
 
 	// 缓存结果
@@ -708,6 +719,7 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) (err error) {
 	var (
 		durReexec time.Duration
 		durApply  time.Duration
+		usedCache bool
 	)
 	defer func() {
 		total := time.Since(startAt)
@@ -724,8 +736,8 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) (err error) {
 
 		if total >= vmProbeSlowCommitBlock {
 			logs.Warn(
-				"[VM][Probe][SlowCommit] height=%d hash=%s total=%s reexec=%s apply=%s err=%v",
-				height, hash, total, durReexec, durApply, err,
+				"[VM][Probe][SlowCommit] height=%d hash=%s total=%s reexec=%s apply=%s cacheHit=%v err=%v",
+				height, hash, total, durReexec, durApply, usedCache, err,
 			)
 		}
 		maybeLogVMProbeSummary(time.Now())
@@ -748,9 +760,16 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) (err error) {
 	}
 
 	// 缓存缺失：重新执行
-	reexecAt := time.Now()
-	res, err := x.preExecuteBlock(b, false)
-	durReexec += time.Since(reexecAt)
+	var res *SpecResult
+	if cached, ok := x.Cache.Get(b.BlockHash); ok && x.isCachedSpecUsable(b, cached) {
+		res = cached
+		usedCache = true
+	}
+	if res == nil {
+		reexecAt := time.Now()
+		res, err = x.preExecuteBlock(b, false)
+		durReexec += time.Since(reexecAt)
+	}
 	if err != nil {
 		return fmt.Errorf("re-execute block failed: %v", err)
 	}
@@ -1066,6 +1085,93 @@ func (x *Executor) GetTransactionStatus(txID string) (string, error) {
 		return "PENDING", nil
 	}
 	return string(status), nil
+}
+
+func (x *Executor) resolveBaseCommittedState(b *pb.Block) (uint64, string) {
+	if b == nil || b.Header.Height == 0 {
+		return 0, ""
+	}
+	parentHeight := b.Header.Height - 1
+	if ok, hash := x.IsBlockCommitted(parentHeight); ok {
+		return parentHeight, hash
+	}
+	return 0, ""
+}
+
+func (x *Executor) isCachedSpecUsable(b *pb.Block, cached *SpecResult) bool {
+	if b == nil || cached == nil {
+		return false
+	}
+	if !cached.Valid {
+		return false
+	}
+	if cached.BlockID != b.BlockHash || cached.ParentID != b.Header.PrevBlockHash || cached.Height != b.Header.Height {
+		return false
+	}
+
+	baseHeight, baseHash := x.resolveBaseCommittedState(b)
+	if baseHeight == 0 && baseHash == "" {
+		return cached.BaseCommittedHeight == 0 && cached.BaseCommittedHash == ""
+	}
+	return cached.BaseCommittedHeight == baseHeight && cached.BaseCommittedHash == baseHash
+}
+
+func collectUniqueTxIDsFromBlock(b *pb.Block) []string {
+	if b == nil || len(b.Body) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(b.Body))
+	txIDs := make([]string, 0, len(b.Body))
+	for _, tx := range b.Body {
+		if tx == nil {
+			continue
+		}
+		txID := tx.GetTxId()
+		if txID == "" {
+			continue
+		}
+		if _, ok := seen[txID]; ok {
+			continue
+		}
+		seen[txID] = struct{}{}
+		txIDs = append(txIDs, txID)
+	}
+	return txIDs
+}
+
+func (x *Executor) prefetchAppliedTxStatus(b *pb.Block) map[string]bool {
+	txIDs := collectUniqueTxIDsFromBlock(b)
+	applied := make(map[string]bool, len(txIDs))
+	if len(txIDs) == 0 {
+		return applied
+	}
+
+	fetchKeys := make([]string, 0, len(txIDs))
+	keyToTxID := make(map[string]string, len(txIDs))
+	for _, txID := range txIDs {
+		key := keys.KeyVMAppliedTx(txID)
+		fetchKeys = append(fetchKeys, key)
+		keyToTxID[key] = txID
+	}
+
+	if batchGetter, ok := x.DB.(kvBatchGetter); ok {
+		if kvs, err := batchGetter.GetKVs(fetchKeys); err == nil {
+			for key, val := range kvs {
+				if len(val) == 0 {
+					continue
+				}
+				if txID, exists := keyToTxID[key]; exists {
+					applied[txID] = true
+				}
+			}
+			return applied
+		}
+	}
+
+	for _, txID := range txIDs {
+		applied[txID] = x.isTxApplied(txID)
+	}
+	return applied
 }
 
 func (x *Executor) isTxApplied(txID string) bool {

@@ -6,9 +6,90 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	gverkle "github.com/ethereum/go-verkle"
 )
+
+const (
+	verkleProbeSlowUpdate      = 800 * time.Millisecond
+	verkleProbeSlowFlush       = 800 * time.Millisecond
+	verkleProbeSummaryInterval = 10 * time.Second
+	verkleFlushBatchNodeSize   = 2048
+)
+
+var (
+	verkleProbeLastSummaryUnix atomic.Int64
+	verkleProbeStats           = struct {
+		updateCalls    atomic.Uint64
+		updateEntries  atomic.Uint64
+		updateTotalNs  atomic.Uint64
+		updateInsertNs atomic.Uint64
+		updateHashNs   atomic.Uint64
+		updateStoreNs  atomic.Uint64
+
+		flushCalls    atomic.Uint64
+		flushNodes    atomic.Uint64
+		flushEntries  atomic.Uint64
+		flushTotalNs  atomic.Uint64
+		flushBuildNs  atomic.Uint64
+		flushWriteNs  atomic.Uint64
+		flushShrinkNs atomic.Uint64
+	}{}
+)
+
+func addVerkleProbeDuration(dst *atomic.Uint64, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	dst.Add(uint64(d))
+}
+
+func avgVerkleProbeDuration(totalNs uint64, calls uint64) time.Duration {
+	if calls == 0 {
+		return 0
+	}
+	return time.Duration(totalNs / calls)
+}
+
+func divOrZero(v uint64, d uint64) uint64 {
+	if d == 0 {
+		return 0
+	}
+	return v / d
+}
+
+func maybeLogVerkleProbeSummary(now time.Time) {
+	nowUnix := now.Unix()
+	last := verkleProbeLastSummaryUnix.Load()
+	if last != 0 && nowUnix-last < int64(verkleProbeSummaryInterval.Seconds()) {
+		return
+	}
+	if !verkleProbeLastSummaryUnix.CompareAndSwap(last, nowUnix) {
+		return
+	}
+
+	updateCalls := verkleProbeStats.updateCalls.Load()
+	flushCalls := verkleProbeStats.flushCalls.Load()
+
+	fmt.Printf(
+		"[Verkle][Probe] update.calls=%d avg.total=%s avg.insert=%s avg.hash=%s avg.store=%s avg.entries=%d flush.calls=%d avg.total=%s avg.build=%s avg.write=%s avg.shrink=%s avg.nodes=%d avg.entries=%d\n",
+		updateCalls,
+		avgVerkleProbeDuration(verkleProbeStats.updateTotalNs.Load(), updateCalls),
+		avgVerkleProbeDuration(verkleProbeStats.updateInsertNs.Load(), updateCalls),
+		avgVerkleProbeDuration(verkleProbeStats.updateHashNs.Load(), updateCalls),
+		avgVerkleProbeDuration(verkleProbeStats.updateStoreNs.Load(), updateCalls),
+		divOrZero(verkleProbeStats.updateEntries.Load(), updateCalls),
+		flushCalls,
+		avgVerkleProbeDuration(verkleProbeStats.flushTotalNs.Load(), flushCalls),
+		avgVerkleProbeDuration(verkleProbeStats.flushBuildNs.Load(), flushCalls),
+		avgVerkleProbeDuration(verkleProbeStats.flushWriteNs.Load(), flushCalls),
+		avgVerkleProbeDuration(verkleProbeStats.flushShrinkNs.Load(), flushCalls),
+		divOrZero(verkleProbeStats.flushNodes.Load(), flushCalls),
+		divOrZero(verkleProbeStats.flushEntries.Load(), flushCalls),
+	)
+}
 
 // ============================================
 // Verkle Tree 适配层
@@ -406,13 +487,37 @@ func (t *VerkleTree) writeLargeValues(largeValues []largeValueEntry, newVersion 
 }
 
 // updateWithSessionProcessed 在会话中应用已预处理好的树写入。
-func (t *VerkleTree) updateWithSessionProcessed(sess VersionedStoreSession, processedEntries []processedEntry, newVersion Version) ([]byte, error) {
+func (t *VerkleTree) updateWithSessionProcessed(sess VersionedStoreSession, processedEntries []processedEntry, newVersion Version) (rootCommitment []byte, err error) {
+	startAt := time.Now()
+	var (
+		durInsert time.Duration
+		durHash   time.Duration
+		durStore  time.Duration
+	)
+	entryCount := len(processedEntries)
+	defer func() {
+		total := time.Since(startAt)
+		verkleProbeStats.updateCalls.Add(1)
+		verkleProbeStats.updateEntries.Add(uint64(entryCount))
+		addVerkleProbeDuration(&verkleProbeStats.updateTotalNs, total)
+		addVerkleProbeDuration(&verkleProbeStats.updateInsertNs, durInsert)
+		addVerkleProbeDuration(&verkleProbeStats.updateHashNs, durHash)
+		addVerkleProbeDuration(&verkleProbeStats.updateStoreNs, durStore)
+		if total >= verkleProbeSlowUpdate {
+			fmt.Printf(
+				"[Verkle][Probe][SlowUpdate] version=%d total=%s insert=%s hash=%s store=%s entries=%d err=%v\n",
+				newVersion, total, durInsert, durHash, durStore, entryCount, err,
+			)
+		}
+		maybeLogVerkleProbeSummary(time.Now())
+	}()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	// 统一开关：禁用 Verkle 写路径（仅更新版本/根缓存）
 	if t.disableRootCommit {
-		rootCommitment := t.computeRootCommitmentLocked()
+		rootCommitment = t.computeRootCommitmentLocked()
 		t.version = newVersion
 		t.rootHistory[newVersion] = rootCommitment
 		t.pruneHistory(newVersion)
@@ -420,29 +525,38 @@ func (t *VerkleTree) updateWithSessionProcessed(sess VersionedStoreSession, proc
 	}
 
 	// 更新树结构（内存操作）
+	insertAt := time.Now()
 	for _, entry := range processedEntries {
 		if err := t.root.Insert(entry.verkleKey[:], entry.treeVal, t.nodeResolverWithSession(sess)); err != nil {
+			durInsert += time.Since(insertAt)
 			return nil, err
 		}
 	}
+	durInsert += time.Since(insertAt)
 
 	// 计算根承诺
-	rootCommitment := t.computeRootCommitmentLocked()
+	hashAt := time.Now()
+	rootCommitment = t.computeRootCommitmentLocked()
+	durHash += time.Since(hashAt)
 
 	t.version = newVersion
 	t.rootHistory[newVersion] = rootCommitment
 
 	// 保存根承诺和根节点（主事务）
+	storeAt := time.Now()
 	if err := sess.Set(rootKey(newVersion), rootCommitment, newVersion); err != nil {
+		durStore += time.Since(storeAt)
 		return nil, err
 	}
 
-	rootData, err := t.root.Serialize()
-	if err == nil && len(rootData) >= 65 {
+	rootData, serializeErr := t.root.Serialize()
+	if serializeErr == nil && len(rootData) >= 65 {
 		if err := sess.Set(nodeKey(rootCommitment), rootData, newVersion); err != nil {
+			durStore += time.Since(storeAt)
 			return nil, err
 		}
 	}
+	durStore += time.Since(storeAt)
 
 	// 收集并释放深层节点内存，持久化由主事务提交后 FlushPendingNodes 完成。
 	t.collectAndFlushToMemory(newVersion)
@@ -512,7 +626,36 @@ func (t *VerkleTree) collectAndFlushToMemory(version Version) {
 
 // FlushPendingNodes 使用 WriteBatch 原子写入待处理的节点数据
 // WriteBatch 没有事务大小限制，可以一次性写入所有节点
-func (t *VerkleTree) FlushPendingNodes() error {
+func (t *VerkleTree) FlushPendingNodes() (err error) {
+	startAt := time.Now()
+	var (
+		durBuild  time.Duration
+		durWrite  time.Duration
+		durShrink time.Duration
+	)
+	nodeCount := 0
+	entryCount := 0
+	defer func() {
+		if nodeCount == 0 {
+			return
+		}
+		total := time.Since(startAt)
+		verkleProbeStats.flushCalls.Add(1)
+		verkleProbeStats.flushNodes.Add(uint64(nodeCount))
+		verkleProbeStats.flushEntries.Add(uint64(entryCount))
+		addVerkleProbeDuration(&verkleProbeStats.flushTotalNs, total)
+		addVerkleProbeDuration(&verkleProbeStats.flushBuildNs, durBuild)
+		addVerkleProbeDuration(&verkleProbeStats.flushWriteNs, durWrite)
+		addVerkleProbeDuration(&verkleProbeStats.flushShrinkNs, durShrink)
+		if total >= verkleProbeSlowFlush {
+			fmt.Printf(
+				"[Verkle][Probe][SlowFlush] total=%s build=%s write=%s shrink=%s nodes=%d entries=%d err=%v\n",
+				total, durBuild, durWrite, durShrink, nodeCount, entryCount, err,
+			)
+		}
+		maybeLogVerkleProbeSummary(time.Now())
+	}()
+
 	t.flushMu.Lock()
 	defer t.flushMu.Unlock()
 
@@ -522,6 +665,7 @@ func (t *VerkleTree) FlushPendingNodes() error {
 		return nil
 	}
 	nodes := append([]pendingNodeData(nil), t.pendingNodes...)
+	nodeCount = len(nodes)
 	t.mu.Unlock()
 
 	if len(nodes) == 0 {
@@ -533,35 +677,56 @@ func (t *VerkleTree) FlushPendingNodes() error {
 	var flushErr error
 	if !ok {
 		// 如果不是 BadgerStore，回退到简单实现（测试用）
+		entryCount = len(nodes)
+		writeAt := time.Now()
 		flushErr = t.flushPendingNodesSimple(nodes)
+		durWrite += time.Since(writeAt)
 	} else {
-		// 收集所有要写入的条目
-		entries := make([]BatchEntry, 0, len(nodes)*2)
-		for _, nd := range nodes {
-			// 使用 commitment 作为 key
-			entries = append(entries, BatchEntry{
-				Key:     nodeKey(nd.key),
-				Value:   nd.data,
-				Version: nd.version,
-			})
+		// 分批收集并写入，避免一次性构造超大 entries 引发瞬时内存峰值。
+		for start := 0; start < len(nodes); start += verkleFlushBatchNodeSize {
+			end := start + verkleFlushBatchNodeSize
+			if end > len(nodes) {
+				end = len(nodes)
+			}
+			chunk := nodes[start:end]
 
-			// 同时使用 path 作为 key
-			if len(nd.path) > 0 {
+			buildAt := time.Now()
+			entries := make([]BatchEntry, 0, len(chunk)*2)
+			for _, nd := range chunk {
+				// 使用 commitment 作为 key
 				entries = append(entries, BatchEntry{
-					Key:     nodeKey(nd.path),
+					Key:     nodeKey(nd.key),
 					Value:   nd.data,
 					Version: nd.version,
 				})
+
+				// 同时使用 path 作为 key
+				if len(nd.path) > 0 {
+					entries = append(entries, BatchEntry{
+						Key:     nodeKey(nd.path),
+						Value:   nd.data,
+						Version: nd.version,
+					})
+				}
 			}
+			entryCount += len(entries)
+			durBuild += time.Since(buildAt)
+
+			writeAt := time.Now()
+			if err := badgerStore.WriteBatch(entries); err != nil {
+				durWrite += time.Since(writeAt)
+				flushErr = err
+				break
+			}
+			durWrite += time.Since(writeAt)
 		}
-		// 原子写入所有节点数据
-		flushErr = badgerStore.WriteBatch(entries)
 	}
 	if flushErr != nil {
 		return flushErr
 	}
 
 	// 仅在写入成功后移除本次快照中的 pending，失败时保留以便后续重试
+	shrinkAt := time.Now()
 	t.mu.Lock()
 	if len(t.pendingNodes) <= len(nodes) {
 		t.pendingNodes = nil
@@ -569,6 +734,7 @@ func (t *VerkleTree) FlushPendingNodes() error {
 		t.pendingNodes = append([]pendingNodeData(nil), t.pendingNodes[len(nodes):]...)
 	}
 	t.mu.Unlock()
+	durShrink += time.Since(shrinkAt)
 	return nil
 }
 

@@ -58,8 +58,11 @@ type SpecResult struct {
 	BlockID  string
 	ParentID string
 	Height   uint64
-	Valid    bool
-	Reason   string     // 无效时的原因
-	Receipts []*Receipt // 交易执行结果
-	Diff     []WriteOp  // 状态变更集合
+	// BaseCommittedHeight/BaseCommittedHash capture finalized base state observed during pre-exec.
+	BaseCommittedHeight uint64
+	BaseCommittedHash   string
+	Valid               bool
+	Reason              string     // 无效时的原因
+	Receipts            []*Receipt // 交易执行结果
+	Diff                []WriteOp  // 状态变更集合
 }

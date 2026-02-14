@@ -10,8 +10,8 @@
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "env": {
-                "GOMEMLIMIT": "6GiB",
-                "GOGC": "80"
+                "GOMEMLIMIT": "32GiB",
+                "GOGC": "200"
             }
         },
         {
@@ -75,8 +75,8 @@
             "type": "go",
             "console": "integratedTerminal",
             "env": {
-                "GOMEMLIMIT": "6GiB",
-                "GOGC": "80"
+                "GOMEMLIMIT": "32GiB",
+                "GOGC": "200"
             },
             "mode": "auto"
         }
