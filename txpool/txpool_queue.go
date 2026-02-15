@@ -2,7 +2,6 @@ package txpool
 
 import (
 	"dex/pb"
-	"dex/utils"
 	"log"
 )
 
@@ -88,60 +87,20 @@ func (tq *txPoolQueue) handleAddTx(incoming *pb.AnyTx, ip string, onAdded OnTxAd
 		return
 	}
 
-	// 从 PublicKeys 中获取 ECDSA_P256 公钥
-	var pubKeyPem string
-	if base.PublicKeys != nil {
-		if pk, ok := base.PublicKeys.Keys[int32(pb.SignAlgo_SIGN_ALGO_ECDSA_P256)]; ok {
-			pubKeyPem = string(pk)
-		}
+	// 验证交易
+	if err := tq.validator.CheckAnyTx(incoming); err != nil {
+		tq.pool.Logger.Debug("[TxPoolQueue] tx=%s invalid: %v", txID, err)
+		return
 	}
 
-	// 检查是否为已知节点
-	isKnown := false
-	if pubKeyPem != "" {
-		if pubKeyObj, err := utils.DecodePublicKey(pubKeyPem); err == nil {
-			pubKeyStr := utils.ExtractPublicKeyString(pubKeyObj)
-			isKnown = tq.pool.network.IsKnownNode(pubKeyStr)
-		}
+	// 入池
+	if err := tq.pool.storeAnyTx(incoming); err != nil {
+		tq.pool.Logger.Debug("[TxPoolQueue] store tx=%s fail: %v", txID, err)
+		return
 	}
 
-	if isKnown {
-		// 已知节点：先验证并入池，再触发广播回调，避免“先广播后入池”造成的重复广播窗口
-		if err := tq.validator.CheckAnyTx(incoming); err != nil {
-			tq.pool.Logger.Debug("[TxPoolQueue] known node, tx=%s invalid: %v", txID, err)
-			return
-		}
-		if err := tq.pool.storeAnyTx(incoming); err != nil {
-			tq.pool.Logger.Debug("[TxPoolQueue] known node => store tx=%s fail: %v", txID, err)
-			return
-		}
-		if onAdded != nil {
-			onAdded(txID)
-		}
-	} else {
-		// 未知节点：先验证后广播
-		if err := tq.validator.CheckAnyTx(incoming); err != nil {
-			tq.pool.Logger.Debug("[TxPoolQueue] unknown node, tx=%s invalid: %v", txID, err)
-			return
-		}
-
-		// 更新网络节点信息
-		if pubKeyPem != "" {
-			if pubKeyObj, err := utils.DecodePublicKey(pubKeyPem); err == nil {
-				pubKeyStr := utils.ExtractPublicKeyString(pubKeyObj)
-				tq.pool.network.AddOrUpdateNode(pubKeyStr, ip, true)
-			}
-		}
-
-		// 入池
-		if err := tq.pool.storeAnyTx(incoming); err != nil {
-			tq.pool.Logger.Debug("[TxPoolQueue] unknown node => store tx=%s fail: %v", txID, err)
-			return
-		}
-
-		// 最后广播
-		if onAdded != nil {
-			onAdded(txID)
-		}
+	// 触发广播回调
+	if onAdded != nil {
+		onAdded(txID)
 	}
 }

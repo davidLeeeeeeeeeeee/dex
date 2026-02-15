@@ -5,7 +5,6 @@ import (
 	"dex/db"
 	"dex/keys"
 	"dex/logs"
-	"dex/network"
 	"dex/pb"
 	"dex/stats"
 	"dex/utils"
@@ -23,7 +22,6 @@ import (
 // TxPool 交易池结构体
 type TxPool struct {
 	dbManager *db.Manager
-	network   *network.Network
 
 	// 缓存
 	mu                     sync.RWMutex
@@ -58,7 +56,6 @@ func NewTxPool(dbManager *db.Manager, validator TxValidator, address string, log
 	cacheTx, _ := lru.New(cfg.TxPool.CacheTxSize)
 	shortTxCache, _ := lru.New(cfg.TxPool.ShortTxCacheSize)
 
-	net := network.NewNetwork(dbManager)
 	pendingSaveQueueSize := cfg.TxPool.MessageQueueSize
 	if pendingSaveQueueSize <= 0 {
 		pendingSaveQueueSize = 10000
@@ -69,7 +66,6 @@ func NewTxPool(dbManager *db.Manager, validator TxValidator, address string, log
 		dbManager:              dbManager,
 		address:                address,
 		Logger:                 logger,
-		network:                net,
 		pendingAnyTxCache:      pendingAnyTxCache,
 		shortPendingAnyTxCache: shortPendingAnyTxCache,
 		cacheTx:                cacheTx,

@@ -213,7 +213,7 @@ func DefaultConfig() *Config {
 			IndexCacheSize:          16 << 20, // 降低到 16MB
 			BlockCacheSizeDB:        32 << 20, // 降低到 32MB
 			NumMemtables:            3,        // 减少 MemTable 数量
-			NumCompactors:           0,
+			NumCompactors:           2,
 			VerkleKVLogEnabled:      true, // false,
 			VerkleDisableRootCommit: false,
 		},

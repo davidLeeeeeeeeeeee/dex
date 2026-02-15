@@ -77,6 +77,9 @@ type Manager struct {
 	writeQueueFlushDurationNsTotal uint64
 	writeQueueForceFlushTotal      uint64
 	writeQueueMaxDepth             uint64
+	writeQueueFlushInFlightSince   uint64   // UnixNano timestamp; 0 means no flush in progress
+	writeQueueKeyCounters          sync.Map // map[string]*atomic.Uint64
+	writeQueueBlockedKeyCounters   sync.Map // map[string]*atomic.Uint64
 
 	// 还可以增加两个参数，用来控制"写多少/多长时间"就落库
 	maxBatchSize  int                // 累计多少条就写一次
@@ -116,6 +119,8 @@ type writeQueueMetricsSnapshot struct {
 	flushDurationNsTotal uint64
 	forceFlushTotal      uint64
 	maxDepth             uint64
+	keyCounters          map[string]uint64
+	blockedKeyCounters   map[string]uint64
 }
 
 // NewManager 创建一个新的 DBManager 实例
@@ -138,8 +143,13 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 		opts.MaxTableSize = cfg.Database.BaseTableSize
 	}
 	opts.NumMemtables = cfg.Database.NumMemtables
-	// Real node path: disable compactor workers to reduce background CPU spikes.
-	opts.NumCompactors = 0
+	numCompactors := cfg.Database.NumCompactors
+	if numCompactors <= 0 {
+		// Disabling compactors can permanently stall writes under sustained load.
+		logs.Warn("[DB] NumCompactors=%d is unsafe for write-heavy workloads; forcing to 1", numCompactors)
+		numCompactors = 1
+	}
+	opts.NumCompactors = numCompactors
 	opts.BlockCacheSize = cfg.Database.BlockCacheSizeDB
 	opts.IndexCacheSize = cfg.Database.IndexCacheSize
 	// 使用 FileIO 模式减少 mmap 内存占用
@@ -197,8 +207,9 @@ func (manager *Manager) InitWriteQueue(maxBatchSize int, flushInterval time.Dura
 
 	manager.stopChan = make(chan struct{})
 
-	manager.wg.Add(1)
+	manager.wg.Add(2)
 	go manager.runWriteQueue()
+	go manager.runWriteQueueWatchdog()
 }
 
 func (manager *Manager) resetWriteQueueMetrics() {
@@ -214,6 +225,9 @@ func (manager *Manager) resetWriteQueueMetrics() {
 	manager.writeQueueFlushDurationNsTotal = 0
 	manager.writeQueueForceFlushTotal = 0
 	manager.writeQueueMaxDepth = 0
+	manager.writeQueueFlushInFlightSince = 0
+	manager.clearCounterMap(&manager.writeQueueKeyCounters)
+	manager.clearCounterMap(&manager.writeQueueBlockedKeyCounters)
 }
 
 func (manager *Manager) observeQueueDepth() {
@@ -227,6 +241,112 @@ func (manager *Manager) observeQueueDepth() {
 			return
 		}
 	}
+}
+
+func normalizeWriteQueueKeyBucket(key string) string {
+	if key == "" {
+		return "empty"
+	}
+	if strings.HasPrefix(key, "snapshot_") {
+		return "snapshot"
+	}
+	if strings.HasPrefix(key, "finalization_chits_") {
+		return "finalization_chits"
+	}
+	if strings.HasPrefix(key, "consensus_sig_set_") {
+		return "consensus_sig_set"
+	}
+
+	parts := strings.Split(key, "_")
+	if len(parts) >= 4 && parts[0] == "v1" {
+		return strings.Join(parts[:4], "_")
+	}
+	if len(parts) >= 3 {
+		return strings.Join(parts[:3], "_")
+	}
+	if len(key) > 32 {
+		return key[:32] + "..."
+	}
+	return key
+}
+
+func (manager *Manager) addCounter(counterMap *sync.Map, key string) {
+	if counterMap == nil || key == "" {
+		return
+	}
+	val, _ := counterMap.LoadOrStore(key, &atomic.Uint64{})
+	if c, ok := val.(*atomic.Uint64); ok && c != nil {
+		c.Add(1)
+	}
+}
+
+func (manager *Manager) clearCounterMap(counterMap *sync.Map) {
+	if counterMap == nil {
+		return
+	}
+	counterMap.Range(func(k, _ any) bool {
+		counterMap.Delete(k)
+		return true
+	})
+}
+
+func (manager *Manager) snapshotCounterMap(counterMap *sync.Map) map[string]uint64 {
+	snapshot := make(map[string]uint64)
+	if counterMap == nil {
+		return snapshot
+	}
+	counterMap.Range(func(k, v any) bool {
+		key, ok := k.(string)
+		if !ok || key == "" {
+			return true
+		}
+		c, ok := v.(*atomic.Uint64)
+		if !ok || c == nil {
+			return true
+		}
+		snapshot[key] = c.Load()
+		return true
+	})
+	return snapshot
+}
+
+type counterDelta struct {
+	Key   string
+	Delta uint64
+}
+
+func topCounterDeltas(cur map[string]uint64, prev map[string]uint64, topN int) []string {
+	if topN <= 0 || len(cur) == 0 {
+		return nil
+	}
+	deltas := make([]counterDelta, 0, len(cur))
+	for k, curVal := range cur {
+		prevVal := prev[k]
+		if curVal <= prevVal {
+			continue
+		}
+		deltas = append(deltas, counterDelta{
+			Key:   k,
+			Delta: curVal - prevVal,
+		})
+	}
+	if len(deltas) == 0 {
+		return nil
+	}
+	sort.Slice(deltas, func(i, j int) bool {
+		if deltas[i].Delta != deltas[j].Delta {
+			return deltas[i].Delta > deltas[j].Delta
+		}
+		return deltas[i].Key < deltas[j].Key
+	})
+	if len(deltas) > topN {
+		deltas = deltas[:topN]
+	}
+	result := make([]string, 0, len(deltas))
+	for _, d := range deltas {
+		result = append(result, fmt.Sprintf("%s=%d", d.Key, d.Delta))
+	}
+	return result
 }
 
 func (manager *Manager) snapshotWriteQueueMetrics() writeQueueMetricsSnapshot {
@@ -243,6 +363,8 @@ func (manager *Manager) snapshotWriteQueueMetrics() writeQueueMetricsSnapshot {
 		flushDurationNsTotal: atomic.LoadUint64(&manager.writeQueueFlushDurationNsTotal),
 		forceFlushTotal:      atomic.LoadUint64(&manager.writeQueueForceFlushTotal),
 		maxDepth:             atomic.LoadUint64(&manager.writeQueueMaxDepth),
+		keyCounters:          manager.snapshotCounterMap(&manager.writeQueueKeyCounters),
+		blockedKeyCounters:   manager.snapshotCounterMap(&manager.writeQueueBlockedKeyCounters),
 	}
 }
 
@@ -287,6 +409,14 @@ func (manager *Manager) logWriteQueueStats(prev writeQueueMetricsSnapshot, inter
 		flushedTaskDelta, flushBatchDelta, avgBatch, avgFlushMs,
 		flushErrDelta, forceFlushDelta, blockedDelta, avgBlockMs,
 	)
+	topKeys := topCounterDeltas(cur.keyCounters, prev.keyCounters, 6)
+	if len(topKeys) > 0 {
+		msg += " topWriteKeys=" + strings.Join(topKeys, ",")
+	}
+	topBlockedKeys := topCounterDeltas(cur.blockedKeyCounters, prev.blockedKeyCounters, 6)
+	if len(topBlockedKeys) > 0 {
+		msg += " topBlockedKeys=" + strings.Join(topBlockedKeys, ",")
+	}
 	if manager.Logger != nil {
 		manager.Logger.Info(msg)
 	} else {
@@ -318,12 +448,24 @@ func (manager *Manager) runWriteQueue() {
 		}
 		count := len(batch)
 		start := time.Now()
+		atomic.StoreUint64(&manager.writeQueueFlushInFlightSince, uint64(start.UnixNano()))
 		err := manager.flushBatch(batch)
+		atomic.StoreUint64(&manager.writeQueueFlushInFlightSince, 0)
+		duration := time.Since(start)
 		atomic.AddUint64(&manager.writeQueueFlushBatchTotal, 1)
 		atomic.AddUint64(&manager.writeQueueFlushedTaskTotal, uint64(count))
-		atomic.AddUint64(&manager.writeQueueFlushDurationNsTotal, uint64(time.Since(start)))
+		atomic.AddUint64(&manager.writeQueueFlushDurationNsTotal, uint64(duration))
 		if err != nil {
 			atomic.AddUint64(&manager.writeQueueFlushErrTotal, 1)
+		}
+		if duration >= 2*time.Second {
+			logs.Warn(
+				"[DBQueue] slow flush batch=%d took=%s q=%d/%d",
+				count,
+				duration,
+				len(manager.writeQueueChan),
+				cap(manager.writeQueueChan),
+			)
 		}
 		batch = batch[:0]
 		return err
@@ -381,6 +523,35 @@ func (manager *Manager) runWriteQueue() {
 				}
 			}
 		doneForceFlush:
+		}
+	}
+}
+
+func (manager *Manager) runWriteQueueWatchdog() {
+	defer manager.wg.Done()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-manager.stopChan:
+			return
+		case <-ticker.C:
+			sinceNs := atomic.LoadUint64(&manager.writeQueueFlushInFlightSince)
+			if sinceNs == 0 {
+				continue
+			}
+			elapsed := time.Since(time.Unix(0, int64(sinceNs)))
+			if elapsed < 5*time.Second {
+				continue
+			}
+			logs.Warn(
+				"[DBQueue] flush appears stuck elapsed=%s q=%d/%d",
+				elapsed.Truncate(time.Millisecond),
+				len(manager.writeQueueChan),
+				cap(manager.writeQueueChan),
+			)
 		}
 	}
 }
@@ -1079,6 +1250,7 @@ func (tv *TransactionView) NewIterator() *badger.Iterator {
 // 提供"投递写请求"的方法（替换原先的 Write/WriteBatch）
 
 func (manager *Manager) EnqueueSet(key, value string) {
+	bucket := normalizeWriteQueueKeyBucket(key)
 	start := time.Now()
 	manager.writeQueueChan <- WriteTask{
 		Key:   []byte(key),
@@ -1087,15 +1259,18 @@ func (manager *Manager) EnqueueSet(key, value string) {
 	}
 	atomic.AddUint64(&manager.writeQueueEnqueueTotal, 1)
 	atomic.AddUint64(&manager.writeQueueEnqueueSetTotal, 1)
+	manager.addCounter(&manager.writeQueueKeyCounters, bucket)
 	blocked := time.Since(start)
 	if blocked > 100*time.Microsecond {
 		atomic.AddUint64(&manager.writeQueueEnqueueBlockedCount, 1)
 		atomic.AddUint64(&manager.writeQueueEnqueueBlockedNs, uint64(blocked))
+		manager.addCounter(&manager.writeQueueBlockedKeyCounters, bucket)
 	}
 	manager.observeQueueDepth()
 }
 
 func (manager *Manager) EnqueueDelete(key string) {
+	bucket := normalizeWriteQueueKeyBucket(key)
 	start := time.Now()
 	manager.writeQueueChan <- WriteTask{
 		Key: []byte(key),
@@ -1103,10 +1278,12 @@ func (manager *Manager) EnqueueDelete(key string) {
 	}
 	atomic.AddUint64(&manager.writeQueueEnqueueTotal, 1)
 	atomic.AddUint64(&manager.writeQueueEnqueueDeleteTotal, 1)
+	manager.addCounter(&manager.writeQueueKeyCounters, bucket)
 	blocked := time.Since(start)
 	if blocked > 100*time.Microsecond {
 		atomic.AddUint64(&manager.writeQueueEnqueueBlockedCount, 1)
 		atomic.AddUint64(&manager.writeQueueEnqueueBlockedNs, uint64(blocked))
+		manager.addCounter(&manager.writeQueueBlockedKeyCounters, bucket)
 	}
 	manager.observeQueueDepth()
 }

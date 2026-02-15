@@ -9,7 +9,7 @@ import (
 	frostrt "dex/frost/runtime"
 	"dex/handlers"
 	"dex/logs"
-	"dex/middleware"
+
 	"dex/sender"
 	"dex/txpool"
 	"dex/types"
@@ -201,7 +201,7 @@ func startHTTPServerWithSignal(node *NodeInstance, readyChan chan<- int, errorCh
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// 应用中间件
-	handler := middleware.RateLimit(wrapHandlerWithLatencyMetrics(node, mux))
+	handler := wrapHandlerWithLatencyMetrics(node, mux)
 
 	// 生成自签名证书
 	certFile := fmt.Sprintf("server_%d.crt", node.ID)
