@@ -840,17 +840,11 @@ func (x *Executor) CommitFinalizedBlock(b *pb.Block) (err error) {
 			b.Header.Height, blockHash, b.BlockHash)
 	}
 
-	// 缓存缺失：重新执行
+	// 延迟执行：始终全量执行（Add 阶段已跳过 PreExecuteBlock）
 	var res *SpecResult
-	if cached, ok := x.Cache.Get(b.BlockHash); ok && x.isCachedSpecUsable(b, cached) {
-		res = cached
-		usedCache = true
-	}
-	if res == nil {
-		reexecAt := time.Now()
-		res, err = x.preExecuteBlock(b, false)
-		durReexec += time.Since(reexecAt)
-	}
+	reexecAt := time.Now()
+	res, err = x.preExecuteBlock(b, false)
+	durReexec += time.Since(reexecAt)
 	if err != nil {
 		return fmt.Errorf("re-execute block failed: %v", err)
 	}

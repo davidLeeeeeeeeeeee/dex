@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"google.golang.org/protobuf/proto"
 	"strconv"
 	"strings"
 	"sync"
@@ -217,36 +216,18 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 	s.heightIndex[block.Header.Height] = append(s.heightIndex[block.Header.Height], block)
 	s.mu.Unlock()
 
-	// 第四步：调用 VM 预执行（已确认有完整数据）
-	// VM pre-execution mutates tx base fields (for example ExecutedHeight).
-	// Always run on a clone to avoid writing into shared block cache objects.
-	clonedMsg := proto.Clone(pbBlock)
-	pbBlockForVM, ok := clonedMsg.(*pb.Block)
-	if !ok || pbBlockForVM == nil {
-		return false, fmt.Errorf("failed to clone block for VM pre-execution: block=%s", block.ID)
-	}
-	result, err := s.vmExecutor.PreExecuteBlock(pbBlockForVM)
-
-	if err != nil {
-		logs.Error("[RealBlockStore] VM PreExecuteBlock failed for block %s: %v", block.ID, err)
-		// 执行失败，需要把刚才占坑的数据撤回
-		s.mu.Lock()
-		delete(s.blockCache, block.ID)
-		// 注意：heightIndex 的清理较复杂，此处简略处理或依靠后续最终化清理
-		s.mu.Unlock()
-		return false, fmt.Errorf("VM pre-execution failed: %w", err)
-	}
-
-	// 检查预执行结果
-	if !result.Valid {
-		logs.Error("[RealBlockStore] Block %s failed VM validation: %s", block.ID, result.Reason)
+	// 第四步：轻量验证（延迟执行架构）
+	// 重计算（订单簿重建、撮合、余额计算）延迟到 CommitFinalizedBlock 阶段执行，
+	// 避免对不会最终化的候选区块浪费 CPU。
+	if err := s.lightweightValidateBlock(pbBlock); err != nil {
+		logs.Debug("[RealBlockStore] Block %s failed lightweight validation: %v", block.ID, err)
 		s.mu.Lock()
 		delete(s.blockCache, block.ID)
 		s.mu.Unlock()
-		return false, fmt.Errorf("block failed VM validation: %s", result.Reason)
+		return false, fmt.Errorf("lightweight validation failed: %w", err)
 	}
 
-	logs.Debug("[RealBlockStore] Block %s passed VM pre-execution", block.ID)
+	logs.Debug("[RealBlockStore] Block %s passed lightweight validation", block.ID)
 
 	// 第三步：更新高度元数据
 	s.mu.Lock()
@@ -810,6 +791,39 @@ func (s *RealBlockStore) validateVRF(block *types.Block) error {
 	}
 
 	logs.Debug("[RealBlockStore] VRF verification passed for block %s", block.ID)
+	return nil
+}
+
+// lightweightValidateBlock 轻量验证区块（延迟执行架构）
+// 只做格式检查和去重，跳过订单簿重建、撮合、余额计算等重计算。
+// 全量 VM 执行延迟到 CommitFinalizedBlock 阶段。
+func (s *RealBlockStore) lightweightValidateBlock(block *pb.Block) error {
+	if block == nil || block.Header == nil {
+		return fmt.Errorf("nil block or header")
+	}
+
+	seenTxIDs := make(map[string]struct{}, len(block.Body))
+	for i, tx := range block.Body {
+		if tx == nil {
+			continue
+		}
+
+		// 检查交易格式是否可解析
+		kind, err := vm.DefaultKindFn(tx)
+		if err != nil {
+			return fmt.Errorf("tx %d has invalid structure: %v", i, err)
+		}
+		_ = kind
+
+		// 检查区块内重复 TxId
+		if base := tx.GetBase(); base != nil && base.TxId != "" {
+			if _, exists := seenTxIDs[base.TxId]; exists {
+				return fmt.Errorf("duplicate tx_id in block: %s", base.TxId)
+			}
+			seenTxIDs[base.TxId] = struct{}{}
+		}
+	}
+
 	return nil
 }
 
