@@ -153,7 +153,10 @@ func (a *ConsensusAdapter) ConsensusBlockToDB(block *types.Block, txs []*pb.AnyT
 
 // 将共识消息转换为PushQuery
 func (a *ConsensusAdapter) ConsensusMessageToPushQuery(msg types.Message, address string) (*pb.PushQuery, error) {
-	container, isBlock := a.prepareContainer(msg)
+	container, isBlock, err := a.prepareContainer(msg)
+	if err != nil {
+		return nil, err
+	}
 
 	return &pb.PushQuery{
 		Address:          address,
@@ -331,14 +334,23 @@ func (a *ConsensusAdapter) generateBitmap() []byte {
 	return bitmap
 }
 
-func (a *ConsensusAdapter) prepareContainer(msg types.Message) ([]byte, bool) {
+func (a *ConsensusAdapter) prepareContainer(msg types.Message) ([]byte, bool, error) {
 	// 准备容器数据的逻辑
 	if msg.Block != nil {
 		dbBlock := a.ConsensusBlockToDB(msg.Block, nil)
-		data, _ := proto.Marshal(dbBlock)
-		return data, true
+		if dbBlock == nil {
+			return nil, false, fmt.Errorf("prepare pushquery container failed: nil db block for %s", msg.Block.ID)
+		}
+		if dbBlock.Header == nil {
+			return nil, false, fmt.Errorf("prepare pushquery container failed: nil header for %s", msg.Block.ID)
+		}
+		data, err := proto.Marshal(dbBlock)
+		if err != nil {
+			return nil, false, fmt.Errorf("prepare pushquery container marshal failed for %s: %w", msg.Block.ID, err)
+		}
+		return data, true, nil
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 func (a *ConsensusAdapter) resolveShorHashesToTxs(shortHashes []byte) ([]*pb.AnyTx, error) {

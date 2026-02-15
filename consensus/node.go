@@ -6,6 +6,8 @@ import (
 	"dex/logs"
 	"dex/stats"
 	"dex/types"
+	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -36,12 +38,35 @@ type Node struct {
 	handleMsgSemPeak  atomic.Int64
 	handleMsgSemCap   atomic.Int64
 	handleMsgLatency  *stats.LatencyRecorder
+	handleMsgSlow100  atomic.Uint64
+	handleMsgSlow1s   atomic.Uint64
+	handleMsgByType   sync.Map // map[string]*handleMsgTypeAccumulator
+	lastPressureLogNs atomic.Int64
 }
 
 type HandleMsgRuntimeStats struct {
-	SemInUse    int64
-	SemCapacity int64
-	SemPeak     int64
+	SemInUse      int64
+	SemCapacity   int64
+	SemPeak       int64
+	SlowWait100ms uint64
+	SlowWait1s    uint64
+}
+
+type HandleMsgTypeRuntimeStats struct {
+	Type          string
+	InFlight      int64
+	Started       uint64
+	Completed     uint64
+	SlowWait100ms uint64
+	SlowWait1s    uint64
+}
+
+type handleMsgTypeAccumulator struct {
+	inFlight      atomic.Int64
+	started       atomic.Uint64
+	completed     atomic.Uint64
+	slowWait100ms atomic.Uint64
+	slowWait1s    atomic.Uint64
 }
 
 func NewNode(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, byzantine bool, config *Config, logger logs.Logger) *Node {
@@ -229,22 +254,43 @@ func (n *Node) ResetProposalTimer() {
 func (n *Node) dispatchMessageWithSem(sem chan struct{}, msg types.Message) {
 	waitStart := time.Now()
 	sem <- struct{}{}
-	if n.handleMsgLatency != nil {
-		n.handleMsgLatency.Record("node.handle_msg.sem_wait", time.Since(waitStart))
-	}
-	n.incHandleMsgSemInUse()
+	waitDuration := time.Since(waitStart)
 
-	go func(m types.Message) {
+	msgType := n.normalizeMessageType(msg.Type)
+	acc := n.getHandleMsgTypeAccumulator(msgType)
+
+	if n.handleMsgLatency != nil {
+		n.handleMsgLatency.Record("node.handle_msg.sem_wait", waitDuration)
+		n.handleMsgLatency.Record("node.handle_msg.sem_wait."+msgType, waitDuration)
+	}
+	if waitDuration >= 100*time.Millisecond {
+		n.handleMsgSlow100.Add(1)
+		acc.slowWait100ms.Add(1)
+	}
+	if waitDuration >= time.Second {
+		n.handleMsgSlow1s.Add(1)
+		acc.slowWait1s.Add(1)
+	}
+	acc.started.Add(1)
+	acc.inFlight.Add(1)
+	n.incHandleMsgSemInUse()
+	n.maybeLogHandleMsgPressure(waitDuration, sem, msg, msgType)
+
+	go func(m types.Message, typeKey string, typeAcc *handleMsgTypeAccumulator) {
 		start := time.Now()
 		defer func() {
 			if n.handleMsgLatency != nil {
-				n.handleMsgLatency.Record("node.handle_msg.total", time.Since(start))
+				totalDuration := time.Since(start)
+				n.handleMsgLatency.Record("node.handle_msg.total", totalDuration)
+				n.handleMsgLatency.Record("node.handle_msg.total."+typeKey, totalDuration)
 			}
+			typeAcc.completed.Add(1)
+			typeAcc.inFlight.Add(-1)
 			n.decHandleMsgSemInUse()
 			<-sem
 		}()
 		n.messageHandler.HandleMsg(m)
-	}(msg)
+	}(msg, msgType, acc)
 }
 
 func (n *Node) incHandleMsgSemInUse() {
@@ -266,10 +312,77 @@ func (n *Node) decHandleMsgSemInUse() {
 
 func (n *Node) GetRuntimeStats() HandleMsgRuntimeStats {
 	return HandleMsgRuntimeStats{
-		SemInUse:    n.handleMsgSemInUse.Load(),
-		SemCapacity: n.handleMsgSemCap.Load(),
-		SemPeak:     n.handleMsgSemPeak.Load(),
+		SemInUse:      n.handleMsgSemInUse.Load(),
+		SemCapacity:   n.handleMsgSemCap.Load(),
+		SemPeak:       n.handleMsgSemPeak.Load(),
+		SlowWait100ms: n.handleMsgSlow100.Load(),
+		SlowWait1s:    n.handleMsgSlow1s.Load(),
 	}
+}
+
+func (n *Node) GetHandleMsgTypeStats(reset bool, topN int) []HandleMsgTypeRuntimeStats {
+	if n == nil {
+		return nil
+	}
+
+	result := make([]HandleMsgTypeRuntimeStats, 0, 8)
+	n.handleMsgByType.Range(func(k, v any) bool {
+		typeKey, ok := k.(string)
+		if !ok {
+			return true
+		}
+		acc, ok := v.(*handleMsgTypeAccumulator)
+		if !ok || acc == nil {
+			return true
+		}
+
+		stat := HandleMsgTypeRuntimeStats{
+			Type:     typeKey,
+			InFlight: acc.inFlight.Load(),
+		}
+		if reset {
+			stat.Started = acc.started.Swap(0)
+			stat.Completed = acc.completed.Swap(0)
+			stat.SlowWait100ms = acc.slowWait100ms.Swap(0)
+			stat.SlowWait1s = acc.slowWait1s.Swap(0)
+		} else {
+			stat.Started = acc.started.Load()
+			stat.Completed = acc.completed.Load()
+			stat.SlowWait100ms = acc.slowWait100ms.Load()
+			stat.SlowWait1s = acc.slowWait1s.Load()
+		}
+
+		// Keep types with live pressure or recent traffic.
+		if stat.InFlight > 0 || stat.Started > 0 || stat.SlowWait100ms > 0 || stat.SlowWait1s > 0 {
+			result = append(result, stat)
+		}
+		return true
+	})
+
+	if len(result) == 0 {
+		return nil
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].InFlight != result[j].InFlight {
+			return result[i].InFlight > result[j].InFlight
+		}
+		if result[i].SlowWait1s != result[j].SlowWait1s {
+			return result[i].SlowWait1s > result[j].SlowWait1s
+		}
+		if result[i].SlowWait100ms != result[j].SlowWait100ms {
+			return result[i].SlowWait100ms > result[j].SlowWait100ms
+		}
+		if result[i].Started != result[j].Started {
+			return result[i].Started > result[j].Started
+		}
+		return result[i].Type < result[j].Type
+	})
+
+	if topN > 0 && len(result) > topN {
+		result = result[:topN]
+	}
+	return result
 }
 
 func (n *Node) GetHandleMsgLatencyStats(reset bool) map[string]stats.LatencySummary {
@@ -277,4 +390,52 @@ func (n *Node) GetHandleMsgLatencyStats(reset bool) map[string]stats.LatencySumm
 		return nil
 	}
 	return n.handleMsgLatency.Snapshot(reset)
+}
+
+func (n *Node) normalizeMessageType(msgType types.MessageType) string {
+	if msgType == "" {
+		return "unknown"
+	}
+	return string(msgType)
+}
+
+func (n *Node) getHandleMsgTypeAccumulator(typeKey string) *handleMsgTypeAccumulator {
+	if existing, ok := n.handleMsgByType.Load(typeKey); ok {
+		if acc, ok := existing.(*handleMsgTypeAccumulator); ok && acc != nil {
+			return acc
+		}
+	}
+
+	acc := &handleMsgTypeAccumulator{}
+	actual, _ := n.handleMsgByType.LoadOrStore(typeKey, acc)
+	if typed, ok := actual.(*handleMsgTypeAccumulator); ok && typed != nil {
+		return typed
+	}
+	return acc
+}
+
+func (n *Node) maybeLogHandleMsgPressure(wait time.Duration, sem chan struct{}, msg types.Message, msgType string) {
+	semCap := cap(sem)
+	if semCap == 0 {
+		return
+	}
+	semLen := len(sem)
+	usagePct := semLen * 100 / semCap
+	if wait < 500*time.Millisecond && usagePct < 90 {
+		return
+	}
+
+	now := time.Now().UnixNano()
+	last := n.lastPressureLogNs.Load()
+	if last != 0 && now-last < int64(5*time.Second) {
+		return
+	}
+	if !n.lastPressureLogNs.CompareAndSwap(last, now) {
+		return
+	}
+
+	logs.Warn(
+		"[HandleMsg] pressure local=%s wait=%v sem=%d/%d usage=%d%% type=%s from=%s request=%d block=%s",
+		n.ID, wait, semLen, semCap, usagePct, msgType, msg.From, msg.RequestID, msg.BlockID,
+	)
 }

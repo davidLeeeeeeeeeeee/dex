@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"dex/consensus"
+	"dex/logs"
 	"dex/pb"
 	"fmt"
 	"io"
@@ -33,7 +34,11 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 	// Try TxPool first.
 	txFromPool := hm.txPool.GetTransactionById(getDataMsg.TxId)
 	if txFromPool != nil {
-		respData, _ := proto.Marshal(txFromPool)
+		respData, err := proto.Marshal(txFromPool)
+		if err != nil {
+			http.Error(w, "Failed to marshal tx payload", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		w.WriteHeader(http.StatusOK)
 		w.Write(respData)
@@ -51,7 +56,11 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	respData, _ := proto.Marshal(anyTx)
+	respData, err := proto.Marshal(anyTx)
+	if err != nil {
+		http.Error(w, "Failed to marshal tx payload", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.WriteHeader(http.StatusOK)
 	w.Write(respData)
@@ -83,7 +92,11 @@ func (hm *HandlerManager) HandleGetTxReceipt(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	respData, _ := proto.Marshal(receipt)
+	respData, err := proto.Marshal(receipt)
+	if err != nil {
+		http.Error(w, "Failed to marshal receipt payload", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.WriteHeader(http.StatusOK)
 	w.Write(respData)
@@ -97,7 +110,11 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, _ := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read getblockbyid request body", http.StatusBadRequest)
+		return
+	}
 	var req pb.GetBlockByIDRequest
 	if err := proto.Unmarshal(body, &req); err != nil {
 		http.Error(w, "Invalid GetBlockByID proto", http.StatusBadRequest)
@@ -106,8 +123,10 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 
 	// 1) Prefer global cache so unfinalized blocks can return complete payload.
 	var blk *pb.Block
+	source := "unknown"
 	if cached, exists := consensus.GetCachedBlock(req.BlockId); exists && cached != nil {
 		blk = cached
+		source = "cache"
 	}
 
 	// 2) Fallback to DB.
@@ -115,6 +134,7 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 		dbBlock, err := hm.dbManager.GetBlockByID(req.BlockId)
 		if err == nil && dbBlock != nil {
 			blk = dbBlock
+			source = "db"
 		}
 	}
 
@@ -123,6 +143,7 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 		if hm.consensusManager.Node != nil && hm.adapter != nil {
 			if b, ok := hm.consensusManager.Node.GetBlock(req.BlockId); ok && b != nil {
 				blk = hm.adapter.ConsensusBlockToDB(b, nil)
+				source = "consensus_node"
 			}
 		}
 
@@ -131,6 +152,7 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 				if tBlk, shortTxs := pbb.GetPendingBlock(req.BlockId); tBlk != nil {
 					blk = hm.adapter.ConsensusBlockToDB(tBlk, nil)
 					blk.ShortTxs = shortTxs
+					source = "pending_buffer"
 				}
 			}
 		}
@@ -142,19 +164,35 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich fallback responses with cached data if possible.
+	enrichedFromCache := false
 	if len(blk.ShortTxs) == 0 || len(blk.Body) == 0 {
 		if cached, exists := consensus.GetCachedBlock(req.BlockId); exists && cached != nil {
 			if len(blk.ShortTxs) == 0 && len(cached.ShortTxs) > 0 {
 				blk.ShortTxs = cached.ShortTxs
+				enrichedFromCache = true
 			}
 			if len(blk.Body) == 0 && len(cached.Body) > 0 {
 				blk.Body = cached.Body
+				enrichedFromCache = true
+			}
+			if blk.Header == nil && cached.Header != nil {
+				blk.Header = cached.Header
+				enrichedFromCache = true
 			}
 		}
 	}
+	if enrichedFromCache {
+		source += "+cache_enrich"
+	}
 
 	resp := &pb.GetBlockResponse{Block: blk}
-	bytes, _ := proto.Marshal(resp)
+	bytes, err := proto.Marshal(resp)
+	if err != nil {
+		detail := buildGetBlockMarshalDetail(req.BlockId, source, blk, err)
+		logs.Error("[HandleGet] Failed to marshal GetBlockResponse: %s", detail)
+		http.Error(w, "Failed to marshal GetBlockResponse: "+detail, http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.WriteHeader(http.StatusOK)
 	w.Write(bytes)

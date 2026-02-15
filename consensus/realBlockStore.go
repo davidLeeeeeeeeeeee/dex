@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"strconv"
 	"strings"
 	"sync"
@@ -217,7 +218,14 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 	s.mu.Unlock()
 
 	// 第四步：调用 VM 预执行（已确认有完整数据）
-	result, err := s.vmExecutor.PreExecuteBlock(pbBlock)
+	// VM pre-execution mutates tx base fields (for example ExecutedHeight).
+	// Always run on a clone to avoid writing into shared block cache objects.
+	clonedMsg := proto.Clone(pbBlock)
+	pbBlockForVM, ok := clonedMsg.(*pb.Block)
+	if !ok || pbBlockForVM == nil {
+		return false, fmt.Errorf("failed to clone block for VM pre-execution: block=%s", block.ID)
+	}
+	result, err := s.vmExecutor.PreExecuteBlock(pbBlockForVM)
 
 	if err != nil {
 		logs.Error("[RealBlockStore] VM PreExecuteBlock failed for block %s: %v", block.ID, err)

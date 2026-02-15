@@ -206,9 +206,16 @@ func monitorQueueStats(nodes []*NodeInstance) {
 				if runtimeStats.SemCapacity > 0 {
 					usage = float64(runtimeStats.SemInUse) / float64(runtimeStats.SemCapacity) * 100
 				}
-				fmt.Printf("  %-10s %-16s inUse=%5d cap=%5d peak=%5d usage=%6.2f%%\n",
+				fmt.Printf("  %-10s %-16s inUse=%5d cap=%5d peak=%5d usage=%6.2f%% wait100=%5d wait1s=%5d\n",
 					"HandleMsg", "sem",
-					runtimeStats.SemInUse, runtimeStats.SemCapacity, runtimeStats.SemPeak, usage)
+					runtimeStats.SemInUse, runtimeStats.SemCapacity, runtimeStats.SemPeak, usage,
+					runtimeStats.SlowWait100ms, runtimeStats.SlowWait1s)
+
+				for _, item := range node.ConsensusManager.Node.GetHandleMsgTypeStats(true, 3) {
+					fmt.Printf("  %-10s %-16s type=%-16s in=%4d start=%5d done=%5d wait100=%5d wait1s=%5d\n",
+						"HandleMsg", "type.top",
+						item.Type, item.InFlight, item.Started, item.Completed, item.SlowWait100ms, item.SlowWait1s)
+				}
 
 				printLatencyTopN("HandleMsg", node.ConsensusManager.Node.GetHandleMsgLatencyStats(true), 3, "node.handle_msg")
 			}
@@ -222,6 +229,15 @@ func monitorQueueStats(nodes []*NodeInstance) {
 						runtimeStats.DataEnqueueFullDrops,
 						runtimeStats.InboxForwardTimeoutDrops,
 						runtimeStats.PreprocessInvalidDrops)
+
+					for _, item := range rt.GetTopInboxTimeoutByType(true, 3) {
+						fmt.Printf("  %-10s %-16s type=%-16s timeout=%5d\n",
+							"Transport", "timeout.type", item.Key, item.Count)
+					}
+					for _, item := range rt.GetTopInboxTimeoutBySender(true, 3) {
+						fmt.Printf("  %-10s %-16s from=%-16s timeout=%5d\n",
+							"Transport", "timeout.from", item.Key, item.Count)
+					}
 				}
 			}
 

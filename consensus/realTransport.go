@@ -13,6 +13,7 @@ import (
 	"dex/utils"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -47,6 +48,8 @@ type RealTransport struct {
 	dataEnqueueFullDrops       atomic.Uint64
 	inboxForwardTimeoutDrops   atomic.Uint64
 	preprocessInvalidDrops     atomic.Uint64
+	inboxTimeoutByType         sync.Map // map[string]*atomic.Uint64
+	inboxTimeoutBySender       sync.Map // map[string]*atomic.Uint64
 }
 
 type RealTransportRuntimeStats struct {
@@ -54,6 +57,11 @@ type RealTransportRuntimeStats struct {
 	DataEnqueueFullDrops       uint64
 	InboxForwardTimeoutDrops   uint64
 	PreprocessInvalidDrops     uint64
+}
+
+type RealTransportTopDrop struct {
+	Key   string
+	Count uint64
 }
 
 type NodeInfo struct {
@@ -405,7 +413,10 @@ func (t *RealTransport) EnqueueReceivedMessage(msg types.Message) error {
 			return nil
 		case <-time.After(50 * time.Millisecond):
 			t.controlEnqueueTimeoutDrops.Add(1)
-			logs.Warn("[RealTransport] Control message queue full, dropping from %s", msg.From)
+			logs.Warn(
+				"[RealTransport] Control message queue full local=%s type=%s from=%s receiveQueue=%d/%d",
+				t.nodeID, msg.Type, msg.From, len(t.receiveQueue), cap(t.receiveQueue),
+			)
 			return fmt.Errorf("receive queue full for control message")
 		}
 	} else {
@@ -415,7 +426,10 @@ func (t *RealTransport) EnqueueReceivedMessage(msg types.Message) error {
 			return nil
 		default:
 			t.dataEnqueueFullDrops.Add(1)
-			logs.Debug("[RealTransport] Data message queue full, dropping from %s", msg.From)
+			logs.Debug(
+				"[RealTransport] Data message queue full local=%s type=%s from=%s receiveQueue=%d/%d",
+				t.nodeID, msg.Type, msg.From, len(t.receiveQueue), cap(t.receiveQueue),
+			)
 			return fmt.Errorf("receive queue full for data message")
 		}
 	}
@@ -514,8 +528,19 @@ func (t *RealTransport) receiveWorker(workerID int) {
 					workerID, msg.Type, msg.From)
 			case <-time.After(5 * time.Second):
 				t.inboxForwardTimeoutDrops.Add(1)
-				logs.Warn("[RealTransport] Worker %d: Timeout sending to inbox, dropping message from %s",
-					workerID, msg.From)
+				t.addCounter(&t.inboxTimeoutByType, normalizeCounterKey(string(msg.Type)))
+				t.addCounter(&t.inboxTimeoutBySender, normalizeCounterKey(string(msg.From)))
+				logs.Warn(
+					"[RealTransport] Worker %d: Timeout sending to inbox local=%s type=%s from=%s request=%d block=%s receiveQueue=%d/%d inbox=%d/%d",
+					workerID,
+					t.nodeID,
+					msg.Type,
+					msg.From,
+					msg.RequestID,
+					msg.BlockID,
+					len(t.receiveQueue), cap(t.receiveQueue),
+					len(t.inbox), cap(t.inbox),
+				)
 			case <-t.stopChan:
 				return
 			}
@@ -553,4 +578,88 @@ func (t *RealTransport) GetRuntimeStats() RealTransportRuntimeStats {
 		InboxForwardTimeoutDrops:   t.inboxForwardTimeoutDrops.Load(),
 		PreprocessInvalidDrops:     t.preprocessInvalidDrops.Load(),
 	}
+}
+
+func (t *RealTransport) GetTopInboxTimeoutByType(reset bool, topN int) []RealTransportTopDrop {
+	if t == nil {
+		return nil
+	}
+	return snapshotCounterMap(&t.inboxTimeoutByType, reset, topN)
+}
+
+func (t *RealTransport) GetTopInboxTimeoutBySender(reset bool, topN int) []RealTransportTopDrop {
+	if t == nil {
+		return nil
+	}
+	return snapshotCounterMap(&t.inboxTimeoutBySender, reset, topN)
+}
+
+func (t *RealTransport) addCounter(counterMap *sync.Map, key string) {
+	if key == "" {
+		return
+	}
+	if existing, ok := counterMap.Load(key); ok {
+		if counter, ok := existing.(*atomic.Uint64); ok && counter != nil {
+			counter.Add(1)
+			return
+		}
+	}
+
+	counter := &atomic.Uint64{}
+	actual, _ := counterMap.LoadOrStore(key, counter)
+	if typed, ok := actual.(*atomic.Uint64); ok && typed != nil {
+		typed.Add(1)
+	}
+}
+
+func snapshotCounterMap(counterMap *sync.Map, reset bool, topN int) []RealTransportTopDrop {
+	if counterMap == nil {
+		return nil
+	}
+
+	result := make([]RealTransportTopDrop, 0, 8)
+	counterMap.Range(func(k, v any) bool {
+		key, ok := k.(string)
+		if !ok {
+			return true
+		}
+		counter, ok := v.(*atomic.Uint64)
+		if !ok || counter == nil {
+			return true
+		}
+
+		var value uint64
+		if reset {
+			value = counter.Swap(0)
+		} else {
+			value = counter.Load()
+		}
+		if value > 0 {
+			result = append(result, RealTransportTopDrop{Key: key, Count: value})
+		}
+		return true
+	})
+
+	if len(result) == 0 {
+		return nil
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Count != result[j].Count {
+			return result[i].Count > result[j].Count
+		}
+		return result[i].Key < result[j].Key
+	})
+
+	if topN > 0 && len(result) > topN {
+		result = result[:topN]
+	}
+	return result
+}
+
+func normalizeCounterKey(key string) string {
+	if key == "" {
+		return "unknown"
+	}
+	return key
 }

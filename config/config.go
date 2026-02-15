@@ -248,7 +248,7 @@ func DefaultConfig() *Config {
 			TxExpirationTime:        24 * time.Hour,
 		},
 		Sender: SenderConfig{
-			WorkerCount:                   64,
+			WorkerCount:                   200,
 			QueueCapacity:                 200,
 			ControlMaxInflightPerTarget:   3,
 			DataMaxInflightPerTarget:      6,

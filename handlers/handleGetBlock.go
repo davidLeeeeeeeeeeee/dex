@@ -27,6 +27,7 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 	}
 
 	var block *pb.Block
+	source := "unknown"
 	finalizedAttempted := false
 	if hm.consensusManager != nil {
 		if blockID, ok := hm.consensusManager.GetFinalizedBlockID(req.Height); ok {
@@ -34,6 +35,7 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 			b, err := hm.dbManager.GetBlockByID(blockID)
 			if err == nil && b != nil {
 				block = b
+				source = "finalized_db"
 			} else {
 				logs.Warn("[HandleGetBlock] Finalized block %s at height %d not found in DB: %v",
 					blockID, req.Height, err)
@@ -51,6 +53,7 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 		b, err := hm.dbManager.GetBlock(req.Height)
 		if err == nil && b != nil {
 			block = b
+			source = "height_fallback_db"
 		}
 	}
 
@@ -58,7 +61,12 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 		resp := &pb.GetBlockResponse{
 			Error: fmt.Sprintf("Block not found at height %d", req.Height),
 		}
-		respBytes, _ := proto.Marshal(resp)
+		respBytes, err := proto.Marshal(resp)
+		if err != nil {
+			logs.Error("[HandleGetBlock] Failed to marshal not-found response: height=%d err=%v", req.Height, err)
+			http.Error(w, fmt.Sprintf("Failed to marshal GetBlockResponse: %v", err), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		w.WriteHeader(http.StatusNotFound)
 		w.Write(respBytes)
@@ -70,7 +78,9 @@ func (hm *HandlerManager) HandleGetBlock(w http.ResponseWriter, r *http.Request)
 	}
 	respBytes, err := proto.Marshal(resp)
 	if err != nil {
-		http.Error(w, "Failed to marshal GetBlockResponse", http.StatusInternalServerError)
+		detail := buildGetBlockMarshalDetail(block.BlockHash, source, block, err)
+		logs.Error("[HandleGetBlock] Failed to marshal GetBlockResponse: %s", detail)
+		http.Error(w, "Failed to marshal GetBlockResponse: "+detail, http.StatusInternalServerError)
 		return
 	}
 
