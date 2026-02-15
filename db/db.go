@@ -9,12 +9,10 @@ import (
 	"dex/pb"
 	"dex/stats"
 	"dex/utils"
-	"dex/verkle"
 	"errors"
 	"fmt"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -26,10 +24,38 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// stateKVUpdate is the internal state-sync payload shape.
+type stateKVUpdate struct {
+	Key     string
+	Value   []byte
+	Deleted bool
+}
+
+// stateDBSession abstracts state backend sessions (disabled in current runtime).
+type stateDBSession interface {
+	Get(key string) ([]byte, bool, error)
+	GetKV(key string) ([]byte, error)
+	ApplyUpdate(height uint64, kvs ...stateKVUpdate) error
+	Commit() error
+	Rollback() error
+	Close() error
+	Root() []byte
+}
+
+// stateDB abstracts the optional state backend (formerly verkle/jmt).
+type stateDB interface {
+	Get(key string) ([]byte, bool, error)
+	ApplyAccountUpdate(height uint64, kvs ...stateKVUpdate) error
+	NewSession() (stateDBSession, error)
+	Root() []byte
+	CommitRoot(version uint64, root []byte)
+	Close() error
+}
+
 // Manager 封装 BadgerDB 的管理器
 type Manager struct {
 	Db      *badger.DB
-	StateDB *verkle.VerkleStateDB // 使用 Verkle Tree 作为状态存储
+	StateDB stateDB // optional state backend; nil means disabled
 	mu      sync.RWMutex
 
 	// 队列通道，批量写的 goroutine 用它来取写请求
@@ -143,25 +169,9 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 		return nil, fmt.Errorf("failed to create sequence: %w", err)
 	}
 
-	// 初始化 Verkle StateDB
-	verkleCfg := verkle.VerkleConfig{
-		DataDir:           filepath.Join(path, "verkle_state"),
-		Prefix:            []byte("verkle:"),
-		EnableKVLog:       cfg.Database.VerkleKVLogEnabled,
-		DisableRootCommit: cfg.Database.VerkleDisableRootCommit,
-		Database:          &cfg.Database,
-	}
-
-	stateDB, err := verkle.NewVerkleStateDB(verkleCfg)
-	if err != nil {
-		_ = seq.Release()
-		_ = db.Close()
-		return nil, fmt.Errorf("failed to create Verkle StateDB: %w", err)
-	}
-
 	manager := &Manager{
 		Db:              db,
-		StateDB:         stateDB,
+		StateDB:         nil,
 		IndexMgr:        indexMgr,
 		seq:             seq,
 		Logger:          logger,
@@ -440,13 +450,16 @@ func (manager *Manager) resolvePendingForceFlush(err error) {
 
 // NewSession 创建一个新的数据库会话
 func (m *Manager) NewSession() (interfaces.DBSession, error) {
-	verkleSess, err := m.StateDB.NewSession()
+	if m.StateDB == nil {
+		return &dbSession{manager: m}, nil
+	}
+	stateSess, err := m.StateDB.NewSession()
 	if err != nil {
 		return nil, err
 	}
 	return &dbSession{
 		manager:    m,
-		verkleSess: verkleSess,
+		verkleSess: stateSess,
 	}, nil
 }
 
@@ -459,10 +472,14 @@ func (m *Manager) CommitRoot(height uint64, root []byte) {
 // dbSession 数据库会话实现
 type dbSession struct {
 	manager    *Manager
-	verkleSess *verkle.VerkleStateDBSession
+	verkleSess stateDBSession
 }
 
 func (s *dbSession) Get(key string) ([]byte, error) {
+	if s.verkleSess == nil {
+		return s.manager.GetKV(key)
+	}
+
 	// 对于状态数据，优先尝试从 Verkle 会话读取
 	if keys.IsStatefulKey(key) {
 		val, exists, err := s.verkleSess.Get(key)
@@ -476,7 +493,11 @@ func (s *dbSession) Get(key string) ([]byte, error) {
 }
 
 func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]byte, error) {
-	kvUpdates := make([]verkle.KVUpdate, 0, len(updates))
+	if s.verkleSess == nil {
+		return nil, nil
+	}
+
+	kvUpdates := make([]stateKVUpdate, 0, len(updates))
 	for _, u := range updates {
 		type writeOpInterface interface {
 			GetKey() string
@@ -489,7 +510,7 @@ func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]by
 			if !keys.IsStatefulKey(key) {
 				continue
 			}
-			kvUpdates = append(kvUpdates, verkle.KVUpdate{
+			kvUpdates = append(kvUpdates, stateKVUpdate{
 				Key:     key,
 				Value:   writeOp.GetValue(),
 				Deleted: writeOp.IsDel(),
@@ -507,14 +528,23 @@ func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]by
 }
 
 func (s *dbSession) Commit() error {
+	if s.verkleSess == nil {
+		return nil
+	}
 	return s.verkleSess.Commit()
 }
 
 func (s *dbSession) Rollback() error {
+	if s.verkleSess == nil {
+		return nil
+	}
 	return s.verkleSess.Rollback()
 }
 
 func (s *dbSession) Close() error {
+	if s.verkleSess == nil {
+		return nil
+	}
 	return s.verkleSess.Close()
 }
 
@@ -1414,56 +1444,14 @@ func RebuildOrderPriceIndexes(m *Manager) (int, error) {
 // 注意：只有被 keys.IsStatefulKey 判定为状态数据的 key 才会被同步
 // 返回值：(stateRoot, error) - stateRoot 是同步后的状态树根哈希
 func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) ([]byte, error) {
-	if m.StateDB == nil {
-		return nil, fmt.Errorf("StateDB is not initialized")
-	}
-
-	// 将 WriteOp 转换为 Verkle 的 KVUpdate
-	// 使用 keys.IsStatefulKey 进行二次过滤，确保只有状态数据才会同步
-	kvUpdates := make([]verkle.KVUpdate, 0, len(updates))
-	for _, u := range updates {
-		// 使用接口类型断言（避免循环依赖）
-		type writeOpInterface interface {
-			GetKey() string
-			GetValue() []byte
-			IsDel() bool
-		}
-
-		if writeOp, ok := u.(writeOpInterface); ok {
-			key := writeOp.GetKey()
-			// 只同步状态数据（可变证明状态）
-			// 流水数据（不可变区块/交易）和索引数据不会同步到 StateDB
-			if !keys.IsStatefulKey(key) {
-				continue
-			}
-			kvUpdates = append(kvUpdates, verkle.KVUpdate{
-				Key:     key,
-				Value:   writeOp.GetValue(),
-				Deleted: writeOp.IsDel(),
-			})
-		} else {
-			m.Logger.Warn("[DB] Failed to convert update to WriteOp: %T", u)
-		}
-	}
-
-	// 调用 Verkle StateDB 的 ApplyAccountUpdate
-	if len(kvUpdates) > 0 {
-		if err := m.StateDB.ApplyAccountUpdate(height, kvUpdates...); err != nil {
-			logs.Error("[DB] Failed to sync to StateDB: %v", err)
-			return nil, err
-		}
-	}
-
-	// 返回当前状态树根哈希
-	return m.StateDB.Root(), nil
+	_ = height
+	_ = updates
+	return nil, nil
 }
 
 // GetStateRoot 获取当前状态树根哈希
 func (m *Manager) GetStateRoot() []byte {
-	if m.StateDB == nil {
-		return nil
-	}
-	return m.StateDB.Root()
+	return nil
 }
 
 // GetChannelStats 返回 DB Manager 的 channel 状态
