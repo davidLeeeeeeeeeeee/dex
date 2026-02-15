@@ -175,8 +175,16 @@ func (jmt *JellyfishMerkleTree) getRootForVersionWithSession(sess VersionedStore
 	var err error
 	if sess != nil {
 		rootData, err = sess.Get(rootKey(version), version)
+		if err != nil {
+			// Backward compatibility for legacy root key format ('R'+version).
+			rootData, err = sess.Get(legacyRootKey(version), version)
+		}
 	} else {
 		rootData, err = jmt.store.Get(rootKey(version), version)
+		if err != nil {
+			// Backward compatibility for legacy root key format ('R'+version).
+			rootData, err = jmt.store.Get(legacyRootKey(version), version)
+		}
 	}
 
 	if err != nil {
@@ -195,6 +203,10 @@ func (jmt *JellyfishMerkleTree) getRootForVersion(version Version) ([]byte, erro
 	}
 	// 尝试从存储中获取
 	rootData, err := jmt.store.Get(rootKey(version), version)
+	if err != nil {
+		// Backward compatibility for legacy root key format ('R'+version).
+		rootData, err = jmt.store.Get(legacyRootKey(version), version)
+	}
 	if err != nil {
 		return nil, ErrVersionNotFound
 	}
@@ -635,6 +647,69 @@ func (jmt *JellyfishMerkleTree) DeleteWithSession(sess VersionedStoreSession, ke
 	return newRoot, nil
 }
 
+// deleteBatchWithSession 批量删除多个 key，可选择是否在末尾持久化 root。
+// 当后续还有更新要在同一 version 写入时，可设置 persistRoot=false 来避免 root 重复写。
+func (jmt *JellyfishMerkleTree) deleteBatchWithSession(
+	sess VersionedStoreSession,
+	keys [][]byte,
+	newVersion Version,
+	persistRoot bool,
+) ([]byte, error) {
+	jmt.mu.Lock()
+	defer jmt.mu.Unlock()
+
+	currentRoot := jmt.root
+	if len(keys) == 0 {
+		if persistRoot {
+			if err := sess.Set(rootKey(newVersion), currentRoot, newVersion); err != nil {
+				return nil, err
+			}
+		}
+		jmt.rootHistory[newVersion] = currentRoot
+		jmt.root = currentRoot
+		jmt.version = newVersion
+		return currentRoot, nil
+	}
+
+	seenPath := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		path := jmt.hasher.Path(key)
+		pathStr := string(path)
+		if _, ok := seenPath[pathStr]; ok {
+			continue
+		}
+		seenPath[pathStr] = struct{}{}
+
+		if !jmt.hasher.IsPlaceholder(currentRoot) {
+			newRoot, err := jmt.deleteFromTree(path, currentRoot, 0, newVersion, sess)
+			if err != nil {
+				return nil, err
+			}
+			currentRoot = newRoot
+		}
+
+		if err := sess.Delete(valueKey(path), newVersion); err != nil {
+			return nil, err
+		}
+	}
+
+	jmt.rootHistory[newVersion] = currentRoot
+	if persistRoot {
+		if err := sess.Set(rootKey(newVersion), currentRoot, newVersion); err != nil {
+			return nil, err
+		}
+	}
+	jmt.root = currentRoot
+	jmt.version = newVersion
+
+	return currentRoot, nil
+}
+
+// DeleteBatchWithSession 在同一会话内批量删除并持久化一次 root。
+func (jmt *JellyfishMerkleTree) DeleteBatchWithSession(sess VersionedStoreSession, keys [][]byte, newVersion Version) ([]byte, error) {
+	return jmt.deleteBatchWithSession(sess, keys, newVersion, true)
+}
+
 // deleteFromTree 递归删除节点
 func (jmt *JellyfishMerkleTree) deleteFromTree(path, nodeHash []byte, depth int, version Version, sess VersionedStoreSession) ([]byte, error) {
 	if jmt.hasher.IsPlaceholder(nodeHash) {
@@ -764,9 +839,24 @@ func valueKey(path []byte) []byte {
 
 // rootKey 生成根哈希的存储 Key
 func rootKey(version Version) []byte {
-	key := make([]byte, 9)
-	key[0] = 'R' // Root prefix
+	key := make([]byte, 14)
+	copy(key, "root:v")
 	// Big-endian version
+	key[6] = byte(version >> 56)
+	key[7] = byte(version >> 48)
+	key[8] = byte(version >> 40)
+	key[9] = byte(version >> 32)
+	key[10] = byte(version >> 24)
+	key[11] = byte(version >> 16)
+	key[12] = byte(version >> 8)
+	key[13] = byte(version)
+	return key
+}
+
+// legacyRootKey 兼容旧版本 root key 格式: 'R'+8-byte version。
+func legacyRootKey(version Version) []byte {
+	key := make([]byte, 9)
+	key[0] = 'R'
 	key[1] = byte(version >> 56)
 	key[2] = byte(version >> 48)
 	key[3] = byte(version >> 40)

@@ -25,8 +25,9 @@ import (
 const orderBookRebuildSideLimit = 500
 
 var (
-	orderPriceMinKey67 = strings.Repeat("0", 67)
-	orderPriceMaxKey67 = strings.Repeat("9", 67)
+	orderPriceMinKey67  = strings.Repeat("0", 67)
+	orderPriceMaxKey67  = strings.Repeat("9", 67)
+	vmFailedSummarySeen sync.Map
 )
 
 const (
@@ -132,6 +133,62 @@ func maybeLogVMProbeSummary(now time.Time) {
 		vmProbe.applyAccountOps.Load(),
 		vmProbe.applyStateOps.Load(),
 	)
+}
+
+func classifyTxFailureReason(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "buyer frozen balance underflow"):
+		return "buyer frozen balance underflow"
+	case strings.Contains(msg, "seller frozen balance underflow"):
+		return "seller frozen balance underflow"
+	case strings.Contains(msg, "failed to update account balances"):
+		return "failed to update account balances"
+	default:
+		return msg
+	}
+}
+
+func formatTopFailureReasons(reasonCounts map[string]int, topN int) string {
+	if len(reasonCounts) == 0 {
+		return ""
+	}
+	if topN <= 0 {
+		topN = 1
+	}
+	type reasonCount struct {
+		reason string
+		count  int
+	}
+	items := make([]reasonCount, 0, len(reasonCounts))
+	for reason, count := range reasonCounts {
+		items = append(items, reasonCount{reason: reason, count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].count == items[j].count {
+			return items[i].reason < items[j].reason
+		}
+		return items[i].count > items[j].count
+	})
+	if topN > len(items) {
+		topN = len(items)
+	}
+	parts := make([]string, 0, topN)
+	for i := 0; i < topN; i++ {
+		parts = append(parts, fmt.Sprintf("%dx %s", items[i].count, items[i].reason))
+	}
+	return strings.Join(parts, " | ")
+}
+
+func shouldLogVMFailedSummaryAtInfo(blockHash string) bool {
+	if blockHash == "" {
+		return true
+	}
+	_, loaded := vmFailedSummarySeen.LoadOrStore(blockHash, struct{}{})
+	return !loaded
 }
 
 type pairOrderPriceBounds struct {
@@ -341,7 +398,10 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 		dryRunErrors    int
 		diffOps         int
 		pairCount       int
+		failedTxCount   int
 	)
+	failureReasons := make(map[string]int)
+	failedSamples := make([]string, 0, 5)
 	defer func() {
 		total := time.Since(startAt)
 		height := uint64(0)
@@ -542,8 +602,13 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 					}
 				}
 				receipts = append(receipts, rc)
-
-				logs.Info("[VM] Tx %s mark as FAILED in block %d: %v", rc.TxID, b.Header.Height, err)
+				failedTxCount++
+				failureReasons[classifyTxFailureReason(err)]++
+				if len(failedSamples) < cap(failedSamples) {
+					failedSamples = append(failedSamples, fmt.Sprintf("%s:%s", rc.TxID, err.Error()))
+				}
+				logs.Debug("[VM] Tx %s mark as FAILED in block %d hash=%s: %v",
+					rc.TxID, b.Header.Height, b.BlockHash, err)
 				continue
 			}
 
@@ -597,6 +662,22 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 			"[VM] skipped txs in block: height=%d hash=%s dup=%d applied=%d body=%d",
 			b.Header.Height, b.BlockHash, skippedDupInBlock, skippedApplied, len(b.Body),
 		)
+	}
+	if failedTxCount > 0 {
+		summary := fmt.Sprintf(
+			"[VM] failed tx summary: height=%d hash=%s failed=%d uniqueReasons=%d topReasons=%s samples=%s",
+			b.Header.Height,
+			b.BlockHash,
+			failedTxCount,
+			len(failureReasons),
+			formatTopFailureReasons(failureReasons, 3),
+			strings.Join(failedSamples, "; "),
+		)
+		if shouldLogVMFailedSummaryAtInfo(b.BlockHash) {
+			logs.Info(summary)
+		} else {
+			logs.Debug(summary)
+		}
 	}
 
 	witnessAt := time.Now()

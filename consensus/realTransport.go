@@ -144,7 +144,7 @@ func (t *RealTransport) doSend(to types.NodeID, msg types.Message) error {
 	case types.MsgChits:
 		errSend = t.sendChits(targetIP, msg)
 	case types.MsgGet:
-		errSend = t.sendGet(targetIP, msg)
+		errSend = t.sendGet(to, targetIP, msg)
 	case types.MsgPut:
 		errSend = t.sendBlock(targetIP, msg)
 	case types.MsgGossip:
@@ -240,10 +240,11 @@ func (t *RealTransport) sendChits(targetIP string, msg types.Message) error {
 	return t.senderManager.SendChits(targetIP, chits)
 }
 
-func (t *RealTransport) sendGet(targetIP string, msg types.Message) error {
+func (t *RealTransport) sendGet(peer types.NodeID, targetIP string, msg types.Message) error {
 	// 使用新的PullBlockByID方法
 	t.senderManager.PullGet(targetIP, msg.BlockID, func(block *pb.Block) {
 		if block != nil {
+			CacheBlock(block)
 			// 转换为types.Block
 			consensusBlock, err := t.adapter.DBBlockToConsensus(block)
 			if err != nil {
@@ -255,10 +256,11 @@ func (t *RealTransport) sendGet(targetIP string, msg types.Message) error {
 			putMsg := types.Message{
 				RequestID: msg.RequestID,
 				Type:      types.MsgPut,
-				From:      t.nodeID,
+				From:      peer,
 				Block:     consensusBlock,
 				Height:    consensusBlock.Header.Height,
 				BlockID:   consensusBlock.ID,
+				ShortTxs:  block.ShortTxs,
 			}
 
 			// 将消息放入接收队列
@@ -278,6 +280,9 @@ func (t *RealTransport) sendBlock(targetIP string, msg types.Message) error {
 	}
 
 	dbBlock := t.adapter.ConsensusBlockToDB(msg.Block, nil)
+	if dbBlock != nil && len(dbBlock.ShortTxs) == 0 && len(msg.ShortTxs) > 0 {
+		dbBlock.ShortTxs = msg.ShortTxs
+	}
 	return t.senderManager.SendBlock(targetIP, dbBlock)
 }
 
@@ -291,6 +296,9 @@ func (t *RealTransport) sendGossip(targetIP string, msg types.Message) error {
 	payload := &types.GossipPayload{
 		Block:     t.adapter.ConsensusBlockToDB(msg.Block, nil),
 		RequestID: msg.RequestID,
+	}
+	if payload.Block != nil && len(payload.Block.ShortTxs) == 0 && len(msg.ShortTxs) > 0 {
+		payload.Block.ShortTxs = msg.ShortTxs
 	}
 	return t.senderManager.BroadcastGossipToTarget(targetIP, payload)
 }

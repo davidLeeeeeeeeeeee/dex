@@ -93,7 +93,7 @@ func InitConsensusManagerWithSimulation(
 	node.proposalManager.SetProposer(proposer)
 
 	// 创建 ConsensusAdapter（需要提前创建用于 PendingBlockBuffer）
-	adapter := NewConsensusAdapter(dbManager)
+	adapter := NewConsensusAdapterWithTxPool(dbManager, txPool)
 
 	// 创建 PendingBlockBuffer 并注入到 MessageHandler 和 SyncManager
 	pendingBlockBuffer := NewPendingBlockBuffer(txPool, adapter, senderMgr, logger)
@@ -143,6 +143,9 @@ func (m *ConsensusNodeManager) GetActiveQueryCount() int {
 func (m *ConsensusNodeManager) AddBlock(block *pb.Block) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Keep payload in global cache for RealBlockStore.Add full-data checks.
+	CacheBlock(block)
 
 	// 转换为types.Block
 	typesBlock, err := m.adapter.DBBlockToConsensus(block)

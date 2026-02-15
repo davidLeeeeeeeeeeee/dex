@@ -1,3 +1,6 @@
+//go:build verkle_legacy
+// +build verkle_legacy
+
 package verkle
 
 import (

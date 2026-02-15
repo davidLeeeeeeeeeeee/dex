@@ -3,13 +3,11 @@ package handlers
 import (
 	"dex/consensus"
 	"dex/types"
-	"encoding/json"
 	"io"
 	"net/http"
 )
 
-// 发送端 gossip 发的是 JSON 的 types.GossipPayload（里头嵌 db.Block）
-// 这里只解析这一种；不做其他格式兜底。
+// HandleBlockGossip handles JSON GossipPayload posted to /gossipAnyMsg.
 func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("HandleBlockGossip0")
 
@@ -20,17 +18,16 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 	}
 	defer r.Body.Close()
 
-	var payload types.GossipPayload
-	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-		http.Error(w, "Failed to parse JSON GossipPayload", http.StatusBadRequest)
-		return
-	}
-	if payload.Block == nil {
-		http.Error(w, "GossipPayload missing block", http.StatusBadRequest)
+	payload, err := types.DecodeGossipPayload(bodyBytes)
+	if err != nil {
+		http.Error(w, "Failed to parse GossipPayload", http.StatusBadRequest)
+		hm.Logger.Debug("[HandleBlockGossip] decode payload failed: %v", err)
 		return
 	}
 
-	// 转为共识层 block
+	// Cache payload first so consensus Add() can use body/shortTxs immediately.
+	consensus.CacheBlock(payload.Block)
+
 	if hm.adapter == nil {
 		http.Error(w, "adapter unavailable", http.StatusServiceUnavailable)
 		return
@@ -41,7 +38,6 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 已见过的区块直接返回 OK（可选，按你现有字段）
 	if hm.seenBlocksCache != nil && consBlock.ID != "" && hm.seenBlocksCache.Contains(consBlock.ID) {
 		hm.Logger.Debug("[HandleBlockGossip] Block %s already seen, OK", consBlock.ID)
 		w.WriteHeader(http.StatusOK)
@@ -52,10 +48,8 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 		hm.seenBlocksCache.Add(consBlock.ID, true)
 	}
 
-	// 统计点位
 	hm.Stats.RecordAPICall("HandleBlockGossip1")
 
-	// 交给共识/网络层
 	msg := types.Message{
 		RequestID: payload.RequestID,
 		Type:      types.MsgGossip,
@@ -63,25 +57,22 @@ func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Reque
 		Block:     consBlock,
 		BlockID:   consBlock.ID,
 		Height:    consBlock.Header.Height,
+		ShortTxs:  payload.Block.ShortTxs,
 	}
 
-	// 将 dbBlock 加到共识存储（直接用 payload 里的 db.Block 即可）
 	if hm.consensusManager != nil {
 		if err := hm.consensusManager.AddBlock(payload.Block); err != nil {
-			hm.Logger.Debug("[HandleBlockGossip] AddBlock warn: %v", err) // 已存在等非致命错误
+			hm.Logger.Debug("[HandleBlockGossip] AddBlock warn: %v", err)
 		}
-		// 如果是RealTransport，使用队列方式处理
 		if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 			if err := rt.EnqueueReceivedMessage(msg); err != nil {
 				hm.Logger.Warn("[Handler] Failed to enqueue chits message: %v", err)
-				// 控制面消息入队失败，返回 503
 				http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
 				return
 			}
 		}
 	}
 
-	// 将交易放入交易池
 	if len(payload.Block.Body) > 0 {
 		for _, tx := range payload.Block.Body {
 			if tx != nil {

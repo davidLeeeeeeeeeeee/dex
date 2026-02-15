@@ -151,7 +151,9 @@ func (p *RealBlockProposer) ShouldPropose(nodeID types.NodeID, window int, curre
 	if maxTxsPerBlock <= 0 {
 		maxTxsPerBlock = 2500
 	}
-	if currentBlocks > 0 && window > 0 && pendingCount >= maxTxsPerBlock {
+	// Keep early-window rate limiting, but do not hard-block later windows:
+	// otherwise a temporary propagation gap can become permanent liveness stall.
+	if currentBlocks > 0 && window == 0 && pendingCount >= maxTxsPerBlock {
 		return false
 	}
 	// 策略修改：

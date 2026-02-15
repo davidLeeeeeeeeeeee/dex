@@ -106,6 +106,28 @@ func (a *ConsensusAdapter) DBBlockToConsensus(dbBlock *pb.Block) (*types.Block, 
 
 // ConsensusBlockToDB 将共识区块转换为数据库格式
 func (a *ConsensusAdapter) ConsensusBlockToDB(block *types.Block, txs []*pb.AnyTx) *pb.Block {
+	if block == nil {
+		return nil
+	}
+
+	useProvidedTxs := txs != nil
+	body := txs
+	var shortTxs []byte
+
+	// Prefer the canonical cached pb.Block when available so propagation keeps Body/ShortTxs.
+	if cachedBlock, exists := GetCachedBlock(block.ID); exists && cachedBlock != nil {
+		if !useProvidedTxs && len(cachedBlock.Body) > 0 {
+			body = cachedBlock.Body
+		}
+		if len(cachedBlock.ShortTxs) > 0 {
+			shortTxs = cachedBlock.ShortTxs
+		}
+	}
+
+	if len(shortTxs) == 0 && len(body) > 0 && a.txPool != nil {
+		shortTxs = a.txPool.ConcatFirst8Bytes(body)
+	}
+
 	return &pb.Block{
 		BlockHash: block.ID,
 		Header: &pb.BlockHeader{
@@ -120,7 +142,8 @@ func (a *ConsensusAdapter) ConsensusBlockToDB(block *types.Block, txs []*pb.AnyT
 			VrfOutput:     block.Header.VRFOutput,
 			BlsPublicKey:  block.Header.BLSPublicKey,
 		},
-		Body: txs,
+		Body:     body,
+		ShortTxs: shortTxs,
 	}
 }
 

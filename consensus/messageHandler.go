@@ -192,7 +192,13 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 	if err != nil {
 		// 关键改动：如果是因为数据不完整导致的拒绝，放入 PendingBlockBuffer 异步补课
 		if strings.Contains(err.Error(), "block data incomplete") {
-			if h.pendingBlockBuffer != nil && msg.ShortTxs != nil {
+			shortTxs := msg.ShortTxs
+			if len(shortTxs) == 0 {
+				if cached, exists := GetCachedBlock(msg.Block.ID); exists && cached != nil {
+					shortTxs = cached.ShortTxs
+				}
+			}
+			if h.pendingBlockBuffer != nil && len(shortTxs) > 0 {
 				// 保存原始消息上下文用于回调
 				fromNode := types.NodeID(msg.From)
 				requestID := msg.RequestID
@@ -201,7 +207,7 @@ func (h *MessageHandler) handlePushQuery(msg types.Message) {
 				// 添加到待处理缓冲区，成功后注入共识
 				h.pendingBlockBuffer.AddPendingBlockForConsensus(
 					block,
-					msg.ShortTxs,
+					shortTxs,
 					fromNode,
 					requestID,
 					func(resolvedBlock *types.Block) {
@@ -358,33 +364,74 @@ func (h *MessageHandler) handleGet(msg types.Message) {
 }
 
 func (h *MessageHandler) handlePut(msg types.Message) {
-	if msg.Block != nil {
-		isNew, err := h.store.Add(msg.Block)
-		if err != nil {
-			// 如果是因为缺父块导致的拒绝，自动请求父块
-			if strings.Contains(err.Error(), "parent block") && strings.Contains(err.Error(), "not found") {
-				if h.queryManager != nil {
-					h.queryManager.RequestBlock(msg.Block.Header.ParentID, types.NodeID(msg.From))
+	if msg.Block == nil {
+		return
+	}
+	isNew, err := h.store.Add(msg.Block)
+	if err != nil {
+		if strings.Contains(err.Error(), "block data incomplete") {
+			shortTxs := msg.ShortTxs
+			if len(shortTxs) == 0 {
+				if cached, exists := GetCachedBlock(msg.Block.ID); exists && cached != nil {
+					shortTxs = cached.ShortTxs
 				}
 			}
 
-			// 仍尝试清理 pendingQueries，避免泄漏
-			h.checkPendingQueries(msg.RequestID)
-			return
+			if h.pendingBlockBuffer != nil && len(shortTxs) > 0 {
+				fromNode := types.NodeID(msg.From)
+				requestID := msg.RequestID
+				block := msg.Block
+
+				_ = h.pendingBlockBuffer.AddPendingBlockForConsensus(
+					block,
+					shortTxs,
+					fromNode,
+					requestID,
+					func(resolvedBlock *types.Block) {
+						if resolvedBlock == nil {
+							return
+						}
+						if newAdded, addErr := h.store.Add(resolvedBlock); addErr == nil && newAdded {
+							logs.Info("[Node %s] Block %s resolved and added via Put path",
+								h.nodeID, resolvedBlock.ID)
+							h.events.PublishAsync(types.BaseEvent{
+								EventType: types.EventBlockReceived,
+								EventData: resolvedBlock,
+							})
+						}
+						h.checkPendingQueries(requestID)
+					},
+				)
+				return
+			}
+
+			if h.queryManager != nil && msg.From != "" {
+				h.queryManager.RequestBlock(msg.Block.ID, types.NodeID(msg.From))
+			}
+		}
+		// 如果是因为缺父块导致的拒绝，自动请求父块
+		if strings.Contains(err.Error(), "parent block") && strings.Contains(err.Error(), "not found") {
+			if h.queryManager != nil {
+				h.queryManager.RequestBlock(msg.Block.Header.ParentID, types.NodeID(msg.From))
+			}
 		}
 
-		if isNew {
-			logs.Debug("[Node %s] Received new block %s via Put from Node %s",
-				h.nodeID, msg.Block.ID, msg.From)
-			h.events.PublishAsync(types.BaseEvent{
-				EventType: types.EventBlockReceived,
-				EventData: msg.Block,
-			})
-		}
-
-		// 无论是否 isNew，都要检查 pendingQueries（可能已通过 gossip 等路径先收到该块）
+		// 仍尝试清理 pendingQueries，避免泄漏
 		h.checkPendingQueries(msg.RequestID)
+		return
 	}
+
+	if isNew {
+		logs.Debug("[Node %s] Received new block %s via Put from Node %s",
+			h.nodeID, msg.Block.ID, msg.From)
+		h.events.PublishAsync(types.BaseEvent{
+			EventType: types.EventBlockReceived,
+			EventData: msg.Block,
+		})
+	}
+
+	// 无论是否 isNew，都要检查 pendingQueries（可能已通过 gossip 等路径先收到该块）
+	h.checkPendingQueries(msg.RequestID)
 }
 
 // 添加检查待回复查询的方法

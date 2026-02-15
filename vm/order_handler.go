@@ -652,7 +652,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 				Owner:            newOrd.Base.FromAddress,
 			}
 		} else {
- // 失败也要归还
+			// 失败也要归还
 			orderStateKey := keys.KeyOrderState(ev.OrderID)
 			orderStateData, exists, err := sv.Get(orderStateKey)
 			if err != nil || !exists {
@@ -761,7 +761,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			Category:    "orderstate",
 		})
 
-	// 所有使用 stateUpdates 的函数已执行完毕，现在安全地归还 Pool 对象
+		// 所有使用 stateUpdates 的函数已执行完毕，现在安全地归还 Pool 对象
 		priceKey67, err := db.PriceToKey128(orderState.Price)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert price to key: %w", err)
@@ -777,7 +777,7 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			Category:    "index",
 		})
 
-	// 如果 accountCache 中有更新后的账户，生成对应的 WriteOp
+		// 如果 accountCache 中有更新后的账户，生成对应的 WriteOp
 		if orderState.IsFilled {
 			newIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, true, priceKey67, orderID)
 			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
@@ -917,7 +917,7 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		return nil, fmt.Errorf("failed to convert price to key: %w", err)
 	}
 
-		// 创建成交记录
+	// 创建成交记录
 	priceIndexKey := keys.KeyOrderPriceIndex(pair, ord.Side, orderState.IsFilled, priceKey67, ord.Base.TxId)
 	indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
 	ws = append(ws, WriteOp{
@@ -1037,7 +1037,7 @@ func (h *OrderTxHandler) generateTradeRecordsFromStates(
 			}
 		}
 
-	// key 格式: "address:token"
+		// key 格式: "address:token"
 		takerIDShort := takerOrderID
 		if len(takerIDShort) > 8 {
 			takerIDShort = takerIDShort[:8]
@@ -1144,7 +1144,17 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 			}
 			newFrozen, err := SafeSub(frozen, tradeAmtBI)
 			if err != nil {
-				return nil, fmt.Errorf("seller frozen balance underflow: %w", err)
+				return nil, fmt.Errorf(
+					"seller frozen balance underflow: order_id=%s owner=%s token=%s frozen=%s deduct=%s trade_amt=%s trade_price=%s: %w",
+					ev.OrderID,
+					address,
+					orderState.BaseToken,
+					frozen.String(),
+					tradeAmtBI.String(),
+					tradeAmtBI.String(),
+					tradePriceBI.String(),
+					err,
+				)
 			}
 			newQuoteBalance, err := SafeAdd(quoteBalance, tradeQuoteAmt)
 			if err != nil {
@@ -1168,7 +1178,18 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 			}
 			newFrozen, err := SafeSub(frozen, frozenToDeduct)
 			if err != nil {
-				return nil, fmt.Errorf("buyer frozen balance underflow: %w", err)
+				return nil, fmt.Errorf(
+					"buyer frozen balance underflow: order_id=%s owner=%s token=%s frozen=%s deduct=%s trade_amt=%s trade_price=%s limit_price=%s: %w",
+					ev.OrderID,
+					address,
+					orderState.QuoteToken,
+					frozen.String(),
+					frozenToDeduct.String(),
+					tradeAmtBI.String(),
+					tradePriceBI.String(),
+					limitPrice.String(),
+					err,
+				)
 			}
 			quoteBal.OrderFrozenBalance = newFrozen.String()
 

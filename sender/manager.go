@@ -9,7 +9,6 @@ import (
 	"dex/txpool"
 	"dex/types"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -283,9 +282,9 @@ func (sm *SenderManager) BatchGetTxs(peerAddress string, shortHashes map[string]
 // 广播消息给随机矿工
 func (sm *SenderManager) BroadcastGossipToTarget(targetAddr string, payload *types.GossipPayload) error {
 	// 序列化整个 payload
-	data, err := json.Marshal(payload)
+	data, err := types.EncodeGossipPayload(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal gossip payload: %w", err)
+		return fmt.Errorf("failed to encode gossip payload: %w", err)
 	}
 	if targetAddr == "" {
 		return nil

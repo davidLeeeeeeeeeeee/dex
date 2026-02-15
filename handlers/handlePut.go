@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// 发送端 /put 发的是 protobuf 的 db.Block，这里只解析这一种
+// HandlePut handles /put where sender posts a protobuf db.Block.
 func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("HandlePut")
 
@@ -27,20 +27,20 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 基本校验（按你项目习惯来，可保留）
 	if block.BlockHash == "" || block.BlockHash == "genesis" {
 		http.Error(w, "Invalid block hash", http.StatusBadRequest)
 		return
 	}
 
-	// 保存区块
 	if err := hm.dbManager.SaveBlock(&block); err != nil {
 		hm.Logger.Error("[HandlePut] Failed to save block %s: %v", block.BlockHash, err)
 		http.Error(w, "Failed to save block", http.StatusInternalServerError)
 		return
 	}
 
-	// 将交易放入交易池（标记为已在区块中）
+	// Keep block payload available for consensus Add()/finalize path.
+	consensus.CacheBlock(&block)
+
 	if len(block.Body) > 0 {
 		for _, tx := range block.Body {
 			if tx != nil {
@@ -52,16 +52,21 @@ func (hm *HandlerManager) HandlePut(w http.ResponseWriter, r *http.Request) {
 		hm.Logger.Debug("[HandlePut] Added %d transactions from block %s to pool", len(block.Body), block.BlockHash)
 	}
 
-	// 通知共识（保持你现有逻辑）
 	if hm.consensusManager != nil && hm.adapter != nil {
 		if consensusBlock, err := hm.adapter.DBBlockToConsensus(&block); err == nil {
+			from := types.NodeID(consensusBlock.Header.Proposer)
+			if from == "" && block.Header != nil {
+				from = types.NodeID(block.Header.Miner)
+			}
+
 			msg := types.Message{
-				RequestID: 0, // /put 不走请求-响应，这里固定 0
+				RequestID: 0,
 				Type:      types.MsgPut,
-				From:      types.NodeID(block.Header.Miner),
+				From:      from,
 				Block:     consensusBlock,
 				BlockID:   block.BlockHash,
 				Height:    block.Header.Height,
+				ShortTxs:  block.ShortTxs,
 			}
 			if rt, ok := hm.consensusManager.Transport.(*consensus.RealTransport); ok {
 				if err := rt.EnqueueReceivedMessage(msg); err != nil {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dex/consensus"
 	"dex/pb"
 	"fmt"
 	"io"
@@ -9,11 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// HandleGetData 处理来自对等节点的 /getdata 请求。
-// 客户端会发送 GetData 消息（包含 tx_id），服务器查找该 tx（例如 AnyTx 或 Transaction），
-// 并将完整交易数据返回给请求者。
-
-// 处理获取交易数据请求
+// HandleGetData handles /getdata requests for tx payload by tx_id.
 func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("HandleGetData")
 	if !hm.checkAuth(r) {
@@ -33,7 +30,7 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 先从TxPool查找
+	// Try TxPool first.
 	txFromPool := hm.txPool.GetTransactionById(getDataMsg.TxId)
 	if txFromPool != nil {
 		respData, _ := proto.Marshal(txFromPool)
@@ -43,7 +40,7 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 从数据库查找
+	// Fallback to DB.
 	anyTx, err := hm.dbManager.GetAnyTxById(getDataMsg.TxId)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("[TxPool: not found] [DB error: %v]", err), http.StatusNotFound)
@@ -60,7 +57,7 @@ func (hm *HandlerManager) HandleGetData(w http.ResponseWriter, r *http.Request) 
 	w.Write(respData)
 }
 
-// HandleGetTxReceipt 处理获取交易回执的请求
+// HandleGetTxReceipt handles /gettxreceipt request.
 func (hm *HandlerManager) HandleGetTxReceipt(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("HandleGetTxReceipt")
 	if !hm.checkAuth(r) {
@@ -80,7 +77,6 @@ func (hm *HandlerManager) HandleGetTxReceipt(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// 从数据库获取对应的 Receipt
 	receipt, err := hm.dbManager.GetTxReceipt(getDataMsg.TxId)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Receipt for %s not found: %v", getDataMsg.TxId, err), http.StatusNotFound)
@@ -93,32 +89,46 @@ func (hm *HandlerManager) HandleGetTxReceipt(w http.ResponseWriter, r *http.Requ
 	w.Write(respData)
 }
 
+// HandleGet handles /getblockbyid request.
 func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("HandleGet")
 	if !hm.checkAuth(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
 	body, _ := io.ReadAll(r.Body)
 	var req pb.GetBlockByIDRequest
 	if err := proto.Unmarshal(body, &req); err != nil {
 		http.Error(w, "Invalid GetBlockByID proto", http.StatusBadRequest)
 		return
 	}
-	blk, err := hm.dbManager.GetBlockByID(req.BlockId)
-	if (err != nil || blk == nil) && hm.consensusManager != nil {
-		// 1. 尝试从共识 Store 获取（可能在内存尚未落盘）
+
+	// 1) Prefer global cache so unfinalized blocks can return complete payload.
+	var blk *pb.Block
+	if cached, exists := consensus.GetCachedBlock(req.BlockId); exists && cached != nil {
+		blk = cached
+	}
+
+	// 2) Fallback to DB.
+	if blk == nil {
+		dbBlock, err := hm.dbManager.GetBlockByID(req.BlockId)
+		if err == nil && dbBlock != nil {
+			blk = dbBlock
+		}
+	}
+
+	// 3) Fallback to consensus memory/pending buffer.
+	if blk == nil && hm.consensusManager != nil {
 		if hm.consensusManager.Node != nil && hm.adapter != nil {
 			if b, ok := hm.consensusManager.Node.GetBlock(req.BlockId); ok && b != nil {
 				blk = hm.adapter.ConsensusBlockToDB(b, nil)
 			}
 		}
 
-		// 2. 尝试从补课缓冲区获取（支持“短 Hash 传染”机制）
 		if blk == nil {
 			if pbb := hm.consensusManager.GetPendingBlockBuffer(); pbb != nil {
 				if tBlk, shortTxs := pbb.GetPendingBlock(req.BlockId); tBlk != nil {
-					// 虽然没有 Body，但返回 Header + ShortTxs，允许请求者也开始补课
 					blk = hm.adapter.ConsensusBlockToDB(tBlk, nil)
 					blk.ShortTxs = shortTxs
 				}
@@ -130,6 +140,19 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Block %s not found (pending or missing)", req.BlockId), http.StatusNotFound)
 		return
 	}
+
+	// Enrich fallback responses with cached data if possible.
+	if len(blk.ShortTxs) == 0 || len(blk.Body) == 0 {
+		if cached, exists := consensus.GetCachedBlock(req.BlockId); exists && cached != nil {
+			if len(blk.ShortTxs) == 0 && len(cached.ShortTxs) > 0 {
+				blk.ShortTxs = cached.ShortTxs
+			}
+			if len(blk.Body) == 0 && len(cached.Body) > 0 {
+				blk.Body = cached.Body
+			}
+		}
+	}
+
 	resp := &pb.GetBlockResponse{Block: blk}
 	bytes, _ := proto.Marshal(resp)
 	w.Header().Set("Content-Type", "application/x-protobuf")

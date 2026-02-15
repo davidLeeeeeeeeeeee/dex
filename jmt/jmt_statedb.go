@@ -3,9 +3,12 @@ package smt
 import (
 	"crypto/sha256"
 	"dex/config"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/dgraph-io/badger/v2"
@@ -26,8 +29,9 @@ type KVUpdate struct {
 
 // JMTConfig 是 JMTStateDB 的配置
 type JMTConfig struct {
-	DataDir string // BadgerDB 目录（如已有 DB 实例则忽略）
-	Prefix  []byte // 命名空间前缀，默认 "jmt:"
+	DataDir     string // BadgerDB directory (ignored if an existing DB is provided)
+	Prefix      []byte // namespace prefix, default "jmt:"
+	EnableKVLog bool   // write per-height KV/hash debug log
 }
 
 // JMTStateDB 提供与现有 StateDB 兼容的接口
@@ -36,12 +40,14 @@ type JMTStateDB struct {
 	tree         *JellyfishMerkleTree
 	store        *VersionedBadgerStore
 	db           *badger.DB
-	ownsDB       bool // 是否由本实例管理 DB 生命周期
+	ownsDB       bool // whether this instance owns DB lifecycle
 	prefix       []byte
+	dataDir      string
+	enableKVLog  bool
 	mu           sync.RWMutex
-	pendingKeys  [][]byte // 当前批次的 keys
-	pendingVals  [][]byte // 当前批次的 values
-	batchVersion Version  // 当前批次的版本号
+	pendingKeys  [][]byte // current batch keys
+	pendingVals  [][]byte // current batch values
+	batchVersion Version  // current batch version
 }
 
 // NewJMTStateDB 创建 JMT 状态存储（自己管理 BadgerDB）
@@ -84,6 +90,7 @@ func NewJMTStateDBWithDB(db *badger.DB, cfg JMTConfig) (*JMTStateDB, error) {
 	if len(prefix) == 0 {
 		prefix = []byte("jmt:")
 	}
+	enableKVLog := cfg.EnableKVLog || envBool("JMT_ENABLE_KV_LOG")
 
 	store := NewVersionedBadgerStore(db, prefix)
 	tree := NewJMT(store, sha256.New())
@@ -95,12 +102,19 @@ func NewJMTStateDBWithDB(db *badger.DB, cfg JMTConfig) (*JMTStateDB, error) {
 	}
 
 	return &JMTStateDB{
-		tree:   tree,
-		store:  store,
-		db:     db,
-		ownsDB: false,
-		prefix: prefix,
+		tree:        tree,
+		store:       store,
+		db:          db,
+		ownsDB:      false,
+		prefix:      prefix,
+		dataDir:     cfg.DataDir,
+		enableKVLog: enableKVLog,
 	}, nil
+}
+
+func envBool(name string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
 // recoverLatestVersion 从 BadgerDB 恢复最新版本和根哈希
@@ -247,10 +261,13 @@ func (s *JMTStateDBSession) GetKV(key string) ([]byte, error) {
 }
 
 func (s *JMTStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error {
+	prevRoot := append([]byte(nil), s.lastRoot...)
 	keys := make([][]byte, 0, len(kvs))
 	vals := make([][]byte, 0, len(kvs))
+	deletedKeys := make([][]byte, 0)
 	for _, kv := range kvs {
 		if kv.Deleted {
+			deletedKeys = append(deletedKeys, []byte(kv.Key))
 			// JMT 原生支持从树中删除
 			_, err := s.db.tree.DeleteWithSession(s.sess, []byte(kv.Key), Version(height))
 			if err != nil && !errors.Is(err, ErrNotFound) {
@@ -287,7 +304,71 @@ func (s *JMTStateDBSession) ApplyUpdate(height uint64, kvs ...KVUpdate) error {
 		return fmt.Errorf("failed to save root hash in session: %w", err)
 	}
 
+	if s.db.enableKVLog && s.db.dataDir != "" {
+		s.writeKVLog(height, prevRoot, keys, vals, deletedKeys)
+	}
+
 	return nil
+}
+
+func (s *JMTStateDBSession) writeKVLog(height uint64, prevRoot []byte, keys [][]byte, vals [][]byte, deletedKeys [][]byte) {
+	if s.db.dataDir == "" {
+		return
+	}
+
+	logDir := filepath.Join(s.db.dataDir, "jmt_kv_logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		fmt.Printf("[JMTKVLog] failed to create log dir: %v\n", err)
+		return
+	}
+
+	logFile := filepath.Join(logDir, fmt.Sprintf("height_%d.txt", height))
+	f, err := os.Create(logFile)
+	if err != nil {
+		fmt.Printf("[JMTKVLog] failed to create log file: %v\n", err)
+		return
+	}
+	defer f.Close()
+
+	hasher := s.db.tree.Hasher()
+
+	fmt.Fprintf(f, "# JMT KV Log - Height %d\n", height)
+	fmt.Fprintf(f, "# Root Before: %x\n", prevRoot)
+	fmt.Fprintf(f, "# Root After : %x\n", s.lastRoot)
+	fmt.Fprintf(f, "# Update Keys: %d\n", len(keys))
+	fmt.Fprintf(f, "# Delete Keys: %d\n", len(deletedKeys))
+	fmt.Fprintf(f, "# ==========================================\n\n")
+
+	if len(keys) > 0 {
+		fmt.Fprintf(f, "## UPDATES (%d entries)\n", len(keys))
+		for i := 0; i < len(keys); i++ {
+			key := keys[i]
+			val := vals[i]
+			pathHash := hasher.Path(key)
+			valueHash := hasher.Digest(val)
+			leafHash, _ := hasher.DigestLeafNode(pathHash, valueHash)
+
+			fmt.Fprintf(f, "[%d] KEY: %s\n", i+1, string(key))
+			fmt.Fprintf(f, "    KEY_HEX   : %s\n", hex.EncodeToString(key))
+			fmt.Fprintf(f, "    PATH_HASH : %x\n", pathHash)
+			fmt.Fprintf(f, "    VALUE_HASH: %x\n", valueHash)
+			fmt.Fprintf(f, "    LEAF_HASH : %x\n", leafHash)
+			fmt.Fprintf(f, "    VAL_HEX   : %s\n", hex.EncodeToString(val))
+			fmt.Fprintf(f, "    VAL_LEN   : %d\n\n", len(val))
+		}
+	}
+
+	if len(deletedKeys) > 0 {
+		fmt.Fprintf(f, "## DELETES (%d entries)\n", len(deletedKeys))
+		for i, key := range deletedKeys {
+			pathHash := hasher.Path(key)
+			fmt.Fprintf(f, "[%d] DEL_KEY  : %s\n", i+1, string(key))
+			fmt.Fprintf(f, "    DEL_HEX  : %s\n", hex.EncodeToString(key))
+			fmt.Fprintf(f, "    PATH_HASH: %x\n\n", pathHash)
+		}
+	}
+
+	fmt.Printf("[JMTKVLog] height=%d file=%s updates=%d deletes=%d\n", height, logFile, len(keys), len(deletedKeys))
 }
 
 func (s *JMTStateDBSession) Commit() error {

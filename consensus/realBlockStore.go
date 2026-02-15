@@ -21,6 +21,7 @@ import (
 )
 
 var ErrAlreadyFinalized = errors.New("already finalized")
+var emptyTxsHash = txpool.ComputeTxsHash(nil)
 
 // RealBlockStore 使用数据库的真实区块存储实现
 type RealBlockStore struct {
@@ -161,6 +162,19 @@ func (s *RealBlockStore) SetEventBus(events interfaces.EventBus) {
 }
 
 // Add 添加新区块
+func isCompleteBlockPayload(block *pb.Block) bool {
+	if block == nil || block.Header == nil {
+		return false
+	}
+	if len(block.Body) > 0 {
+		return true
+	}
+	if len(block.ShortTxs) > 0 {
+		return false
+	}
+	return block.Header.TxsHash == emptyTxsHash
+}
+
 func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 	// 第一步：快速检查是否已存在 + 验证区块（持锁）
 	s.mu.Lock()
@@ -178,7 +192,14 @@ func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
 	// 第二步（新增）：检查是否有完整的区块数据（交易体）
 	// 这是共识安全的关键门槛：没有完整数据的块不能进入候选池
 	pbBlock, hasFullData := GetCachedBlock(block.ID)
-	if !hasFullData || pbBlock == nil {
+	if (!hasFullData || !isCompleteBlockPayload(pbBlock)) && s.dbManager != nil {
+		if dbBlock, err := s.dbManager.GetBlockByID(block.ID); err == nil && isCompleteBlockPayload(dbBlock) {
+			pbBlock = dbBlock
+			hasFullData = true
+			CacheBlock(dbBlock)
+		}
+	}
+	if !hasFullData || !isCompleteBlockPayload(pbBlock) {
 		// 没有完整数据，拒绝加入共识候选
 		logs.Debug("[RealBlockStore] Block %s rejected: no full data available (awaiting transaction body)", block.ID)
 		return false, fmt.Errorf("block data incomplete: awaiting transaction body")
@@ -457,7 +478,15 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 	commitStart := time.Now()
 	var txCount int
 	// 优先使用完整的 pb.Block（包含交易）
-	if pbBlock, exists := GetCachedBlock(block.ID); exists && pbBlock != nil {
+	pbBlock, exists := GetCachedBlock(block.ID)
+	if (!exists || !isCompleteBlockPayload(pbBlock)) && s.dbManager != nil {
+		if dbBlock, err := s.dbManager.GetBlockByID(blockID); err == nil && isCompleteBlockPayload(dbBlock) {
+			pbBlock = dbBlock
+			exists = true
+			CacheBlock(dbBlock)
+		}
+	}
+	if exists && isCompleteBlockPayload(pbBlock) {
 		if err := s.vmExecutor.CommitFinalizedBlock(pbBlock); err != nil {
 			logs.Error("[RealBlockStore] VM CommitFinalizedBlock failed for block %s: %v", block.ID, err)
 			return fmt.Errorf("vm commit failed: %w", err)
