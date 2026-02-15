@@ -114,7 +114,7 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 	validator := &TestValidator{}
 
 	// 5. 创建并启动TxPool（不再使用单例）
-	txPool, err := txpool.NewTxPool(dbManager, validator, node.Address, node.Logger)
+	txPool, err := txpool.NewTxPoolWithConfig(dbManager, validator, node.Address, node.Logger, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create TxPool: %v", err)
 	}

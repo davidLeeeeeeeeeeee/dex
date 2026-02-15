@@ -128,6 +128,13 @@ func (pm *ProposalManager) proposeBlock() {
 
 	// 判断是否应该在当前window提出区块
 	if !pm.proposer.ShouldPropose(pm.nodeID, currentWindow, currentBlocks, int(lastHeight), int(targetHeight), lastBlockTime, parentID) {
+		if currentWindow >= 2 {
+			since := time.Since(lastBlockTime)
+			if since > 10*time.Second {
+				logs.Warn("[ProposalManager] No proposal at node=%s height=%d window=%d currentBlocks=%d sinceLastFinalized=%v parent=%s",
+					pm.nodeID, targetHeight, currentWindow, currentBlocks, since.Round(time.Second), parentID)
+			}
+		}
 		return
 	}
 

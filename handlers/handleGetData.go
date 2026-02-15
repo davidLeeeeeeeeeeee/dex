@@ -159,6 +159,8 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if blk == nil {
+		logs.Warn("[HandleGet] Block %s not found for %s (source=%s)",
+			req.BlockId, r.RemoteAddr, source)
 		http.Error(w, fmt.Sprintf("Block %s not found (pending or missing)", req.BlockId), http.StatusNotFound)
 		return
 	}
@@ -183,6 +185,10 @@ func (hm *HandlerManager) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	if enrichedFromCache {
 		source += "+cache_enrich"
+	}
+	if len(blk.Body) == 0 && len(blk.ShortTxs) > 0 {
+		logs.Warn("[HandleGet] Serving block %s from %s without body (shortTxs=%d)",
+			req.BlockId, source, len(blk.ShortTxs))
 	}
 
 	resp := &pb.GetBlockResponse{Block: blk}

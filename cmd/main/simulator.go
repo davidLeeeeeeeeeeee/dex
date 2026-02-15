@@ -6,6 +6,7 @@ import (
 	"dex/pb"
 	mrand "math/rand"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -56,21 +57,64 @@ func (s *TxSimulator) monitorTxPool() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if len(s.nodes) == 0 || s.nodes[0] == nil || s.nodes[0].TxPool == nil {
+		if len(s.nodes) == 0 {
 			continue
 		}
 
-		// 检查第一个节点的交易池作为参考（或计算平均值）
-		pending := s.nodes[0].TxPool.PendingLen()
+		maxPending := 0
+		maxPendingNode := -1
+		maxQueueUsage := 0.0
+		maxQueueNode := -1
+		pendingHigh := 5000
 
-		if pending > 5000 {
+		for i, node := range s.nodes {
+			if node == nil || node.TxPool == nil {
+				continue
+			}
+			if limit := node.TxPool.MaxPendingLimit(); limit > 0 {
+				pendingHigh = limit
+			}
+
+			pending := node.TxPool.PendingLen()
+			if pending > maxPending {
+				maxPending = pending
+				maxPendingNode = i
+			}
+
+			qLen, qCap := node.TxPool.QueueDepth()
+			if qCap > 0 {
+				usage := float64(qLen) / float64(qCap)
+				if usage > maxQueueUsage {
+					maxQueueUsage = usage
+					maxQueueNode = i
+				}
+			}
+		}
+
+		if pendingHigh <= 0 {
+			pendingHigh = 5000
+		}
+		pendingLow := pendingHigh * 2 / 5 // hysteresis: 40%
+		queueHigh := 0.80
+		queueLow := 0.30
+
+		overloaded := maxPending > pendingHigh || maxQueueUsage >= queueHigh
+		relieved := maxPending < pendingLow && maxQueueUsage <= queueLow
+
+		if overloaded {
 			if !s.paused.Load() {
-				logs.Warn("SIMULATOR: TxPool overload detected (%d pending), PAUSING tx generation", pending)
+				logs.Warn(
+					"SIMULATOR: TxPool overload detected (maxPending=%d@node=%d limit=%d, maxQueueUsage=%.0f%%@node=%d), PAUSING tx generation",
+					maxPending, maxPendingNode, pendingHigh, maxQueueUsage*100, maxQueueNode,
+				)
 				s.paused.Store(true)
 			}
-		} else if pending < 2000 {
+		} else if relieved {
 			if s.paused.Load() {
-				logs.Info("SIMULATOR: TxPool pressure relieved (%d pending), RESUMING tx generation", pending)
+				logs.Info(
+					"SIMULATOR: TxPool pressure relieved (maxPending=%d limit=%d, maxQueueUsage=%.0f%%), RESUMING tx generation",
+					maxPending, pendingHigh, maxQueueUsage*100,
+				)
 				s.paused.Store(false)
 			}
 		}
@@ -81,6 +125,10 @@ func (s *TxSimulator) submitTx(node *NodeInstance, tx *pb.AnyTx) {
 	if node == nil || tx == nil {
 		return
 	}
+	// Global simulator gate: when overloaded, suppress all synthetic tx sources.
+	if s.paused.Load() {
+		return
+	}
 	// 使用 SubmitTx 发送到交易池，并触发广播回调
 	err := node.TxPool.SubmitTx(tx, "127.0.0.1", func(txID string) {
 		if node.SenderManager != nil {
@@ -88,6 +136,11 @@ func (s *TxSimulator) submitTx(node *NodeInstance, tx *pb.AnyTx) {
 		}
 	})
 	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "txpool queue is full") || strings.Contains(errStr, "txpool pending is full") {
+			logs.Debug("Simulator: Drop tx %s due txpool pressure: %v", tx.GetBase().TxId, err)
+			return
+		}
 		logs.Error("Simulator: Failed to submit tx %s: %v", tx.GetBase().TxId, err)
 	}
 }
@@ -346,6 +399,9 @@ func (s *TxSimulator) runOrderScenario() {
 		// 每次生成 10-20 笔订单
 		orderCount := 10 + mrand.Intn(300)
 		for i := 0; i < orderCount; i++ {
+			if s.paused.Load() {
+				break
+			}
 			// 随机选择一个节点
 			nodeIdx := mrand.Intn(len(s.nodes))
 			node := s.nodes[nodeIdx]

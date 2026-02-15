@@ -10,6 +10,7 @@ import (
 	"dex/types"
 	"encoding/binary"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 )
@@ -416,6 +417,25 @@ func secureRandUint32() (uint32, error) {
 	return binary.BigEndian.Uint32(b[:]), nil
 }
 
+func parseProposerFromBlockID(blockID string) (types.NodeID, bool) {
+	// Expected format: block-<height>-<proposer>-w<window>-<hash>
+	if !strings.HasPrefix(blockID, "block-") {
+		return "", false
+	}
+	rest := strings.TrimPrefix(blockID, "block-")
+	heightSep := strings.Index(rest, "-")
+	if heightSep <= 0 || heightSep+1 >= len(rest) {
+		return "", false
+	}
+	rest = rest[heightSep+1:] // <proposer>-w<window>-<hash>
+	proposerSep := strings.Index(rest, "-")
+	if proposerSep <= 0 {
+		return "", false
+	}
+	proposer := rest[:proposerSep]
+	return types.NodeID(proposer), proposer != ""
+}
+
 // RequestBlock 尝试请求缺失的区块，带有自激荡保护（限流）
 func (qm *QueryManager) RequestBlock(blockID string, from types.NodeID) {
 	// 检查是否最近已请求过该块，避免自激
@@ -431,6 +451,17 @@ func (qm *QueryManager) RequestBlock(blockID string, from types.NodeID) {
 	}
 
 	if shouldRequest {
+		if proposer, ok := parseProposerFromBlockID(blockID); ok && proposer != "" && proposer != from {
+			if err := qm.transport.Send(proposer, types.Message{
+				Type:      types.MsgGet,
+				From:      qm.nodeID,
+				RequestID: 0,
+				BlockID:   blockID,
+			}); err != nil {
+				logs.Warn("[QueryManager] Failed to request missing block %s from proposer %s: %v",
+					blockID, proposer, err)
+			}
+		}
 		logs.Warn("[QueryManager] Requesting missing block %s from %s", blockID, from)
 		if err := qm.transport.Send(from, types.Message{
 			Type:      types.MsgGet,

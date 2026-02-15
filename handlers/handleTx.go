@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -34,7 +35,12 @@ func (hm *HandlerManager) HandleTx(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to submit tx: %v", err), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		errStr := err.Error()
+		if strings.Contains(errStr, "txpool queue is full") || strings.Contains(errStr, "txpool pending is full") {
+			status = http.StatusTooManyRequests
+		}
+		http.Error(w, fmt.Sprintf("Failed to submit tx: %v", err), status)
 		return
 	}
 

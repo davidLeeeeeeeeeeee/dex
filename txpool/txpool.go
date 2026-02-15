@@ -43,11 +43,19 @@ type TxPool struct {
 	// DB 持久化队列（固定 worker + 有界队列，避免每 tx 起 goroutine）
 	pendingSaveQueue   chan *pb.AnyTx
 	pendingSaveWorkers int
+	cfg                *config.Config
 }
 
 // NewTxPool 创建新的TxPool实例（替代GetInstance）
 func NewTxPool(dbManager *db.Manager, validator TxValidator, address string, logger logs.Logger) (*TxPool, error) {
-	cfg := config.DefaultConfig()
+	return NewTxPoolWithConfig(dbManager, validator, address, logger, nil)
+}
+
+// NewTxPoolWithConfig creates a TxPool with caller-provided config.
+func NewTxPoolWithConfig(dbManager *db.Manager, validator TxValidator, address string, logger logs.Logger, cfg *config.Config) (*TxPool, error) {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
 	pendingAnyTxCache, err := lru.New(cfg.TxPool.PendingTxCacheSize)
 	if err != nil {
 		return nil, err
@@ -74,6 +82,7 @@ func NewTxPool(dbManager *db.Manager, validator TxValidator, address string, log
 		stopChan:               make(chan struct{}),
 		pendingSaveQueue:       make(chan *pb.AnyTx, pendingSaveQueueSize),
 		pendingSaveWorkers:     pendingSaveWorkers,
+		cfg:                    cfg,
 	}
 
 	// 创建内部队列
@@ -112,6 +121,21 @@ func (tp *TxPool) SubmitTx(anyTx *pb.AnyTx, fromIP string, onAdded OnTxAddedCall
 	if anyTx == nil {
 		return fmt.Errorf("nil transaction")
 	}
+	if tp == nil || tp.Queue == nil {
+		return fmt.Errorf("txpool is not initialized")
+	}
+	txID := anyTx.GetTxId()
+	// Duplicate tx should be treated as accepted, even under pressure.
+	// Otherwise peers keep receiving 429 for already-known tx and flood logs.
+	if txID != "" && tp.HasTransaction(txID) {
+		return nil
+	}
+
+	maxPending := tp.MaxPendingLimit()
+	pending := tp.PendingLen()
+	if maxPending > 0 && pending >= maxPending {
+		return fmt.Errorf("txpool pending is full (%d/%d)", pending, maxPending)
+	}
 
 	msg := &txPoolMessage{
 		Type:    msgAddTx,
@@ -124,7 +148,7 @@ func (tp *TxPool) SubmitTx(anyTx *pb.AnyTx, fromIP string, onAdded OnTxAddedCall
 	case tp.Queue.MsgChan <- msg:
 		return nil
 	default:
-		return fmt.Errorf("txpool queue is full")
+		return fmt.Errorf("txpool queue is full (%d/%d)", len(tp.Queue.MsgChan), cap(tp.Queue.MsgChan))
 	}
 }
 
@@ -405,7 +429,11 @@ func (p *TxPool) GetPendingAnyTx() []*pb.AnyTx {
 func (p *TxPool) GetPending65500Tx() []*pb.AnyTx {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	cfg := config.DefaultConfig()
+
+	cfg := p.cfg
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
 	var result []*pb.AnyTx
 	keys := p.pendingAnyTxCache.Keys()
 	maxCount := cfg.TxPool.MaxPendingTxs
@@ -590,5 +618,21 @@ func (tp *TxPool) PendingLen() int {
 	if tp.pendingAnyTxCache == nil {
 		return 0
 	}
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
 	return tp.pendingAnyTxCache.Len()
+}
+
+func (tp *TxPool) MaxPendingLimit() int {
+	if tp == nil || tp.cfg == nil {
+		return 0
+	}
+	return tp.cfg.TxPool.MaxPendingTxs
+}
+
+func (tp *TxPool) QueueDepth() (int, int) {
+	if tp == nil || tp.Queue == nil {
+		return 0, 0
+	}
+	return len(tp.Queue.MsgChan), cap(tp.Queue.MsgChan)
 }

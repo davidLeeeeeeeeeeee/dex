@@ -247,27 +247,67 @@ func normalizeWriteQueueKeyBucket(key string) string {
 	if key == "" {
 		return "empty"
 	}
-	if strings.HasPrefix(key, "snapshot_") {
-		return "snapshot"
-	}
-	if strings.HasPrefix(key, "finalization_chits_") {
-		return "finalization_chits"
-	}
-	if strings.HasPrefix(key, "consensus_sig_set_") {
-		return "consensus_sig_set"
+
+	// Drop version prefix like v1_/v2_ to avoid splitting bucket families by version.
+	keyNoVer := key
+	if idx := strings.IndexByte(key, '_'); idx > 1 && idx <= 4 && key[0] == 'v' {
+		allDigits := true
+		for i := 1; i < idx; i++ {
+			if key[i] < '0' || key[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			keyNoVer = key[idx+1:]
+		}
 	}
 
-	parts := strings.Split(key, "_")
-	if len(parts) >= 4 && parts[0] == "v1" {
-		return strings.Join(parts[:4], "_")
+	switch {
+	case strings.HasPrefix(keyNoVer, "snapshot_"):
+		return "snapshot"
+	case strings.HasPrefix(keyNoVer, "finalization_chits_"):
+		return "finalization_chits"
+	case strings.HasPrefix(keyNoVer, "consensus_sig_set_"):
+		return "consensus_sig_set"
+	case strings.HasPrefix(keyNoVer, "pending_anytx_"):
+		return "pending_anytx"
+	case strings.HasPrefix(keyNoVer, "anyTx_"):
+		return "anyTx"
+	case strings.HasPrefix(keyNoVer, "tx_"):
+		return "tx"
+	case strings.HasPrefix(keyNoVer, "order_"):
+		return "order"
+	case strings.HasPrefix(keyNoVer, "orderstate_"):
+		return "orderstate"
+	case strings.HasPrefix(keyNoVer, "blockdata_"):
+		return "blockdata"
+	case strings.HasPrefix(keyNoVer, "height_"):
+		return "height"
+	case strings.HasPrefix(keyNoVer, "blockid_"):
+		return "blockid"
+	case strings.HasPrefix(keyNoVer, "account_"):
+		return "account"
+	case strings.HasPrefix(keyNoVer, "balance_"):
+		return "balance"
+	case strings.HasPrefix(keyNoVer, "acc_order_"):
+		return "acc_order"
+	case strings.HasPrefix(keyNoVer, "frost_planning_log"):
+		return "frost_planning_log"
 	}
-	if len(parts) >= 3 {
-		return strings.Join(parts[:3], "_")
+
+	parts := strings.Split(keyNoVer, "_")
+	if len(parts) >= 2 {
+		bucket := parts[0] + "_" + parts[1]
+		if len(bucket) > 48 {
+			return parts[0]
+		}
+		return bucket
 	}
-	if len(key) > 32 {
-		return key[:32] + "..."
+	if len(keyNoVer) > 48 {
+		return keyNoVer[:48] + "..."
 	}
-	return key
+	return keyNoVer
 }
 
 func (manager *Manager) addCounter(counterMap *sync.Map, key string) {
@@ -290,7 +330,7 @@ func (manager *Manager) clearCounterMap(counterMap *sync.Map) {
 	})
 }
 
-func (manager *Manager) snapshotCounterMap(counterMap *sync.Map) map[string]uint64 {
+func (manager *Manager) snapshotCounterMapDelta(counterMap *sync.Map) map[string]uint64 {
 	snapshot := make(map[string]uint64)
 	if counterMap == nil {
 		return snapshot
@@ -304,47 +344,46 @@ func (manager *Manager) snapshotCounterMap(counterMap *sync.Map) map[string]uint
 		if !ok || c == nil {
 			return true
 		}
-		snapshot[key] = c.Load()
+		// Metrics are emitted periodically; consume a windowed delta to keep
+		// map churn and per-tick diff work bounded.
+		delta := c.Swap(0)
+		if delta == 0 {
+			return true
+		}
+		snapshot[key] = delta
 		return true
 	})
 	return snapshot
 }
 
-type counterDelta struct {
+type counterValue struct {
 	Key   string
-	Delta uint64
+	Value uint64
 }
 
-func topCounterDeltas(cur map[string]uint64, prev map[string]uint64, topN int) []string {
+func topCounterValues(cur map[string]uint64, topN int) []string {
 	if topN <= 0 || len(cur) == 0 {
 		return nil
 	}
-	deltas := make([]counterDelta, 0, len(cur))
-	for k, curVal := range cur {
-		prevVal := prev[k]
-		if curVal <= prevVal {
-			continue
-		}
-		deltas = append(deltas, counterDelta{
+	values := make([]counterValue, 0, len(cur))
+	for k, v := range cur {
+		values = append(values, counterValue{
 			Key:   k,
-			Delta: curVal - prevVal,
+			Value: v,
 		})
 	}
-	if len(deltas) == 0 {
-		return nil
-	}
-	sort.Slice(deltas, func(i, j int) bool {
-		if deltas[i].Delta != deltas[j].Delta {
-			return deltas[i].Delta > deltas[j].Delta
+	sort.Slice(values, func(i, j int) bool {
+		if values[i].Value != values[j].Value {
+			return values[i].Value > values[j].Value
 		}
-		return deltas[i].Key < deltas[j].Key
+		return values[i].Key < values[j].Key
 	})
-	if len(deltas) > topN {
-		deltas = deltas[:topN]
+	if len(values) > topN {
+		values = values[:topN]
 	}
-	result := make([]string, 0, len(deltas))
-	for _, d := range deltas {
-		result = append(result, fmt.Sprintf("%s=%d", d.Key, d.Delta))
+	result := make([]string, 0, len(values))
+	for _, d := range values {
+		result = append(result, fmt.Sprintf("%s=%d", d.Key, d.Value))
 	}
 	return result
 }
@@ -363,8 +402,8 @@ func (manager *Manager) snapshotWriteQueueMetrics() writeQueueMetricsSnapshot {
 		flushDurationNsTotal: atomic.LoadUint64(&manager.writeQueueFlushDurationNsTotal),
 		forceFlushTotal:      atomic.LoadUint64(&manager.writeQueueForceFlushTotal),
 		maxDepth:             atomic.LoadUint64(&manager.writeQueueMaxDepth),
-		keyCounters:          manager.snapshotCounterMap(&manager.writeQueueKeyCounters),
-		blockedKeyCounters:   manager.snapshotCounterMap(&manager.writeQueueBlockedKeyCounters),
+		keyCounters:          manager.snapshotCounterMapDelta(&manager.writeQueueKeyCounters),
+		blockedKeyCounters:   manager.snapshotCounterMapDelta(&manager.writeQueueBlockedKeyCounters),
 	}
 }
 
@@ -409,11 +448,11 @@ func (manager *Manager) logWriteQueueStats(prev writeQueueMetricsSnapshot, inter
 		flushedTaskDelta, flushBatchDelta, avgBatch, avgFlushMs,
 		flushErrDelta, forceFlushDelta, blockedDelta, avgBlockMs,
 	)
-	topKeys := topCounterDeltas(cur.keyCounters, prev.keyCounters, 6)
+	topKeys := topCounterValues(cur.keyCounters, 6)
 	if len(topKeys) > 0 {
 		msg += " topWriteKeys=" + strings.Join(topKeys, ",")
 	}
-	topBlockedKeys := topCounterDeltas(cur.blockedKeyCounters, prev.blockedKeyCounters, 6)
+	topBlockedKeys := topCounterValues(cur.blockedKeyCounters, 6)
 	if len(topBlockedKeys) > 0 {
 		msg += " topBlockedKeys=" + strings.Join(topBlockedKeys, ",")
 	}

@@ -363,8 +363,13 @@ func (sq *SendQueue) doSend(task *SendTask, workerID int, queueType string) erro
 		if isTimeoutSendError(err) {
 			sq.sendTimeout.Add(1)
 		}
-		sq.Logger.Error("[SendQueue][%s] worker=%d,%s send to %s FAILED after %v: %v",
-			queueType, workerID, task.FuncName(), task.Target, elapsed, err)
+		if isBackpressureSendError(err) {
+			sq.Logger.Debug("[SendQueue][%s] worker=%d,%s target=%s backpressure after %v: %v",
+				queueType, workerID, task.FuncName(), task.Target, elapsed, err)
+		} else {
+			sq.Logger.Error("[SendQueue][%s] worker=%d,%s send to %s FAILED after %v: %v",
+				queueType, workerID, task.FuncName(), task.Target, elapsed, err)
+		}
 	} else {
 		sq.sendSuccess.Add(1)
 		sq.Logger.Trace("[SendQueue][%s] worker=%d,%s send to %s success in %v",
@@ -374,6 +379,12 @@ func (sq *SendQueue) doSend(task *SendTask, workerID int, queueType string) erro
 }
 
 func (sq *SendQueue) handleRetry(task *SendTask, sendErr error) {
+	if isNonRetriableSendError(sendErr) {
+		sq.Logger.Debug("[SendQueue] Non-retriable send error target=%s func=%s: %v",
+			task.Target, task.FuncName(), sendErr)
+		return
+	}
+
 	task.RetryCount++
 	cfg := sq.cfg
 
@@ -424,6 +435,29 @@ func isTimeoutSendError(err error) bool {
 	}
 	low := strings.ToLower(err.Error())
 	return strings.Contains(low, "timeout") || strings.Contains(low, "deadline exceeded")
+}
+
+func isBackpressureSendError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var statusErr *httpStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.statusCode == http.StatusTooManyRequests
+}
+
+func isNonRetriableSendError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var statusErr *httpStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	// 4xx are caller/request-side problems; retrying usually amplifies pressure.
+	return statusErr.statusCode >= 400 && statusErr.statusCode < 500
 }
 
 func compactFuncName(full string) string {

@@ -101,6 +101,9 @@ func (sm *SenderManager) BroadcastTx(tx *pb.AnyTx) {
 	}
 
 	for _, account := range peers {
+		if account == nil || account.Ip == "" || account.Address == sm.address {
+			continue
+		}
 		task := &SendTask{
 			Target:     account.Ip,
 			Message:    data,
@@ -128,6 +131,9 @@ func (sm *SenderManager) SendTxToAllPeers(tx *pb.AnyTx) {
 	}
 
 	for _, acc := range accounts {
+		if acc == nil || acc.Ip == "" || acc.Address == sm.address {
+			continue
+		}
 		task := &SendTask{
 			Target:     acc.Ip,
 			Message:    data,

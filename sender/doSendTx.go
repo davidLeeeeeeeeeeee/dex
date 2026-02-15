@@ -25,7 +25,11 @@ func doSendTx(t *SendTask, client *http.Client) error {
 
 	if resp.StatusCode != http.StatusOK {
 		respData, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("doSendTx: status %d, body %s", resp.StatusCode, string(respData))
+		return &httpStatusError{
+			op:         "doSendTx",
+			statusCode: resp.StatusCode,
+			body:       string(respData),
+		}
 	}
 
 	// 完全读取 response body，确保连接可复用
