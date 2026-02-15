@@ -2,6 +2,7 @@ package types
 
 import (
 	"dex/pb"
+	"encoding/json"
 	"testing"
 )
 
@@ -59,5 +60,26 @@ func TestEncodeGossipPayloadMissingBlock(t *testing.T) {
 	_, err := EncodeGossipPayload(&GossipPayload{RequestID: 1})
 	if err == nil {
 		t.Fatal("expected error for missing block")
+	}
+}
+
+func TestDecodeGossipPayloadRejectLegacyJSON(t *testing.T) {
+	payload := &GossipPayload{
+		Block: &pb.Block{
+			BlockHash: "legacy-json",
+			Header: &pb.BlockHeader{
+				Height: 7,
+			},
+		},
+		RequestID: 77,
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal legacy JSON payload error = %v", err)
+	}
+
+	if _, err := DecodeGossipPayload(data); err == nil {
+		t.Fatal("expected decode error for legacy JSON payload")
 	}
 }

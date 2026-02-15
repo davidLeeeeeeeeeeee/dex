@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-// HandleBlockGossip handles JSON GossipPayload posted to /gossipAnyMsg.
+// HandleBlockGossip handles binary GossipPayload posted to /gossipAnyMsg.
 func (hm *HandlerManager) HandleBlockGossip(w http.ResponseWriter, r *http.Request) {
 	hm.Stats.RecordAPICall("HandleBlockGossip0")
 

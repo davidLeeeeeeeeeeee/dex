@@ -1,12 +1,11 @@
 package types
 
 import (
-	"bytes"
 	"dex/pb"
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
 
-	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // GossipPayload carries block gossip between nodes.
@@ -15,12 +14,9 @@ type GossipPayload struct {
 	RequestID uint32    `json:"request_id"`
 }
 
-// gossipPayloadJSON is the wire envelope used on /gossipAnyMsg.
-// Block uses protobuf-JSON to support oneof fields inside pb.AnyTx.
-type gossipPayloadJSON struct {
-	Block     json.RawMessage `json:"block"`
-	RequestID uint32          `json:"request_id"`
-}
+var gossipWireMagic = [4]byte{'G', 'P', 'B', '1'}
+
+const gossipWireHeaderLen = 8 // 4 bytes magic + 4 bytes request_id
 
 func EncodeGossipPayload(payload *GossipPayload) ([]byte, error) {
 	if payload == nil {
@@ -30,49 +26,38 @@ func EncodeGossipPayload(payload *GossipPayload) ([]byte, error) {
 		return nil, fmt.Errorf("gossip payload missing block")
 	}
 
-	blockJSON, err := protojson.Marshal(payload.Block)
+	blockBytes, err := proto.Marshal(payload.Block)
 	if err != nil {
-		return nil, fmt.Errorf("marshal gossip block: %w", err)
+		return nil, fmt.Errorf("marshal gossip block proto: %w", err)
 	}
 
-	wire := gossipPayloadJSON{
-		Block:     blockJSON,
-		RequestID: payload.RequestID,
-	}
-	data, err := json.Marshal(&wire)
-	if err != nil {
-		return nil, fmt.Errorf("marshal gossip payload: %w", err)
-	}
+	data := make([]byte, gossipWireHeaderLen+len(blockBytes))
+	copy(data[:4], gossipWireMagic[:])
+	binary.BigEndian.PutUint32(data[4:8], payload.RequestID)
+	copy(data[gossipWireHeaderLen:], blockBytes)
+
 	return data, nil
 }
 
 func DecodeGossipPayload(data []byte) (*GossipPayload, error) {
-	var wire gossipPayloadJSON
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return nil, fmt.Errorf("parse gossip payload JSON: %w", err)
+	if len(data) < gossipWireHeaderLen {
+		return nil, fmt.Errorf("gossip payload too short: got %d bytes", len(data))
 	}
-
-	trimmed := bytes.TrimSpace(wire.Block)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+	if data[0] != gossipWireMagic[0] || data[1] != gossipWireMagic[1] || data[2] != gossipWireMagic[2] || data[3] != gossipWireMagic[3] {
+		return nil, fmt.Errorf("unsupported gossip payload wire format")
+	}
+	if len(data) == gossipWireHeaderLen {
 		return nil, fmt.Errorf("gossip payload missing block")
 	}
 
+	requestID := binary.BigEndian.Uint32(data[4:8])
 	block := &pb.Block{}
-	if err := protojson.Unmarshal(wire.Block, block); err == nil {
-		return &GossipPayload{
-			Block:     block,
-			RequestID: wire.RequestID,
-		}, nil
+	if err := proto.Unmarshal(data[gossipWireHeaderLen:], block); err != nil {
+		return nil, fmt.Errorf("unmarshal gossip block proto: %w", err)
 	}
 
-	// Backward-compatible fallback for historical JSON encoding path.
-	var legacy GossipPayload
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		return nil, fmt.Errorf("parse legacy gossip payload: %w", err)
-	}
-	if legacy.Block == nil {
-		return nil, fmt.Errorf("legacy gossip payload missing block")
-	}
-
-	return &legacy, nil
+	return &GossipPayload{
+		Block:     block,
+		RequestID: requestID,
+	}, nil
 }
