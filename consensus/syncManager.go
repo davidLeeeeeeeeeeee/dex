@@ -2,11 +2,11 @@ package consensus
 
 import (
 	"context"
-	"errors"
 	"dex/interfaces"
 	"dex/logs"
 	"dex/pb"
 	"dex/types"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -215,7 +215,7 @@ func (sm *SyncManager) processTimeouts() {
 		}
 
 		if hasTimeout && len(sm.SyncRequests) == 0 {
-			logs.Warn("[Node %s] All sync requests timed out, resetting Syncing flag", sm.nodeID)
+			sm.Logger.Warn("[Node %s] All sync requests timed out, resetting Syncing flag", sm.nodeID)
 			sm.Syncing = false
 			sm.usingSnapshot = false
 		}
@@ -224,7 +224,7 @@ func (sm *SyncManager) processTimeouts() {
 	// 检查高度采样超时
 	if sm.sampling {
 		if now.Sub(sm.sampleStartTime) > sm.config.SampleTimeout {
-			logs.Debug("[Node %s] Sample verification timed out, resetting sampling flag", sm.nodeID)
+			sm.Logger.Debug("[Node %s] Sample verification timed out, resetting sampling flag", sm.nodeID)
 			sm.sampling = false
 		}
 	}
@@ -251,7 +251,7 @@ func (sm *SyncManager) checkAndSync() {
 	if sm.sampling {
 		// 检查采样是否超时
 		if time.Since(sm.sampleStartTime) > sm.config.SampleTimeout {
-			logs.Debug("[Sync] Sample verification timed out, responses=%d", len(sm.sampleResponses))
+			sm.Logger.Debug("[Sync] Sample verification timed out, responses=%d", len(sm.sampleResponses))
 			sm.sampling = false
 			sm.Mu.Unlock()
 			return
@@ -270,7 +270,7 @@ func (sm *SyncManager) checkAndSync() {
 		_, localAcceptedHeight := sm.store.GetLastAccepted()
 
 		if quorumHeight > localAcceptedHeight {
-			logs.Info("[Sync] ✅ Quorum verified: target height %d confirmed by %.0f%% nodes",
+			sm.Logger.Info("[Sync] ✅ Quorum verified: target height %d confirmed by %.0f%% nodes",
 				quorumHeight, sm.config.QuorumRatio*100)
 			sm.Mu.Unlock()
 
@@ -304,7 +304,7 @@ func (sm *SyncManager) checkAndSync() {
 
 	// 3. 如果落后超过阈值，启动采样验证
 	if heightDiff > sm.config.BehindThreshold {
-		logs.Debug("[Sync] Detected lag of %d blocks, starting sample verification (target=%d)",
+		sm.Logger.Debug("[Sync] Detected lag of %d blocks, starting sample verification (target=%d)",
 			heightDiff, maxPeerHeight)
 		sm.startHeightSampling()
 	}
@@ -358,7 +358,7 @@ func (sm *SyncManager) resetStaleSyncStateLocked() bool {
 	if len(sm.SyncRequests) > 0 {
 		return true
 	}
-	logs.Debug("[SyncManager] Chit trigger: resetting stale sync state (Requests=0)")
+	sm.Logger.Debug("[SyncManager] Chit trigger: resetting stale sync state (Requests=0)")
 	sm.Syncing = false
 	sm.sampling = false
 	return false
@@ -492,7 +492,7 @@ func (sm *SyncManager) evaluatePendingChitTrigger() {
 	sm.Mu.Unlock()
 
 	heightDiff := targetHeight - localAccepted
-	logs.Debug("[SyncManager] TriggerSyncFromChit: delayed trigger peer=%s peerHeight=%d localAccepted=%d diff=%d",
+	sm.Logger.Debug("[SyncManager] TriggerSyncFromChit: delayed trigger peer=%s peerHeight=%d localAccepted=%d diff=%d",
 		from, targetHeight, localAccepted, heightDiff)
 	sm.performTriggeredSync(targetHeight, localAccepted, heightDiff)
 }
@@ -533,7 +533,7 @@ func (sm *SyncManager) TriggerSyncFromChit(peerAcceptedHeight uint64, from types
 		sm.lastChitTriggerAt = now
 		sm.Mu.Unlock()
 
-		logs.Debug("[SyncManager] TriggerSyncFromChit: hard trigger peer=%s peerHeight=%d localAccepted=%d diff=%d",
+		sm.Logger.Debug("[SyncManager] TriggerSyncFromChit: hard trigger peer=%s peerHeight=%d localAccepted=%d diff=%d",
 			from, peerAcceptedHeight, localAccepted, heightDiff)
 		sm.performTriggeredSync(peerAcceptedHeight, localAccepted, heightDiff)
 		return
@@ -610,7 +610,7 @@ func (sm *SyncManager) requestSyncParallel(fromHeight, toHeight uint64) {
 	// 计算每个节点负责的高度范围
 	rangePerPeer := totalBlocks / uint64(len(peers))
 
-	logs.Info("[SyncManager] Starting parallel sync: heights %d-%d across %d peers",
+	sm.Logger.Info("[SyncManager] Starting parallel sync: heights %d-%d across %d peers",
 		fromHeight, toHeight, len(peers))
 
 	for i, peer := range peers {
@@ -630,7 +630,7 @@ func (sm *SyncManager) requestSyncParallel(fromHeight, toHeight uint64) {
 		useShortMode := totalBlocks <= sm.config.ShortSyncThreshold
 
 		go func(p types.NodeID, s, e uint64, id uint32, shortMode bool) {
-			logs.Debug("[SyncManager] Parallel shard: peer=%s heights=%d-%d shortMode=%v", p, s, e, shortMode)
+			sm.Logger.Debug("[SyncManager] Parallel shard: peer=%s heights=%d-%d shortMode=%v", p, s, e, shortMode)
 
 			msg := types.Message{
 				Type:          types.MsgSyncRequest,
@@ -702,7 +702,7 @@ func (sm *SyncManager) evaluateSampleQuorum() (uint64, bool) {
 	}
 
 	if maxQuorumHeight > 0 {
-		logs.Debug("[Sync] Quorum check: %d/%d nodes support height %d (required=%d)",
+		sm.Logger.Debug("[Sync] Quorum check: %d/%d nodes support height %d (required=%d)",
 			len(sm.sampleResponses), sm.config.SampleSize, maxQuorumHeight, required)
 		return maxQuorumHeight, true
 	}
@@ -1028,7 +1028,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 			}
 			// 接入补课机制：如果是数据不完整导致的失败，加入 PendingBlockBuffer
 			if strings.Contains(err.Error(), "block data incomplete") && sm.pendingBlockBuffer != nil {
-				logs.Debug("[SyncManager] Block %s incomplete, queueing for async resolution", block.ID)
+				sm.Logger.Debug("[SyncManager] Block %s incomplete, queueing for async resolution", block.ID)
 				// 尝试使用响应中的 ShortTxs（如果有）
 				shortTxs := msg.BlocksShortTxs[block.ID]
 				sm.pendingBlockBuffer.AddPendingBlockForConsensus(block, shortTxs, types.NodeID(msg.From), 0, nil)
@@ -1045,17 +1045,17 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 			sm.nodeID, added, msg.FromHeight, msg.ToHeight)
 	}
 	if addErrs > 0 {
-		logs.Warn("[Node %s] Sync received %d blocks, %d failed to add (first=%s err=%v)",
+		sm.Logger.Warn("[Node %s] Sync received %d blocks, %d failed to add (first=%s err=%v)",
 			sm.nodeID, len(msg.Blocks), addErrs, firstAddErrBlockID, firstAddErr)
 	}
 	if added == 0 && len(msg.Blocks) > 0 && addErrs == 0 {
 		// 优化：根据当前状态调整日志级别。如果是早于或等于当前高度的同步，使用 Debug。
 		_, acceptedHeight := sm.store.GetLastAccepted()
 		if msg.ToHeight <= acceptedHeight {
-			logs.Debug("[Node %s] Sync received %d blocks but none were new (heights %d-%d, current accepted=%d)",
+			sm.Logger.Debug("[Node %s] Sync received %d blocks but none were new (heights %d-%d, current accepted=%d)",
 				sm.nodeID, len(msg.Blocks), msg.FromHeight, msg.ToHeight, acceptedHeight)
 		} else {
-			logs.Warn("[Node %s] Sync received %d blocks but none were new (heights %d-%d, current accepted=%d)",
+			sm.Logger.Warn("[Node %s] Sync received %d blocks but none were new (heights %d-%d, current accepted=%d)",
 				sm.nodeID, len(msg.Blocks), msg.FromHeight, msg.ToHeight, acceptedHeight)
 		}
 	}
@@ -1103,10 +1103,10 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 			if sigData, hasSig := msg.SignatureSets[nextHeight]; hasSig {
 				var sigSet pb.ConsensusSignatureSet
 				if err := proto.Unmarshal(sigData, &sigSet); err != nil {
-					logs.Warn("[SyncManager] Failed to decode signature set for height %d: %v", nextHeight, err)
+					sm.Logger.Warn("[SyncManager] Failed to decode signature set for height %d: %v", nextHeight, err)
 				} else {
 					if !VerifySignatureSet(&sigSet, sm.config.SyncAlpha, sm.config.SyncBeta, sm.transport, sm.nodeID) {
-						logs.Warn("[SyncManager] ⚠️ Signature set verification failed for height %d, skipping", nextHeight)
+						sm.Logger.Warn("[SyncManager] ⚠️ Signature set verification failed for height %d, skipping", nextHeight)
 						break
 					}
 					// 验证通过，存储到本地
@@ -1123,7 +1123,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 				acceptedID, acceptedHeight = sm.store.GetLastAccepted()
 				continue
 			}
-			logs.Warn("[SyncManager] Failed to finalize block %s at height %d: %v", chosen.ID, nextHeight, err)
+			sm.Logger.Warn("[SyncManager] Failed to finalize block %s at height %d: %v", chosen.ID, nextHeight, err)
 			break
 		}
 
@@ -1145,7 +1145,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 	}
 
 	if finalized > 0 {
-		logs.Info("[Node %s] ✅ Fast-finalized %d block(s) via sync (accepted=%d)",
+		sm.Logger.Info("[Node %s] ✅ Fast-finalized %d block(s) via sync (accepted=%d)",
 			sm.nodeID, finalized, acceptedHeight)
 		atomic.StoreUint32(&sm.consecutiveStallCount, 0) // 重置停滞计数
 	} else if len(msg.Blocks) > 0 {
@@ -1154,7 +1154,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 		if msg.ToHeight > acceptedHeight {
 			stalls := atomic.AddUint32(&sm.consecutiveStallCount, 1)
 			if stalls >= 3 {
-				logs.Debug("[Node %s] ⚠️ Sync stalled for %d rounds at height %d, breaking pipeline and switching peers",
+				sm.Logger.Debug("[Node %s] ⚠️ Sync stalled for %d rounds at height %d, breaking pipeline and switching peers",
 					sm.nodeID, stalls, acceptedHeight)
 				sm.Mu.Lock()
 				delete(sm.PeerHeights, types.NodeID(msg.From)) // 清理该 Peer 高度信息，强制重新采样
@@ -1164,7 +1164,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 				return
 			}
 		} else {
-			logs.Debug("[Node %s] Sync response for heights %d-%d is older than accepted %d, ignoring stall check",
+			sm.Logger.Debug("[Node %s] Sync response for heights %d-%d is older than accepted %d, ignoring stall check",
 				sm.nodeID, msg.FromHeight, msg.ToHeight, acceptedHeight)
 		}
 	}
@@ -1181,7 +1181,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 				EventData: added,
 			})
 		} else {
-			logs.Debug("[Node %s] Skipping EventSyncComplete signal: still behind by %d blocks",
+			sm.Logger.Debug("[Node %s] Skipping EventSyncComplete signal: still behind by %d blocks",
 				sm.nodeID, maxPeer-curAccepted)
 		}
 	}

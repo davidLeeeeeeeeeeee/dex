@@ -29,6 +29,7 @@ type RealTransport struct {
 	mu            sync.RWMutex
 	senderManager *sender.SenderManager
 	adapter       *ConsensusAdapter
+	Logger        logs.Logger
 
 	inbox          chan types.Message
 	receiveQueue   chan types.Message
@@ -103,6 +104,7 @@ func NewRealTransportWithSimulation(nodeID types.NodeID, dbMgr *db.Manager, send
 		minLatency:     minLatency,
 		maxLatency:     maxLatency,
 		nodeIPCache:    make(map[types.NodeID]string),
+		Logger:         logs.NewNodeLogger(string(nodeID)+":transport", 500),
 	}
 
 	rt.startReceiveWorkers()
@@ -115,7 +117,7 @@ func (t *RealTransport) Send(to types.NodeID, msg types.Message) error {
 	if t.packetLossRate > 0 && rand.Float64() < t.packetLossRate {
 		// 丢包了，直接返回，不发送消息
 		// 发送方不知道丢包，返回nil表示"发送成功"
-		logs.Trace("[RealTransport] Packet dropped: %s -> %s, MsgType=%v", t.nodeID, to, msg.Type)
+		t.Logger.Trace("[RealTransport] Packet dropped: %s -> %s, MsgType=%v", t.nodeID, to, msg.Type)
 		return nil
 	}
 
@@ -139,7 +141,7 @@ func (t *RealTransport) doSend(to types.NodeID, msg types.Message) error {
 	t.Stats.RecordAPICall(string(msg.Type))
 	targetIP, err := t.getNodeIP(to)
 	if err != nil {
-		logs.Debug("[RealTransport] Failed to get IP for node %s: %v", to, err)
+		t.Logger.Debug("[RealTransport] Failed to get IP for node %s: %v", to, err)
 		return err
 	}
 
@@ -169,7 +171,7 @@ func (t *RealTransport) doSend(to types.NodeID, msg types.Message) error {
 
 	// 如果耗时超过 50ms，记录跟踪
 	if duration := time.Since(start); duration > 50*time.Millisecond {
-		logs.Debug("[RealTransport] Send Latency: Type=%v, to=%s, duration=%v", msg.Type, to, duration)
+		t.Logger.Debug("[RealTransport] Send Latency: Type=%v, to=%s, duration=%v", msg.Type, to, duration)
 	}
 
 	return errSend
@@ -256,7 +258,7 @@ func (t *RealTransport) sendGet(peer types.NodeID, targetIP string, msg types.Me
 			// 转换为types.Block
 			consensusBlock, err := t.adapter.DBBlockToConsensus(block)
 			if err != nil {
-				logs.Error("[RealTransport] Failed to convert block: %v", err)
+				t.Logger.Error("[RealTransport] Failed to convert block: %v", err)
 				return
 			}
 
@@ -273,10 +275,10 @@ func (t *RealTransport) sendGet(peer types.NodeID, targetIP string, msg types.Me
 
 			// 将消息放入接收队列
 			if err := t.EnqueueReceivedMessage(putMsg); err != nil {
-				logs.Debug("[RealTransport] Failed to enqueue Put message: %v", err)
+				t.Logger.Debug("[RealTransport] Failed to enqueue Put message: %v", err)
 			}
 
-			logs.Debug("[RealTransport] Received block %s from %s", block.BlockHash, targetIP)
+			t.Logger.Debug("[RealTransport] Received block %s from %s", block.BlockHash, targetIP)
 		}
 	})
 	return nil
@@ -413,7 +415,7 @@ func (t *RealTransport) EnqueueReceivedMessage(msg types.Message) error {
 			return nil
 		case <-time.After(50 * time.Millisecond):
 			t.controlEnqueueTimeoutDrops.Add(1)
-			logs.Warn(
+			t.Logger.Warn(
 				"[RealTransport] Control message queue full local=%s type=%s from=%s receiveQueue=%d/%d",
 				t.nodeID, msg.Type, msg.From, len(t.receiveQueue), cap(t.receiveQueue),
 			)
@@ -426,7 +428,7 @@ func (t *RealTransport) EnqueueReceivedMessage(msg types.Message) error {
 			return nil
 		default:
 			t.dataEnqueueFullDrops.Add(1)
-			logs.Debug(
+			t.Logger.Debug(
 				"[RealTransport] Data message queue full local=%s type=%s from=%s receiveQueue=%d/%d",
 				t.nodeID, msg.Type, msg.From, len(t.receiveQueue), cap(t.receiveQueue),
 			)
@@ -445,14 +447,13 @@ func (t *RealTransport) Broadcast(msg types.Message, peers []types.NodeID) {
 	for _, peer := range peers {
 		if isConsensusQuery {
 			if err := t.Send(peer, msg); err != nil {
-				logs.Debug("[RealTransport] Failed to send to peer %s: %v", peer, err)
+				t.Logger.Debug("[RealTransport] Failed to send to peer %s: %v", peer, err)
 			}
 			continue
 		}
 		go func(p types.NodeID) {
-			logs.SetThreadNodeContext(string(t.nodeID))
 			if err := t.Send(p, msg); err != nil {
-				logs.Debug("[RealTransport] Failed to send to peer %s: %v", p, err)
+				t.Logger.Debug("[RealTransport] Failed to send to peer %s: %v", p, err)
 			}
 		}(peer)
 	}
@@ -461,7 +462,7 @@ func (t *RealTransport) Broadcast(msg types.Message, peers []types.NodeID) {
 func (t *RealTransport) SamplePeers(exclude types.NodeID, count int) []types.NodeID {
 	miners, err := t.dbManager.GetRandomMinersFast(count + 1)
 	if err != nil {
-		logs.Error("[RealTransport] Failed to get random miners: %v", err)
+		t.Logger.Error("[RealTransport] Failed to get random miners: %v", err)
 		return nil
 	}
 
@@ -483,7 +484,7 @@ func (t *RealTransport) SamplePeers(exclude types.NodeID, count int) []types.Nod
 func (t *RealTransport) GetAllPeers(exclude types.NodeID) []types.NodeID {
 	allMiners, err := t.dbManager.GetRandomMinersFast(1000) // 取足够多的矿工
 	if err != nil {
-		logs.Error("[RealTransport] GetAllPeers failed: %v", err)
+		t.Logger.Error("[RealTransport] GetAllPeers failed: %v", err)
 		return nil
 	}
 
@@ -503,12 +504,11 @@ func (t *RealTransport) startReceiveWorkers() {
 		go t.receiveWorker(i)
 	}
 
-	logs.Info("[RealTransport] Started %d receive workers", t.receiveWorkers)
+	t.Logger.Info("[RealTransport] Started %d receive workers", t.receiveWorkers)
 }
 
 func (t *RealTransport) receiveWorker(workerID int) {
 	defer t.wg.Done()
-	logs.SetThreadNodeContext(string(t.nodeID))
 
 	for {
 		select {
@@ -517,20 +517,20 @@ func (t *RealTransport) receiveWorker(workerID int) {
 		case msg := <-t.receiveQueue:
 			if err := t.preprocessMessage(&msg); err != nil {
 				t.preprocessInvalidDrops.Add(1)
-				logs.Debug("[RealTransport] Worker %d: Invalid message from %s: %v",
+				t.Logger.Debug("[RealTransport] Worker %d: Invalid message from %s: %v",
 					workerID, msg.From, err)
 				continue
 			}
 
 			select {
 			case t.inbox <- msg:
-				logs.Trace("[RealTransport] Worker %d: Processed message type %d from %s",
+				t.Logger.Trace("[RealTransport] Worker %d: Processed message type %d from %s",
 					workerID, msg.Type, msg.From)
 			case <-time.After(5 * time.Second):
 				t.inboxForwardTimeoutDrops.Add(1)
 				t.addCounter(&t.inboxTimeoutByType, normalizeCounterKey(string(msg.Type)))
 				t.addCounter(&t.inboxTimeoutBySender, normalizeCounterKey(string(msg.From)))
-				logs.Warn(
+				t.Logger.Warn(
 					"[RealTransport] Worker %d: Timeout sending to inbox local=%s type=%s from=%s request=%d block=%s receiveQueue=%d/%d inbox=%d/%d",
 					workerID,
 					t.nodeID,
@@ -564,7 +564,7 @@ func (t *RealTransport) Close() {
 		t.wg.Wait()
 		close(t.receiveQueue)
 		close(t.inbox)
-		logs.Info("[RealTransport] Closed")
+		t.Logger.Info("[RealTransport] Closed")
 	})
 }
 

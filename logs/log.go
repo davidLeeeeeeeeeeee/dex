@@ -67,12 +67,12 @@ func NewNodeLogger(address string, maxLines int) *NodeLogger {
 	}
 	l := &NodeLogger{
 		addr:          address,
-		traceLogger:   log.New(os.Stdout, fmt.Sprintf("[TRACE]   [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
-		debugLogger:   log.New(os.Stdout, fmt.Sprintf("[DEBUG]   [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
-		verboseLogger: log.New(os.Stdout, fmt.Sprintf("[VERBOSE] [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
-		infoLogger:    log.New(os.Stdout, fmt.Sprintf("[INFO]    [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
-		warnLogger:    log.New(os.Stdout, fmt.Sprintf("[WARN]    [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
-		errorLogger:   log.New(os.Stderr, fmt.Sprintf("[ERROR]   [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
+		traceLogger:   log.New(os.Stdout, fmt.Sprintf("[TRACE]   [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds),
+		debugLogger:   log.New(os.Stdout, fmt.Sprintf("[DEBUG]   [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds),
+		verboseLogger: log.New(os.Stdout, fmt.Sprintf("[VERBOSE] [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds),
+		infoLogger:    log.New(os.Stdout, fmt.Sprintf("[INFO]    [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds),
+		warnLogger:    log.New(os.Stdout, fmt.Sprintf("[WARN]    [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds),
+		errorLogger:   log.New(os.Stderr, fmt.Sprintf("[ERROR]   [%s] ", prefix), log.Ldate|log.Ltime|log.Lmicroseconds),
 		maxLines:      maxLines,
 		buffer:        make([]*pb.LogLine, 0, maxLines),
 	}
@@ -102,9 +102,12 @@ func (l *NodeLogger) writeToBuffer(level, message string) {
 	}
 
 	if len(l.buffer) >= l.maxLines {
-		l.buffer = l.buffer[1:]
+		// 使用 copy 旋转而非 l.buffer[1:]，避免底层数组头部元素永远无法被 GC 回收
+		copy(l.buffer, l.buffer[1:])
+		l.buffer[len(l.buffer)-1] = line
+	} else {
+		l.buffer = append(l.buffer, line)
 	}
-	l.buffer = append(l.buffer, line)
 }
 
 func (l *NodeLogger) GetBuffer() []*pb.LogLine {
@@ -213,12 +216,22 @@ func normalizeNodeIdent(ident string) string {
 	return ident
 }
 
+// gidBufPool 池化 getGID 使用的 64 字节 buffer，消除每次调用的 make([]byte, 64) 分配。
+var gidBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 64)
+		return &b
+	},
+}
+
 func getGID() uint64 {
-	b := make([]byte, 64)
+	bp := gidBufPool.Get().(*[]byte)
+	b := (*bp)[:cap(*bp)]
 	b = b[:runtime.Stack(b, false)]
 	b = bytes.TrimPrefix(b, []byte("goroutine "))
 	b = b[:bytes.IndexByte(b, ' ')]
 	n, _ := strconv.ParseUint(string(b), 10, 64)
+	gidBufPool.Put(bp)
 	return n
 }
 
