@@ -23,7 +23,7 @@ const (
 	LevelError          // 5（最高，最严重）
 )
 
-var logLevel = LevelVerbose // 全局日志级别
+var logLevel = LevelInfo // 全局日志级别
 
 // Logger 是日志接口，所有组件都应该持有这个接口的实例
 type Logger interface {
@@ -217,12 +217,7 @@ func normalizeNodeIdent(ident string) string {
 }
 
 // gidBufPool 池化 getGID 使用的 64 字节 buffer，消除每次调用的 make([]byte, 64) 分配。
-var gidBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 64)
-		return &b
-	},
-}
+var gidBufPool = sync.Pool{New: func() any { b := make([]byte, 64); return &b }}
 
 func getGID() uint64 {
 	bp := gidBufPool.Get().(*[]byte)
@@ -261,12 +256,37 @@ func GetLogs() []*pb.LogLine {
 }
 
 // 包级别的全局函数，重定向到活跃 Logger
-func Trace(format string, v ...interface{})   { getActiveLogger().Trace(format, v...) }
-func Debug(format string, v ...interface{})   { getActiveLogger().Debug(format, v...) }
-func Verbose(format string, v ...interface{}) { getActiveLogger().Verbose(format, v...) }
-func Info(format string, v ...interface{})    { getActiveLogger().Info(format, v...) }
-func Warn(format string, v ...interface{})    { getActiveLogger().Warn(format, v...) }
-func Error(format string, v ...interface{})   { getActiveLogger().Error(format, v...) }
+// 关键优化：先检查日志级别，避免在级别不够时白白调用 getGID() → runtime.Stack()
+func Trace(format string, v ...interface{}) {
+	if logLevel <= LevelTrace {
+		getActiveLogger().Trace(format, v...)
+	}
+}
+func Debug(format string, v ...interface{}) {
+	if logLevel <= LevelDebug {
+		getActiveLogger().Debug(format, v...)
+	}
+}
+func Verbose(format string, v ...interface{}) {
+	if logLevel <= LevelVerbose {
+		getActiveLogger().Verbose(format, v...)
+	}
+}
+func Info(format string, v ...interface{}) {
+	if logLevel <= LevelInfo {
+		getActiveLogger().Info(format, v...)
+	}
+}
+func Warn(format string, v ...interface{}) {
+	if logLevel <= LevelWarning {
+		getActiveLogger().Warn(format, v...)
+	}
+}
+func Error(format string, v ...interface{}) {
+	if logLevel <= LevelError {
+		getActiveLogger().Error(format, v...)
+	}
+}
 
 // 废弃旧方法占位
 func (l *NodeLogger) writeToBufferOld(level, message string) {}

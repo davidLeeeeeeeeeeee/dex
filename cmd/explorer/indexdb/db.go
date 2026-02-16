@@ -6,12 +6,12 @@ import (
 	"os"
 	"sync"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
 )
 
 // IndexDB 是 Explorer 专用的索引数据库
 type IndexDB struct {
-	db     *badger.DB
+	db     *pebble.DB
 	path   string
 	mu     sync.RWMutex
 	nodeDB *db.Manager // 节点数据库引用（用于查询余额快照）
@@ -19,23 +19,17 @@ type IndexDB struct {
 
 // New 创建新的索引数据库
 func New(path string) (*IndexDB, error) {
-	opts := badger.DefaultOptions(path)
-	opts.Logger = nil // 禁用 badger 日志
-	opts.NumCompactors = 2
-
-	// badger v2 不自动创建父目录
+	opts := &pebble.Options{
+		MaxConcurrentCompactions: func() int { return 2 },
+	}
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create indexdb dir: %w", err)
 	}
-	db, err := badger.Open(opts)
+	d, err := pebble.Open(path, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open indexdb: %w", err)
 	}
-
-	return &IndexDB{
-		db:   db,
-		path: path,
-	}, nil
+	return &IndexDB{db: d, path: path}, nil
 }
 
 // Close 关闭数据库
@@ -50,102 +44,90 @@ func (idb *IndexDB) Close() error {
 
 // Set 设置键值
 func (idb *IndexDB) Set(key, value string) error {
-	return idb.db.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte(key), []byte(value))
-	})
+	return idb.db.Set([]byte(key), []byte(value), pebble.Sync)
 }
 
 // Get 获取值
 func (idb *IndexDB) Get(key string) (string, error) {
-	var val string
-	err := idb.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
-		if err != nil {
-			return err
+	raw, closer, err := idb.db.Get([]byte(key))
+	if err != nil {
+		if err == pebble.ErrNotFound {
+			return "", nil
 		}
-		return item.Value(func(v []byte) error {
-			val = string(v)
-			return nil
-		})
-	})
-	if err == badger.ErrKeyNotFound {
-		return "", nil
+		return "", err
 	}
-	return val, err
+	val := string(raw)
+	closer.Close()
+	return val, nil
 }
 
 // Delete 删除键
 func (idb *IndexDB) Delete(key string) error {
-	return idb.db.Update(func(txn *badger.Txn) error {
-		return txn.Delete([]byte(key))
-	})
+	return idb.db.Delete([]byte(key), pebble.Sync)
+}
+
+// prefixUpperBound 计算前缀的上界
+func prefixUpperBound(prefix []byte) []byte {
+	upper := make([]byte, len(prefix))
+	copy(upper, prefix)
+	for i := len(upper) - 1; i >= 0; i-- {
+		upper[i]++
+		if upper[i] != 0 {
+			return upper
+		}
+	}
+	return nil
 }
 
 // ScanPrefix 扫描指定前缀的所有键值
 func (idb *IndexDB) ScanPrefix(prefix string, limit int) ([]KV, error) {
 	var results []KV
-	err := idb.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(prefix)
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		count := 0
-		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
-			if limit > 0 && count >= limit {
-				break
-			}
-			item := it.Item()
-			key := string(item.Key())
-			var val string
-			err := item.Value(func(v []byte) error {
-				val = string(v)
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-			results = append(results, KV{Key: key, Value: val})
-			count++
+	p := []byte(prefix)
+	iter, err := idb.db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	count := 0
+	for iter.SeekGE(p); iter.Valid(); iter.Next() {
+		if limit > 0 && count >= limit {
+			break
 		}
-		return nil
-	})
-	return results, err
+		key := string(iter.Key())
+		val := string(iter.Value())
+		results = append(results, KV{Key: key, Value: val})
+		count++
+	}
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // ScanPrefixReverse 反向扫描指定前缀的所有键值（用于按时间倒序）
 func (idb *IndexDB) ScanPrefixReverse(prefix string, limit int) ([]KV, error) {
 	var results []KV
-	err := idb.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(prefix)
-		opts.Reverse = true
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		// 找到前缀的最后一个可能的 key
-		seekKey := append([]byte(prefix), 0xFF)
-		count := 0
-		for it.Seek(seekKey); it.ValidForPrefix([]byte(prefix)); it.Next() {
-			if limit > 0 && count >= limit {
-				break
-			}
-			item := it.Item()
-			key := string(item.Key())
-			var val string
-			err := item.Value(func(v []byte) error {
-				val = string(v)
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-			results = append(results, KV{Key: key, Value: val})
-			count++
+	p := []byte(prefix)
+	upper := prefixUpperBound(p)
+	iter, err := idb.db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: upper})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	count := 0
+	for iter.SeekLT(upper); iter.Valid(); iter.Prev() {
+		if limit > 0 && count >= limit {
+			break
 		}
-		return nil
-	})
-	return results, err
+		key := string(iter.Key())
+		val := string(iter.Value())
+		results = append(results, KV{Key: key, Value: val})
+		count++
+	}
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // KV 键值对

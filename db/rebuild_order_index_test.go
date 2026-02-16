@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -252,40 +252,36 @@ func TestRebuildOrderPriceIndexes_Performance(t *testing.T) {
 // countKeysWithPrefix 计算指定前缀的 key 数量
 func countKeysWithPrefix(t *testing.T, dbMgr *Manager, prefix string) int {
 	count := 0
-	err := dbMgr.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		p := []byte(prefix)
-		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
-			count++
-		}
-		return nil
-	})
+	p := []byte(prefix)
+	iter, err := dbMgr.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
 	require.NoError(t, err)
+	defer iter.Close()
+	for iter.SeekGE(p); iter.Valid(); iter.Next() {
+		count++
+	}
+	require.NoError(t, iter.Error())
 	return count
 }
 
 // deleteKeysWithPrefix 删除指定前缀的所有 key
 func deleteKeysWithPrefix(t *testing.T, dbMgr *Manager, prefix string) {
-	err := dbMgr.Db.Update(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		p := []byte(prefix)
-		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			if err := txn.Delete(key); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	p := []byte(prefix)
+	var keysToDelete [][]byte
+	iter, err := dbMgr.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
 	require.NoError(t, err)
+	for iter.SeekGE(p); iter.Valid(); iter.Next() {
+		k := make([]byte, len(iter.Key()))
+		copy(k, iter.Key())
+		keysToDelete = append(keysToDelete, k)
+	}
+	require.NoError(t, iter.Error())
+	iter.Close()
+	b := dbMgr.Db.NewBatch()
+	for _, k := range keysToDelete {
+		require.NoError(t, b.Delete(k, nil))
+	}
+	require.NoError(t, b.Commit(pebble.Sync))
+	b.Close()
 }
 
 // extractOrderIDFromIndexKey 从索引 key 中提取订单 ID

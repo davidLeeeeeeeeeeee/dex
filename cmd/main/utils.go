@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
 )
 
 // TestValidator 简单的交易验证器
@@ -44,7 +44,6 @@ func (v *TestValidator) CheckAnyTx(tx *pb.AnyTx) error {
 func generatePrivateKeys(count int) []string {
 	keys := make([]string, count)
 	for i := 0; i < count; i++ {
-		// 使用确定性的 seed 替代随机数，确保每次运行地址一致
 		seed := fmt.Sprintf("node_seed_%d", i)
 		hash := sha256.Sum256([]byte(seed))
 		keys[i] = hex.EncodeToString(hash[:])
@@ -54,7 +53,6 @@ func generatePrivateKeys(count int) []string {
 
 // 生成自签名证书
 func generateSelfSignedCert(certFile, keyFile string) error {
-	// 如果文件已存在，直接返回
 	if _, err := os.Stat(certFile); err == nil {
 		if _, err := os.Stat(keyFile); err == nil {
 			return nil
@@ -131,5 +129,5 @@ func isHexString(value string) bool {
 }
 
 func isNotFoundError(err error) bool {
-	return err != nil && (err == badger.ErrKeyNotFound || strings.Contains(err.Error(), "not found"))
+	return err != nil && (err == pebble.ErrNotFound || strings.Contains(err.Error(), "not found"))
 }

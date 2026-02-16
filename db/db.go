@@ -9,7 +9,7 @@ import (
 	"dex/pb"
 	"dex/stats"
 	"dex/utils"
-	"errors"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"os"
@@ -19,8 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dgraph-io/badger/v2"
-	"github.com/dgraph-io/badger/v2/options"
+	"github.com/cockroachdb/pebble"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -52,9 +51,9 @@ type stateDB interface {
 	Close() error
 }
 
-// Manager 封装 BadgerDB 的管理器
+// Manager 封装 PebbleDB 的管理器
 type Manager struct {
-	Db      *badger.DB
+	Db      *pebble.DB
 	StateDB stateDB // optional state backend; nil means disabled
 	mu      sync.RWMutex
 
@@ -85,7 +84,9 @@ type Manager struct {
 	maxBatchSize  int                // 累计多少条就写一次
 	flushInterval time.Duration      // 间隔多久强制写一次
 	IndexMgr      *MinerIndexManager // 新增
-	seq           *badger.Sequence   //自增发号器
+	// 自增发号器 (替代 Badger Sequence)
+	seq   uint64
+	seqMu sync.Mutex
 	// 你可以在这里做一个 wait group，保证 close 的时候能等 goroutine 退出
 	wg sync.WaitGroup
 	// 缓存的区块切片，最多存 10 个
@@ -133,57 +134,56 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
-	opts := badger.DefaultOptions(path).WithLogger(nil)
-	// 应用调优参数
-	opts.ValueLogFileSize = cfg.Database.ValueLogFileSize
-	// Badger v2 没有独立 MemTableSize 选项，MaxTableSize 是最接近的可调参数。
-	if cfg.Database.MemTableSize > 0 {
-		opts.MaxTableSize = cfg.Database.MemTableSize
-	} else {
-		opts.MaxTableSize = cfg.Database.BaseTableSize
+	opts := &pebble.Options{
+		MaxOpenFiles: 500,
 	}
-	opts.NumMemtables = cfg.Database.NumMemtables
+	// 配置 Block Cache（关键性能参数！没有 cache 每次 Get 都会 CGo calloc/free）
+	cacheSize := cfg.Database.BlockCacheSizeDB
+	if cacheSize <= 0 {
+		cacheSize = 32 << 20 // 默认 32MB
+	}
+	opts.Cache = pebble.NewCache(cacheSize)
+	defer opts.Cache.Unref()
+
+	if cfg.Database.MemTableSize > 0 {
+		opts.MemTableSize = uint64(cfg.Database.MemTableSize)
+	}
 	numCompactors := cfg.Database.NumCompactors
 	if numCompactors <= 0 {
-		// Disabling compactors can permanently stall writes under sustained load.
 		logs.Warn("[DB] NumCompactors=%d is unsafe for write-heavy workloads; forcing to 1", numCompactors)
 		numCompactors = 1
 	}
-	opts.NumCompactors = numCompactors
-	opts.BlockCacheSize = cfg.Database.BlockCacheSizeDB
-	opts.IndexCacheSize = cfg.Database.IndexCacheSize
-	// 使用 FileIO 模式减少 mmap 内存占用
-	opts.TableLoadingMode = options.FileIO
-	opts.ValueLogLoadingMode = options.FileIO
-	//
-	// 可选：让Badger启动时自动截断不完整的日志，能避免某些不一致问题
-	// badger v2 不自动创建父目录，需要手动创建
+	opts.MaxConcurrentCompactions = func() int { return numCompactors }
+
+	// Pebble 不自动创建父目录
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create db dir: %w", err)
 	}
-	db, err := badger.Open(opts)
+	db, err := pebble.Open(path, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open badger db: %w", err)
+		return nil, fmt.Errorf("failed to open pebble db: %w", err)
 	}
 
 	indexMgr, err := NewMinerIndexManager(db, logger)
 	if err != nil {
-		_ = db.Close() // 清理已打开的数据库
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to create index manager: %w", err)
 	}
 
-	// ① 创建 Sequence（一次预取 1 000 个号段，可按业务量调大/调小）
-	seq, err := db.GetSequence([]byte("meta:max_index"), cfg.Database.SequenceBandwidth)
-	if err != nil {
-		_ = db.Close() // 清理已打开的数据库
-		return nil, fmt.Errorf("failed to create sequence: %w", err)
+	// 恢复 sequence counter
+	seqVal := uint64(0)
+	if raw, closer, err := db.Get([]byte("meta:seq_counter")); err == nil {
+		if len(raw) >= 8 {
+			seqVal = binary.BigEndian.Uint64(raw)
+		}
+		closer.Close()
 	}
 
 	manager := &Manager{
 		Db:              db,
 		StateDB:         nil,
 		IndexMgr:        indexMgr,
-		seq:             seq,
+		seq:             seqVal,
 		Logger:          logger,
 		cfg:             cfg,
 		minerSampleRand: rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -200,13 +200,9 @@ func (manager *Manager) InitWriteQueue(maxBatchSize int, flushInterval time.Dura
 	manager.maxBatchSize = maxBatchSize
 	manager.flushInterval = flushInterval
 	manager.resetWriteQueueMetrics()
-	manager.writeQueueChan = make(chan WriteTask, cfg.Database.WriteQueueSize) // 缓冲区大小可酌情调大
-
-	// 新建 forceFlushChan
+	manager.writeQueueChan = make(chan WriteTask, cfg.Database.WriteQueueSize)
 	manager.forceFlushChan = make(chan flushRequest, 1)
-
 	manager.stopChan = make(chan struct{})
-
 	manager.wg.Add(2)
 	go manager.runWriteQueue()
 	go manager.runWriteQueueWatchdog()
@@ -247,8 +243,6 @@ func normalizeWriteQueueKeyBucket(key string) string {
 	if key == "" {
 		return "empty"
 	}
-
-	// Drop version prefix like v1_/v2_ to avoid splitting bucket families by version.
 	keyNoVer := key
 	if idx := strings.IndexByte(key, '_'); idx > 1 && idx <= 4 && key[0] == 'v' {
 		allDigits := true
@@ -262,7 +256,6 @@ func normalizeWriteQueueKeyBucket(key string) string {
 			keyNoVer = key[idx+1:]
 		}
 	}
-
 	switch {
 	case strings.HasPrefix(keyNoVer, "snapshot_"):
 		return "snapshot"
@@ -295,7 +288,6 @@ func normalizeWriteQueueKeyBucket(key string) string {
 	case strings.HasPrefix(keyNoVer, "frost_planning_log"):
 		return "frost_planning_log"
 	}
-
 	parts := strings.Split(keyNoVer, "_")
 	if len(parts) >= 2 {
 		bucket := parts[0] + "_" + parts[1]
@@ -344,8 +336,6 @@ func (manager *Manager) snapshotCounterMapDelta(counterMap *sync.Map) map[string
 		if !ok || c == nil {
 			return true
 		}
-		// Metrics are emitted periodically; consume a windowed delta to keep
-		// map churn and per-tick diff work bounded.
 		delta := c.Swap(0)
 		if delta == 0 {
 			return true
@@ -367,10 +357,7 @@ func topCounterValues(cur map[string]uint64, topN int) []string {
 	}
 	values := make([]counterValue, 0, len(cur))
 	for k, v := range cur {
-		values = append(values, counterValue{
-			Key:   k,
-			Value: v,
-		})
+		values = append(values, counterValue{Key: k, Value: v})
 	}
 	sort.Slice(values, func(i, j int) bool {
 		if values[i].Value != values[j].Value {
@@ -461,19 +448,14 @@ func (manager *Manager) logWriteQueueStats(prev writeQueueMetricsSnapshot, inter
 	} else {
 		logs.Info(msg)
 	}
-
 	return cur
 }
 
 // 写队列的核心 goroutine 逻辑
 func (manager *Manager) runWriteQueue() {
 	defer manager.wg.Done()
-
-	// 用于临时收集写请求
 	var batch []WriteTask
 	batch = make([]WriteTask, 0, manager.maxBatchSize)
-
-	// 定时器：到了 flushInterval 就要提交
 	ticker := time.NewTicker(manager.flushInterval)
 	defer ticker.Stop()
 	metricsTicker := time.NewTicker(10 * time.Second)
@@ -498,13 +480,7 @@ func (manager *Manager) runWriteQueue() {
 			atomic.AddUint64(&manager.writeQueueFlushErrTotal, 1)
 		}
 		if duration >= 2*time.Second {
-			logs.Warn(
-				"[DBQueue] slow flush batch=%d took=%s q=%d/%d",
-				count,
-				duration,
-				len(manager.writeQueueChan),
-				cap(manager.writeQueueChan),
-			)
+			logs.Warn("[DBQueue] slow flush batch=%d took=%s q=%d/%d", count, duration, len(manager.writeQueueChan), cap(manager.writeQueueChan))
 		}
 		batch = batch[:0]
 		return err
@@ -513,43 +489,31 @@ func (manager *Manager) runWriteQueue() {
 	for {
 		select {
 		case <-manager.stopChan:
-			// 退出前先排空队列，再刷掉最后一批
 			batch = manager.drainWriteQueue(batch)
 			err := flushCurrentBatch()
 			manager.resolvePendingForceFlush(err)
 			return
-
 		case task := <-manager.writeQueueChan:
-			// 收到一条写请求，加入 batch
 			atomic.AddUint64(&manager.writeQueueDequeuedTotal, 1)
 			batch = append(batch, task)
 			if len(batch) >= manager.maxBatchSize {
-				// 超过阈值，立即 flush
 				if err := flushCurrentBatch(); err != nil {
 					logs.Error("[runWriteQueue] flush by size failed: %v", err)
 				}
 			}
-
 		case <-ticker.C:
-			// 定时触发时先排空当前队列积压，避免频繁小批次 flush
 			batch = manager.drainWriteQueue(batch)
-			// 到了时间间隔，也要 flush
 			if err := flushCurrentBatch(); err != nil {
 				logs.Error("[runWriteQueue] flush by ticker failed: %v", err)
 			}
-
 		case <-metricsTicker.C:
 			metricsPrev = manager.logWriteQueueStats(metricsPrev, time.Since(lastMetricsAt))
 			lastMetricsAt = time.Now()
-
 		case req := <-manager.forceFlushChan:
-			// 同步 flush：排空已入队写请求并等待落盘完成
 			atomic.AddUint64(&manager.writeQueueForceFlushTotal, 1)
 			batch = manager.drainWriteQueue(batch)
 			err := flushCurrentBatch()
 			manager.finishForceFlush(req, err)
-
-			// 依次处理已排队的其他 force flush 请求，保持强一致语义
 			for {
 				select {
 				case req = <-manager.forceFlushChan:
@@ -568,10 +532,8 @@ func (manager *Manager) runWriteQueue() {
 
 func (manager *Manager) runWriteQueueWatchdog() {
 	defer manager.wg.Done()
-
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-manager.stopChan:
@@ -585,12 +547,7 @@ func (manager *Manager) runWriteQueueWatchdog() {
 			if elapsed < 5*time.Second {
 				continue
 			}
-			logs.Warn(
-				"[DBQueue] flush appears stuck elapsed=%s q=%d/%d",
-				elapsed.Truncate(time.Millisecond),
-				len(manager.writeQueueChan),
-				cap(manager.writeQueueChan),
-			)
+			logs.Warn("[DBQueue] flush appears stuck elapsed=%s q=%d/%d", elapsed.Truncate(time.Millisecond), len(manager.writeQueueChan), cap(manager.writeQueueChan))
 		}
 	}
 }
@@ -600,9 +557,7 @@ func (manager *Manager) ForceFlush() error {
 	if manager.forceFlushChan == nil {
 		return nil
 	}
-
 	req := flushRequest{done: make(chan error, 1)}
-
 	if manager.stopChan != nil {
 		select {
 		case manager.forceFlushChan <- req:
@@ -612,7 +567,6 @@ func (manager *Manager) ForceFlush() error {
 	} else {
 		manager.forceFlushChan <- req
 	}
-
 	if manager.stopChan != nil {
 		select {
 		case err := <-req.done:
@@ -626,7 +580,6 @@ func (manager *Manager) ForceFlush() error {
 			return fmt.Errorf("write queue stopped before flush completed")
 		}
 	}
-
 	return <-req.done
 }
 
@@ -667,10 +620,7 @@ func (m *Manager) NewSession() (interfaces.DBSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &dbSession{
-		manager:    m,
-		verkleSess: stateSess,
-	}, nil
+	return &dbSession{manager: m, verkleSess: stateSess}, nil
 }
 
 func (m *Manager) CommitRoot(height uint64, root []byte) {
@@ -689,16 +639,12 @@ func (s *dbSession) Get(key string) ([]byte, error) {
 	if s.verkleSess == nil {
 		return s.manager.GetKV(key)
 	}
-
-	// 对于状态数据，优先尝试从 Verkle 会话读取
 	if keys.IsStatefulKey(key) {
 		val, exists, err := s.verkleSess.Get(key)
 		if err == nil && exists {
 			return val, nil
 		}
 	}
-
-	// 否则从会话底层事务读取（共享事务）
 	return s.verkleSess.GetKV(key)
 }
 
@@ -706,7 +652,6 @@ func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]by
 	if s.verkleSess == nil {
 		return nil, nil
 	}
-
 	kvUpdates := make([]stateKVUpdate, 0, len(updates))
 	for _, u := range updates {
 		type writeOpInterface interface {
@@ -714,26 +659,19 @@ func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]by
 			GetValue() []byte
 			IsDel() bool
 		}
-
 		if writeOp, ok := u.(writeOpInterface); ok {
 			key := writeOp.GetKey()
 			if !keys.IsStatefulKey(key) {
 				continue
 			}
-			kvUpdates = append(kvUpdates, stateKVUpdate{
-				Key:     key,
-				Value:   writeOp.GetValue(),
-				Deleted: writeOp.IsDel(),
-			})
+			kvUpdates = append(kvUpdates, stateKVUpdate{Key: key, Value: writeOp.GetValue(), Deleted: writeOp.IsDel()})
 		}
 	}
-
 	if len(kvUpdates) > 0 {
 		if err := s.verkleSess.ApplyUpdate(height, kvUpdates...); err != nil {
 			return nil, err
 		}
 	}
-
 	return s.verkleSess.Root(), nil
 }
 
@@ -758,103 +696,92 @@ func (s *dbSession) Close() error {
 	return s.verkleSess.Close()
 }
 
+// prefixUpperBound 计算前缀的上界（用于 Pebble IterOptions.UpperBound）
+func prefixUpperBound(prefix []byte) []byte {
+	upper := make([]byte, len(prefix))
+	copy(upper, prefix)
+	for i := len(upper) - 1; i >= 0; i-- {
+		upper[i]++
+		if upper[i] != 0 {
+			return upper
+		}
+	}
+	return nil // prefix 全是 0xFF，无上界
+}
+
 // Scan scans all keys with the given prefix and returns a map of key-value pairs
 func (manager *Manager) Scan(prefix string) (map[string][]byte, error) {
 	result := make(map[string][]byte)
-
-	err := manager.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		p := []byte(prefix)
-		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
-			item := it.Item()
-			k := item.KeyCopy(nil)
-			v, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			result[string(k)] = v
-		}
-		return nil
-	})
+	p := []byte(prefix)
+	iter, err := manager.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
 	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	for iter.SeekGE(p); iter.Valid(); iter.Next() {
+		k := make([]byte, len(iter.Key()))
+		copy(k, iter.Key())
+		v := make([]byte, len(iter.Value()))
+		copy(v, iter.Value())
+		result[string(k)] = v
+	}
+	if err := iter.Error(); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
 // ScanKVWithLimit 扫描指定前缀的所有键值对，最多返回 limit 条记录
-// 返回 map[key]value，由 vm.DBManager 接口调用
 func (manager *Manager) ScanKVWithLimit(prefix string, limit int) (map[string][]byte, error) {
 	result := make(map[string][]byte)
-
-	err := manager.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		p := []byte(prefix)
-		count := 0
-		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
-			if limit > 0 && count >= limit {
-				break
-			}
-			item := it.Item()
-			k := item.KeyCopy(nil)
-			v, err := item.ValueCopy(nil)
-			if err != nil {
-				continue
-			}
-			result[string(k)] = v
-			count++
-		}
-		return nil
-	})
-
+	p := []byte(prefix)
+	iter, err := manager.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
 	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	count := 0
+	for iter.SeekGE(p); iter.Valid(); iter.Next() {
+		if limit > 0 && count >= limit {
+			break
+		}
+		k := make([]byte, len(iter.Key()))
+		copy(k, iter.Key())
+		v := make([]byte, len(iter.Value()))
+		copy(v, iter.Value())
+		result[string(k)] = v
+		count++
+	}
+	if err := iter.Error(); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
 // ScanKVWithLimitReverse 反向扫描指定前缀的所有键值对，最多返回 limit 条记录
-// 适用于买盘索引（最高价排在最后，需要反向扫描以获取市场前沿）
 func (manager *Manager) ScanKVWithLimitReverse(prefix string, limit int) (map[string][]byte, error) {
 	result := make(map[string][]byte)
-
-	err := manager.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Reverse = true
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		p := []byte(prefix)
-		// 对于反向扫描，Seek 需要指向前缀范围的最末端
-		// 在 Badger 中，反向迭代器 Seek(k) 会找到 <= k 的第一个键
-		pEnd := make([]byte, len(p)+1)
-		copy(pEnd, p)
-		pEnd[len(p)] = 0xFF
-
-		count := 0
-		for it.Seek(pEnd); it.ValidForPrefix(p); it.Next() {
-			if limit > 0 && count >= limit {
-				break
-			}
-			item := it.Item()
-			k := item.KeyCopy(nil)
-			v, err := item.ValueCopy(nil)
-			if err != nil {
-				continue
-			}
-			result[string(k)] = v
-			count++
-		}
-		return nil
-	})
-
+	p := []byte(prefix)
+	upper := prefixUpperBound(p)
+	iter, err := manager.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: upper})
 	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	count := 0
+	// 反向扫描：SeekLT(upper) 然后 iter.Prev()
+	for iter.SeekLT(upper); iter.Valid(); iter.Prev() {
+		if limit > 0 && count >= limit {
+			break
+		}
+		k := make([]byte, len(iter.Key()))
+		copy(k, iter.Key())
+		v := make([]byte, len(iter.Value()))
+		copy(v, iter.Value())
+		result[string(k)] = v
+		count++
+	}
+	if err := iter.Error(); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -863,19 +790,16 @@ func (manager *Manager) ScanKVWithLimitReverse(prefix string, limit int) (map[st
 func extractPriceKeyFromIndexKey(indexKey string) (string, bool) {
 	priceMarker := "|price:"
 	orderIDMarker := "|order_id:"
-
 	priceStart := strings.Index(indexKey, priceMarker)
 	if priceStart < 0 {
 		return "", false
 	}
 	priceStart += len(priceMarker)
-
 	rest := indexKey[priceStart:]
 	priceEndOffset := strings.Index(rest, orderIDMarker)
 	if priceEndOffset < 0 {
 		return "", false
 	}
-
 	return rest[:priceEndOffset], true
 }
 
@@ -893,19 +817,11 @@ func extractOrderIDFromIndexKeyBytes(indexKey []byte) (string, bool) {
 }
 
 func (manager *Manager) ScanOrderPriceIndexRange(
-	pair string,
-	side pb.OrderSide,
-	isFilled bool,
-	minPriceKey67 string,
-	maxPriceKey67 string,
-	limit int,
-	reverse bool,
+	pair string, side pb.OrderSide, isFilled bool,
+	minPriceKey67 string, maxPriceKey67 string, limit int, reverse bool,
 ) (map[string][]byte, error) {
 	result := make(map[string][]byte)
-	if minPriceKey67 == "" || maxPriceKey67 == "" {
-		return result, nil
-	}
-	if minPriceKey67 > maxPriceKey67 {
+	if minPriceKey67 == "" || maxPriceKey67 == "" || minPriceKey67 > maxPriceKey67 {
 		return result, nil
 	}
 
@@ -914,75 +830,69 @@ func (manager *Manager) ScanOrderPriceIndexRange(
 	lowSeek := []byte(fmt.Sprintf("%sprice:%s|order_id:", prefix, minPriceKey67))
 	highSeek := []byte(fmt.Sprintf("%sprice:%s|order_id:%c", prefix, maxPriceKey67, 0xFF))
 
-	err := manager.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Reverse = reverse
-		it := txn.NewIterator(opts)
-		defer it.Close()
+	iter, err := manager.Db.NewIter(&pebble.IterOptions{LowerBound: prefixBytes, UpperBound: prefixUpperBound(prefixBytes)})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
 
-		if reverse {
-			it.Seek(highSeek)
-		} else {
-			it.Seek(lowSeek)
-		}
-
-		count := 0
-		for ; it.ValidForPrefix(prefixBytes); it.Next() {
+	count := 0
+	if reverse {
+		for iter.SeekLT(highSeek); iter.Valid() && bytes.HasPrefix(iter.Key(), prefixBytes); iter.Prev() {
 			if limit > 0 && count >= limit {
 				break
 			}
-
-			item := it.Item()
-			k := string(item.KeyCopy(nil))
+			k := string(iter.Key())
 			priceKey, ok := extractPriceKeyFromIndexKey(k)
 			if !ok {
 				continue
 			}
-
 			if priceKey < minPriceKey67 {
-				if reverse {
-					break
-				}
-				continue
+				break
 			}
 			if priceKey > maxPriceKey67 {
-				if !reverse {
-					break
-				}
 				continue
 			}
-
-			v, err := item.ValueCopy(nil)
-			if err != nil {
-				continue
-			}
+			v := make([]byte, len(iter.Value()))
+			copy(v, iter.Value())
 			result[k] = v
 			count++
 		}
-		return nil
-	})
-	if err != nil {
+	} else {
+		for iter.SeekGE(lowSeek); iter.Valid() && bytes.HasPrefix(iter.Key(), prefixBytes); iter.Next() {
+			if limit > 0 && count >= limit {
+				break
+			}
+			k := string(iter.Key())
+			priceKey, ok := extractPriceKeyFromIndexKey(k)
+			if !ok {
+				continue
+			}
+			if priceKey < minPriceKey67 {
+				continue
+			}
+			if priceKey > maxPriceKey67 {
+				break
+			}
+			v := make([]byte, len(iter.Value()))
+			copy(v, iter.Value())
+			result[k] = v
+			count++
+		}
+	}
+	if err := iter.Error(); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
 // ScanOrderPriceIndexRangeOrdered 扫描订单价格索引，按底层迭代器顺序返回有序结果。
-// 该接口避免 map + sort 的额外分配，提供确定性顺序供 VM 直接消费。
 func (manager *Manager) ScanOrderPriceIndexRangeOrdered(
-	pair string,
-	side pb.OrderSide,
-	isFilled bool,
-	minPriceKey67 string,
-	maxPriceKey67 string,
-	limit int,
-	reverse bool,
+	pair string, side pb.OrderSide, isFilled bool,
+	minPriceKey67 string, maxPriceKey67 string, limit int, reverse bool,
 ) ([]interfaces.OrderIndexEntry, error) {
 	result := make([]interfaces.OrderIndexEntry, 0, limit)
-	if minPriceKey67 == "" || maxPriceKey67 == "" {
-		return result, nil
-	}
-	if minPriceKey67 > maxPriceKey67 {
+	if minPriceKey67 == "" || maxPriceKey67 == "" || minPriceKey67 > maxPriceKey67 {
 		return result, nil
 	}
 
@@ -991,136 +901,113 @@ func (manager *Manager) ScanOrderPriceIndexRangeOrdered(
 	lowSeek := []byte(fmt.Sprintf("%sprice:%s|order_id:", prefix, minPriceKey67))
 	highSeek := []byte(fmt.Sprintf("%sprice:%s|order_id:%c", prefix, maxPriceKey67, 0xFF))
 
-	err := manager.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Reverse = reverse
-		it := txn.NewIterator(opts)
-		defer it.Close()
+	iter, err := manager.Db.NewIter(&pebble.IterOptions{LowerBound: prefixBytes, UpperBound: prefixUpperBound(prefixBytes)})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
 
-		if reverse {
-			it.Seek(highSeek)
-		} else {
-			it.Seek(lowSeek)
-		}
-
-		count := 0
-		for ; it.ValidForPrefix(prefixBytes); it.Next() {
+	count := 0
+	if reverse {
+		for iter.SeekLT(highSeek); iter.Valid() && bytes.HasPrefix(iter.Key(), prefixBytes); iter.Prev() {
 			if limit > 0 && count >= limit {
 				break
 			}
-
-			item := it.Item()
-			keyBytes := item.Key()
-
-			// Key 格式是固定的，使用低/高边界直接裁剪，避免逐条解析 price 字段。
-			if reverse {
-				if bytes.Compare(keyBytes, lowSeek) < 0 {
-					break
-				}
-			} else {
-				if bytes.Compare(keyBytes, highSeek) > 0 {
-					break
-				}
+			keyBytes := iter.Key()
+			if bytes.Compare(keyBytes, lowSeek) < 0 {
+				break
 			}
-
 			orderID, ok := extractOrderIDFromIndexKeyBytes(keyBytes)
 			if !ok {
 				continue
 			}
-
-			val, err := item.ValueCopy(nil)
-			if err != nil {
-				continue
-			}
-
-			result = append(result, interfaces.OrderIndexEntry{
-				OrderID:   orderID,
-				IndexData: val,
-			})
+			val := make([]byte, len(iter.Value()))
+			copy(val, iter.Value())
+			result = append(result, interfaces.OrderIndexEntry{OrderID: orderID, IndexData: val})
 			count++
 		}
-		return nil
-	})
-	if err != nil {
+	} else {
+		for iter.SeekGE(lowSeek); iter.Valid() && bytes.HasPrefix(iter.Key(), prefixBytes); iter.Next() {
+			if limit > 0 && count >= limit {
+				break
+			}
+			keyBytes := iter.Key()
+			if bytes.Compare(keyBytes, highSeek) > 0 {
+				break
+			}
+			orderID, ok := extractOrderIDFromIndexKeyBytes(keyBytes)
+			if !ok {
+				continue
+			}
+			val := make([]byte, len(iter.Value()))
+			copy(val, iter.Value())
+			result = append(result, interfaces.OrderIndexEntry{OrderID: orderID, IndexData: val})
+			count++
+		}
+	}
+	if err := iter.Error(); err != nil {
 		return nil, err
 	}
-
 	return result, nil
 }
 
 // ScanOrdersByPairs 一次性扫描多个交易对的未成交订单
-// 返回：map[pair]map[indexKey][]byte
 func (manager *Manager) ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error) {
 	result := make(map[string]map[string][]byte)
 	unfilledMarker := "|is_filled:false|"
 
-	// 单个 txn 内完成所有扫描
-	err := manager.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
+	snap := manager.Db.NewSnapshot()
+	defer snap.Close()
 
-		for _, pair := range pairs {
-			// 生成该交易对的未成交订单索引通用前缀 (不分 Side)
-			prefix := keys.KeyOrderPriceIndexGeneralPrefix(pair, false)
-			p := []byte(prefix)
-
-			pairMap := make(map[string][]byte)
-			it := txn.NewIterator(opts)
-
-			for it.Seek(p); it.ValidForPrefix(p); it.Next() {
-				item := it.Item()
-				k := item.KeyCopy(nil)
-				if !strings.Contains(string(k), unfilledMarker) {
-					continue
-				}
-				v, err := item.ValueCopy(nil)
-				if err != nil {
-					it.Close()
-					return err
-				}
-				pairMap[string(k)] = v
-			}
-			it.Close()
-
-			result[pair] = pairMap
+	for _, pair := range pairs {
+		prefix := keys.KeyOrderPriceIndexGeneralPrefix(pair, false)
+		p := []byte(prefix)
+		pairMap := make(map[string][]byte)
+		iter, err := snap.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
+		if err != nil {
+			return nil, err
 		}
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
+		for iter.SeekGE(p); iter.Valid(); iter.Next() {
+			k := string(iter.Key())
+			if !strings.Contains(k, unfilledMarker) {
+				continue
+			}
+			v := make([]byte, len(iter.Value()))
+			copy(v, iter.Value())
+			pairMap[k] = v
+		}
+		if err := iter.Error(); err != nil {
+			iter.Close()
+			return nil, err
+		}
+		iter.Close()
+		result[pair] = pairMap
 	}
 	return result, nil
 }
 
 // ScanByPrefix 扫描指定前缀的所有键值对
-// 返回 map[key]value，最多返回 limit 条记录
 func (manager *Manager) ScanByPrefix(prefix string, limit int) (map[string]string, error) {
 	result := make(map[string]string)
-
-	err := manager.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		p := []byte(prefix)
-		count := 0
-		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
-			if limit > 0 && count >= limit {
-				break
-			}
-			item := it.Item()
-			k := item.KeyCopy(nil)
-			v, err := item.ValueCopy(nil)
-			if err != nil {
-				continue
-			}
-			result[string(k)] = string(v)
-			count++
-		}
-		return nil
-	})
-
+	p := []byte(prefix)
+	iter, err := manager.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
 	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	count := 0
+	for iter.SeekGE(p); iter.Valid(); iter.Next() {
+		if limit > 0 && count >= limit {
+			break
+		}
+		k := make([]byte, len(iter.Key()))
+		copy(k, iter.Key())
+		v := make([]byte, len(iter.Value()))
+		copy(v, iter.Value())
+		result[string(k)] = string(v)
+		count++
+	}
+	if err := iter.Error(); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -1131,159 +1018,49 @@ func (manager *Manager) EnqueueDel(key string) {
 	manager.EnqueueDelete(key)
 }
 
-// 这里 flushBatch 会把 batch 分段后提交到 BadgerDB。
+// flushBatch 把 batch 提交到 PebbleDB。Pebble Batch 无大小限制，直接提交。
 func (manager *Manager) flushBatch(batch []WriteTask) error {
 	if len(batch) == 0 {
 		return nil
 	}
-	cfg := manager.cfg
-	if cfg == nil {
-		cfg = config.DefaultConfig()
-	}
-	// 保守软上限，留出 Badger 元数据开销余量
-	softLimitBytes := cfg.Database.WriteBatchSoftLimit // 8 MiB
-	maxCountPerTxn := cfg.Database.MaxCountPerTxn      // 也保留条数上限，双重保险
-	perEntryOverhead := cfg.Database.PerEntryOverhead  // 估算每条附加开销
-
-	// 1) 先按“字节+条数”把batch切成若干 sub-batch
-	type sliceRange struct{ i, j int }
-	subRanges := make([]sliceRange, 0, (len(batch)+maxCountPerTxn-1)/maxCountPerTxn)
-
-	curStart, curBytes, curCount := 0, 0, 0
-	for idx, t := range batch {
-		entryBytes := len(t.Key) + len(t.Value) + perEntryOverhead
-		// 如果加上当前条会超过限制，就先封口开新段
-		if curCount > 0 && (int64(curBytes+entryBytes) > softLimitBytes || curCount >= maxCountPerTxn) {
-			subRanges = append(subRanges, sliceRange{curStart, idx})
-			curStart, curBytes, curCount = idx, 0, 0
-		}
-		curBytes += entryBytes
-		curCount++
-	}
-	// 收尾
-	if curStart < len(batch) {
-		subRanges = append(subRanges, sliceRange{curStart, len(batch)})
-	}
-
-	var firstErr error
-
-	// 2) 提交每个 sub-batch；若仍报过大，二分退让
-	for _, r := range subRanges {
-		if err := manager.flushRangeWithSplit(batch, r.i, r.j); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-
-	return firstErr
-}
-
-func (manager *Manager) flushRangeWithSplit(batch []WriteTask, start, end int) error {
-	type sliceRange struct{ i, j int }
-
-	stack := []sliceRange{{i: start, j: end}}
-	var firstErr error
-
-	for len(stack) > 0 {
-		cur := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-
-		if cur.i >= cur.j {
-			continue
-		}
-
-		ok, err := manager.tryFlushRange(batch, cur.i, cur.j)
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-		if ok {
-			continue
-		}
-
-		if cur.j-cur.i <= 1 {
-			continue
-		}
-
-		mid := cur.i + (cur.j-cur.i)/2
-		stack = append(stack, sliceRange{i: mid, j: cur.j}, sliceRange{i: cur.i, j: mid})
-	}
-
-	return firstErr
-}
-
-// 返回是否提交成功；若返回 false，调用方应继续拆分范围重试。
-func (manager *Manager) tryFlushRange(batch []WriteTask, start, end int) (bool, error) {
-	if start >= end {
-		return true, nil
-	}
-	sub := batch[start:end]
-
-	wb := manager.Db.NewWriteBatch()
-	defer wb.Cancel()
-
-	for _, task := range sub {
+	b := manager.Db.NewBatch()
+	defer b.Close()
+	for _, task := range batch {
 		var err error
 		switch task.Op {
 		case OpSet:
-			err = wb.Set(task.Key, task.Value)
+			err = b.Set(task.Key, task.Value, nil)
 		case OpDelete:
-			err = wb.Delete(task.Key)
+			err = b.Delete(task.Key, nil)
 		}
 		if err != nil {
-			// ErrTxnTooBig 时交给外层继续切分
-			if errors.Is(err, badger.ErrTxnTooBig) || strings.Contains(err.Error(), "Txn is too big") {
-				if end-start == 1 {
-					key := string(sub[0].Key)
-					valSz := len(sub[0].Value)
-					msg := fmt.Errorf("single entry too big for badger: key=%q size=%d bytes", key, valSz)
-					manager.Logger.Error("[flushBatch] %v; consider compressing, chunking, or storing out-of-DB", msg)
-					return true, msg
-				}
-				return false, nil
-			}
-			logs.Error("[flushBatch] subBatch [%d:%d] set/delete error: %v", start, end, err)
-			return true, err
+			logs.Error("[flushBatch] set/delete error: %v", err)
+			return err
 		}
 	}
-
-	err := wb.Flush()
-	if err == nil {
-		return true, nil
+	if err := b.Commit(pebble.Sync); err != nil {
+		logs.Error("[flushBatch] commit error: %v", err)
+		return err
 	}
-
-	// Badger 的典型报错文案里包含 "Txn is too big"
-	if errors.Is(err, badger.ErrTxnTooBig) || strings.Contains(err.Error(), "Txn is too big") {
-		if end-start == 1 {
-			// 单条仍过大：给出清晰提示
-			key := string(sub[0].Key)
-			valSz := len(sub[0].Value)
-			msg := fmt.Errorf("single entry still too big: key=%q size=%d bytes", key, valSz)
-			manager.Logger.Error("[flushBatch] %v; consider compressing, chunking, or storing out-of-DB", msg)
-			return true, msg
-		}
-		// 交给上层继续二分
-		return false, nil
-	}
-
-	// 其他错误：记录并继续
-	logs.Error("[flushBatch] subBatch [%d:%d] error: %v", start, end, err)
-	return true, err // 避免卡死：把它当“已处理”，不中断后续
+	return nil
 }
 
 func (manager *Manager) View(fn func(txn *TransactionView) error) error {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
-	return manager.Db.View(func(badgerTxn *badger.Txn) error {
-		return fn(&TransactionView{badgerTxn})
-	})
+	snap := manager.Db.NewSnapshot()
+	defer snap.Close()
+	return fn(&TransactionView{Snap: snap})
 }
 
-// TransactionView 包装 badger.Txn
+// TransactionView 包装 pebble.Snapshot
 type TransactionView struct {
-	Txn *badger.Txn
+	Snap *pebble.Snapshot
 }
 
-func (tv *TransactionView) NewIterator() *badger.Iterator {
-	return tv.Txn.NewIterator(badger.DefaultIteratorOptions)
+func (tv *TransactionView) NewIterator() *pebble.Iterator {
+	iter, _ := tv.Snap.NewIter(nil)
+	return iter
 }
 
 // 提供"投递写请求"的方法（替换原先的 Write/WriteBatch）
@@ -1291,11 +1068,7 @@ func (tv *TransactionView) NewIterator() *badger.Iterator {
 func (manager *Manager) EnqueueSet(key, value string) {
 	bucket := normalizeWriteQueueKeyBucket(key)
 	start := time.Now()
-	manager.writeQueueChan <- WriteTask{
-		Key:   []byte(key),
-		Value: []byte(value),
-		Op:    OpSet,
-	}
+	manager.writeQueueChan <- WriteTask{Key: []byte(key), Value: []byte(value), Op: OpSet}
 	atomic.AddUint64(&manager.writeQueueEnqueueTotal, 1)
 	atomic.AddUint64(&manager.writeQueueEnqueueSetTotal, 1)
 	manager.addCounter(&manager.writeQueueKeyCounters, bucket)
@@ -1311,10 +1084,7 @@ func (manager *Manager) EnqueueSet(key, value string) {
 func (manager *Manager) EnqueueDelete(key string) {
 	bucket := normalizeWriteQueueKeyBucket(key)
 	start := time.Now()
-	manager.writeQueueChan <- WriteTask{
-		Key: []byte(key),
-		Op:  OpDelete,
-	}
+	manager.writeQueueChan <- WriteTask{Key: []byte(key), Op: OpDelete}
 	atomic.AddUint64(&manager.writeQueueEnqueueTotal, 1)
 	atomic.AddUint64(&manager.writeQueueEnqueueDeleteTotal, 1)
 	manager.addCounter(&manager.writeQueueKeyCounters, bucket)
@@ -1328,40 +1098,29 @@ func (manager *Manager) EnqueueDelete(key string) {
 }
 
 func (manager *Manager) Close() {
-	// 1. 先做一次同步 flush，确保已经入队的写请求全部落盘
+	// 1. 先做一次同步 flush
 	if err := manager.ForceFlush(); err != nil {
 		logs.Error("[db.Close] force flush failed: %v", err)
 	}
-
 	// 2. 通知写队列 goroutine 停止
 	if manager.stopChan != nil {
 		select {
 		case <-manager.stopChan:
-			// already closed
 		default:
 			close(manager.stopChan)
 		}
 	}
-
 	// 3. 等待 goroutine 退出
 	manager.wg.Wait()
 	manager.stopChan = nil
 	manager.forceFlushChan = nil
-
-	// 4. 这时所有队列里的数据都已经flush完了，可以安全关闭DB
+	// 4. 关闭 DB
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-
-	if manager.seq != nil {
-		_ = manager.seq.Release() // 无须处理返回值；Close() 时 Badger 仍会安全落盘
-		manager.seq = nil
-	}
-
 	if manager.StateDB != nil {
 		_ = manager.StateDB.Close()
 		manager.StateDB = nil
 	}
-
 	if manager.Db != nil {
 		_ = manager.Db.Close()
 		manager.Db = nil
@@ -1369,84 +1128,49 @@ func (manager *Manager) Close() {
 }
 
 // Read 读取键对应的值
-// 对于状态数据（账户、订单状态、Token、Witness 等）优先从 StateDB 读取
-// 对于流水数据（区块、交易原文、历史记录）直接从 KV 读取
 func (manager *Manager) Read(key string) (string, error) {
-	// 1. 对于状态数据，优先尝试从 StateDB 读取
 	if keys.IsStatefulKey(key) && manager.StateDB != nil {
 		if val, exists, err := manager.StateDB.Get(key); err == nil && exists && len(val) > 0 {
 			return string(val), nil
 		}
-		// StateDB 没有找到，继续回退到 KV
 	}
-
-	// 2. 从 KV 读取
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
-
 	if db == nil {
 		return "", fmt.Errorf("database is not initialized or closed")
 	}
-
-	var value string
-	err := db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
-		if err != nil {
-			return err
-		}
-		val, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-		value = string(val)
-		return nil
-	})
+	raw, closer, err := db.Get([]byte(key))
 	if err != nil {
 		return "", err
 	}
-	return value, nil
+	val := string(raw)
+	closer.Close()
+	return val, nil
 }
 
 // Get 实现 vm.DBManager 接口，返回 []byte
-// 对于状态数据（账户、订单状态、Token、Witness 等）优先从 StateDB 读取
-// 对于流水数据（区块、交易原文、历史记录）直接从 KV 读取
 func (manager *Manager) Get(key string) ([]byte, error) {
-	// 1. 对于状态数据，优先尝试从 StateDB 读取
 	if keys.IsStatefulKey(key) && manager.StateDB != nil {
 		val, exists, err := manager.StateDB.Get(key)
 		if err == nil && exists && len(val) > 0 {
 			return val, nil
 		}
-		// StateDB 没有找到，继续回退到 KV
 	}
-
-	// 2. 从 KV 读取
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
-
 	if db == nil {
 		return nil, fmt.Errorf("database is not initialized or closed")
 	}
-
-	var value []byte
-	err := db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
-		if err != nil {
-			return err
-		}
-		val, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-		value = val
-		return nil
-	})
+	raw, closer, err := db.Get([]byte(key))
 	if err != nil {
 		return nil, err
 	}
-	return value, nil
+	val := make([]byte, len(raw))
+	copy(val, raw)
+	closer.Close()
+	return val, nil
 }
 
 // GetKV 直接从 KV 读取（绕过 StateDB）
@@ -1454,28 +1178,17 @@ func (manager *Manager) GetKV(key string) ([]byte, error) {
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
-
 	if db == nil {
 		return nil, fmt.Errorf("database is not initialized or closed")
 	}
-
-	var value []byte
-	err := db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
-		if err != nil {
-			return err
-		}
-		val, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-		value = val
-		return nil
-	})
+	raw, closer, err := db.Get([]byte(key))
 	if err != nil {
 		return nil, err
 	}
-	return value, nil
+	val := make([]byte, len(raw))
+	copy(val, raw)
+	closer.Close()
+	return val, nil
 }
 
 func (manager *Manager) GetKVs(keys []string) (map[string][]byte, error) {
@@ -1483,50 +1196,34 @@ func (manager *Manager) GetKVs(keys []string) (map[string][]byte, error) {
 	if len(keys) == 0 {
 		return result, nil
 	}
-
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
-
 	if db == nil {
 		return nil, fmt.Errorf("database is not initialized or closed")
 	}
-
-	err := db.View(func(txn *badger.Txn) error {
-		for _, key := range keys {
-			if key == "" {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		raw, closer, err := db.Get([]byte(key))
+		if err != nil {
+			if err == pebble.ErrNotFound {
 				continue
 			}
-			item, err := txn.Get([]byte(key))
-			if err != nil {
-				if err == badger.ErrKeyNotFound {
-					continue
-				}
-				return err
-			}
-			val, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			result[key] = val
+			return nil, err
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		val := make([]byte, len(raw))
+		copy(val, raw)
+		closer.Close()
+		result[key] = val
 	}
 	return result, nil
 }
 
 // 将 db.Transaction 序列化为 [][]byte
 func SerializeAllTransactions(txCopy []*pb.AnyTx) [][]byte {
-
-	// 1) 按 TxId 排序
-	sort.Slice(txCopy, func(i, j int) bool {
-		return txCopy[i].GetTxId() < txCopy[j].GetTxId()
-	})
-
-	// 2) 逐笔序列化
+	sort.Slice(txCopy, func(i, j int) bool { return txCopy[i].GetTxId() < txCopy[j].GetTxId() })
 	var result [][]byte
 	for _, tx := range txCopy {
 		result = append(result, serializeTransaction(tx))
@@ -1534,21 +1231,21 @@ func SerializeAllTransactions(txCopy []*pb.AnyTx) [][]byte {
 	return result
 }
 
-// 根据 db.Transaction 的字段进行序列化
-// 实际中应根据业务需求将交易变成字节切片，这里只作简单示例
 func serializeTransaction(tx *pb.AnyTx) []byte {
-	data := []byte(tx.GetTxId() + "|" + tx.GetBase().FromAddress)
-	// 可以增加更多字段序列化逻辑
-	return data
+	return []byte(tx.GetTxId() + "|" + tx.GetBase().FromAddress)
 }
 
 // NextIndex 获取下一个自增索引
 func (m *Manager) NextIndex() (uint64, error) {
-	id, err := m.seq.Next() // Badger 自动并发安全
-	if err != nil {
+	m.seqMu.Lock()
+	defer m.seqMu.Unlock()
+	m.seq++
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, m.seq)
+	if err := m.Db.Set([]byte("meta:seq_counter"), buf, pebble.Sync); err != nil {
 		return 0, err
 	}
-	return id + 1, nil // 让索引依旧 from 1 开始
+	return m.seq, nil
 }
 
 // GetMinerByIndex 通过节点索引获取对应的矿工账户
@@ -1565,110 +1262,73 @@ func (m *Manager) GetMinerByIndex(index uint64) (*pb.Account, error) {
 
 // ========== 索引重建接口 ==========
 
-//	从订单数据重建价格索引
-//
-// 用于轻节点同步后重建索引，提升查询性能
-// 返回重建的索引数量
 func RebuildOrderPriceIndexes(m *Manager) (int, error) {
-	// 使用 withVer 获取正确的前缀
 	prefix := "v1_order_"
 	count := 0
-
-	// 先收集所有需要写入的索引，避免在 View 事务中调用 EnqueueSet
 	type indexEntry struct {
 		key   string
 		value string
 	}
 	var indexes []indexEntry
 
-	err := m.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		p := []byte(prefix)
-		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
-			item := it.Item()
-			key := string(item.Key())
-
-			// 确保 key 以前缀开头
-			if !strings.HasPrefix(key, prefix) {
-				break
-			}
-
-			orderData, err := item.ValueCopy(nil)
-			if err != nil {
-				continue
-			}
-
-			// 反序列化订单
-			var order pb.OrderTx
-			if err := proto.Unmarshal(orderData, &order); err != nil {
-				continue
-			}
-
-			// 尝试从 OrderState 获取最新的 is_filled 状态
-			isFilled := false
-			orderStateKey := keys.KeyOrderState(order.Base.TxId)
-			if stateData, err := m.Get(orderStateKey); err == nil && len(stateData) > 0 {
-				var state pb.OrderState
-				if err := proto.Unmarshal(stateData, &state); err == nil {
-					isFilled = state.IsFilled
-				}
-			}
-
-			// 重建价格索引
-			pair := utils.GeneratePairKey(order.BaseToken, order.QuoteToken)
-			priceKey67, err := PriceToKey128(order.Price)
-			if err != nil {
-				continue
-			}
-
-			indexKey := keys.KeyOrderPriceIndex(pair, order.Side, isFilled, priceKey67, order.Base.TxId)
-			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
-
-			indexes = append(indexes, indexEntry{
-				key:   indexKey,
-				value: string(indexData),
-			})
-			count++
-		}
-		return nil
-	})
-
+	p := []byte(prefix)
+	iter, err := m.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
 	if err != nil {
 		return 0, err
 	}
+	for iter.SeekGE(p); iter.Valid(); iter.Next() {
+		key := string(iter.Key())
+		if !strings.HasPrefix(key, prefix) {
+			break
+		}
+		orderData := make([]byte, len(iter.Value()))
+		copy(orderData, iter.Value())
+		var order pb.OrderTx
+		if err := proto.Unmarshal(orderData, &order); err != nil {
+			continue
+		}
+		isFilled := false
+		orderStateKey := keys.KeyOrderState(order.Base.TxId)
+		if stateData, err := m.Get(orderStateKey); err == nil && len(stateData) > 0 {
+			var state pb.OrderState
+			if err := proto.Unmarshal(stateData, &state); err == nil {
+				isFilled = state.IsFilled
+			}
+		}
+		pair := utils.GeneratePairKey(order.BaseToken, order.QuoteToken)
+		priceKey67, err := PriceToKey128(order.Price)
+		if err != nil {
+			continue
+		}
+		indexKey := keys.KeyOrderPriceIndex(pair, order.Side, isFilled, priceKey67, order.Base.TxId)
+		indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
+		indexes = append(indexes, indexEntry{key: indexKey, value: string(indexData)})
+		count++
+	}
+	if err := iter.Error(); err != nil {
+		iter.Close()
+		return 0, err
+	}
+	iter.Close()
 
-	// 写入所有索引
 	for _, idx := range indexes {
 		m.EnqueueSet(idx.key, idx.value)
 	}
-
-	// 强制刷盘
 	if err := m.ForceFlush(); err != nil {
 		return 0, err
 	}
-
 	return count, nil
 }
 
 // ========== StateDB 同步接口 ==========
 
-// SyncToStateDB 同步状态变化到 StateDB
-// 这是 VM 的 applyResult 调用的接口，用于将 WriteOp 同步到 StateDB
-// 注意：只有被 keys.IsStatefulKey 判定为状态数据的 key 才会被同步
-// 返回值：(stateRoot, error) - stateRoot 是同步后的状态树根哈希
 func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) ([]byte, error) {
 	_ = height
 	_ = updates
 	return nil, nil
 }
 
-// GetStateRoot 获取当前状态树根哈希
-func (m *Manager) GetStateRoot() []byte {
-	return nil
-}
+func (m *Manager) GetStateRoot() []byte { return nil }
 
 // GetChannelStats 返回 DB Manager 的 channel 状态
 func (m *Manager) GetChannelStats() []stats.ChannelStat {

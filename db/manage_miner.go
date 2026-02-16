@@ -8,7 +8,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
 )
 
 // GetRandomMinersFast samples active miners directly from in-memory snapshot.
@@ -36,13 +36,10 @@ func (mgr *Manager) GetRandomMinersFast(k int) ([]*pb.Account, error) {
 	}
 
 	accounts := make([]*pb.Account, 0, k)
-
 	mgr.minerSampleRandMu.Lock()
 	if mgr.minerSampleRand == nil {
 		mgr.minerSampleRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
-
-	// When k is large, use permutation to avoid excessive collision retries.
 	if k*2 >= len(miners) {
 		perm := mgr.minerSampleRand.Perm(len(miners))
 		for i := 0; i < k; i++ {
@@ -51,7 +48,6 @@ func (mgr *Manager) GetRandomMinersFast(k int) ([]*pb.Account, error) {
 		mgr.minerSampleRandMu.Unlock()
 		return accounts, nil
 	}
-
 	seen := make(map[int]struct{}, k)
 	for len(accounts) < k {
 		i := mgr.minerSampleRand.Intn(len(miners))
@@ -78,7 +74,6 @@ func (mgr *Manager) RefreshMinerParticipantsForEpoch(epoch uint64) error {
 	if mgr == nil {
 		return fmt.Errorf("RefreshMinerParticipantsForEpoch: db manager is nil")
 	}
-
 	mgr.minerCacheMu.RLock()
 	if mgr.minerCacheReady && mgr.minerCacheEpoch >= epoch {
 		mgr.minerCacheMu.RUnlock()
@@ -90,7 +85,6 @@ func (mgr *Manager) RefreshMinerParticipantsForEpoch(epoch uint64) error {
 	if err != nil {
 		return err
 	}
-
 	mgr.minerCacheMu.Lock()
 	if mgr.minerCacheReady && mgr.minerCacheEpoch >= epoch {
 		mgr.minerCacheMu.Unlock()
@@ -100,7 +94,6 @@ func (mgr *Manager) RefreshMinerParticipantsForEpoch(epoch uint64) error {
 	mgr.minerCacheEpoch = epoch
 	mgr.minerCacheReady = true
 	mgr.minerCacheMu.Unlock()
-
 	logs.Debug("[MinerCache] refreshed epoch=%d miners=%d", epoch, len(miners))
 	return nil
 }
@@ -112,10 +105,8 @@ func (mgr *Manager) ensureMinerCacheReady() error {
 	if ready {
 		return nil
 	}
-
 	height, err := mgr.GetLatestBlockHeight()
 	if err != nil {
-		// Height may be unavailable before first block; use epoch 0 bootstrap.
 		return mgr.RefreshMinerParticipantsForEpoch(0)
 	}
 	return mgr.RefreshMinerParticipantsForEpoch(mgr.minerEpochByHeight(height))
@@ -142,50 +133,42 @@ func (mgr *Manager) loadMinerParticipantsFromDB() ([]*pb.Account, error) {
 		return []*pb.Account{}, nil
 	}
 
+	snap := mgr.Db.NewSnapshot()
+	defer snap.Close()
+
 	miners := make([]*pb.Account, 0, len(indices))
-	err := mgr.Db.View(func(txn *badger.Txn) error {
-		for _, idx := range indices {
-			item, err := txn.Get([]byte(KeyIndexToAccount(idx)))
-			if errors.Is(err, badger.ErrKeyNotFound) {
+	for _, idx := range indices {
+		raw, closer, err := snap.Get([]byte(KeyIndexToAccount(idx)))
+		if err != nil {
+			if errors.Is(err, pebble.ErrNotFound) {
 				continue
 			}
-			if err != nil {
-				return err
-			}
-
-			accountKey, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-
-			accountItem, err := txn.Get(accountKey)
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-
-			accountBytes, err := accountItem.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-
-			account := &pb.Account{}
-			if err := ProtoUnmarshal(accountBytes, account); err != nil {
-				logs.Warn("[MinerCache] failed to unmarshal account idx=%d: %v", idx, err)
-				continue
-			}
-			if !account.IsMiner {
-				continue
-			}
-			miners = append(miners, account)
+			return nil, err
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
+		accountKey := make([]byte, len(raw))
+		copy(accountKey, raw)
+		closer.Close()
 
+		raw2, closer2, err := snap.Get(accountKey)
+		if err != nil {
+			if errors.Is(err, pebble.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		accountBytes := make([]byte, len(raw2))
+		copy(accountBytes, raw2)
+		closer2.Close()
+
+		account := &pb.Account{}
+		if err := ProtoUnmarshal(accountBytes, account); err != nil {
+			logs.Warn("[MinerCache] failed to unmarshal account idx=%d: %v", idx, err)
+			continue
+		}
+		if !account.IsMiner {
+			continue
+		}
+		miners = append(miners, account)
+	}
 	return miners, nil
 }

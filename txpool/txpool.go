@@ -30,6 +30,7 @@ type TxPool struct {
 	shortPendingAnyTxCache *lru.Cache
 	cacheTx                *lru.Cache
 	shortTxCache           *lru.Cache
+	appliedTxCache         *lru.Cache // isTxApplied 缓存，避免频繁查 DB
 
 	// 内部队列管理
 	Queue     *txPoolQueue
@@ -63,6 +64,7 @@ func NewTxPoolWithConfig(dbManager *db.Manager, validator TxValidator, address s
 	shortPendingAnyTxCache, _ := lru.New(cfg.TxPool.ShortPendingTxCacheSize)
 	cacheTx, _ := lru.New(cfg.TxPool.CacheTxSize)
 	shortTxCache, _ := lru.New(cfg.TxPool.ShortTxCacheSize)
+	appliedTxCache, _ := lru.New(50000) // isTxApplied 缓存
 
 	pendingSaveQueueSize := cfg.TxPool.MessageQueueSize
 	if pendingSaveQueueSize <= 0 {
@@ -78,6 +80,7 @@ func NewTxPoolWithConfig(dbManager *db.Manager, validator TxValidator, address s
 		shortPendingAnyTxCache: shortPendingAnyTxCache,
 		cacheTx:                cacheTx,
 		shortTxCache:           shortTxCache,
+		appliedTxCache:         appliedTxCache,
 		validator:              validator,
 		stopChan:               make(chan struct{}),
 		pendingSaveQueue:       make(chan *pb.AnyTx, pendingSaveQueueSize),
@@ -217,8 +220,20 @@ func (tp *TxPool) isTxApplied(txID string) bool {
 	if txID == "" || tp.dbManager == nil {
 		return false
 	}
+	// 先查 LRU 缓存
+	if tp.appliedTxCache != nil {
+		if _, ok := tp.appliedTxCache.Get(txID); ok {
+			return true
+		}
+	}
 	status, err := tp.dbManager.Get(keys.KeyVMAppliedTx(txID))
-	return err == nil && len(status) > 0
+	if err == nil && len(status) > 0 {
+		if tp.appliedTxCache != nil {
+			tp.appliedTxCache.Add(txID, struct{}{})
+		}
+		return true
+	}
+	return false
 }
 
 func (tp *TxPool) cacheAnyTxUnlocked(txID string, anyTx *pb.AnyTx, pending bool) {

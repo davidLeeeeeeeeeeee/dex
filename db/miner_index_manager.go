@@ -8,25 +8,25 @@ import (
 	"time"
 
 	"github.com/RoaringBitmap/roaring"
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
 )
 
 // MinerIndexManager 负责：
-//  1. 启动时扫描 Badger，恢复活跃矿工索引到 RoaringBitmap；
+//  1. 启动时扫描 DB，恢复活跃矿工索引到 RoaringBitmap；
 //  2. 运行中实时 Add / Remove；
 //  3. 提供高性能采样 SampleK。
 type MinerIndexManager struct {
 	mu     sync.RWMutex
 	bitmap *roaring.Bitmap
-	db     *badger.DB
+	db     *pebble.DB
 	Logger logs.Logger
-	rng    *rand.Rand // 共享随机数生成器，避免每次分配
-	rngMu  sync.Mutex // 保护 rng 的互斥锁
+	rng    *rand.Rand
+	rngMu  sync.Mutex
 }
 
 // ----------  初始化 / 恢复  ----------
 
-func NewMinerIndexManager(db *badger.DB, logger logs.Logger) (*MinerIndexManager, error) {
+func NewMinerIndexManager(db *pebble.DB, logger logs.Logger) (*MinerIndexManager, error) {
 	m := &MinerIndexManager{
 		db:     db,
 		bitmap: roaring.New(),
@@ -39,31 +39,32 @@ func NewMinerIndexManager(db *badger.DB, logger logs.Logger) (*MinerIndexManager
 	return m, nil
 }
 
-// 在一次只读事务里迭代所有 "indexToAccount_*" 键，填充 bitmap。
+// 在一次迭代里扫描所有 "indexToAccount_*" 键，填充 bitmap。
 func (m *MinerIndexManager) RebuildBitmapFromDB() error {
 	prefix := []byte(NameOfKeyIndexToAccount())
 	rebuilt := roaring.New()
 	count := 0
 
-	err := m.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			key := it.Item().Key()
-			idxBytes := key[len(prefix):]
-			idx, err := strconv.ParseUint(string(idxBytes), 10, 64)
-			if err != nil {
-				continue
-			}
-			rebuilt.Add(uint32(idx))
-			count++
-		}
-		return nil
+	iter, err := m.db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: prefixUpperBound(prefix),
 	})
 	if err != nil {
+		return err
+	}
+	defer iter.Close()
+
+	for iter.SeekGE(prefix); iter.Valid(); iter.Next() {
+		key := iter.Key()
+		idxBytes := key[len(prefix):]
+		idx, err := strconv.ParseUint(string(idxBytes), 10, 64)
+		if err != nil {
+			continue
+		}
+		rebuilt.Add(uint32(idx))
+		count++
+	}
+	if err := iter.Error(); err != nil {
 		return err
 	}
 
@@ -92,12 +93,10 @@ func (m *MinerIndexManager) Remove(idx uint64) {
 func (m *MinerIndexManager) SnapshotIndices() []uint64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
 	card := int(m.bitmap.GetCardinality())
 	if card == 0 {
 		return nil
 	}
-
 	indices := make([]uint64, 0, card)
 	it := m.bitmap.Iterator()
 	for it.HasNext() {
@@ -109,22 +108,12 @@ func (m *MinerIndexManager) SnapshotIndices() []uint64 {
 // GetAddressByIndex 通过索引查找矿工地址
 func (m *MinerIndexManager) GetAddressByIndex(index uint64) (string, error) {
 	key := []byte(KeyIndexToAccount(index))
-	var addr string
-	err := m.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(key)
-		if err != nil {
-			return err
-		}
-		val, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-		addr = string(val)
-		return nil
-	})
+	raw, closer, err := m.db.Get(key)
 	if err != nil {
 		return "", err
 	}
+	addr := string(raw)
+	closer.Close()
 	return addr, nil
 }
 
@@ -133,24 +122,20 @@ func (m *MinerIndexManager) GetAddressByIndex(index uint64) (string, error) {
 func (m *MinerIndexManager) SampleK(k int) ([]uint64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
 	card := int(m.bitmap.GetCardinality())
 	if card == 0 {
-		return nil, nil // 没有矿工
+		return nil, nil
 	}
 	if k > card {
 		k = card
 	}
-
 	res := make([]uint64, 0, k)
 	seen := make(map[uint32]struct{}, k)
-
 	m.rngMu.Lock()
 	defer m.rngMu.Unlock()
-
 	for len(res) < k {
-		r := uint32(m.rng.Intn(card)) // 使用共享 rng
-		v, _ := m.bitmap.Select(r)    // O(log64 N)
+		r := uint32(m.rng.Intn(card))
+		v, _ := m.bitmap.Select(r)
 		if _, dup := seen[v]; dup {
 			continue
 		}

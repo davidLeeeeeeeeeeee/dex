@@ -5,14 +5,15 @@ import (
 	"dex/pb"
 	"testing"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/vfs"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestMinerCacheRefreshByEpoch(t *testing.T) {
-	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
+	db, err := pebble.Open("", &pebble.Options{FS: vfs.NewMem()})
 	if err != nil {
-		t.Fatalf("open badger: %v", err)
+		t.Fatalf("open pebble: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -77,18 +78,20 @@ func TestMinerCacheRefreshByEpoch(t *testing.T) {
 	}
 }
 
-func putMinerAccount(db *badger.DB, idx uint64, account *pb.Account) error {
+func putMinerAccount(db *pebble.DB, idx uint64, account *pb.Account) error {
 	accountBytes, err := proto.Marshal(account)
 	if err != nil {
 		return err
 	}
 	accountKey := KeyAccount(account.Address)
 	indexKey := KeyIndexToAccount(idx)
-
-	return db.Update(func(txn *badger.Txn) error {
-		if err := txn.Set([]byte(accountKey), accountBytes); err != nil {
-			return err
-		}
-		return txn.Set([]byte(indexKey), []byte(accountKey))
-	})
+	b := db.NewBatch()
+	defer b.Close()
+	if err := b.Set([]byte(accountKey), accountBytes, nil); err != nil {
+		return err
+	}
+	if err := b.Set([]byte(indexKey), []byte(accountKey), nil); err != nil {
+		return err
+	}
+	return b.Commit(pebble.Sync)
 }

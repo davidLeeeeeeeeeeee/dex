@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -290,35 +290,34 @@ func createTestAccount(t *testing.T, dbMgr *db.Manager, address string, balances
 
 // getOrder 获取订单数据
 func getOrder(t *testing.T, dbMgr *db.Manager, orderID string) *pb.OrderTx {
-	var order pb.OrderTx
-	err := dbMgr.Db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(keys.KeyOrder(orderID)))
-		if err != nil {
-			return err
-		}
-		return item.Value(func(val []byte) error {
-			return proto.Unmarshal(val, &order)
-		})
-	})
+	raw, closer, err := dbMgr.Db.Get([]byte(keys.KeyOrder(orderID)))
 	require.NoError(t, err)
+	val := make([]byte, len(raw))
+	copy(val, raw)
+	closer.Close()
+	var order pb.OrderTx
+	require.NoError(t, proto.Unmarshal(val, &order))
 	return &order
 }
 
 // countDBKeysWithPrefix 计算指定前缀的 key 数量
 func countDBKeysWithPrefix(t *testing.T, dbMgr *db.Manager, prefix string) int {
 	count := 0
-	err := dbMgr.Db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		p := []byte(prefix)
-		for it.Seek(p); it.ValidForPrefix(p); it.Next() {
-			count++
+	p := []byte(prefix)
+	upper := make([]byte, len(p))
+	copy(upper, p)
+	for i := len(upper) - 1; i >= 0; i-- {
+		upper[i]++
+		if upper[i] != 0 {
+			break
 		}
-		return nil
-	})
+	}
+	iter, err := dbMgr.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: upper})
 	require.NoError(t, err)
+	defer iter.Close()
+	for iter.SeekGE(p); iter.Valid(); iter.Next() {
+		count++
+	}
+	require.NoError(t, iter.Error())
 	return count
 }

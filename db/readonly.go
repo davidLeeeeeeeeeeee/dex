@@ -5,37 +5,23 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dgraph-io/badger/v2"
-	"github.com/dgraph-io/badger/v2/options"
+	"github.com/cockroachdb/pebble"
 )
 
 // NewReadOnlyManager 创建一个只读的 DBManager 实例
 // 用于 Explorer 等外部进程直接读取节点数据库，不需要写队列和 VerkleStateDB
-// 注意：Windows 不支持 BadgerDB 的 ReadOnly 模式，所以用 BypassLockGuard 代替
-// Explorer 不初始化写队列，因此不会写入任何数据
 func NewReadOnlyManager(path string, logger logs.Logger) (*Manager, error) {
-	opts := badger.DefaultOptions(path).WithLogger(nil)
-	// Windows 不支持 ReadOnly，使用 BypassLockGuard 允许多进程打开同一数据库
-	opts.BypassLockGuard = true
-	// 使用 FileIO 模式减少内存占用
-	opts.TableLoadingMode = options.FileIO
-	opts.ValueLogLoadingMode = options.FileIO
-	opts.NumCompactors = 0 // 不做压缩
-
-	db, err := badger.Open(opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open badger db for explorer: %w", err)
+	opts := &pebble.Options{
+		ReadOnly:     true,
+		MaxOpenFiles: 100,
 	}
-
-	manager := &Manager{
+	db, err := pebble.Open(path, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open pebble db for explorer: %w", err)
+	}
+	return &Manager{
 		Db:     db,
 		mu:     sync.RWMutex{},
 		Logger: logger,
-		// StateDB = nil, 不初始化 VerkleStateDB
-		// writeQueueChan = nil, 不初始化写队列
-		// seq = nil, 不初始化自增发号器
-		// IndexMgr = nil, 不初始化矿工索引
-	}
-
-	return manager, nil
+	}, nil
 }

@@ -4,38 +4,30 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"dex/pb"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"strconv"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
 	"google.golang.org/protobuf/proto"
 )
 
-func ProtoMarshal(m proto.Message) ([]byte, error) {
-	return proto.Marshal(m)
-}
-
-func ProtoUnmarshal(data []byte, m proto.Message) error {
-	return proto.Unmarshal(data, m)
-}
+func ProtoMarshal(m proto.Message) ([]byte, error)      { return proto.Marshal(m) }
+func ProtoUnmarshal(data []byte, m proto.Message) error { return proto.Unmarshal(data, m) }
 
 // DeleteKey 一个DeleteKey工具
 func (manager *Manager) DeleteKey(key string) error {
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
-
 	if db == nil {
 		return fmt.Errorf("database is not initialized or closed")
 	}
-
-	return db.Update(func(txn *badger.Txn) error {
-		return txn.Delete([]byte(key))
-	})
+	return db.Delete([]byte(key), pebble.Sync)
 }
 
-// getNewIndex 只做只读操作，计算“应该用哪个下标”
+// getNewIndex 只做只读操作，计算"应该用哪个下标"
 // 并返回：
 //
 //	idx      -> 新分配的下标
@@ -47,50 +39,38 @@ func getNewIndex(mgr *Manager) (uint64, []WriteTask, error) {
 		freeIdxKey []byte
 	)
 
-	// ① 只读事务：尝试寻找可复用的 free_idx_*
-	err := mgr.Db.View(func(txn *badger.Txn) error {
-		itOpts := badger.DefaultIteratorOptions
-		itOpts.Prefix = []byte(KeyFreeIdx())
-		it := txn.NewIterator(itOpts)
-		defer it.Close()
-
-		it.Rewind()
-		if it.Valid() {
-			// 找到了可复用的 index
-			freeIdxKey = it.Item().KeyCopy(nil)
-			idxStr := bytes.TrimPrefix(freeIdxKey, []byte(KeyFreeIdx()))
-			i, _ := strconv.ParseUint(string(idxStr), 10, 64)
-			idx = i
-			return nil
-		}
-
-		// 没有空闲 -> 尝试读取 meta:max_index
-		idx = 0
-
-		return nil
-
+	// 使用 Pebble Iterator 寻找可复用的 free_idx_*
+	prefix := []byte(KeyFreeIdx())
+	iter, err := mgr.Db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: prefixUpperBound(prefix),
 	})
 	if err != nil {
 		return 0, nil, err
 	}
+
+	if iter.SeekGE(prefix); iter.Valid() {
+		freeIdxKey = make([]byte, len(iter.Key()))
+		copy(freeIdxKey, iter.Key())
+		idxStr := bytes.TrimPrefix(freeIdxKey, prefix)
+		i, _ := strconv.ParseUint(string(idxStr), 10, 64)
+		idx = i
+	}
+	iter.Close()
+
 	if idx == 0 {
 		idx, _ = mgr.NextIndex()
 	}
-	// ② 生成写入任务
-	if freeIdxKey != nil {
-		// 复用 index，需要删除 free_idx_<idx>
-		tasks = append(tasks, WriteTask{
-			Key: freeIdxKey,
-			Op:  OpDelete,
-		})
-	}
 
+	if freeIdxKey != nil {
+		tasks = append(tasks, WriteTask{Key: freeIdxKey, Op: OpDelete})
+	}
 	return idx, tasks, nil
 }
 
 func removeIndex(idx uint64) WriteTask {
 	k := []byte(fmt.Sprintf(KeyFreeIdx()+"%020d", idx))
-	return WriteTask{Key: k, Op: OpSet} // 值为空即可，也可以存时间戳
+	return WriteTask{Key: k, Op: OpSet}
 }
 
 // HashTx 接受任意交易消息（proto.Message），并返回其哈希值（排除 BaseMessage.TxId 字段）。
@@ -98,10 +78,7 @@ func removeIndex(idx uint64) WriteTask {
 // HashTx 接受任意交易消息（proto.Message），并返回其哈希值。
 // 在计算 hash 时，排除了 BaseMessage 中的 tx_id 和 signature 字段。
 func HashTx(tx proto.Message) (string, error) {
-	// 克隆一份消息，避免修改原始对象
 	txCopy := proto.Clone(tx)
-
-	// 根据不同的 tx 类型，清空其中 BaseMessage 的 tx_id 和 signature 字段
 	switch t := txCopy.(type) {
 	case *pb.IssueTokenTx:
 		if t.Base != nil {
@@ -128,9 +105,7 @@ func HashTx(tx proto.Message) (string, error) {
 			t.Base.TxId = ""
 			t.Base.Signature = nil
 		}
-
 	case *pb.AnyTx:
-		// 对于 AnyTx，需要判断当前存放的是哪种 tx，并清空其中的 BaseMessage 中相关字段
 		switch content := t.Content.(type) {
 		case *pb.AnyTx_IssueTokenTx:
 			if content.IssueTokenTx.Base != nil {
@@ -193,14 +168,23 @@ func HashTx(tx proto.Message) (string, error) {
 	default:
 		return "", fmt.Errorf("不支持的交易类型")
 	}
-
-	// 使用 proto.Marshal 序列化为字节数组
 	data, err := proto.Marshal(txCopy)
 	if err != nil {
 		return "", err
 	}
-
-	// 计算 SHA256 哈希值，并以十六进制字符串返回
 	hashBytes := sha256.Sum256(data)
 	return hex.EncodeToString(hashBytes[:]), nil
+}
+
+// restoreSeqFromDB 从 DB 恢复 sequence counter（用于测试或初始化后）
+func restoreSeqFromDB(db *pebble.DB) uint64 {
+	raw, closer, err := db.Get([]byte("meta:seq_counter"))
+	if err != nil {
+		return 0
+	}
+	defer closer.Close()
+	if len(raw) < 8 {
+		return 0
+	}
+	return binary.BigEndian.Uint64(raw)
 }

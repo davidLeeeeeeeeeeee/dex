@@ -4,7 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/vfs"
 )
 
 // 触发后台批量写并等待其完成
@@ -15,12 +16,17 @@ func flushAndWait(t *testing.T, mgr *Manager) {
 	}
 }
 
-func TestForceFlushIsSynchronous(t *testing.T) {
-	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
+func openMemDB(t *testing.T) *pebble.DB {
+	t.Helper()
+	db, err := pebble.Open("", &pebble.Options{FS: vfs.NewMem()})
 	if err != nil {
-		t.Fatalf("open badger: %v", err)
+		t.Fatalf("open pebble: %v", err)
 	}
+	return db
+}
 
+func TestForceFlushIsSynchronous(t *testing.T) {
+	db := openMemDB(t)
 	mgr := &Manager{Db: db}
 	mgr.InitWriteQueue(1_000, time.Hour)
 	t.Cleanup(func() { mgr.Close() })
@@ -29,7 +35,6 @@ func TestForceFlushIsSynchronous(t *testing.T) {
 	if err := mgr.ForceFlush(); err != nil {
 		t.Fatalf("force flush: %v", err)
 	}
-
 	got, err := mgr.GetKV("sync:test:key")
 	if err != nil {
 		t.Fatalf("read after force flush: %v", err)
@@ -39,21 +44,12 @@ func TestForceFlushIsSynchronous(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------------
 // TestIndexAllocator - 验证 FIFO 复用逻辑
-// -----------------------------------------------------------------------------
 func TestIndexAllocator(t *testing.T) {
-	// 1. 内存 Badger
-	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
-	if err != nil {
-		t.Fatalf("open badger: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openMemDB(t)
 
-	// 2. Manager
 	mgr := &Manager{Db: db}
-	mgr.seq, _ = db.GetSequence([]byte("seq"), 1000)
-	mgr.InitWriteQueue(1_000, 200*time.Millisecond) // flushInterval 随便设
+	mgr.InitWriteQueue(1_000, 200*time.Millisecond)
 
 	// ---------- 首次 idx1 ----------
 	idx1, tasks, err := getNewIndex(mgr)
@@ -110,24 +106,15 @@ func TestIndexAllocator(t *testing.T) {
 		mgr.writeQueueChan <- w
 	}
 	flushAndWait(t, mgr)
-
 	mgr.Close()
 }
 
-// -----------------------------------------------------------------------------
-// TestIndexAllocatorPerformance - 分配 2 000 个 index 的速度
-// -----------------------------------------------------------------------------
+// TestIndexAllocatorPerformance - 分配 10 个 index 的速度
 func TestIndexAllocatorPerformance(t *testing.T) {
 	const n = 10
-
-	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
-	if err != nil {
-		t.Fatalf("open badger: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openMemDB(t)
 
 	mgr := &Manager{Db: db}
-	mgr.seq, _ = db.GetSequence([]byte("seq"), 1000)
 	mgr.InitWriteQueue(100000, 200*time.Millisecond)
 
 	start := time.Now()
@@ -142,14 +129,12 @@ func TestIndexAllocatorPerformance(t *testing.T) {
 		for _, w := range tasks {
 			mgr.writeQueueChan <- w
 		}
-		flushAndWait(t, mgr) // 保证 meta:max_index 立刻可见
+		flushAndWait(t, mgr)
 	}
 	dur := time.Since(start)
 	t.Logf("allocated %d indexes in %s (%.2f µs/idx)", n, dur, float64(dur.Microseconds())/float64(n))
-
 	if dur > time.Second {
 		t.Fatalf("too slow: %s for %d allocations", dur, n)
 	}
-
 	mgr.Close()
 }

@@ -4,17 +4,11 @@ import (
 	"dex/pb"
 	"fmt"
 
-	"github.com/dgraph-io/badger/v2"
+	"github.com/cockroachdb/pebble"
 	"google.golang.org/protobuf/proto"
 )
 
 // SavePendingAnyTx saves a pending AnyTx to the database
-//
-// ⚠️ INTERNAL API - DO NOT CALL DIRECTLY FROM OUTSIDE DB PACKAGE
-// This method is used internally by db package for legacy compatibility.
-// New code should use VM's unified write path (applyResult) instead.
-//
-// Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SavePendingAnyTx(tx *pb.AnyTx) error {
 	txID := tx.GetTxId()
 	if txID == "" {
@@ -24,8 +18,7 @@ func (mgr *Manager) SavePendingAnyTx(tx *pb.AnyTx) error {
 	if err != nil {
 		return err
 	}
-	key := KeyPendingAnyTx(txID)
-	mgr.EnqueueSet(key, string(data))
+	mgr.EnqueueSet(KeyPendingAnyTx(txID), string(data))
 	return nil
 }
 
@@ -34,8 +27,7 @@ func (mgr *Manager) DeletePendingAnyTx(txID string) error {
 	if txID == "" {
 		return fmt.Errorf("DeletePendingAnyTx: empty txID")
 	}
-	key := KeyPendingAnyTx(txID)
-	mgr.EnqueueDelete(key)
+	mgr.EnqueueDelete(KeyPendingAnyTx(txID))
 	return nil
 }
 
@@ -48,27 +40,22 @@ func (mgr *Manager) LoadPendingAnyTx() ([]*pb.AnyTx, error) {
 		return nil, fmt.Errorf("database is not initialized or closed")
 	}
 	var result []*pb.AnyTx
-
-	err := db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-
-		prefix := []byte(KeyPendingAnyTx(""))
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			val, e := item.ValueCopy(nil)
-			if e != nil {
-				return e
-			}
-			var anyTx pb.AnyTx
-			if uerr := proto.Unmarshal(val, &anyTx); uerr != nil {
-				continue
-			}
-			result = append(result, &anyTx)
-		}
-		return nil
-	})
+	prefix := []byte(KeyPendingAnyTx(""))
+	iter, err := db.NewIter(&pebble.IterOptions{LowerBound: prefix, UpperBound: prefixUpperBound(prefix)})
 	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	for iter.SeekGE(prefix); iter.Valid(); iter.Next() {
+		val := make([]byte, len(iter.Value()))
+		copy(val, iter.Value())
+		var anyTx pb.AnyTx
+		if uerr := proto.Unmarshal(val, &anyTx); uerr != nil {
+			continue
+		}
+		result = append(result, &anyTx)
+	}
+	if err := iter.Error(); err != nil {
 		return nil, err
 	}
 	return result, nil
