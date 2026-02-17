@@ -23,39 +23,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// stateKVUpdate is the internal state-sync payload shape.
-type stateKVUpdate struct {
-	Key     string
-	Value   []byte
-	Deleted bool
-}
-
-// stateDBSession abstracts state backend sessions (disabled in current runtime).
-type stateDBSession interface {
-	Get(key string) ([]byte, bool, error)
-	GetKV(key string) ([]byte, error)
-	ApplyUpdate(height uint64, kvs ...stateKVUpdate) error
-	Commit() error
-	Rollback() error
-	Close() error
-	Root() []byte
-}
-
-// stateDB abstracts the optional state backend (formerly verkle/jmt).
-type stateDB interface {
-	Get(key string) ([]byte, bool, error)
-	ApplyAccountUpdate(height uint64, kvs ...stateKVUpdate) error
-	NewSession() (stateDBSession, error)
-	Root() []byte
-	CommitRoot(version uint64, root []byte)
-	Close() error
-}
-
 // Manager 封装 PebbleDB 的管理器
 type Manager struct {
-	Db      *pebble.DB
-	StateDB stateDB // optional state backend; nil means disabled
-	mu      sync.RWMutex
+	Db *pebble.DB
+	mu sync.RWMutex
 
 	// 队列通道，批量写的 goroutine 用它来取写请求
 	writeQueueChan chan WriteTask
@@ -84,7 +55,7 @@ type Manager struct {
 	maxBatchSize  int                // 累计多少条就写一次
 	flushInterval time.Duration      // 间隔多久强制写一次
 	IndexMgr      *MinerIndexManager // 新增
-	// 自增发号器 (替代 Badger Sequence)
+	// 自增发号器
 	seq   uint64
 	seqMu sync.Mutex
 	// 你可以在这里做一个 wait group，保证 close 的时候能等 goroutine 退出
@@ -181,7 +152,6 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 
 	manager := &Manager{
 		Db:              db,
-		StateDB:         nil,
 		IndexMgr:        indexMgr,
 		seq:             seqVal,
 		Logger:          logger,
@@ -613,88 +583,25 @@ func (manager *Manager) resolvePendingForceFlush(err error) {
 
 // NewSession 创建一个新的数据库会话
 func (m *Manager) NewSession() (interfaces.DBSession, error) {
-	if m.StateDB == nil {
-		return &dbSession{manager: m}, nil
-	}
-	stateSess, err := m.StateDB.NewSession()
-	if err != nil {
-		return nil, err
-	}
-	return &dbSession{manager: m, verkleSess: stateSess}, nil
-}
-
-func (m *Manager) CommitRoot(height uint64, root []byte) {
-	if m.StateDB != nil {
-		m.StateDB.CommitRoot(height, root)
-	}
+	return &dbSession{manager: m}, nil
 }
 
 // dbSession 数据库会话实现
 type dbSession struct {
-	manager    *Manager
-	verkleSess stateDBSession
+	manager *Manager
 }
 
 func (s *dbSession) Get(key string) ([]byte, error) {
-	if s.verkleSess == nil {
-		return s.manager.GetKV(key)
-	}
-	if keys.IsStatefulKey(key) {
-		val, exists, err := s.verkleSess.Get(key)
-		if err == nil && exists {
-			return val, nil
-		}
-	}
-	return s.verkleSess.GetKV(key)
+	return s.manager.GetKV(key)
 }
 
 func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]byte, error) {
-	if s.verkleSess == nil {
-		return nil, nil
-	}
-	kvUpdates := make([]stateKVUpdate, 0, len(updates))
-	for _, u := range updates {
-		type writeOpInterface interface {
-			GetKey() string
-			GetValue() []byte
-			IsDel() bool
-		}
-		if writeOp, ok := u.(writeOpInterface); ok {
-			key := writeOp.GetKey()
-			if !keys.IsStatefulKey(key) {
-				continue
-			}
-			kvUpdates = append(kvUpdates, stateKVUpdate{Key: key, Value: writeOp.GetValue(), Deleted: writeOp.IsDel()})
-		}
-	}
-	if len(kvUpdates) > 0 {
-		if err := s.verkleSess.ApplyUpdate(height, kvUpdates...); err != nil {
-			return nil, err
-		}
-	}
-	return s.verkleSess.Root(), nil
+	return nil, nil
 }
 
-func (s *dbSession) Commit() error {
-	if s.verkleSess == nil {
-		return nil
-	}
-	return s.verkleSess.Commit()
-}
-
-func (s *dbSession) Rollback() error {
-	if s.verkleSess == nil {
-		return nil
-	}
-	return s.verkleSess.Rollback()
-}
-
-func (s *dbSession) Close() error {
-	if s.verkleSess == nil {
-		return nil
-	}
-	return s.verkleSess.Close()
-}
+func (s *dbSession) Commit() error   { return nil }
+func (s *dbSession) Rollback() error { return nil }
+func (s *dbSession) Close() error    { return nil }
 
 // prefixUpperBound 计算前缀的上界（用于 Pebble IterOptions.UpperBound）
 func prefixUpperBound(prefix []byte) []byte {
@@ -1117,10 +1024,6 @@ func (manager *Manager) Close() {
 	// 4. 关闭 DB
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-	if manager.StateDB != nil {
-		_ = manager.StateDB.Close()
-		manager.StateDB = nil
-	}
 	if manager.Db != nil {
 		_ = manager.Db.Close()
 		manager.Db = nil
@@ -1129,11 +1032,6 @@ func (manager *Manager) Close() {
 
 // Read 读取键对应的值
 func (manager *Manager) Read(key string) (string, error) {
-	if keys.IsStatefulKey(key) && manager.StateDB != nil {
-		if val, exists, err := manager.StateDB.Get(key); err == nil && exists && len(val) > 0 {
-			return string(val), nil
-		}
-	}
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
@@ -1151,12 +1049,6 @@ func (manager *Manager) Read(key string) (string, error) {
 
 // Get 实现 vm.DBManager 接口，返回 []byte
 func (manager *Manager) Get(key string) ([]byte, error) {
-	if keys.IsStatefulKey(key) && manager.StateDB != nil {
-		val, exists, err := manager.StateDB.Get(key)
-		if err == nil && exists && len(val) > 0 {
-			return val, nil
-		}
-	}
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
@@ -1319,16 +1211,6 @@ func RebuildOrderPriceIndexes(m *Manager) (int, error) {
 	}
 	return count, nil
 }
-
-// ========== StateDB 同步接口 ==========
-
-func (m *Manager) SyncToStateDB(height uint64, updates []interface{}) ([]byte, error) {
-	_ = height
-	_ = updates
-	return nil, nil
-}
-
-func (m *Manager) GetStateRoot() []byte { return nil }
 
 // GetChannelStats 返回 DB Manager 的 channel 状态
 func (m *Manager) GetChannelStats() []stats.ChannelStat {

@@ -404,7 +404,7 @@ func (s *RealBlockStore) GetCurrentHeight() uint64 {
 // 设置区块为最终化状态（内部使用）
 // 原子语义：只有 VM 提交 + 区块持久化成功后，才推进内存 finalized/lastAccepted。
 func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
-	// 同一节点内串行化最终化，避免并发 SetFinalized 触发 Badger 事务冲突。
+	// 同一节点内串行化最终化，避免并发 SetFinalized 触发 DB 事务冲突。
 	s.finalizeMu.Lock()
 	defer s.finalizeMu.Unlock()
 

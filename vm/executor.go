@@ -126,9 +126,7 @@ func maybeLogVMProbeSummary(now time.Time) {
 		applyCalls,
 		avgProbeDuration(vmProbe.applyTotalNs.Load(), applyCalls),
 		avgProbeDuration(vmProbe.applyDiffNs.Load(), applyCalls),
-		avgProbeDuration(vmProbe.applyStakeNs.Load(), applyCalls),
-		avgProbeDuration(vmProbe.applySyncNs.Load(), applyCalls),
-		avgProbeDuration(vmProbe.applyFlushNs.Load(), applyCalls),
+		avgProbeDuration(vmProbe.applyStakeNs.Load(), applyCalls), avgProbeDuration(vmProbe.applyFlushNs.Load(), applyCalls),
 		vmProbe.applyWriteOps.Load(),
 		vmProbe.applyAccountOps.Load(),
 		vmProbe.applyStateOps.Load(),
@@ -632,9 +630,9 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 			} else {
 				// 使用 SetWithMeta 保留元数据
 				if svWithMeta, ok := sv.(interface {
-					SetWithMeta(string, []byte, bool, string)
+					SetWithMeta(string, []byte, string)
 				}); ok {
-					svWithMeta.SetWithMeta(w.Key, w.Value, w.SyncStateDB, w.Category)
+					svWithMeta.SetWithMeta(w.Key, w.Value, w.Category)
 				} else {
 					sv.Set(w.Key, w.Value)
 				}
@@ -910,8 +908,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	// ========== 第二步：应用所有状态变更 ==========
 	// 遍历 Diff 中的所有写操作
-	stateDBUpdates := make([]*WriteOp, 0) // 用于收集需要同步到 StateDB 的更新
-	accountUpdates := make([]*WriteOp, 0) // 用于收集账户更新，用于更新 stake index
+	accountUpdates := make([]*WriteOp, 0)
 
 	writeOps = len(res.Diff)
 	diffLoopAt := time.Now()
@@ -928,18 +925,12 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		} else {
 			x.DB.EnqueueSet(w.Key, string(w.Value))
 		}
-
-		// 第三步：如果是同步 StateDB 的，记录下来
-		if w.SyncStateDB {
-			stateDBUpdates = append(stateDBUpdates, w)
-		}
 	}
 
 	// ========== 更新 Stake Index ==========
 	// ========== 第三步：更新 Stake Index ==========
 	durDiffLoop += time.Since(diffLoopAt)
 	accountOps = len(accountUpdates)
-	stateOps = len(stateDBUpdates)
 
 	stakeAt := time.Now()
 	if len(accountUpdates) > 0 {
@@ -971,7 +962,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 				// 获取新的 stake (通过在 WriteOps 中查找对应的余额更新)
 				newStake := oldStake // 计算新 stake（从当前 WriteOps 中查找对应的余额更新）
 				balanceKey := keys.KeyBalance(address, "FB")
-				for _, wop := range stateDBUpdates {
+				for _, wop := range res.Diff {
 					if wop.Key == balanceKey && !wop.Del {
 						var balRecord pb.TokenBalanceRecord
 						if err := unmarshalProtoCompat(wop.Value, &balRecord); err == nil && balRecord.Balance != nil {
@@ -992,30 +983,6 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		}
 	}
 	durStake += time.Since(stakeAt)
-
-	// ========== 同步到 StateDB ==========
-	// ========== 第四步：同步到 StateDB ==========
-	// 统一处理所有需要同步到 StateDB 的数据
-	// 即使没有更新，也调用 ApplyStateUpdate 以确认当前高度的状态根
-	stateSyncAt := time.Now()
-	sess, err := x.DB.NewSession()
-	if err != nil {
-		durStateSync += time.Since(stateSyncAt)
-		return fmt.Errorf("failed to open db session: %v", err)
-	}
-	defer sess.Close()
-
-	stateDBUpdatesIface := make([]interface{}, len(stateDBUpdates))
-	for i, w := range stateDBUpdates {
-		stateDBUpdatesIface[i] = w
-	}
-	stateRoot, err := sess.ApplyStateUpdate(b.Header.Height, stateDBUpdatesIface)
-	if err != nil {
-		fmt.Printf("[VM] Warning: StateDB sync failed via session: %v\n", err)
-	} else if stateRoot != nil {
-		b.Header.StateRoot = stateRoot
-	}
-	durStateSync += time.Since(stateSyncAt)
 
 	// ========== 第四步：写入交易处理状态 ==========
 	for _, rc := range res.Receipts {
@@ -1099,15 +1066,6 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	x.DB.EnqueueSet(blockHeightKey, b.BlockHash)
 
 	// ========== 提交数据库事务并强制刷新 ==========
-	if err := sess.Commit(); err != nil {
-
-		return fmt.Errorf("failed to commit db session: %v", err)
-	}
-
-	// 在某些存储实现中，状态根需要在执行后显式提交或刷新
-	if b.Header.StateRoot != nil {
-		x.DB.CommitRoot(b.Header.Height, b.Header.StateRoot)
-	}
 
 	// 强制刷盘，确保数据落盘成功后再返回给上层共识模块
 	flushAt := time.Now()

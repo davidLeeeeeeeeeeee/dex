@@ -157,7 +157,6 @@ type DBManager interface {
 	ScanOrdersByPairs(pairs []string) (map[string]map[string][]byte, error)
 	GetKV(key string) ([]byte, error)
 	NewSession() (DBSession, error)
-	CommitRoot(height uint64, root []byte)
 
 	// Frost 相关方法
 	GetFrostVaultTransition(key string) (*pb.VaultTransitionState, error)

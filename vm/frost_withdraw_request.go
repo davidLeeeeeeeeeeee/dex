@@ -117,7 +117,6 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 	ops = append(ops, WriteOp{
 		Key:         withdrawKey,
 		Value:       withdrawData,
-		SyncStateDB: true,
 		Category:    "frost_withdraw",
 	})
 
@@ -126,7 +125,6 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 	ops = append(ops, WriteOp{
 		Key:         fifoKey,
 		Value:       []byte(withdrawID),
-		SyncStateDB: true,
 		Category:    "frost_withdraw_fifo",
 	})
 
@@ -134,7 +132,6 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 	ops = append(ops, WriteOp{
 		Key:         seqKey,
 		Value:       []byte(strconv.FormatUint(newSeq, 10)),
-		SyncStateDB: true,
 		Category:    "frost_withdraw_seq",
 	})
 
@@ -142,7 +139,6 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 	ops = append(ops, WriteOp{
 		Key:         txRefKey,
 		Value:       []byte(withdrawID),
-		SyncStateDB: true,
 		Category:    "frost_withdraw_ref",
 	})
 

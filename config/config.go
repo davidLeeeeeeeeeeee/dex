@@ -42,35 +42,23 @@ type ServerConfig struct {
 	TLSSessionCacheSize int // 128
 }
 
-// DatabaseConfig 数据库配置
+// DatabaseConfig PebbleDB 数据库配置
 type DatabaseConfig struct {
-	// BadgerDB配置
-	ValueLogFileSize int64         // 64 << 20 (64MB)
-	BaseTableSize    int64         // 基础表大小
-	MemTableSize     int64         // 内存表大小
-	MaxBatchSize     int           // 100
-	FlushInterval    time.Duration // 200 * time.Millisecond
+	MemTableSize  int64         // 内存表大小
+	MaxBatchSize  int           // 写队列批量大小
+	FlushInterval time.Duration // 写队列刷盘间隔
 	// 最终化落盘策略：不再每块都强制 flush，而是按块数/时间窗口触发
 	FinalizationForceFlushEveryN   int           // 0=关闭按块数触发；1=每块强刷（旧行为）
 	FinalizationForceFlushInterval time.Duration // 0=关闭按时间触发
 
 	// 写队列配置
-	WriteQueueSize      int
-	WriteBatchSoftLimit int64 // 8 * 1024 * 1024 (8MB)
-	MaxCountPerTxn      int   // 500
-	PerEntryOverhead    int   // 32
+	WriteQueueSize int
 
 	// 缓存配置
-	BlockCacheSize    int    // 10
-	SequenceBandwidth uint64 // 1000
-
-	// 内存限制配置（新增）
-	IndexCacheSize          int64 // 索引缓存大小（字节），限制 Ristretto 缓存
-	BlockCacheSizeDB        int64 // 块缓存大小（字节），限制数据块缓存
-	NumMemtables            int   // MemTable 数量，减少内存占用
-	NumCompactors           int   // 后台压缩线程数，设为 1 可平抑内存峰值
-	VerkleKVLogEnabled      bool  // 是否启用 Verkle 每高度全量 KV 日志（高开销，仅排障使用）
-	VerkleDisableRootCommit bool  // 统一开关：禁用 Verkle 根承诺计算并跳过 Verkle 树写入（仅用于排查）
+	BlockCacheSize   int   // 区块内存缓存条数
+	BlockCacheSizeDB int64 // Pebble Block Cache 大小（字节）
+	NumMemtables     int   // MemTable 数量
+	NumCompactors    int   // 后台压缩线程数
 }
 
 // NetworkConfig 网络配置
@@ -194,28 +182,16 @@ func DefaultConfig() *Config {
 			TLSSessionCacheSize: 128,
 		},
 		Database: DatabaseConfig{
-			ValueLogFileSize:               16 << 20,
-			BaseTableSize:                  16 << 20, // 恢复到 16MB 以匹配 ValueThreshold
-			MemTableSize:                   8 << 20,  // 设置为 8MB
+			MemTableSize:                   8 << 20,
 			MaxBatchSize:                   1000,
 			FlushInterval:                  500 * time.Millisecond,
 			FinalizationForceFlushEveryN:   3,
 			FinalizationForceFlushInterval: 10 * time.Second,
 			WriteQueueSize:                 5000,
-			WriteBatchSoftLimit:            8 * 1024 * 1024,
-			MaxCountPerTxn:                 500,
-			PerEntryOverhead:               32,
 			BlockCacheSize:                 10,
-			SequenceBandwidth:              1000,
-			// 内存限制配置
-			// 适配模拟器多实例环境（20节点 * 2实例 = 40个数据库）
-			// 必须大幅调低单实例缓存，否则总内存会爆炸
-			IndexCacheSize:          16 << 20, // 降低到 16MB
-			BlockCacheSizeDB:        32 << 20, // 降低到 32MB
-			NumMemtables:            3,        // 减少 MemTable 数量
-			NumCompactors:           2,
-			VerkleKVLogEnabled:      true, // false,
-			VerkleDisableRootCommit: false,
+			BlockCacheSizeDB:               32 << 20,
+			NumMemtables:                   3,
+			NumCompactors:                  2,
 		},
 		Network: NetworkConfig{
 			BasePort:           6000,

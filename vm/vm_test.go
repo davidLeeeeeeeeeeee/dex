@@ -13,6 +13,7 @@ import (
 	"dex/vm"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -501,9 +502,11 @@ func TestInvalidTransaction(t *testing.T) {
 	// 预执行
 	result, _ := executor.PreExecuteBlock(block)
 
-	if result.Valid {
-		t.Fatal("Block with invalid transaction should be invalid")
-	}
+	// 交易执行失败，但区块结构有效，PreExecuteBlock 应返回验证通过
+	// 失败的交易会记录在 Receipts 中
+	assert.True(t, result.Valid, "Block structure should be valid despite invalid tx execution")
+	require.Equal(t, 1, len(result.Receipts))
+	assert.Equal(t, "FAILED", result.Receipts[0].Status)
 }
 
 func TestConcurrentExecution(t *testing.T) {

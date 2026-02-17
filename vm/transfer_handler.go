@@ -246,7 +246,6 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Key:         fromAccountKey,
 		Value:       updatedFromData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "account",
 	})
 
@@ -264,25 +263,24 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Key:         toAccountKey,
 		Value:       updatedToData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "account",
 	})
 
 	// 8. 记录转账历史
 	fromTokenBalKey := keys.KeyBalance(transfer.Base.FromAddress, transfer.TokenAddress)
 	fromTokenBalData, _, _ := sv.Get(fromTokenBalKey)
-	ws = append(ws, WriteOp{Key: fromTokenBalKey, Value: fromTokenBalData, SyncStateDB: true, Category: "balance"})
+	ws = append(ws, WriteOp{Key: fromTokenBalKey, Value: fromTokenBalData, Category: "balance"})
 
 	if transfer.TokenAddress != FeeToken {
 		fromFBBalKey := keys.KeyBalance(transfer.Base.FromAddress, FeeToken)
 		fromFBBalData, _, _ := sv.Get(fromFBBalKey)
-		ws = append(ws, WriteOp{Key: fromFBBalKey, Value: fromFBBalData, SyncStateDB: true, Category: "balance"})
+		ws = append(ws, WriteOp{Key: fromFBBalKey, Value: fromFBBalData, Category: "balance"})
 	}
 
 	// 娣诲姞浣欓 WriteOps锛堟帴鏀舵柟锛?
 	toTokenBalKey := keys.KeyBalance(transfer.To, transfer.TokenAddress)
 	toTokenBalData, _, _ := sv.Get(toTokenBalKey)
-	ws = append(ws, WriteOp{Key: toTokenBalKey, Value: toTokenBalData, SyncStateDB: true, Category: "balance"})
+	ws = append(ws, WriteOp{Key: toTokenBalKey, Value: toTokenBalData, Category: "balance"})
 
 	// 8. 璁板綍杞处鍘嗗彶
 	historyKey := keys.KeyTransferHistory(transfer.Base.TxId)
@@ -291,7 +289,6 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Key:         historyKey,
 		Value:       historyData,
 		Del:         false,
-		SyncStateDB: false,
 		Category:    "history",
 	})
 

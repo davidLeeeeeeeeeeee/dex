@@ -98,9 +98,9 @@ func TestBatchOrderBookRebuild_MultiplePairs(t *testing.T) {
 			Height:        1,
 		},
 		Body: []*pb.AnyTx{
-			createOrderAnyTx("new_btc_1", "BTC", "USDT", "50000", "0.5"),
-			createOrderAnyTx("new_eth_1", "ETH", "USDT", "3000", "2.0"),
-			createOrderAnyTx("new_sol_1", "SOL", "USDT", "100", "10.0"),
+			createOrderAnyTx("new_btc_1", "BTC", "USDT", "50000", "1"),
+			createOrderAnyTx("new_eth_1", "ETH", "USDT", "3000", "2"),
+			createOrderAnyTx("new_sol_1", "SOL", "USDT", "100", "10"),
 		},
 	}
 
@@ -167,7 +167,7 @@ func TestBatchOrderBookRebuild_Performance(t *testing.T) {
 					tokens[0],
 					tokens[1],
 					"50000",
-					"0.1",
+					"1",
 				),
 			)
 		}
@@ -251,7 +251,7 @@ func TestBatchOrderBookRebuild_Matching(t *testing.T) {
 		Op:         pb.OrderOp_ADD,
 		Side:       pb.OrderSide_SELL,
 		Price:      "50000",
-		Amount:     "1.0",
+		Amount:     "1",
 	}
 	saveOrderToDB(t, db, sellOrder, pair)
 
@@ -263,7 +263,7 @@ func TestBatchOrderBookRebuild_Matching(t *testing.T) {
 			Height:        1,
 		},
 		Body: []*pb.AnyTx{
-			createBuyOrderAnyTx("buy_order_1", "BTC", "USDT", "50000", "0.5"),
+			createBuyOrderAnyTx("buy_order_1", "BTC", "USDT", "50000", "1"),
 		},
 	}
 
@@ -627,7 +627,7 @@ func TestBatchRebuild_Correctness(t *testing.T) {
 			Height:        1,
 		},
 		Body: []*pb.AnyTx{
-			createOrderAnyTx("new_order", "BTC", "USDT", "50000", "0.5"),
+			createOrderAnyTx("new_order", "BTC", "USDT", "50000", "1"),
 		},
 	}
 
@@ -663,7 +663,7 @@ func TestBatchRebuild_EdgeCases(t *testing.T) {
 					Height: 1,
 				},
 				Body: []*pb.AnyTx{
-					createOrderAnyTx("order1", "BTC", "USDT", "50000", "1.0"),
+					createOrderAnyTx("order1", "BTC", "USDT", "50000", "1"),
 				},
 			},
 			expectValid: true,

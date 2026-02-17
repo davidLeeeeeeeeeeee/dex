@@ -88,7 +88,6 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 			ops = append(ops, WriteOp{
 				Key:         transitionKey,
 				Value:       transitionData,
-				SyncStateDB: true,
 				Category:    "frost_vault_transition",
 			})
 		}
@@ -129,7 +128,6 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	ops = append(ops, WriteOp{
 		Key:         existingKey,
 		Value:       commitData,
-		SyncStateDB: true,
 		Category:    "frost_dkg_commit",
 	})
 
@@ -228,7 +226,6 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 			ops = append(ops, WriteOp{
 				Key:         transitionKey,
 				Value:       transitionData,
-				SyncStateDB: true,
 				Category:    "frost_vault_transition",
 			})
 		}
@@ -266,7 +263,6 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	ops = append(ops, WriteOp{
 		Key:         existingKey,
 		Value:       shareData,
-		SyncStateDB: true,
 		Category:    "frost_dkg_share",
 	})
 
@@ -385,7 +381,6 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 	ops := []WriteOp{{
 		Key:         complaintKey,
 		Value:       complaintData,
-		SyncStateDB: true,
 		Category:    "frost_dkg_complaint",
 	}}
 
@@ -397,7 +392,6 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 			ops = append(ops, WriteOp{
 				Key:         transitionKey,
 				Value:       transitionData,
-				SyncStateDB: true,
 				Category:    "frost_vault_transition",
 			})
 		}
@@ -560,7 +554,6 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 			Key:         commitKey,
 			Value:       nil, // 閸掔娀娅?
 			Del:         true,
-			SyncStateDB: true,
 			Category:    "frost_dkg_commit",
 		})
 	} else {
@@ -603,7 +596,6 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	ops = append(ops, WriteOp{
 		Key:         complaintKey,
 		Value:       updatedComplaintData,
-		SyncStateDB: true,
 		Category:    "frost_dkg_complaint",
 	})
 
@@ -615,7 +607,6 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	ops = append(ops, WriteOp{
 		Key:         transitionKey,
 		Value:       updatedTransitionData,
-		SyncStateDB: true,
 		Category:    "frost_vault_transition",
 	})
 
@@ -820,8 +811,8 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 	}
 
 	ops := []WriteOp{
-		{Key: transitionKey, Value: updatedTransitionData, SyncStateDB: true, Category: "frost_vault_transition"},
-		{Key: vaultKey, Value: updatedVaultData, SyncStateDB: true, Category: "frost_vault_state"},
+		{Key: transitionKey, Value: updatedTransitionData, Category: "frost_vault_transition"},
+		{Key: vaultKey, Value: updatedVaultData, Category: "frost_vault_state"},
 	}
 
 	for _, op := range ops {
@@ -914,8 +905,8 @@ func (h *FrostVaultTransitionSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView)
 	}
 
 	ops := []WriteOp{
-		{Key: oldVaultKey, Value: updatedOldVaultData, SyncStateDB: true, Category: "frost_vault_state"},
-		{Key: newVaultKey, Value: updatedNewVaultData, SyncStateDB: true, Category: "frost_vault_state"},
+		{Key: oldVaultKey, Value: updatedOldVaultData, Category: "frost_vault_state"},
+		{Key: newVaultKey, Value: updatedNewVaultData, Category: "frost_vault_state"},
 	}
 
 	for _, op := range ops {
@@ -973,7 +964,6 @@ func slashBond(sv StateView, address string, bondAmount *big.Int, reason string)
 	return []WriteOp{{
 		Key:         balanceKey,
 		Value:       balData,
-		SyncStateDB: true,
 		Category:    "balance",
 	}}, nil
 }
@@ -1010,7 +1000,6 @@ func slashMinerStake(sv StateView, address string, reason string) ([]WriteOp, er
 	return []WriteOp{{
 		Key:         balanceKey,
 		Value:       balData,
-		SyncStateDB: true,
 		Category:    "balance",
 	}}, nil
 }

@@ -1,10 +1,8 @@
 package vm_test
 
 import (
-	"sync"
 	"testing"
 
-	iface "dex/interfaces"
 	"dex/keys"
 	"dex/pb"
 	"dex/vm"
@@ -14,259 +12,11 @@ import (
 
 // ========== Mock StateDB ==========
 
-type MockStateDB struct {
-	mu   sync.RWMutex
-	data map[string][]byte
-}
-
-func NewMockStateDB() *MockStateDB {
-	return &MockStateDB{
-		data: make(map[string][]byte),
-	}
-}
-
-func (s *MockStateDB) ApplyAccountUpdate(height uint64, update interface{}) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// 模拟 StateDB 的更新逻辑
-	switch u := update.(type) {
-	case map[string]interface{}:
-		key := u["Key"].(string)
-		value := u["Value"].([]byte)
-		deleted := u["Deleted"].(bool)
-
-		if deleted {
-			delete(s.data, key)
-		} else {
-			s.data[key] = value
-		}
-	}
-	return nil
-}
-
-func (s *MockStateDB) Get(key string) ([]byte, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	val, exists := s.data[key]
-	return val, exists
-}
-
-// ========== Enhanced MockDB with StateDB ==========
-
-type EnhancedMockDB struct {
-	*MockDB
-	stateDB *MockStateDB
-}
-
-func NewEnhancedMockDB() *EnhancedMockDB {
-	return &EnhancedMockDB{
-		MockDB:  NewMockDB(),
-		stateDB: NewMockStateDB(),
-	}
-}
-
-func (db *EnhancedMockDB) NewSession() (iface.DBSession, error) {
-	return db.MockDB.NewSession()
-}
-
-func (db *EnhancedMockDB) ScanKVWithLimit(prefix string, limit int) (map[string][]byte, error) {
-	return db.MockDB.ScanKVWithLimit(prefix, limit)
-}
-
-func (db *EnhancedMockDB) ScanKVWithLimitReverse(prefix string, limit int) (map[string][]byte, error) {
-	return db.MockDB.ScanKVWithLimitReverse(prefix, limit)
-}
-
-func (db *EnhancedMockDB) ApplyAccountUpdate(height uint64, update interface{}) error {
-	return db.stateDB.ApplyAccountUpdate(height, update)
-}
-
 // ========== 测试用例 ==========
-
-// TestWriteOpSyncStateDB 测试 WriteOp 的 SyncStateDB 功能
-func TestWriteOpSyncStateDB(t *testing.T) {
-	db := NewEnhancedMockDB()
-
-	// 初始化账户数据（使用分离存储）
-	aliceAddr := "alice"
-	accountKey := keys.KeyAccount(aliceAddr)
-
-	account := &pb.Account{
-		Address: aliceAddr,
-	}
-	accountData, _ := proto.Marshal(account)
-	db.data[accountKey] = accountData
-
-	// 分离存储余额
-	bal := &pb.TokenBalanceRecord{
-		Balance: &pb.TokenBalance{
-			Balance:            "1000",
-			MinerLockedBalance: "0",
-		},
-	}
-	balData, _ := proto.Marshal(bal)
-	balKey := keys.KeyBalance(aliceAddr, "FB")
-	db.data[balKey] = balData
-
-	// 创建执行器
-	registry := vm.NewHandlerRegistry()
-	if err := vm.RegisterDefaultHandlers(registry); err != nil {
-		t.Fatal(err)
-	}
-
-	cache := vm.NewSpecExecLRU(100)
-	executor := vm.NewExecutor(db, registry, cache)
-
-	// 创建转账交易
-	transferTx := &pb.AnyTx{
-		Content: &pb.AnyTx_Transaction{
-			Transaction: &pb.Transaction{
-				Base: &pb.BaseMessage{
-					TxId:        "tx_sync_001",
-					FromAddress: aliceAddr,
-					Status:      pb.Status_PENDING,
-				},
-				To:           "bob",
-				TokenAddress: "FB",
-				Amount:       "100",
-			},
-		},
-	}
-
-	block := &pb.Block{
-		BlockHash: "block_sync_001",
-		Header: &pb.BlockHeader{
-			PrevBlockHash: "genesis",
-			Height:        1,
-		},
-		Body: []*pb.AnyTx{transferTx},
-	}
-
-	// 提交区块
-	err := executor.CommitFinalizedBlock(block)
-	if err != nil {
-		t.Fatal("Commit failed:", err)
-	}
-
-	// 验证 Badger 中的余额数据已更新
-	badgerBalData, err := db.Get(balKey)
-	if err != nil {
-		t.Fatal("Failed to get balance from Badger:", err)
-	}
-	if badgerBalData == nil {
-		t.Fatal("Balance should exist in Badger")
-	}
-
-	var badgerBal pb.TokenBalanceRecord
-	if err := proto.Unmarshal(badgerBalData, &badgerBal); err != nil {
-		t.Fatal("Failed to unmarshal Badger balance:", err)
-	}
-
-	// 验证 StateDB 中的数据已同步
-	stateDBBalData, exists := db.stateDB.Get(balKey)
-	if !exists {
-		t.Fatalf("Balance should be synced to StateDB (key=%s)", balKey)
-	}
-
-	var stateDBBal pb.TokenBalanceRecord
-	if err := proto.Unmarshal(stateDBBalData, &stateDBBal); err != nil {
-		t.Fatal("Failed to unmarshal StateDB balance:", err)
-	}
-
-	// 验证 Badger 和 StateDB 的数据一致
-	if badgerBal.Balance.Balance != stateDBBal.Balance.Balance {
-		t.Fatalf("Badger and StateDB data mismatch: Badger=%s, StateDB=%s",
-			badgerBal.Balance.Balance,
-			stateDBBal.Balance.Balance)
-	}
-
-	t.Logf("✅ Account data synced correctly: Balance=%s", badgerBal.Balance.Balance)
-}
-
-// TestWriteOpNoSyncStateDB 测试非账户数据不同步到 StateDB
-func TestWriteOpNoSyncStateDB(t *testing.T) {
-	db := NewEnhancedMockDB()
-
-	// 初始化账户数据（使用分离存储）
-	issuerAddr := "issuer"
-	accountKey := keys.KeyAccount(issuerAddr)
-
-	account := &pb.Account{
-		Address: issuerAddr,
-	}
-	accountData, _ := proto.Marshal(account)
-	db.data[accountKey] = accountData
-
-	// 分离存储余额
-	bal := &pb.TokenBalanceRecord{
-		Balance: &pb.TokenBalance{
-			Balance:            "10000",
-			MinerLockedBalance: "0",
-		},
-	}
-	balData, _ := proto.Marshal(bal)
-	db.data[keys.KeyBalance(issuerAddr, "FB")] = balData
-
-	// 创建执行器
-	registry := vm.NewHandlerRegistry()
-	if err := vm.RegisterDefaultHandlers(registry); err != nil {
-		t.Fatal(err)
-	}
-
-	cache := vm.NewSpecExecLRU(100)
-	executor := vm.NewExecutor(db, registry, cache)
-
-	// 创建发行 Token 交易
-	issueTx := &pb.AnyTx{
-		Content: &pb.AnyTx_IssueTokenTx{
-			IssueTokenTx: &pb.IssueTokenTx{
-				Base: &pb.BaseMessage{
-					TxId:        "tx_issue_001",
-					FromAddress: issuerAddr,
-					Status:      pb.Status_PENDING,
-				},
-				TokenName:   "TestToken",
-				TokenSymbol: "TT",
-				TotalSupply: "1000000",
-			},
-		},
-	}
-
-	block := &pb.Block{
-		BlockHash: "block_issue_001",
-		Header: &pb.BlockHeader{
-			PrevBlockHash: "genesis",
-			Height:        1,
-		},
-		Body: []*pb.AnyTx{issueTx},
-	}
-
-	// 提交区块
-	err := executor.CommitFinalizedBlock(block)
-	if err != nil {
-		t.Fatal("Commit failed:", err)
-	}
-
-	// 验证账户数据同步到 StateDB（SyncStateDB=true）
-	_, accountExists := db.stateDB.Get(accountKey)
-	if !accountExists {
-		t.Fatal("Account should be synced to StateDB")
-	}
-
-	// 验证 Token 数据没有同步到 StateDB（SyncStateDB=false）
-	tokenKey := keys.KeyToken("generated_token_address") // 实际地址需要从交易中获取
-	_, tokenExists := db.stateDB.Get(tokenKey)
-	if tokenExists {
-		t.Fatal("Token data should NOT be synced to StateDB")
-	}
-
-	t.Logf("✅ Non-account data correctly NOT synced to StateDB")
-}
 
 // TestIdempotency 测试幂等性（防止重复提交）
 func TestIdempotency(t *testing.T) {
-	db := NewEnhancedMockDB()
+	db := NewMockDB()
 
 	// 初始化账户数据（使用分离存储）
 	aliceAddr := "alice"
@@ -340,7 +90,7 @@ func TestIdempotency(t *testing.T) {
 // TestCommitFinalizedBlockDoesNotMutateInputTxStatus verifies commit path does not
 // mutate tx status in the caller-provided block object.
 func TestCommitFinalizedBlockDoesNotMutateInputTxStatus(t *testing.T) {
-	db := NewEnhancedMockDB()
+	db := NewMockDB()
 
 	aliceAddr := "alice_input_immutable"
 	account := &pb.Account{Address: aliceAddr}
@@ -399,7 +149,7 @@ func TestCommitFinalizedBlockDoesNotMutateInputTxStatus(t *testing.T) {
 // TestReplayTxInLaterBlockShouldNotReapply tests that already-applied txs are skipped
 // when they appear again in later blocks, preventing repeated balance deduction.
 func TestReplayTxInLaterBlockShouldNotReapply(t *testing.T) {
-	db := NewEnhancedMockDB()
+	db := NewMockDB()
 
 	aliceAddr := "alice_replay"
 	accountKey := keys.KeyAccount(aliceAddr)
@@ -498,7 +248,7 @@ func TestReplayTxInLaterBlockShouldNotReapply(t *testing.T) {
 // TestCommitFinalizedBlockReexecAgainstLatestState verifies finalized commit does
 // not apply a stale cached pre-execution result computed before parent commit.
 func TestCommitFinalizedBlockReexecAgainstLatestState(t *testing.T) {
-	db := NewEnhancedMockDB()
+	db := NewMockDB()
 
 	aliceAddr := "alice_stale_cache"
 	accountKey := keys.KeyAccount(aliceAddr)

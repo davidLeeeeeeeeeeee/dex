@@ -13,7 +13,7 @@ import (
 )
 
 type metaSetter interface {
-	SetWithMeta(key string, value []byte, syncStateDB bool, category string)
+	SetWithMeta(key string, value []byte, category string)
 }
 
 func (x *Executor) applyWitnessFinalizedEvents(sv StateView, fallbackHeight uint64) error {
@@ -93,7 +93,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 	if err != nil {
 		return err
 	}
-	setWithMeta(sv, requestKey, updatedRequestData, true, "witness_request")
+	setWithMeta(sv, requestKey, updatedRequestData, "witness_request")
 
 	removePendingFunds(sv, stored.RequestId)
 
@@ -148,7 +148,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		if err != nil {
 			return err
 		}
-		setWithMeta(sv, utxoKey, utxoData, true, "frost_funds_utxo")
+		setWithMeta(sv, utxoKey, utxoData, "frost_funds_utxo")
 
 		// 鏇存柊 Vault 鐨勮祫閲戣处鏈仛鍚堢姸鎬侊紙鍙€夛紝鐢ㄤ簬鏌ヨ鎬婚锛?
 		// 更新 Vault 的资金账本聚合状态（可选，用于查询总额）
@@ -158,10 +158,10 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		seq := readUintSeq(sv, seqKey)
 
 		indexKey := keys.KeyFrostFundsLotIndex(chain, asset, vaultID, finalizeHeight, seq)
-		setWithMeta(sv, indexKey, []byte(stored.RequestId), true, "frost_funds")
+		setWithMeta(sv, indexKey, []byte(stored.RequestId), "frost_funds")
 
 		seq++
-		setWithMeta(sv, seqKey, []byte(strconv.FormatUint(seq, 10)), true, "frost_funds")
+		setWithMeta(sv, seqKey, []byte(strconv.FormatUint(seq, 10)), "frost_funds")
 	}
 
 	// 澧炲姞鐢ㄦ埛浣欓锛堜娇鐢ㄥ垎绂诲瓨鍌級
@@ -207,12 +207,12 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		if err != nil {
 			return fmt.Errorf("failed to marshal updated user account: %w", err)
 		}
-		setWithMeta(sv, userKey, updatedUserData, true, "account")
+		setWithMeta(sv, userKey, updatedUserData, "account")
 
 		// 淇濆瓨浣欓鏁版嵁
 		balKey := keys.KeyBalance(userAddr, stored.TokenAddress)
 		balData, _, _ := sv.Get(balKey)
-		setWithMeta(sv, balKey, balData, true, "balance")
+		setWithMeta(sv, balKey, balData, "balance")
 	}
 
 	return nil
@@ -240,7 +240,7 @@ func applyRechargeRejected(sv StateView, req *pb.RechargeRequest) error {
 		if err != nil {
 			return err
 		}
-		setWithMeta(sv, requestKey, updatedRequestData, true, "witness_request")
+		setWithMeta(sv, requestKey, updatedRequestData, "witness_request")
 	}
 
 	removePendingFunds(sv, stored.RequestId)
@@ -272,9 +272,9 @@ func removePendingFunds(sv StateView, requestID string) {
 	sv.Del(refKey)
 }
 
-func setWithMeta(sv StateView, key string, value []byte, syncStateDB bool, category string) {
+func setWithMeta(sv StateView, key string, value []byte, category string) {
 	if setter, ok := sv.(metaSetter); ok {
-		setter.SetWithMeta(key, value, syncStateDB, category)
+		setter.SetWithMeta(key, value, category)
 		return
 	}
 	sv.Set(key, value)
@@ -289,6 +289,6 @@ func persistRechargeRequest(sv StateView, req *pb.RechargeRequest) error {
 	if err != nil {
 		return err
 	}
-	setWithMeta(sv, requestKey, data, true, "witness_request")
+	setWithMeta(sv, requestKey, data, "witness_request")
 	return nil
 }

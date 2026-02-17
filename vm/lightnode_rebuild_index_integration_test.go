@@ -5,6 +5,7 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -68,11 +69,11 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 		amount     string
 		side       pb.OrderSide
 	}{
-		{aliceAddr, "BTC", "USDT", "50000", "1.0", pb.OrderSide_SELL},
-		{aliceAddr, "BTC", "USDT", "51000", "0.5", pb.OrderSide_SELL},
-		{aliceAddr, "BTC", "USDT", "49000", "2.0", pb.OrderSide_SELL},
-		{bobAddr, "ETH", "USDT", "3000", "5.0", pb.OrderSide_SELL},
-		{bobAddr, "ETH", "USDT", "3100", "3.0", pb.OrderSide_SELL},
+		{aliceAddr, "BTC", "USDT", "50000", "1", pb.OrderSide_SELL},
+		{aliceAddr, "BTC", "USDT", "51000", "1", pb.OrderSide_SELL},
+		{aliceAddr, "BTC", "USDT", "49000", "2", pb.OrderSide_SELL},
+		{bobAddr, "ETH", "USDT", "3000", "5", pb.OrderSide_SELL},
+		{bobAddr, "ETH", "USDT", "3100", "3", pb.OrderSide_SELL},
 	}
 
 	orderIDs := make([]string, 0, len(testOrders))
@@ -124,8 +125,11 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 
 	// 验证全节点的订单数据和索引
 	fullNodeOrderCount := countDBKeysWithPrefix(t, fullNodeDB, "v1_order_")
-	fullNodeBTCIndexCount := countDBKeysWithPrefix(t, fullNodeDB, "v1_pair:BTC_USDT|is_filled:false|")
-	fullNodeETHIndexCount := countDBKeysWithPrefix(t, fullNodeDB, "v1_pair:ETH_USDT|is_filled:false|")
+	// Key include side: pair:%s|side:%d|is_filled:%t|
+	btcPrefix := fmt.Sprintf("v1_pair:BTC_USDT|side:%d|is_filled:false|", pb.OrderSide_SELL)
+	ethPrefix := fmt.Sprintf("v1_pair:ETH_USDT|side:%d|is_filled:false|", pb.OrderSide_SELL)
+	fullNodeBTCIndexCount := countDBKeysWithPrefix(t, fullNodeDB, btcPrefix)
+	fullNodeETHIndexCount := countDBKeysWithPrefix(t, fullNodeDB, ethPrefix)
 
 	t.Logf("📊 Full node stats:")
 	t.Logf("  - Orders: %d", fullNodeOrderCount)
@@ -200,8 +204,10 @@ func TestLightNode_RebuildOrderIndexFromStateDB(t *testing.T) {
 	t.Logf("✅ Light node rebuilt %d indexes", rebuiltCount)
 
 	// 验证重建后的索引数量
-	lightNodeBTCIndexCount := countDBKeysWithPrefix(t, lightNodeDB, "v1_pair:BTC_USDT|is_filled:false|")
-	lightNodeETHIndexCount := countDBKeysWithPrefix(t, lightNodeDB, "v1_pair:ETH_USDT|is_filled:false|")
+	btcPrefix2 := fmt.Sprintf("v1_pair:BTC_USDT|side:%d|is_filled:false|", pb.OrderSide_SELL)
+	ethPrefix2 := fmt.Sprintf("v1_pair:ETH_USDT|side:%d|is_filled:false|", pb.OrderSide_SELL)
+	lightNodeBTCIndexCount := countDBKeysWithPrefix(t, lightNodeDB, btcPrefix2)
+	lightNodeETHIndexCount := countDBKeysWithPrefix(t, lightNodeDB, ethPrefix2)
 
 	t.Logf("📊 Light node stats (after rebuild):")
 	t.Logf("  - BTC indexes: %d", lightNodeBTCIndexCount)

@@ -145,7 +145,6 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 		Key:         balanceKey,
 		Value:       balanceData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "balance",
 	})
 
@@ -166,7 +165,6 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 		Key:         accountKey,
 		Value:       updatedAccountData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "account",
 	})
 
@@ -177,7 +175,6 @@ func (h *MinerTxHandler) handleStartMining(minerTx *pb.MinerTx, sv StateView) ([
 		Key:         historyKey,
 		Value:       historyData,
 		Del:         false,
-		SyncStateDB: false,
 		Category:    "history",
 	})
 
@@ -272,7 +269,6 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 		Key:         balanceKey,
 		Value:       balanceData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "balance",
 	})
 
@@ -293,7 +289,6 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 		Key:         accountKey,
 		Value:       updatedAccountData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "account",
 	})
 
@@ -304,7 +299,6 @@ func (h *MinerTxHandler) handleStopMining(minerTx *pb.MinerTx, sv StateView) ([]
 		Key:         historyKey,
 		Value:       historyData,
 		Del:         false,
-		SyncStateDB: false,
 		Category:    "history",
 	})
 

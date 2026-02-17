@@ -382,11 +382,11 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	if targetState.Side == pb.OrderSide_SELL {
 		balKey := keys.KeyBalance(ord.Base.FromAddress, targetState.BaseToken)
 		balData, _, _ := sv.Get(balKey)
-		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, Category: "balance"})
 	} else {
 		balKey := keys.KeyBalance(ord.Base.FromAddress, targetState.QuoteToken)
 		balData, _, _ := sv.Get(balKey)
-		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, Category: "balance"})
 	}
 
 	targetState.Status = pb.OrderStateStatus_ORDER_CANCELLED
@@ -403,7 +403,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Key:         targetStateKey,
 		Value:       updatedStateData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "orderstate",
 	})
 
@@ -412,7 +411,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Key:         accOrderItemKey,
 		Value:       nil,
 		Del:         true,
-		SyncStateDB: true,
 		Category:    "acc_orders_item",
 	})
 
@@ -429,7 +427,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Key:         accountKey,
 		Value:       updatedAccountData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "account",
 	})
 
@@ -448,7 +445,6 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 		Key:         priceIndexKey,
 		Value:       nil,
 		Del:         true,
-		SyncStateDB: false,
 		Category:    "index",
 	})
 
@@ -487,7 +483,6 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 		Key:         targetOrderKey,
 		Value:       nil,
 		Del:         true,
-		SyncStateDB: true,
 		Category:    "order",
 	})
 
@@ -496,7 +491,6 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 		Key:         accOrderItemKey,
 		Value:       nil,
 		Del:         true,
-		SyncStateDB: true,
 		Category:    "acc_orders_item",
 	})
 
@@ -556,7 +550,6 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 	ws = append(ws, WriteOp{
 		Key:         balKey,
 		Value:       balData,
-		SyncStateDB: true,
 		Category:    "balance",
 	})
 
@@ -573,7 +566,6 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 		Key:         accountKey,
 		Value:       updatedAccountData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "account",
 	})
 
@@ -592,7 +584,6 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 		Key:         priceIndexKey,
 		Value:       nil,
 		Del:         true,
-		SyncStateDB: false,
 		Category:    "index",
 	})
 
@@ -738,7 +729,6 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 				Key:         orderKey,
 				Value:       orderData,
 				Del:         false,
-				SyncStateDB: true,
 				Category:    "order",
 			})
 		}
@@ -757,7 +747,6 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			Key:         orderStateKey,
 			Value:       orderStateData,
 			Del:         false,
-			SyncStateDB: true,
 			Category:    "orderstate",
 		})
 
@@ -773,7 +762,6 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 			Key:         oldIndexKey,
 			Value:       nil,
 			Del:         true,
-			SyncStateDB: false,
 			Category:    "index",
 		})
 
@@ -785,7 +773,6 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 				Key:         newIndexKey,
 				Value:       indexData,
 				Del:         false,
-				SyncStateDB: false,
 				Category:    "index",
 			})
 		} else {
@@ -795,7 +782,6 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 				Key:         oldIndexKey,
 				Value:       indexData,
 				Del:         false,
-				SyncStateDB: false,
 				Category:    "index",
 			})
 		}
@@ -841,7 +827,6 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 				Key:         accountKey,
 				Value:       updatedAccountData,
 				Del:         false,
-				SyncStateDB: true,
 				Category:    "account",
 			})
 		}
@@ -851,11 +836,11 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 	if ord.Side == pb.OrderSide_SELL {
 		balKey := keys.KeyBalance(ord.Base.FromAddress, ord.BaseToken)
 		balData, _, _ := sv.Get(balKey)
-		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, Category: "balance"})
 	} else {
 		balKey := keys.KeyBalance(ord.Base.FromAddress, ord.QuoteToken)
 		balData, _, _ := sv.Get(balKey)
-		ws = append(ws, WriteOp{Key: balKey, Value: balData, SyncStateDB: true, Category: "balance"})
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, Category: "balance"})
 	}
 
 	// 閸掓稑缂?OrderState閿涘牆褰查崣妯煎Ц閹緤绱?
@@ -886,7 +871,6 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		Key:         orderStateKey,
 		Value:       orderStateData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "orderstate",
 	})
 
@@ -897,7 +881,6 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		Key:         orderKey,
 		Value:       orderData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "order",
 	})
 
@@ -907,7 +890,6 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		Key:         accOrderItemKey,
 		Value:       []byte{1}, // 娴犲懍缍旀稉鐑樼垼鐠佹澘鐡ㄩ敓?
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "acc_orders_item",
 	})
 
@@ -924,7 +906,6 @@ func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string
 		Key:         priceIndexKey,
 		Value:       indexData,
 		Del:         false,
-		SyncStateDB: false,
 		Category:    "index",
 	})
 
@@ -996,7 +977,6 @@ func (h *OrderTxHandler) generateTradeRecords(
 			Key:         tradeKey,
 			Value:       tradeData,
 			Del:         false,
-			SyncStateDB: false,
 			Category:    "trade",
 		})
 	}
@@ -1071,7 +1051,6 @@ func (h *OrderTxHandler) generateTradeRecordsFromStates(
 			Key:         tradeKey,
 			Value:       tradeData,
 			Del:         false,
-			SyncStateDB: false,
 			Category:    "trade",
 		})
 	}
@@ -1225,7 +1204,6 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 		ws = append(ws, WriteOp{
 			Key:         balKey,
 			Value:       balData,
-			SyncStateDB: true,
 			Category:    "balance",
 		})
 	}

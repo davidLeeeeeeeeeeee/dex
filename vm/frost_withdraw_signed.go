@@ -101,7 +101,6 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		ops = append(ops, WriteOp{
 			Key:         pkgKey,
 			Value:       pkgData,
-			SyncStateDB: true,
 			Category:    "frost_signed_pkg",
 		})
 
@@ -109,7 +108,6 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		ops = append(ops, WriteOp{
 			Key:         countKey,
 			Value:       []byte(strconv.FormatUint(pkgIdx+1, 10)),
-			SyncStateDB: true,
 			Category:    "frost_signed_pkg_count",
 		})
 
@@ -226,7 +224,6 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 			ops = append(ops, WriteOp{
 				Key:         lockKey,
 				Value:       []byte(jobID),
-				SyncStateDB: true,
 				Category:    "frost_btc_utxo_lock",
 			})
 		}
@@ -312,7 +309,6 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		ops = append(ops, WriteOp{
 			Key:         headKey,
 			Value:       []byte(headValue),
-			SyncStateDB: true,
 			Category:    "frost_funds_lot_head",
 		})
 	}
@@ -359,7 +355,6 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		ops = append(ops, WriteOp{
 			Key:         withdrawKey,
 			Value:       updatedData,
-			SyncStateDB: true,
 			Category:    "frost_withdraw",
 		})
 	}
@@ -380,7 +375,6 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	ops = append(ops, WriteOp{
 		Key:         pkgKey,
 		Value:       pkgData,
-		SyncStateDB: true,
 		Category:    "frost_signed_pkg",
 	})
 
@@ -388,7 +382,6 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	ops = append(ops, WriteOp{
 		Key:         countKey,
 		Value:       []byte("1"),
-		SyncStateDB: true,
 		Category:    "frost_signed_pkg_count",
 	})
 
@@ -411,7 +404,6 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	ops = append(ops, WriteOp{
 		Key:         headKey,
 		Value:       []byte(strconv.FormatUint(maxSeq+1, 10)),
-		SyncStateDB: true,
 		Category:    "frost_withdraw_head",
 	})
 

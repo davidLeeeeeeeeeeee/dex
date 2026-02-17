@@ -26,14 +26,6 @@ func (mgr *Manager) SaveAccount(account *pb.Account) error {
 // GetAccount retrieves an Account from the database
 func (mgr *Manager) GetAccount(address string) (*pb.Account, error) {
 	key := KeyAccount(address)
-	if mgr.StateDB != nil {
-		if val, exists, err := mgr.StateDB.Get(key); err == nil && exists && len(val) > 0 {
-			account := &pb.Account{}
-			if err := ProtoUnmarshal(val, account); err == nil {
-				return account, nil
-			}
-		}
-	}
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -48,18 +40,6 @@ func (mgr *Manager) GetAccount(address string) (*pb.Account, error) {
 // CalcStake 计算账户质押金额
 func (mgr *Manager) CalcStake(addr string) (decimal.Decimal, error) {
 	balKey := KeyBalance(addr, "FB")
-	if mgr.StateDB != nil {
-		if val, exists, err := mgr.StateDB.Get(balKey); err == nil && exists && len(val) > 0 {
-			var record pb.TokenBalanceRecord
-			if err := ProtoUnmarshal(val, &record); err == nil && record.Balance != nil {
-				ml, err := decimal.NewFromString(record.Balance.MinerLockedBalance)
-				if err != nil {
-					ml = decimal.Zero
-				}
-				return ml, nil
-			}
-		}
-	}
 	val, err := mgr.Read(balKey)
 	if err != nil || val == "" {
 		return decimal.Zero, nil
@@ -133,14 +113,6 @@ func (mgr *Manager) getAccountByIndex(idx uint64) (*pb.Account, error) {
 // GetToken 获取 Token 信息
 func (mgr *Manager) GetToken(tokenAddress string) (*pb.Token, error) {
 	key := KeyToken(tokenAddress)
-	if mgr.StateDB != nil {
-		if val, exists, err := mgr.StateDB.Get(key); err == nil && exists && len(val) > 0 {
-			token := &pb.Token{}
-			if err := ProtoUnmarshal(val, token); err == nil {
-				return token, nil
-			}
-		}
-	}
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -158,14 +130,6 @@ func (mgr *Manager) GetToken(tokenAddress string) (*pb.Token, error) {
 // GetTokenRegistry 获取 Token 注册表
 func (mgr *Manager) GetTokenRegistry() (*pb.TokenRegistry, error) {
 	key := KeyTokenRegistry()
-	if mgr.StateDB != nil {
-		if val, exists, err := mgr.StateDB.Get(key); err == nil && exists && len(val) > 0 {
-			registry := &pb.TokenRegistry{}
-			if err := ProtoUnmarshal(val, registry); err == nil {
-				return registry, nil
-			}
-		}
-	}
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err

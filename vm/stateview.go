@@ -78,11 +78,11 @@ func (s *overlayStateView) Set(key string, val []byte) {
 	// 复制值，避免外部修改影响内部状态
 	valCopy := make([]byte, len(val))
 	copy(valCopy, val)
-	s.overlay[key] = ovVal{val: valCopy, exist: true, syncStateDB: false, category: ""}
+	s.overlay[key] = ovVal{val: valCopy, exist: true, category: ""}
 }
 
 // SetWithMeta 设置值并保留元数据
-func (s *overlayStateView) SetWithMeta(key string, val []byte, syncStateDB bool, category string) {
+func (s *overlayStateView) SetWithMeta(key string, val []byte, category string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -91,7 +91,7 @@ func (s *overlayStateView) SetWithMeta(key string, val []byte, syncStateDB bool,
 	// 复制值，避免外部修改影响内部状态
 	valCopy := make([]byte, len(val))
 	copy(valCopy, val)
-	s.overlay[key] = ovVal{val: valCopy, exist: true, syncStateDB: syncStateDB, category: category}
+	s.overlay[key] = ovVal{val: valCopy, exist: true, category: category}
 }
 
 // Scan scans all keys with the given prefix

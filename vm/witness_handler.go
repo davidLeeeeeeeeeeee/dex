@@ -218,23 +218,23 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 	SetBalance(sv, address, "FB", fbBalance)
 	balanceKey := keys.KeyBalance(address, "FB")
 	balanceData, _, _ := sv.Get(balanceKey)
-	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, SyncStateDB: true, Category: "balance"})
+	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, Category: "balance"})
 
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "failed to marshal account"}, err
 	}
-	ws = append(ws, WriteOp{Key: accountKey, Value: updatedAccountData, Del: false, SyncStateDB: true, Category: "account"})
+	ws = append(ws, WriteOp{Key: accountKey, Value: updatedAccountData, Del: false, Category: "account"})
 
 	witnessInfoData, err := proto.Marshal(&witnessInfo)
 	if err != nil {
 		return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "failed to marshal witness info"}, err
 	}
-	ws = append(ws, WriteOp{Key: witnessKey, Value: witnessInfoData, Del: false, SyncStateDB: true, Category: "witness"})
+	ws = append(ws, WriteOp{Key: witnessKey, Value: witnessInfoData, Del: false, Category: "witness"})
 
 	historyKey := keys.KeyWitnessHistory(stake.Base.TxId)
 	historyData, _ := proto.Marshal(stake)
-	ws = append(ws, WriteOp{Key: historyKey, Value: historyData, Del: false, SyncStateDB: false, Category: "history"})
+	ws = append(ws, WriteOp{Key: historyKey, Value: historyData, Del: false, Category: "history"})
 
 	// 鍚屾鍒?WitnessService 鍐呭瓨鐘舵€?
 	if h.witnessSvc != nil {
@@ -343,8 +343,8 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 	if err != nil {
 		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "failed to marshal request"}, err
 	}
-	ws = append(ws, WriteOp{Key: existingKey, Value: requestData, Del: false, SyncStateDB: true, Category: "witness_request"})
-	ws = append(ws, WriteOp{Key: nativeTxKey, Value: []byte(requestID), Del: false, SyncStateDB: false, Category: "index"})
+	ws = append(ws, WriteOp{Key: existingKey, Value: requestData, Del: false, Category: "witness_request"})
+	ws = append(ws, WriteOp{Key: nativeTxKey, Value: []byte(requestID), Del: false, Category: "index"})
 
 	pendingHeight := rechargeRequest.CreateHeight
 	if pendingHeight == 0 {
@@ -356,9 +356,9 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 	pendingIndexKey := keys.KeyFrostFundsPendingLotIndex(request.NativeChain, request.TokenAddress, vaultID, pendingHeight, pendingSeq)
 	pendingRefKey := keys.KeyFrostFundsPendingLotRef(requestID)
 
-	ws = append(ws, WriteOp{Key: pendingIndexKey, Value: []byte(requestID), Del: false, SyncStateDB: true, Category: "frost_funds_pending"})
-	ws = append(ws, WriteOp{Key: pendingSeqKey, Value: []byte(strconv.FormatUint(pendingSeq+1, 10)), Del: false, SyncStateDB: true, Category: "frost_funds_pending"})
-	ws = append(ws, WriteOp{Key: pendingRefKey, Value: []byte(pendingIndexKey), Del: false, SyncStateDB: true, Category: "frost_funds_pending"})
+	ws = append(ws, WriteOp{Key: pendingIndexKey, Value: []byte(requestID), Del: false, Category: "frost_funds_pending"})
+	ws = append(ws, WriteOp{Key: pendingSeqKey, Value: []byte(strconv.FormatUint(pendingSeq+1, 10)), Del: false, Category: "frost_funds_pending"})
+	ws = append(ws, WriteOp{Key: pendingRefKey, Value: []byte(pendingIndexKey), Del: false, Category: "frost_funds_pending"})
 
 	return ws, &Receipt{TxID: requestID, Status: "SUCCEED", WriteCount: len(ws)}, nil
 }
@@ -447,13 +447,13 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 	if err != nil {
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "failed to marshal vote"}, err
 	}
-	ws = append(ws, WriteOp{Key: voteKey, Value: voteData, Del: false, SyncStateDB: false, Category: "witness_vote"})
+	ws = append(ws, WriteOp{Key: voteKey, Value: voteData, Del: false, Category: "witness_vote"})
 
 	updatedRequestData, err := proto.Marshal(finalRequest)
 	if err != nil {
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "failed to marshal request"}, err
 	}
-	ws = append(ws, WriteOp{Key: requestKey, Value: updatedRequestData, Del: false, SyncStateDB: true, Category: "witness_request"})
+	ws = append(ws, WriteOp{Key: requestKey, Value: updatedRequestData, Del: false, Category: "witness_request"})
 
 	return ws, &Receipt{TxID: vote.Base.TxId, Status: "SUCCEED", WriteCount: len(ws)}, nil
 }
@@ -555,13 +555,13 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 	// 保存余额更新
 	balanceKey := keys.KeyBalance(challengerAddr, "FB")
 	balanceData, _, _ := sv.Get(balanceKey)
-	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, SyncStateDB: true, Category: "balance"})
+	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, Category: "balance"})
 
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "failed to marshal account"}, err
 	}
-	ws = append(ws, WriteOp{Key: accountKey, Value: updatedAccountData, Del: false, SyncStateDB: true, Category: "account"})
+	ws = append(ws, WriteOp{Key: accountKey, Value: updatedAccountData, Del: false, Category: "account"})
 
 	challengeRecord := &pb.ChallengeRecord{
 		ChallengeId:       challengeID,
@@ -579,7 +579,7 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 	}
 
 	challengeKey := keys.KeyChallengeRecord(challengeID)
-	ws = append(ws, WriteOp{Key: challengeKey, Value: challengeData, Del: false, SyncStateDB: true, Category: "challenge"})
+	ws = append(ws, WriteOp{Key: challengeKey, Value: challengeData, Del: false, Category: "challenge"})
 
 	request.Status = pb.RechargeRequestStatus_RECHARGE_CHALLENGED
 	request.ChallengeId = challengeID
@@ -588,7 +588,7 @@ func (h *WitnessChallengeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteO
 	if err != nil {
 		return nil, &Receipt{TxID: challengeID, Status: "FAILED", Error: "failed to marshal request"}, err
 	}
-	ws = append(ws, WriteOp{Key: requestKey, Value: updatedRequestData, Del: false, SyncStateDB: true, Category: "witness_request"})
+	ws = append(ws, WriteOp{Key: requestKey, Value: updatedRequestData, Del: false, Category: "witness_request"})
 
 	return ws, &Receipt{TxID: challengeID, Status: "SUCCEED", WriteCount: len(ws)}, nil
 }
@@ -649,7 +649,7 @@ func (h *ArbitrationVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp
 	if err != nil {
 		return nil, &Receipt{TxID: arbVote.Base.TxId, Status: "FAILED", Error: "failed to marshal vote"}, err
 	}
-	ws = append(ws, WriteOp{Key: arbVoteKey, Value: voteData, Del: false, SyncStateDB: false, Category: "arbitration_vote"})
+	ws = append(ws, WriteOp{Key: arbVoteKey, Value: voteData, Del: false, Category: "arbitration_vote"})
 
 	challenge.ArbitrationVotes = append(challenge.ArbitrationVotes, arbVote.Vote)
 	switch arbVote.Vote.VoteType {
@@ -663,7 +663,7 @@ func (h *ArbitrationVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp
 	if err != nil {
 		return nil, &Receipt{TxID: arbVote.Base.TxId, Status: "FAILED", Error: "failed to marshal challenge"}, err
 	}
-	ws = append(ws, WriteOp{Key: challengeKey, Value: updatedChallengeData, Del: false, SyncStateDB: true, Category: "challenge"})
+	ws = append(ws, WriteOp{Key: challengeKey, Value: updatedChallengeData, Del: false, Category: "challenge"})
 
 	return ws, &Receipt{TxID: arbVote.Base.TxId, Status: "SUCCEED", WriteCount: len(ws)}, nil
 }
@@ -760,19 +760,19 @@ func (h *WitnessClaimRewardTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	// 淇濆瓨浣欓鏇存柊
 	balanceKey := keys.KeyBalance(witnessAddr, "FB")
 	balanceData, _, _ := sv.Get(balanceKey)
-	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, SyncStateDB: true, Category: "balance"})
+	ws = append(ws, WriteOp{Key: balanceKey, Value: balanceData, Category: "balance"})
 
 	updatedAccountData, err := proto.Marshal(&account)
 	if err != nil {
 		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "failed to marshal account"}, err
 	}
-	ws = append(ws, WriteOp{Key: accountKey, Value: updatedAccountData, Del: false, SyncStateDB: true, Category: "account"})
+	ws = append(ws, WriteOp{Key: accountKey, Value: updatedAccountData, Del: false, Category: "account"})
 
 	updatedWitnessData, err := proto.Marshal(&witnessInfo)
 	if err != nil {
 		return nil, &Receipt{TxID: claim.Base.TxId, Status: "FAILED", Error: "failed to marshal witness info"}, err
 	}
-	ws = append(ws, WriteOp{Key: witnessKey, Value: updatedWitnessData, Del: false, SyncStateDB: true, Category: "witness"})
+	ws = append(ws, WriteOp{Key: witnessKey, Value: updatedWitnessData, Del: false, Category: "witness"})
 
 	return ws, &Receipt{TxID: claim.Base.TxId, Status: "SUCCEED", WriteCount: len(ws)}, nil
 }

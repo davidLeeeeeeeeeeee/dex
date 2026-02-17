@@ -113,8 +113,7 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 	ws = append(ws, WriteOp{
 		Key:         tokenKey,
 		Value:       tokenData,
-		Del:         false,
-		SyncStateDB: true, // ✨ 改为 true，支持轻节点同步
+		Del:         false, // ✨ 改为 true，支持轻节点同步
 		Category:    "token",
 	})
 
@@ -131,7 +130,6 @@ func (h *IssueTokenTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Re
 		Key:         balanceKey,
 		Value:       balanceData,
 		Del:         false,
-		SyncStateDB: true,
 		Category:    "balance",
 	})
 
