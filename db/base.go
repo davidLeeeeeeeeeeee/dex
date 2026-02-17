@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"fmt"
 )
@@ -34,14 +35,14 @@ func (mgr *Manager) SaveTxRaw(anyTx *pb.AnyTx) error {
 		return err
 	}
 	// 只存储到 txraw_ 前缀，不写任何索引
-	rawKey := KeyTxRaw(txID)
+	rawKey := keys.KeyTxRaw(txID)
 	mgr.EnqueueSet(rawKey, string(data))
 	return nil
 }
 
 // GetTxRaw 获取交易原文
 func (mgr *Manager) GetTxRaw(txID string) (*pb.AnyTx, error) {
-	rawKey := KeyTxRaw(txID)
+	rawKey := keys.KeyTxRaw(txID)
 	data, err := mgr.Read(rawKey)
 	if err != nil {
 		return nil, err
@@ -75,15 +76,15 @@ func (mgr *Manager) SaveAnyTx(anyTx *pb.AnyTx) error {
 		return err
 	}
 	// 2. 主存储
-	mainKey := KeyAnyTx(txID)
+	mainKey := keys.KeyAnyTx(txID)
 	mgr.EnqueueSet(mainKey, string(data))
 
 	// 3. 如果 BaseMessage 是 PENDING，则写 "pending_anytx_<txID>"
 	base := anyTx.GetBase()
 	if base != nil && base.Status == pb.Status_PENDING {
-		mgr.EnqueueSet(KeyPendingAnyTx(txID), "")
+		mgr.EnqueueSet(keys.KeyPendingAnyTx(txID), "")
 	} else {
-		mgr.EnqueueDelete(KeyPendingAnyTx(txID))
+		mgr.EnqueueDelete(keys.KeyPendingAnyTx(txID))
 	}
 
 	// 4. 调度到不同的落库/索引函数

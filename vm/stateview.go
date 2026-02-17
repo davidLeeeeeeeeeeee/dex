@@ -10,9 +10,8 @@ import (
 
 // ovVal overlay中的值
 type ovVal struct {
-	val      []byte
-	exist    bool   // false表示已删除
-	category string // 数据分类
+	val   []byte
+	exist bool // false表示已删除
 }
 
 // change 变更记录，用于回滚
@@ -77,20 +76,7 @@ func (s *overlayStateView) Set(key string, val []byte) {
 	// 复制值，避免外部修改影响内部状态
 	valCopy := make([]byte, len(val))
 	copy(valCopy, val)
-	s.overlay[key] = ovVal{val: valCopy, exist: true, category: ""}
-}
-
-// SetWithMeta 设置值并保留元数据
-func (s *overlayStateView) SetWithMeta(key string, val []byte, category string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	prev, has := s.overlay[key]
-	s.changelog = append(s.changelog, change{key: key, prev: prev, hasPrev: has})
-	// 复制值，避免外部修改影响内部状态
-	valCopy := make([]byte, len(val))
-	copy(valCopy, val)
-	s.overlay[key] = ovVal{val: valCopy, exist: true, category: category}
+	s.overlay[key] = ovVal{val: valCopy, exist: true}
 }
 
 // Scan scans all keys with the given prefix
@@ -180,12 +166,11 @@ func (s *overlayStateView) Diff() []WriteOp {
 	diff := make([]WriteOp, 0, len(s.overlay))
 	for _, k := range keys {
 		v := s.overlay[k]
-		// 不需要再次复制，因为 Set/SetWithMeta 已经复制过了
+		// 不需要再次复制，因为 Set 已经复制过了
 		diff = append(diff, WriteOp{
-			Key:      k,
-			Value:    v.val,
-			Del:      !v.exist,
-			Category: v.category,
+			Key:   k,
+			Value: v.val,
+			Del:   !v.exist,
 		})
 	}
 	return diff

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/keys"
 	"dex/logs"
 	"math/rand"
 	"strconv"
@@ -41,7 +42,7 @@ func NewMinerIndexManager(db *pebble.DB, logger logs.Logger) (*MinerIndexManager
 
 // 在一次迭代里扫描所有 "indexToAccount_*" 键，填充 bitmap。
 func (m *MinerIndexManager) RebuildBitmapFromDB() error {
-	prefix := []byte(NameOfKeyIndexToAccount())
+	prefix := []byte(keys.NameOfKeyIndexToAccount())
 	rebuilt := roaring.New()
 	count := 0
 
@@ -107,7 +108,7 @@ func (m *MinerIndexManager) SnapshotIndices() []uint64 {
 
 // GetAddressByIndex 通过索引查找矿工地址
 func (m *MinerIndexManager) GetAddressByIndex(index uint64) (string, error) {
-	key := []byte(KeyIndexToAccount(index))
+	key := []byte(keys.KeyIndexToAccount(index))
 	raw, closer, err := m.db.Get(key)
 	if err != nil {
 		return "", err

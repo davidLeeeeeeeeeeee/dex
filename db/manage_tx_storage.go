@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"dex/utils"
 	"fmt"
@@ -18,7 +19,7 @@ import (
 // Deprecated: Use VM's WriteOp mechanism for all state changes.
 func (mgr *Manager) SaveTransaction(tx *pb.Transaction) error {
 	//logs.Trace("SaveTransaction %s\n", tx)
-	key := KeyTx(tx.Base.TxId)
+	key := keys.KeyTx(tx.Base.TxId)
 	data, err := ProtoMarshal(tx)
 	if err != nil {
 		return err
@@ -26,16 +27,16 @@ func (mgr *Manager) SaveTransaction(tx *pb.Transaction) error {
 	mgr.EnqueueSet(key, string(data))
 	// 如果是PENDING
 	if tx.Base.Status == pb.Status_PENDING {
-		pendingKey := KeyPendingAnyTx(tx.Base.TxId)
+		pendingKey := keys.KeyPendingAnyTx(tx.Base.TxId)
 		mgr.EnqueueSet(pendingKey, string(data))
 	}
 	// 2. 同时把它封装进 AnyTx 并存 "anyTx_<txid>"
-	mgr.EnqueueSet(KeyAnyTx(tx.Base.TxId), key)
+	mgr.EnqueueSet(keys.KeyAnyTx(tx.Base.TxId), key)
 	return nil
 }
 
 func (mgr *Manager) GetTransaction(txID string) (*pb.Transaction, error) {
-	key := KeyTx(txID)
+	key := keys.KeyTx(txID)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -69,7 +70,7 @@ func (mgr *Manager) SaveOrderTx(order *pb.OrderTx) error {
 	// 3. 构造索引key
 	//    例如: "pair:BTC_USDT|price:000000000123123|order_id:..."
 	// 新版本 OrderTx 不再有 IsFilled 字段，新订单默认未成交
-	indexKey := KeyOrderPriceIndex(pairKey, order.Side, false, priceKey, order.Base.TxId)
+	indexKey := keys.KeyOrderPriceIndex(pairKey, order.Side, false, priceKey, order.Base.TxId)
 
 	// 4. 存储 (跟你现在的逻辑一样，只是把 "base_token_base_quote" 替换成 pairKey)
 	data, err := ProtoMarshal(order)
@@ -79,10 +80,10 @@ func (mgr *Manager) SaveOrderTx(order *pb.OrderTx) error {
 	mgr.EnqueueSet(indexKey, string(data))
 
 	// 存储原始订单
-	orderKey := KeyOrderTx(order.Base.TxId)
+	orderKey := keys.KeyOrderTx(order.Base.TxId)
 	mgr.EnqueueSet(orderKey, string(data))
 	// 5. 同时把它封装进 AnyTx 并存 "anyTx_<txid>"
-	mgr.EnqueueSet(KeyAnyTx(order.Base.TxId), orderKey)
+	mgr.EnqueueSet(keys.KeyAnyTx(order.Base.TxId), orderKey)
 	return nil
 }
 func GetOrderTx(mgr *Manager, txID string) (*pb.OrderTx, error) {
@@ -99,7 +100,7 @@ func GetOrderTx(mgr *Manager, txID string) (*pb.OrderTx, error) {
 }
 
 func (mgr *Manager) GetOrderTx(txID string) (*pb.OrderTx, error) {
-	key := KeyOrderTx(txID)
+	key := keys.KeyOrderTx(txID)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -124,13 +125,13 @@ func (mgr *Manager) GetOrderTx(txID string) (*pb.OrderTx, error) {
 func (mgr *Manager) SaveMinerTx(tx *pb.MinerTx) error {
 	// 只做基本的交易存储，不再处理余额逻辑
 	// 真正的业务逻辑（质押、解质押、余额变更）由 VM 层处理
-	mainKey := KeyMinerTx(tx.Base.TxId)
+	mainKey := keys.KeyMinerTx(tx.Base.TxId)
 	data, err := ProtoMarshal(tx)
 	if err != nil {
 		return err
 	}
 	mgr.EnqueueSet(mainKey, string(data))
-	mgr.EnqueueSet(KeyAnyTx(tx.Base.TxId), mainKey)
+	mgr.EnqueueSet(keys.KeyAnyTx(tx.Base.TxId), mainKey)
 	return nil
 }
 
@@ -139,7 +140,7 @@ func (mgr *Manager) SaveMinerTx(tx *pb.MinerTx) error {
 // 如果不存在，则回退到旧的 anyTx_ 间接引用方式（兼容旧数据）
 func (mgr *Manager) GetAnyTxById(txID string) (*pb.AnyTx, error) {
 	// 1. 优先尝试从新的 txraw_ 前缀读取（交易原文，不可变）
-	rawKey := KeyTxRaw(txID)
+	rawKey := keys.KeyTxRaw(txID)
 	if rawData, err := mgr.Read(rawKey); err == nil && rawData != "" {
 		anyTx := &pb.AnyTx{}
 		if err := ProtoUnmarshal([]byte(rawData), anyTx); err != nil {
@@ -149,7 +150,7 @@ func (mgr *Manager) GetAnyTxById(txID string) (*pb.AnyTx, error) {
 	}
 
 	// 2. 回退：读取旧的通用 key "anyTx_<txID>"（兼容旧数据）
-	anyKey := KeyAnyTx(txID)
+	anyKey := keys.KeyAnyTx(txID)
 	specificKey, err := mgr.Read(anyKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read anyTx key %s: %v", anyKey, err)
@@ -219,18 +220,18 @@ func (mgr *Manager) GetAnyTxById(txID string) (*pb.AnyTx, error) {
 // GetTxReceipt 获取交易回执
 func (mgr *Manager) GetTxReceipt(txID string) (*pb.Receipt, error) {
 	// 1. 获取状态
-	statusKey := KeyVMAppliedTx(txID)
+	statusKey := keys.KeyVMAppliedTx(txID)
 	status, err := mgr.Read(statusKey)
 	if err != nil || status == "" {
 		return nil, fmt.Errorf("transaction not applied or not found")
 	}
 
 	// 2. 获取错误（可能有也可能没有）
-	errorKey := KeyVMTxError(txID)
+	errorKey := keys.KeyVMTxError(txID)
 	errMsg, _ := mgr.Read(errorKey)
 
 	// 3. 获取高度
-	heightKey := KeyVMTxHeight(txID)
+	heightKey := keys.KeyVMTxHeight(txID)
 	heightStr, _ := mgr.Read(heightKey)
 	var height uint64
 	if heightStr != "" {

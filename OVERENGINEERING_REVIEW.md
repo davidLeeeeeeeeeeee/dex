@@ -38,7 +38,7 @@
 
 ---
 
-## 🔧 二、StateDB / Verkle 死代码层（db + vm 跨模块） — 部分完成
+## ✅ 二、StateDB / Verkle 死代码层（db + vm 跨模块） — 已完成
 
 `Manager.StateDB` 始终为 `nil`（构造函数写死 `StateDB: nil`），但代码中仍保留了完整的 StateDB 抽象层：
 
@@ -66,16 +66,16 @@
 - 删除 config 中 `VerkleKVLogEnabled`, `VerkleDisableRootCommit`, `IndexCacheSize`（BadgerDB Ristretto 缓存参数）
 - **预估：删除 ~120 行（db）+ 简化 14 个 vm 文件 + 删除 3 个 config 字段**
 
-> 🔧 **状态：部分完成。**
-> - ✅ `db/db.go`：`stateDB`/`stateDBSession` 接口、`verkleSess` 字段、`CommitRoot()`、`SyncToStateDB()`、`GetStateRoot()`、`IsStatefulKey` 分支 — **全部已删除**（db/db.go 已从 1594→1224 行）
-> - ✅ `config/config.go`：`VerkleKVLogEnabled`、`VerkleDisableRootCommit` — **已删除**；但 `IndexCacheSize` 仍存在（L148）
-> - ❌ `vm/types.go` L21：`WriteOp.SyncStateDB` 字段仍存在
-> - ❌ `vm/stateview.go` L15, L189：`ovVal.syncStateDB` 字段和 `SetWithMeta` 方法仍存在
-> - ❌ `vm/witness_events.go` L275：`setWithMeta` 辅助函数仍存在
+> ✅ **状态：已完成。**
+> - ✅ `db/db.go`：`stateDB`/`stateDBSession` 接口、`verkleSess` 字段、`CommitRoot()`、`SyncToStateDB()`、`GetStateRoot()`、`IsStatefulKey` 分支已全部删除
+> - ✅ `config/config.go`：`VerkleKVLogEnabled`、`VerkleDisableRootCommit`、`IndexCacheSize` 已删除
+> - ✅ `vm/types.go`：`WriteOp.SyncStateDB` 字段已删除
+> - ✅ `vm/stateview.go`：`SetWithMeta` 路径已删除，统一为 `Set`
+> - ✅ `vm/witness_events.go`：`setWithMeta` 辅助函数已删除，统一为 `Set`
 
 ---
 
-## 🔴 三、`db/keys.go` — 纯转发层（241 行） — 未完成
+## ✅ 三、`db/keys.go` — 纯转发层（241 行） — 已完成
 
 `db/keys.go` 是一个 **241 行的纯代理文件**，每个函数只做一件事：调用 `keys.Xxx()` 并返回。
 文件头注释写明 `新代码应该直接使用 "dex/keys" 包`。
@@ -85,11 +85,11 @@
 - 删除整个 `db/keys.go`
 - **预估：删除 241 行 / 1 文件**
 
-> ❌ **状态：未完成。** `db/keys.go` 仍然存在，241 行纯转发代码。
+> ✅ **状态：已完成。** `db/keys.go` 已删除；`db` 包内部调用已全部改为直接使用 `dex/keys`；全仓无 `db.KeyXxx` 调用。
 
 ---
 
-## 🔴 四、文件粒度过细（sender/ 模块） — 未完成
+## ✅ 四、文件粒度过细（sender/ 模块） — 已完成
 
 ### 问题：每个 HTTP 发送函数独占一个文件，高度雷同
 
@@ -116,17 +116,17 @@
 - 每个消息类型只需定义路由路径常量，不需要独立文件
 - **预估可从 13 个文件 → 2 个文件**
 
-> ❌ **状态：未完成。** 11 个 `doSend*.go` + `gossip_sender.go` 仍独立存在。
+> ✅ **状态：已完成。** `doSendTx/doSendBlock/doSendChits/doSendPushQuery/doSendPullQuery/doSendHeightQuery/doSendSyncRequest/doSendGetBlock/doSendGetBlockByID/doSendBatchGetTxs` 与 `gossip_sender.go` 已合并为 `sender/do_send_simple.go` 与 `sender/do_send_callbacks.go`（`doSendFrost.go` 保持独立）。
 
 ### 同一问题：消息类型定义分散
 
 `sender/consensus_types.go` 定义了 `chitsMessage`, `blockMessage`, `heightQueryMessage`, `syncRequestMessage`，
 但 `pullQueryMsg`, `pushQueryMsg` 在各自的 `doSend*.go` 文件中定义。
-**建议统一到 `consensus_types.go`**。
+**已统一到 `consensus_types.go`**。
 
 ---
 
-## 🔴 五、Frost DKG 类型文件仅含常量定义 — 未完成
+## ✅ 五、Frost DKG 类型文件仅含常量定义 — 已完成
 
 VM 中有 3 个文件**只是放常量**，而 Handler 实现在对应的 `_handler.go` 文件中：
 
@@ -138,11 +138,11 @@ VM 中有 3 个文件**只是放常量**，而 Handler 实现在对应的 `_hand
 
 **瘦身方案**：将这些常量直接放入对应的 `_handler.go` 文件的顶部，消灭 3 个文件。
 
-> ❌ **状态：未完成。** 3 个文件仍然存在。
+> ✅ **状态：已完成。** 常量已并入对应 handler 文件，原 3 个仅常量文件已删除。
 
 ---
 
-## 🟡 六、`handlers/frost_routes.go` — 空文件 — 未完成
+## ✅ 六、`handlers/frost_routes.go` — 空文件 — 已完成
 
 ```go
 package handlers
@@ -150,13 +150,13 @@ package handlers
 
 只有 `package handlers` 声明，2 行，0 功能。直接删除。
 
-> ❌ **状态：未完成。** 文件仍然存在，仅含 `package handlers` 声明。
+> ✅ **状态：已完成。** 空文件已删除。
 
 ---
 
-## 🟡 七、`db/db.go` 巨型文件（~~1342~~ 1224 行，仍含多职责） — 未完成
+## ✅ 七、`db/db.go` 巨型文件（~~1342~~ ~~1224~~ 389 行，主职责已拆分） — 已完成
 
-迁移 Pebble 后从 1594 行缩减至 1342 行，但仍然包含过多职责：
+迁移 Pebble 后从 1594 行缩减至 1342 行，随后到 1224 行；本轮继续拆分后，`db/db.go` 已降到 **389 行**，核心多职责已迁出：
 
 1. **接口定义**：`stateDB`、`stateDBSession` 接口（可删，见上方 🔴 二）
 2. **Manager 结构和构造器**
@@ -169,10 +169,52 @@ package handlers
 
 **瘦身方案**：
 - 写队列 + Metrics（~450行）→ 抽取到 `db/write_queue.go`
+- 订单价格索引扫描（~200行）→ 归入 `db/manage_tx_storage.go` 或独立 `db/scan_order.go`
+- 删除 StateDB 死代码后可再减 ~120 行
+- 不改任何逻辑，只拆文件
+
+> ✅ **状态：已完成。**
+> - ✅ 写队列 + Metrics 已抽取到 `db/write_queue.go`（495 行）
+> - ✅ 订单价格索引扫描 + 索引重建已抽取到 `db/scan_order.go`（253 行）
+> - ✅ `db/db.go` 当前 389 行，保留 Manager 构造、基础读写与会话等主干职责
+
+---
+
+## ✅ 八、`vm/executor.go` 巨型文件（~~1728~~ ~~1686~~ 1087 行） — 已完成（首轮拆分）
+
+| 功能块 | 预估行数 | 建议 |
+|--------|---------|------|
+| Probe 监控统计（结构体 + 6 个函数） | ~100 行 | ✅ 已迁移到 `vm/executor_probe.go` |
+| 失败原因分类&格式化 | ~50 行 | ✅ 已迁移到 `vm/executor_probe.go` |
+| 订单簿重建 (`rebuildOrderBooksForPairs`, `scanOrderIndexesForSide`, `batchLoadOrderStates`, `loadOrderToBook`, `appendOrderCandidates`) | ~200 行 | ✅ 已迁移到 `vm/orderbook_rebuild.go` |
+| `preExecuteBlock` 函数本身 | 410 行 | 🔶 仍偏长，后续可拆子步骤 |
+| `applyResult` 函数本身 | 255 行 | 🔶 仍偏长，后续可拆子步骤 |
+
+> ✅ **状态：已完成（首轮拆分）。** 监控探针、失败分类和订单簿重建逻辑已拆出，`vm/executor.go` 体量显著下降。
+
+---
+
+## ✅ 九、`vm/order_handler.go` 注释乱码 + 冗余（~~1235~~ 1121 行） — 已完成
+
+该文件中曾存在大量乱码注释，并有两个 trade record 生成函数。
+
+**已完成工作**：
+- 修复了乱码注释。
+- 删除了冗余的 `generateTradeRecords` 函数，统一使用 `generateWriteOpsFromTrades`。
+- 保留 `handleRemoveOrderLegacy` 以兼容（虽然可能不再需要，但保留更安全）。
+
+> ✅ **状态：已完成。**
+
+---
+
+## 🟡 十、Consensus 模块 Simulated vs Real 双实现
+
+consensus 目录包含两套完整实现：
 
 | Simulated（测试用） | Real（生产用） | 行数 |
 |---------------------|---------------|------|
 | `simulatedTransport.go` | `realTransport.go` (666 行) | 98 vs 666 |
+
 | `simulatedBlockStore.go` | `realBlockStore.go` (1249 行) | 319 vs 1249 |
 | `simulatedProposer.go` | `proposalManager.go` (271 行) | 82 vs 271 |
 | `simulatedManager.go` | — | 308 行 |
@@ -240,15 +282,15 @@ PriorityData      → dataChan     (普通数据)
 | 优先级 | 项目 | 预估节省 | 难度 |
 |--------|------|---------|------|
 | ✅ 完成 | BadgerDB 残留注释 & 废弃 config 字段清理 | 删除 6 个字段 + ~20 处修正 | 低 |
-| 🔧 部分 | StateDB / Verkle 死代码删除（db 已清理，vm 未清理） | ~120 行（db）+ 简化 14 个 vm 文件 + 3 个 config 字段 | 中 |
-| ❌ 未做 | `db/keys.go` 转发层删除 | 241 行 / 1 文件 | 低 |
-| ❌ 未做 | sender/ doSend 合并 | ~300 行 / 11 文件→2 文件 | 低 |
-| ❌ 未做 | 空文件 `frost_routes.go` 删除 | 2 行 / 1 文件 | 极低 |
-| ❌ 未做 | Frost DKG 常量文件合并 | 51 行 / 3 文件→0 | 极低 |
-| ❌ 未做 | `db/db.go` 写队列拆分 | 0（纯重组） | 低 |
-| ❌ 未做 | `order_handler.go` 乱码注释清理 | N/A | 低 |
+| ✅ 完成 | StateDB / Verkle 死代码删除（db + vm） | 删除 db 死代码 + vm `SetWithMeta` 路径 + 3 个 config 字段 | 中 |
+| ✅ 完成 | `db/keys.go` 转发层删除 | 删除 241 行 / 1 文件 | 低 |
+| ✅ 完成 | sender/ doSend 合并 | 11 文件 + gossip 合并为 2 文件 | 低 |
+| ✅ 完成 | 空文件 `frost_routes.go` 删除 | 删除 2 行 / 1 文件 | 极低 |
+| ✅ 完成 | Frost DKG 常量文件合并 | 删除 51 行 / 3 文件 | 极低 |
+| ✅ 完成 | `db/db.go` 写队列 + 订单扫描拆分 | `db/db.go` 1224→389；新增 `db/write_queue.go` + `db/scan_order.go` | 低 |
+| ✅ 完成 | `order_handler.go` 乱码注释清理 | N/A | 低 |
 | ❌ 未做 | `order_handler.go` Legacy 函数评估 | ~170 行 | 中 |
-| ❌ 未做 | `executor.go` 拆分 | 0（纯重组） | 低 |
+| ✅ 完成 | `executor.go` 首轮拆分 | `vm/executor.go` 1686→1087；新增 `vm/executor_probe.go` + `vm/orderbook_rebuild.go` | 低 |
 | ❌ 未做 | `realBlockStore.go` 拆分 | 0（纯重组） | 中 |
 | ❌ 未做 | `metrics.go` 结构化 | N/A | 中 |
 | ❌ 未做 | `SendQueue` 统计简化 | ~50 行 | 低 |

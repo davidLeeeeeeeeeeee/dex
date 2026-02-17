@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"fmt"
 
@@ -18,7 +19,7 @@ func (mgr *Manager) SavePendingAnyTx(tx *pb.AnyTx) error {
 	if err != nil {
 		return err
 	}
-	mgr.EnqueueSet(KeyPendingAnyTx(txID), string(data))
+	mgr.EnqueueSet(keys.KeyPendingAnyTx(txID), string(data))
 	return nil
 }
 
@@ -27,7 +28,7 @@ func (mgr *Manager) DeletePendingAnyTx(txID string) error {
 	if txID == "" {
 		return fmt.Errorf("DeletePendingAnyTx: empty txID")
 	}
-	mgr.EnqueueDelete(KeyPendingAnyTx(txID))
+	mgr.EnqueueDelete(keys.KeyPendingAnyTx(txID))
 	return nil
 }
 
@@ -40,7 +41,7 @@ func (mgr *Manager) LoadPendingAnyTx() ([]*pb.AnyTx, error) {
 		return nil, fmt.Errorf("database is not initialized or closed")
 	}
 	var result []*pb.AnyTx
-	prefix := []byte(KeyPendingAnyTx(""))
+	prefix := []byte(keys.KeyPendingAnyTx(""))
 	iter, err := db.NewIter(&pebble.IterOptions{LowerBound: prefix, UpperBound: prefixUpperBound(prefix)})
 	if err != nil {
 		return nil, err

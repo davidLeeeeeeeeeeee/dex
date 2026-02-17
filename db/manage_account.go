@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/keys"
 	"dex/pb"
 	"errors"
 	"strings"
@@ -14,7 +15,7 @@ import (
 //
 // ⚠️ DEPRECATED API - 仅用于过渡期兼容
 func (mgr *Manager) SaveAccount(account *pb.Account) error {
-	key := KeyAccount(account.Address)
+	key := keys.KeyAccount(account.Address)
 	data, err := ProtoMarshal(account)
 	if err != nil {
 		return err
@@ -25,7 +26,7 @@ func (mgr *Manager) SaveAccount(account *pb.Account) error {
 
 // GetAccount retrieves an Account from the database
 func (mgr *Manager) GetAccount(address string) (*pb.Account, error) {
-	key := KeyAccount(address)
+	key := keys.KeyAccount(address)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -39,7 +40,7 @@ func (mgr *Manager) GetAccount(address string) (*pb.Account, error) {
 
 // CalcStake 计算账户质押金额
 func (mgr *Manager) CalcStake(addr string) (decimal.Decimal, error) {
-	balKey := KeyBalance(addr, "FB")
+	balKey := keys.KeyBalance(addr, "FB")
 	val, err := mgr.Read(balKey)
 	if err != nil || val == "" {
 		return decimal.Zero, nil
@@ -81,11 +82,11 @@ func buildStakeIndexKey(stake decimal.Decimal, address string) string {
 	if padNeeded < 0 {
 		padNeeded = 0
 	}
-	return KeyStakeIndex(strings.Repeat("0", padNeeded)+invStr, address)
+	return keys.KeyStakeIndex(strings.Repeat("0", padNeeded)+invStr, address)
 }
 
 func (mgr *Manager) getAccountByIndex(idx uint64) (*pb.Account, error) {
-	indexKey := []byte(KeyIndexToAccount(idx))
+	indexKey := []byte(keys.KeyIndexToAccount(idx))
 
 	raw, closer, err := mgr.Db.Get(indexKey)
 	if err != nil {
@@ -112,7 +113,7 @@ func (mgr *Manager) getAccountByIndex(idx uint64) (*pb.Account, error) {
 
 // GetToken 获取 Token 信息
 func (mgr *Manager) GetToken(tokenAddress string) (*pb.Token, error) {
-	key := KeyToken(tokenAddress)
+	key := keys.KeyToken(tokenAddress)
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err
@@ -129,7 +130,7 @@ func (mgr *Manager) GetToken(tokenAddress string) (*pb.Token, error) {
 
 // GetTokenRegistry 获取 Token 注册表
 func (mgr *Manager) GetTokenRegistry() (*pb.TokenRegistry, error) {
-	key := KeyTokenRegistry()
+	key := keys.KeyTokenRegistry()
 	val, err := mgr.Read(key)
 	if err != nil {
 		return nil, err

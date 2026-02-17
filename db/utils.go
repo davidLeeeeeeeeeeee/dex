@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"crypto/sha256"
+	"dex/keys"
 	"dex/pb"
 	"encoding/binary"
 	"encoding/hex"
@@ -40,7 +41,7 @@ func getNewIndex(mgr *Manager) (uint64, []WriteTask, error) {
 	)
 
 	// 使用 Pebble Iterator 寻找可复用的 free_idx_*
-	prefix := []byte(KeyFreeIdx())
+	prefix := []byte(keys.KeyFreeIdx())
 	iter, err := mgr.Db.NewIter(&pebble.IterOptions{
 		LowerBound: prefix,
 		UpperBound: prefixUpperBound(prefix),
@@ -69,7 +70,7 @@ func getNewIndex(mgr *Manager) (uint64, []WriteTask, error) {
 }
 
 func removeIndex(idx uint64) WriteTask {
-	k := []byte(fmt.Sprintf(KeyFreeIdx()+"%020d", idx))
+	k := []byte(fmt.Sprintf(keys.KeyFreeIdx()+"%020d", idx))
 	return WriteTask{Key: k, Op: OpSet}
 }
 

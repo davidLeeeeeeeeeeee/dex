@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"errors"
@@ -138,7 +139,7 @@ func (mgr *Manager) loadMinerParticipantsFromDB() ([]*pb.Account, error) {
 
 	miners := make([]*pb.Account, 0, len(indices))
 	for _, idx := range indices {
-		raw, closer, err := snap.Get([]byte(KeyIndexToAccount(idx)))
+		raw, closer, err := snap.Get([]byte(keys.KeyIndexToAccount(idx)))
 		if err != nil {
 			if errors.Is(err, pebble.ErrNotFound) {
 				continue

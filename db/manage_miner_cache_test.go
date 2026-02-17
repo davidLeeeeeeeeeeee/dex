@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"testing"
@@ -83,8 +84,8 @@ func putMinerAccount(db *pebble.DB, idx uint64, account *pb.Account) error {
 	if err != nil {
 		return err
 	}
-	accountKey := KeyAccount(account.Address)
-	indexKey := KeyIndexToAccount(idx)
+	accountKey := keys.KeyAccount(account.Address)
+	indexKey := keys.KeyIndexToAccount(idx)
 	b := db.NewBatch()
 	defer b.Close()
 	if err := b.Set([]byte(accountKey), accountBytes, nil); err != nil {

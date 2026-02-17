@@ -29,3 +29,25 @@ type syncRequestMessage struct {
 	toHeight    uint64
 	onSuccess   func([]*pb.Block)
 }
+
+// pushQueryMsg 用于发送 PushQuery
+type pushQueryMsg struct {
+	requestData []byte
+}
+
+// pullQueryMsg 用于发送 PullQuery
+type pullQueryMsg struct {
+	requestData []byte
+}
+
+// pullBlockMessage 用于按高度拉取区块
+type pullBlockMessage struct {
+	requestData []byte
+	onSuccess   func(*pb.Block)
+}
+
+// pullBatchTxMessage 用于批量拉取交易
+type pullBatchTxMessage struct {
+	requestData []byte
+	onSuccess   func([]*pb.AnyTx)
+}

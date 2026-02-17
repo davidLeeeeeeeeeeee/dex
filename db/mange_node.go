@@ -1,6 +1,7 @@
 package db
 
 import (
+	"dex/keys"
 	"dex/pb"
 
 	"github.com/cockroachdb/pebble"
@@ -10,7 +11,7 @@ import (
 // GetAllNodeInfos 改为成员函数
 func (mgr *Manager) GetAllNodeInfos() ([]*pb.NodeInfo, error) {
 	var nodes []*pb.NodeInfo
-	prefix := []byte(KeyNode())
+	prefix := []byte(keys.KeyNode())
 	iter, err := mgr.Db.NewIter(&pebble.IterOptions{LowerBound: prefix, UpperBound: prefixUpperBound(prefix)})
 	if err != nil {
 		return nil, err
@@ -46,7 +47,7 @@ func (mgr *Manager) SaveNodeInfo(node *pb.NodeInfo) error {
 	if nodeKey == "" {
 		nodeKey = node.Ip
 	}
-	key := KeyNode() + nodeKey
+	key := keys.KeyNode() + nodeKey
 	mgr.EnqueueSet(key, string(data))
 	return nil
 }

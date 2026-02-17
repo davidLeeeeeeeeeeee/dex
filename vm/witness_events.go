@@ -12,10 +12,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-type metaSetter interface {
-	SetWithMeta(key string, value []byte, category string)
-}
-
 func (x *Executor) applyWitnessFinalizedEvents(sv StateView, fallbackHeight uint64) error {
 	if x.WitnessService == nil {
 		return nil
@@ -93,7 +89,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 	if err != nil {
 		return err
 	}
-	setWithMeta(sv, requestKey, updatedRequestData, "witness_request")
+	sv.Set(requestKey, updatedRequestData)
 
 	removePendingFunds(sv, stored.RequestId)
 
@@ -148,7 +144,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		if err != nil {
 			return err
 		}
-		setWithMeta(sv, utxoKey, utxoData, "frost_funds_utxo")
+		sv.Set(utxoKey, utxoData)
 
 		// 鏇存柊 Vault 鐨勮祫閲戣处鏈仛鍚堢姸鎬侊紙鍙€夛紝鐢ㄤ簬鏌ヨ鎬婚锛?
 		// 更新 Vault 的资金账本聚合状态（可选，用于查询总额）
@@ -158,10 +154,10 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		seq := readUintSeq(sv, seqKey)
 
 		indexKey := keys.KeyFrostFundsLotIndex(chain, asset, vaultID, finalizeHeight, seq)
-		setWithMeta(sv, indexKey, []byte(stored.RequestId), "frost_funds")
+		sv.Set(indexKey, []byte(stored.RequestId))
 
 		seq++
-		setWithMeta(sv, seqKey, []byte(strconv.FormatUint(seq, 10)), "frost_funds")
+		sv.Set(seqKey, []byte(strconv.FormatUint(seq, 10)))
 	}
 
 	// 澧炲姞鐢ㄦ埛浣欓锛堜娇鐢ㄥ垎绂诲瓨鍌級
@@ -207,12 +203,12 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		if err != nil {
 			return fmt.Errorf("failed to marshal updated user account: %w", err)
 		}
-		setWithMeta(sv, userKey, updatedUserData, "account")
+		sv.Set(userKey, updatedUserData)
 
 		// 淇濆瓨浣欓鏁版嵁
 		balKey := keys.KeyBalance(userAddr, stored.TokenAddress)
 		balData, _, _ := sv.Get(balKey)
-		setWithMeta(sv, balKey, balData, "balance")
+		sv.Set(balKey, balData)
 	}
 
 	return nil
@@ -240,7 +236,7 @@ func applyRechargeRejected(sv StateView, req *pb.RechargeRequest) error {
 		if err != nil {
 			return err
 		}
-		setWithMeta(sv, requestKey, updatedRequestData, "witness_request")
+		sv.Set(requestKey, updatedRequestData)
 	}
 
 	removePendingFunds(sv, stored.RequestId)
@@ -272,14 +268,6 @@ func removePendingFunds(sv StateView, requestID string) {
 	sv.Del(refKey)
 }
 
-func setWithMeta(sv StateView, key string, value []byte, category string) {
-	if setter, ok := sv.(metaSetter); ok {
-		setter.SetWithMeta(key, value, category)
-		return
-	}
-	sv.Set(key, value)
-}
-
 func persistRechargeRequest(sv StateView, req *pb.RechargeRequest) error {
 	if req == nil || req.RequestId == "" {
 		return nil
@@ -289,6 +277,6 @@ func persistRechargeRequest(sv StateView, req *pb.RechargeRequest) error {
 	if err != nil {
 		return err
 	}
-	setWithMeta(sv, requestKey, data, "witness_request")
+	sv.Set(requestKey, data)
 	return nil
 }
