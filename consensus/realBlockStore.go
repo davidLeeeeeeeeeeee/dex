@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/proto"
 )
 
 var ErrAlreadyFinalized = errors.New("already finalized")
@@ -174,6 +176,59 @@ func isCompleteBlockPayload(block *pb.Block) bool {
 		return false
 	}
 	return block.Header.TxsHash == emptyTxsHash
+}
+
+func normalizeReceiptStatus(status string) (pb.Status, bool) {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "SUCCEED", "SUCCESS":
+		return pb.Status_SUCCEED, true
+	case "FAILED", "FAIL":
+		return pb.Status_FAILED, true
+	default:
+		return pb.Status_PENDING, false
+	}
+}
+
+// materializeFinalizedBlock builds a block copy whose tx statuses come from VM receipts
+// of the same finalized height. Txs not executed at this height remain unchanged (pending).
+func (s *RealBlockStore) materializeFinalizedBlock(block *pb.Block) *pb.Block {
+	if block == nil {
+		return nil
+	}
+	cloned, ok := proto.Clone(block).(*pb.Block)
+	if !ok || cloned == nil || cloned.Header == nil || len(cloned.Body) == 0 {
+		return block
+	}
+
+	finalizedHeight := cloned.Header.Height
+	for _, tx := range cloned.Body {
+		if tx == nil {
+			continue
+		}
+		base := tx.GetBase()
+		if base == nil {
+			continue
+		}
+		txID := tx.GetTxId()
+		if txID == "" {
+			continue
+		}
+
+		receipt, err := s.dbManager.GetTxReceipt(txID)
+		if err != nil || receipt == nil {
+			continue
+		}
+		// Only stamp txs executed by VM in this finalized block.
+		if receipt.BlockHeight != finalizedHeight {
+			continue
+		}
+		if status, ok := normalizeReceiptStatus(receipt.Status); ok {
+			base.Status = status
+			base.ExecutedHeight = receipt.BlockHeight
+		}
+	}
+
+	return cloned
 }
 
 func (s *RealBlockStore) Add(block *types.Block) (bool, error) {
@@ -494,11 +549,14 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 			}
 		}
 
-		// 保存区块元数据与正文（用于 /getblock、sync 等按 blockID 查询）
-		if err := s.dbManager.SaveBlock(pbBlock); err != nil {
+		// 保存区块元数据与正文（用于 /getblock、sync 等按 blockID 查询）。
+		// 这里使用 VM 回执回填后的副本，确保最终化区块中的 tx.status 与 VM 结果一致。
+		finalizedPBBlock := s.materializeFinalizedBlock(pbBlock)
+		if err := s.dbManager.SaveBlock(finalizedPBBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save finalized block %s: %v", block.ID, err)
 			return fmt.Errorf("save finalized block failed: %w", err)
 		}
+		CacheBlock(finalizedPBBlock)
 		// 避免每块都强制刷盘导致共识主路径阻塞，改为按策略批量/间隔刷盘。
 		s.maybeForceFlushAfterFinalize()
 	} else {

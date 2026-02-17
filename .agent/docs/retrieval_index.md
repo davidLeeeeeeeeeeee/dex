@@ -39,14 +39,11 @@ Use this index for quick semantic lookup.
 - challenge/arbitration manager: `witness/challenge_manager.go`
 - vm witness handlers: `vm/witness_handler.go`
 
-## Storage and State
+## Storage
 
-- db manager and session: `db/db.go`
+- db manager and write queue: `db/db.go`, `db/write_queue.go`
 - key category routing: `keys/category.go`
 - key schema: `keys/keys.go`
-- verkle state backend: `verkle/verkle_statedb.go`
-- legacy statedb package: `stateDB/`
-- legacy jmt package: `jmt/`
 
 ## Networking and Propagation
 
@@ -54,7 +51,6 @@ Use this index for quick semantic lookup.
 - send queue and retry/backoff: `sender/queue.go`
 - gossip sender: `sender/gossip_sender.go`
 - txpool queue and validation: `txpool/txpool_queue.go`
-- peer registry: `network/network.go`
 
 ## Explorer
 
@@ -74,7 +70,6 @@ Use this index for quick semantic lookup.
 
 ## Simulator
 
-- simulate main entry: `simulateMain/tes.go`
 - simulated consensus components: `consensus/simulatedManager.go`, `consensus/simulatedProposer.go`, `consensus/simulatedTransport.go`, `consensus/simulatedBlockStore.go`
 - simulator runner: `cmd/main/simulator.go`
 

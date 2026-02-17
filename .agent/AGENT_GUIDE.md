@@ -1,7 +1,7 @@
 # DEX Agent Guide
 
 This folder stores AI-facing retrieval metadata for the `dex` codebase.
-Last updated: `2026-02-09`.
+Last updated: `2026-02-17`.
 
 ## Quick Routing
 
@@ -14,10 +14,9 @@ Use this table to jump to the right area fast.
 | Consensus, voting, block sync | `consensus/` | `consensus` |
 | FROST withdraw / DKG / runtime workers | `frost/`, `vm/frost_*.go`, `handlers/frost_*.go` | `frost` |
 | HTTP API behavior | `handlers/`, `cmd/main/node.go` | `handlers` |
-| DB persistence and key schema | `db/`, `keys/`, `verkle/` | `db` + `verkle` |
-| Verkle state root or state-session issues | `verkle/`, `db/db.go`, `keys/category.go` | `verkle` |
+| DB persistence and key schema | `db/`, `keys/` | `db` |
 | Witness workflow and arbitration | `witness/`, `vm/witness_*.go` | `witness` |
-| Tx queueing and gossip send path | `txpool/`, `sender/`, `network/` | `txpool` + `sender` + `network` |
+| Tx queueing and gossip send path | `txpool/`, `sender/` | `txpool` + `sender` |
 | Frontend dashboard and explorer APIs | `explorer/`, `cmd/explorer/` | `explorer` |
 | Config and bootstrap defaults | `config/`, `cmd/main/bootstrap.go` | `config` |
 
@@ -33,16 +32,13 @@ Use this table to jump to the right area fast.
   - `cmd/explorer/indexdb/`
 - Simulator runtime:
   - `cmd/main/simulator.go`
-  - `simulateMain/tes.go`
 
 ## Current Storage Architecture
 
 - Canonical persistence manager is `db.Manager` in `db/db.go`.
-- Mutable state is mirrored into Verkle through `dbSession.ApplyStateUpdate` and `verkle/`.
-- Key routing (stateful vs flow keys) is defined in `keys/category.go`.
-- Legacy/experimental trees still exist:
-  - `stateDB/` (legacy StateDB package)
-  - `jmt/` (Jellyfish Merkle Tree implementation)
+- Backend is **PebbleDB** (`cockroachdb/pebble`).
+- All state via flat KV（无独立状态树）。
+- Key routing defined in `keys/category.go`, key constructors in `keys/keys.go`.
 
 ## Main API Surfaces
 
@@ -65,16 +61,12 @@ Use this table to jump to the right area fast.
   explorer/
   frost/
   handlers/
-  jmt/
   matching/
-  network/
-  project_overview/
   sender/
-  statedb/
   txpool/
-  verkle/
   vm/
   witness/
+  project_overview/
 ```
 
 ## Fast Search Commands
@@ -89,11 +81,8 @@ rg "return \"[a-z0-9_]+\"" vm/handlers.go
 # FROST runtime workers/sessions
 rg "type .*Worker|type .*Session|func \\(.*\\) Start" frost/runtime
 
-# Stateful key classification
-rg "statePrefixes|IsStatefulKey|CategorizeKey" keys
-
-# Verkle apply path
-rg "ApplyStateUpdate|ApplyUpdate|CommitRoot" db verkle vm
+# Key schema
+rg "func Key|KeyVersion|CategorizeKey|IsStatefulKey" keys
 ```
 
 ## Workflow Directory

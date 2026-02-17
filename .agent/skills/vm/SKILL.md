@@ -35,7 +35,7 @@ Use this skill for execution correctness, receipt status, write operations, and 
 2. Each tx resolves kind via `DefaultKindFn`.
 3. Handler `DryRun` returns `[]WriteOp` and a receipt.
 4. `CommitFinalizedBlock` reuses or recomputes result and calls `applyResult`.
-5. `applyResult` persists writes and updates state backend through DB session.
+5. `applyResult` persists writes to PebbleDB through DB session.
 
 ## Typical Tasks
 

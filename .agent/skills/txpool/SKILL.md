@@ -17,7 +17,6 @@ Use this skill for pending tx admission, dedupe, eviction, and queue handling.
 
 - Pool facade and caches: `txpool/txpool.go`
 - Queue loop and validator path: `txpool/txpool_queue.go`
-- Network peer cache helper: `network/network.go`
 
 ## Core Flow
 

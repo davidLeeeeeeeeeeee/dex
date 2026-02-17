@@ -1,5 +1,8 @@
 # StateRoot 不一致问题修复历程
 
+> [!WARNING]
+> **历史文档**：此文档记录的 `verkle/` 模块已在后续重构中完全移除。当前 DB 后端为 PebbleDB flat KV，不再使用 Verkle 状态树。本文仅作历史参考。
+
 ## 问题背景
 
 在模拟环境中运行多节点共识时，发现 **StateRoot 不一致**问题：

@@ -6,10 +6,9 @@ description: 排查余额异常（insufficient balance、余额突降、显示�
 
 ## 1. 确定读取路径
 
-余额有两条读取路径，确认走的是哪一条：
+余额通过 PebbleDB KV 直接读取：
 
-- **StateDB 路径**（优先）：`db/db.go` → `keys.IsStatefulKey` → `stateDB.Get`
-- **KV 回退路径**：如果 StateDB 未命中，回退到 BadgerDB KV
+- `db/db.go` → `Get` / `GetKV` → PebbleDB
 
 ```bash
 rg "GetAccount|GetBalance|SetBalance" db/ vm/
