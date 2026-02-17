@@ -15,11 +15,10 @@ var (
 
 // “要怎么改状态”的清单
 type WriteOp struct {
-	Key         string // 完整的 key（包括命名空间前缀）
-	Value       []byte // 序列化后的值
-	Del         bool   // true表示删除操作
-	SyncStateDB bool   // 是否同步到 StateDB（用于账户相关的关键数据）
-	Category    string // 数据分类：account, token, order, receipt, meta 等，便于追踪和调试
+	Key      string // 完整的 key（包括命名空间前缀）
+	Value    []byte // 序列化后的值
+	Del      bool   // true表示删除操作
+	Category string // 数据分类：account, token, order, receipt, meta 等，便于追踪和调试
 }
 
 // ========== WriteOp 方法 ==========

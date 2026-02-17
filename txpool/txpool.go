@@ -354,7 +354,7 @@ func (p *TxPool) loadFromDB() {
 			continue
 		}
 		if p.isTxApplied(txID) {
-			stalePendingKeys = append(stalePendingKeys, db.KeyPendingAnyTx(txID))
+			stalePendingKeys = append(stalePendingKeys, keys.KeyPendingAnyTx(txID))
 			continue
 		}
 		p.cacheAnyTxUnlocked(txID, anyTx, true)

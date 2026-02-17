@@ -3,6 +3,7 @@ package consensus
 import (
 	"dex/config"
 	"dex/db"
+	"dex/keys"
 	"dex/pb"
 	"dex/txpool"
 	"dex/types"
@@ -82,7 +83,7 @@ func (a *ConsensusAdapter) DBBlockToConsensus(dbBlock *pb.Block) (*types.Block, 
 	// 兼容：DB 中 Miner 字段有时会被写成带前缀的形式（例如 "v1_node_3"），
 	// 但 VRF 生成/验证的 nodeID 必须一致，否则会导致同步拉到的新块无法通过 VRF 校验。
 	proposer := header.Miner
-	if prefix := db.KeyNode(); strings.HasPrefix(proposer, prefix) {
+	if prefix := keys.KeyNode(); strings.HasPrefix(proposer, prefix) {
 		proposer = strings.TrimPrefix(proposer, prefix)
 	}
 
@@ -288,7 +289,7 @@ func (a *ConsensusAdapter) ProcessReceivedContainer(container []byte, isBlock bo
 
 func (a *ConsensusAdapter) parseMinerToNodeID(miner string) types.NodeID {
 	var nodeID int
-	fmt.Sscanf(miner, db.KeyNode()+"%d", &nodeID)
+	fmt.Sscanf(miner, keys.KeyNode()+"%d", &nodeID)
 	return types.NodeID(strconv.Itoa(nodeID))
 }
 

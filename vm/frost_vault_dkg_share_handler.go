@@ -10,6 +10,15 @@ import (
 	"fmt"
 )
 
+// DkgShareStatus DKG share 状态
+type DkgShareStatus string
+
+const (
+	DkgShareStatusPending  DkgShareStatus = "PENDING"
+	DkgShareStatusVerified DkgShareStatus = "VERIFIED"
+	DkgShareStatusDisputed DkgShareStatus = "DISPUTED"
+)
+
 // HandleFrostVaultDkgShareTx 处理加密 share 提交
 // 校验：
 // 1. dkg_status == Sharing

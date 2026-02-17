@@ -105,8 +105,8 @@ func registerAllNodes(nodes []*NodeInstance, frostCfg config.FrostConfig) {
 			}
 			node.DBManager.SaveNodeInfo(nodeInfo)
 			// 保存索引映射
-			indexKey := db.KeyIndexToAccount(uint64(j))
-			accountKey := db.KeyAccount(otherNode.Address)
+			indexKey := keys.KeyIndexToAccount(uint64(j))
+			accountKey := keys.KeyAccount(otherNode.Address)
 			node.DBManager.EnqueueSet(indexKey, accountKey)
 
 		}

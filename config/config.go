@@ -141,20 +141,6 @@ type AuthConfig struct {
 	ServerChallenge string // "server_challenge_123456"
 }
 
-// MinerConfig 矿工相关配置
-type MinerConfig struct {
-	// 索引管理
-	MaxMinerIndex  uint64 // 可配置的最大矿工索引
-	IndexCacheSize int    // 索引缓存大小
-
-	// Stake配置
-	MaxStake            string // "1e30"
-	StakeIndexPadLength int    // 32
-
-	// BLS签名缓存
-	BLSSignCacheSize int // 100
-}
-
 // WindowStage 时间窗口阶段配置
 type WindowStage struct {
 	Duration    time.Duration // 阶段持续时间

@@ -10,10 +10,9 @@ import (
 
 // ovVal overlay中的值
 type ovVal struct {
-	val         []byte
-	exist       bool   // false表示已删除
-	syncStateDB bool   // 是否同步到 StateDB
-	category    string // 数据分类
+	val      []byte
+	exist    bool   // false表示已删除
+	category string // 数据分类
 }
 
 // change 变更记录，用于回滚
@@ -183,11 +182,10 @@ func (s *overlayStateView) Diff() []WriteOp {
 		v := s.overlay[k]
 		// 不需要再次复制，因为 Set/SetWithMeta 已经复制过了
 		diff = append(diff, WriteOp{
-			Key:         k,
-			Value:       v.val,
-			Del:         !v.exist,
-			SyncStateDB: v.syncStateDB,
-			Category:    v.category,
+			Key:      k,
+			Value:    v.val,
+			Del:      !v.exist,
+			Category: v.category,
 		})
 	}
 	return diff

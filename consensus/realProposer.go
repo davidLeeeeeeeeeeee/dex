@@ -4,6 +4,7 @@ import (
 	"dex/config"
 	"dex/db"
 	"dex/interfaces"
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"dex/txpool"
@@ -99,7 +100,7 @@ func (p *RealBlockProposer) ProposeBlock(parentID string, height uint64, propose
 			Height:        height,
 			TxsHash:       txsHash,
 			PrevBlockHash: parentID,
-			Miner:         fmt.Sprintf(db.KeyNode()+"%s", proposer),
+			Miner:         fmt.Sprintf(keys.KeyNode()+"%s", proposer),
 			Window:        int32(window),
 			VrfProof:      vrfProof,
 			VrfOutput:     vrfOutput,

@@ -13,6 +13,20 @@ import (
 	"fmt"
 )
 
+// Vault 生命周期常量
+const (
+	VaultLifecycleActive   = "ACTIVE"
+	VaultLifecycleDraining = "DRAINING"
+	VaultLifecycleRetired  = "RETIRED"
+)
+
+// Vault 状态常量
+const (
+	VaultStatusKeyReady   = "KEY_READY"
+	VaultStatusActive     = "ACTIVE"
+	VaultStatusDeprecated = "DEPRECATED"
+)
+
 // HandleFrostVaultTransitionSignedTx 处理 Vault 迁移签名
 // 当新 Vault 完成 DKG 后，旧 Vault 签名迁移交易，将资产转移到新 Vault
 // 校验：

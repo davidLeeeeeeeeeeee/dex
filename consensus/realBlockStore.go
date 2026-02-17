@@ -4,6 +4,7 @@ import (
 	"dex/config"
 	"dex/db"
 	"dex/interfaces"
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"dex/txpool"
@@ -843,7 +844,7 @@ func (s *RealBlockStore) saveBlockToDB(block *types.Block) {
 			Header: &pb.BlockHeader{
 				Height:        block.Header.Height,
 				PrevBlockHash: block.Header.ParentID,
-				Miner:         fmt.Sprintf(db.KeyNode()+"%s", block.Header.Proposer),
+				Miner:         fmt.Sprintf(keys.KeyNode()+"%s", block.Header.Proposer),
 				Window:        int32(block.Header.Window),
 				VrfProof:      block.Header.VRFProof,
 				VrfOutput:     block.Header.VRFOutput,

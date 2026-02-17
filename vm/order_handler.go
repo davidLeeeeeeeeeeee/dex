@@ -1,4 +1,4 @@
-package vm
+﻿package vm
 
 import (
 	"dex/db"
@@ -27,9 +27,9 @@ var (
 	}
 )
 
-// OrderTxHandler 订单交易处理器
+// OrderTxHandler 璁㈠崟浜ゆ槗澶勭悊鍣?
 type OrderTxHandler struct {
-	// 区块级别的订单簿缓存（由 Executor 在 PreExecuteBlock 时设置）
+	// 鍖哄潡绾у埆鐨勮鍗曠翱缂撳瓨锛堢敱 Executor 鍦?PreExecuteBlock 鏃惰缃級
 	orderBooks map[string]*matching.OrderBook
 }
 
@@ -37,13 +37,13 @@ func (h *OrderTxHandler) Kind() string {
 	return "order"
 }
 
-// SetOrderBooks 设置区块级别的订单簿缓存
+// SetOrderBooks 璁剧疆鍖哄潡绾у埆鐨勮鍗曠翱缂撳瓨
 func (h *OrderTxHandler) SetOrderBooks(books map[string]*matching.OrderBook) {
 	h.orderBooks = books
 }
 
 func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 提取OrderTx
+	// 1. 鎻愬彇OrderTx
 	orderTx, ok := tx.GetContent().(*pb.AnyTx_OrderTx)
 	if !ok {
 		return nil, &Receipt{
@@ -62,7 +62,7 @@ func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 		}, fmt.Errorf("invalid order transaction")
 	}
 
-	// 2. 根据操作类型分发处理
+	// 2. 鏍规嵁鎿嶄綔绫诲瀷鍒嗗彂澶勭悊
 	switch ord.Op {
 	case pb.OrderOp_ADD:
 		return h.handleAddOrder(ord, sv)
@@ -77,7 +77,7 @@ func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 	}
 }
 
-// handleAddOrder 处理添加/更新订单，并执行撮合
+// handleAddOrder 澶勭悊娣诲姞/鏇存柊璁㈠崟锛屽苟鎵ц鎾悎
 func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	amountBI, err := parsePositiveBalanceStrict("order amount", ord.Amount)
 	if err != nil {
@@ -231,8 +231,8 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	}, nil
 }
 
-// handleRemoveOrder 婢跺嫮鎮婇幘銈呭礋
-// 閻滄澘婀担璺ㄦ暏 OrderState 閼板奔绗夐敓?OrderTx
+// handleRemoveOrder 澶勭悊绉婚櫎璁㈠崟璇锋眰
+// 閫昏緫锛氫紭鍏堝皾璇曟煡鎵惧苟绉婚櫎 OrderState锛涘鏋滄湭鎵惧埌锛屽垯灏濊瘯鏌ユ壘鏃х増 OrderTx锛堝吋瀹规€у鐞嗭級銆?
 func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	if ord.OpTargetId == "" {
 		return nil, &Receipt{
@@ -245,6 +245,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	targetStateKey := keys.KeyOrderState(ord.OpTargetId)
 	targetStateData, exists, err := sv.Get(targetStateKey)
 	if err != nil || !exists {
+		// 灏濊瘯鍥為€€鏌ユ壘鏃х増 OrderTx
 		targetOrderKey := keys.KeyOrder(ord.OpTargetId)
 		targetOrderData, oldExists, oldErr := sv.Get(targetOrderKey)
 		if oldErr != nil || !oldExists {
@@ -400,18 +401,18 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}
 
 	ws = append(ws, WriteOp{
-		Key:         targetStateKey,
-		Value:       updatedStateData,
-		Del:         false,
-		Category:    "orderstate",
+		Key:      targetStateKey,
+		Value:    updatedStateData,
+		Del:      false,
+		Category: "orderstate",
 	})
 
 	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.OpTargetId)
 	ws = append(ws, WriteOp{
-		Key:         accOrderItemKey,
-		Value:       nil,
-		Del:         true,
-		Category:    "acc_orders_item",
+		Key:      accOrderItemKey,
+		Value:    nil,
+		Del:      true,
+		Category: "acc_orders_item",
 	})
 
 	updatedAccountData, err := proto.Marshal(&account)
@@ -424,10 +425,10 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}
 
 	ws = append(ws, WriteOp{
-		Key:         accountKey,
-		Value:       updatedAccountData,
-		Del:         false,
-		Category:    "account",
+		Key:      accountKey,
+		Value:    updatedAccountData,
+		Del:      false,
+		Category: "account",
 	})
 
 	pair := utils.GeneratePairKey(targetState.BaseToken, targetState.QuoteToken)
@@ -442,10 +443,10 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetState.Side, targetState.IsFilled, priceKey67, ord.OpTargetId)
 
 	ws = append(ws, WriteOp{
-		Key:         priceIndexKey,
-		Value:       nil,
-		Del:         true,
-		Category:    "index",
+		Key:      priceIndexKey,
+		Value:    nil,
+		Del:      true,
+		Category: "index",
 	})
 
 	return ws, &Receipt{
@@ -455,7 +456,8 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}, nil
 }
 
-// handleRemoveOrderLegacy 婢跺嫮鎮婇弮褎鏆熼幑顔界壐瀵繒娈戦幘銈呭礋閿涘牆鍚嬬€硅鈧嶇礆
+// handleRemoveOrderLegacy 澶勭悊閬楃暀鐨?OrderTx 鏍煎紡璁㈠崟绉婚櫎
+// 鐢ㄤ簬鍏煎鏃ф暟鎹紝褰?OrderState 涓嶅瓨鍦ㄦ椂璋冪敤銆?
 func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	accountKey := keys.KeyAccount(ord.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
@@ -480,18 +482,18 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 
 	targetOrderKey := keys.KeyOrder(ord.OpTargetId)
 	ws = append(ws, WriteOp{
-		Key:         targetOrderKey,
-		Value:       nil,
-		Del:         true,
-		Category:    "order",
+		Key:      targetOrderKey,
+		Value:    nil,
+		Del:      true,
+		Category: "order",
 	})
 
 	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.OpTargetId)
 	ws = append(ws, WriteOp{
-		Key:         accOrderItemKey,
-		Value:       nil,
-		Del:         true,
-		Category:    "acc_orders_item",
+		Key:      accOrderItemKey,
+		Value:    nil,
+		Del:      true,
+		Category: "acc_orders_item",
 	})
 
 	var refundToken string
@@ -548,9 +550,9 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 	balKey := keys.KeyBalance(ord.Base.FromAddress, refundToken)
 	balData, _, _ := sv.Get(balKey)
 	ws = append(ws, WriteOp{
-		Key:         balKey,
-		Value:       balData,
-		Category:    "balance",
+		Key:      balKey,
+		Value:    balData,
+		Category: "balance",
 	})
 
 	updatedAccountData, err := proto.Marshal(&account)
@@ -563,10 +565,10 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 	}
 
 	ws = append(ws, WriteOp{
-		Key:         accountKey,
-		Value:       updatedAccountData,
-		Del:         false,
-		Category:    "account",
+		Key:      accountKey,
+		Value:    updatedAccountData,
+		Del:      false,
+		Category: "account",
 	})
 
 	pair := utils.GeneratePairKey(targetOrder.BaseToken, targetOrder.QuoteToken)
@@ -581,10 +583,10 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 	priceIndexKey := keys.KeyOrderPriceIndex(pair, targetOrder.Side, false, priceKey67, ord.OpTargetId)
 
 	ws = append(ws, WriteOp{
-		Key:         priceIndexKey,
-		Value:       nil,
-		Del:         true,
-		Category:    "index",
+		Key:      priceIndexKey,
+		Value:    nil,
+		Del:      true,
+		Category: "index",
 	})
 
 	return ws, &Receipt{
@@ -594,471 +596,12 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 	}, nil
 }
 
+
 func (h *OrderTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
 
-// generateWriteOpsFromTrades 閺嶈宓侀幘顔兼値娴滃娆㈤悽鐔稿灇WriteOps
-// 閻滄澘婀担璺ㄦ暏 OrderState 鐎涙ê鍋嶉崣顖氬綁閻樿埖鈧緤绱漁rderTx 閸欘亝妲告稉宥呭讲閸欐娈戞禍銈嗘閸樼喐鏋?
-func (h *OrderTxHandler) generateWriteOpsFromTrades(
-	newOrd *pb.OrderTx,
-	tradeEvents []matching.TradeUpdate,
-	sv StateView,
-	pair string,
-	accountCache map[string]*pb.Account,
-) ([]WriteOp, error) {
-	ws := make([]WriteOp, 0)
-
-	// 婵″倹鐏夊▽鈩冩箒閹绢喖鎮庢禍瀣╂閿涘矁顕╅弰搴ゎ吂閸楁洘婀幋鎰唉閿涘瞼娲块幒銉ょ箽鐎涙顓归崡鏇犲Ц閿?
-	if len(tradeEvents) == 0 {
-		// 濞夈劍鍓伴敍姘崇箹闁插瞼娈?saveNewOrder 閸愬懘鍎存导姘辨晸閹存劘澶勯幋閿嬫纯閿?WriteOp
-		// 娴ｅ棛鏁遍敓?handleAddOrder 瀹歌尙绮￠崘鑽ょ波娴滃棔缍戞０婵撶礉閹存垳婊戞潻娆撳櫡閿?WriteOp 娑撳骸鍨垫慨瀣畱娑撯偓閿?
-		return h.saveNewOrder(newOrd, sv, pair, accountCache)
-	}
-
-	// 婢跺嫮鎮婂В蹇庨嚋閹绢喖鎮庢禍瀣╂ - 娴ｈ法鏁?OrderState 鐎涙ê鍋嶉崣顖氬綁閻樿鎷?
-	stateUpdates := make(map[string]*pb.OrderState) // orderID -> updated OrderState
-
-	for _, ev := range tradeEvents {
-		// 閸旂姾娴囩拋銏犲礋閻樿鎷?- 娴兼ê鍘涢敓?stateUpdates 娑擃叀骞忛崣鏍у嚒閺囧瓨鏌婇惃鍕閿?
-		var orderState *pb.OrderState
-		if cached, ok := stateUpdates[ev.OrderID]; ok {
-			// 瀹稿弶婀佺拠銉吂閸楁洜濮搁幀浣烘畱閺囧瓨鏌婇悧鍫熸拱閿涘苯婀崗璺虹唨绾偓娑撳﹦鎴风紒顓熸纯閿?
-			orderState = cached
-		} else if ev.OrderID == newOrd.Base.TxId {
-			// 鏉╂瑦妲搁弬鎷岊吂閸楁洩绱濋崚娑樼紦閸掓繂顫?OrderState
-			orderState = &pb.OrderState{
-				OrderId:          newOrd.Base.TxId,
-				FilledBase:       "0",
-				FilledQuote:      "0",
-				IsFilled:         false,
-				Status:           pb.OrderStateStatus_ORDER_OPEN,
-				CreateHeight:     newOrd.Base.ExecutedHeight,
-				LastUpdateHeight: newOrd.Base.ExecutedHeight,
-				BaseToken:        newOrd.BaseToken,
-				QuoteToken:       newOrd.QuoteToken,
-				Amount:           newOrd.Amount,
-				Price:            newOrd.Price,
-				Side:             newOrd.Side,
-				Owner:            newOrd.Base.FromAddress,
-			}
-		} else {
-			// 失败也要归还
-			orderStateKey := keys.KeyOrderState(ev.OrderID)
-			orderStateData, exists, err := sv.Get(orderStateKey)
-			if err != nil || !exists {
-				// 閸忕厧顔愰弮褎鏆熼幑顕嗙窗鐏忔繆鐦禒搴㈡＋閿?OrderTx 閸旂姾娴?
-				orderKey := keys.KeyOrder(ev.OrderID)
-				orderData, oldExists, oldErr := sv.Get(orderKey)
-				if oldErr != nil || !oldExists {
-					continue
-				}
-				var oldOrderTx pb.OrderTx
-				if err := unmarshalProtoCompat(orderData, &oldOrderTx); err != nil {
-					continue
-				}
-				// 鏉烆剚宕查敓?OrderState
-				orderState = &pb.OrderState{
-					OrderId:     ev.OrderID,
-					FilledBase:  "0", // 閺冄勬殶閹诡喖褰查懗鑺ョ梾閺堝绻栨禍娑樼摟濞堢绱濋柌宥嗘煀鐠侊紕鐣?
-					FilledQuote: "0",
-					IsFilled:    false,
-					Status:      pb.OrderStateStatus_ORDER_OPEN,
-					BaseToken:   oldOrderTx.BaseToken,
-					QuoteToken:  oldOrderTx.QuoteToken,
-					Amount:      oldOrderTx.Amount,
-					Price:       oldOrderTx.Price,
-					Side:        oldOrderTx.Side,
-					Owner:       oldOrderTx.Base.FromAddress,
-				}
-			} else {
-				orderState = orderStatePool.Get().(*pb.OrderState)
-				orderState.Reset()
-				// 鏉╂瑩鍣锋稉宥堝厴閿?defer Put閿涘苯娲滄稉鍝勬倵闂堛垼绻曠憰浣哥摠閿?map 楠炴儼顫﹀顏嗗箚婢舵牜娈戦柅鏄忕帆娴ｈ法鏁?
-				if err := unmarshalProtoCompat(orderStateData, orderState); err != nil {
-					orderStatePool.Put(orderState) // 婢惰精瑙︽稊鐔活洣瑜版帟绻?
-					continue
-				}
-			}
-		}
-
-		// 閺囧瓨鏌婄拋銏犲礋閻樿埖鈧胶娈戦幋鎰唉娣団剝浼?
-		filledBase, err := parseBalanceStrict("order filled_base", orderState.FilledBase)
-		if err != nil {
-			return nil, fmt.Errorf("invalid order state filled_base for %s: %w", ev.OrderID, err)
-		}
-		filledQuote, err := parseBalanceStrict("order filled_quote", orderState.FilledQuote)
-		if err != nil {
-			return nil, fmt.Errorf("invalid order state filled_quote for %s: %w", ev.OrderID, err)
-		}
-		tradeAmtBI, err := decimalToBalanceStrict("trade amount", ev.TradeAmt)
-		if err != nil {
-			return nil, fmt.Errorf("invalid trade amount for %s: %w", ev.OrderID, err)
-		}
-		tradePriceBI, err := decimalToBalanceStrict("trade price", ev.TradePrice)
-		if err != nil {
-			return nil, fmt.Errorf("invalid trade price for %s: %w", ev.OrderID, err)
-		}
-		tradeQuoteBI, err := SafeMul(tradeAmtBI, tradePriceBI)
-		if err != nil {
-			return nil, fmt.Errorf("trade quote overflow for %s: %w", ev.OrderID, err)
-		}
-		newFilledBase, err := SafeAdd(filledBase, tradeAmtBI)
-		if err != nil {
-			return nil, fmt.Errorf("filled_base overflow for %s: %w", ev.OrderID, err)
-		}
-		newFilledQuote, err := SafeAdd(filledQuote, tradeQuoteBI)
-		if err != nil {
-			return nil, fmt.Errorf("filled_quote overflow for %s: %w", ev.OrderID, err)
-		}
-
-		orderState.FilledBase = newFilledBase.String()
-		orderState.FilledQuote = newFilledQuote.String()
-		orderState.IsFilled = ev.IsFilled
-		if ev.IsFilled {
-			orderState.Status = pb.OrderStateStatus_ORDER_FILLED
-		}
-
-		stateUpdates[ev.OrderID] = orderState
-
-		// 閸氬本妞傜涵顔荤箽鐠併垹宕熺€圭偘缍嬬悮顐＄箽鐎涙﹫绱欓崗鐓庮啇缁便垹绱╅柌宥呯紦閿?
-		if ev.OrderID == newOrd.Base.TxId {
-			orderKey := keys.KeyOrderTx(newOrd.Base.TxId)
-			orderData, _ := proto.Marshal(newOrd)
-			ws = append(ws, WriteOp{
-				Key:         orderKey,
-				Value:       orderData,
-				Del:         false,
-				Category:    "order",
-			})
-		}
-	}
-
-	// 閻㈢喐鍨歐riteOps娣囨繂鐡ㄩ幍鈧張澶嬫纯閺傛壆娈戠拋銏犲礋閻樿鎷?
-	for orderID, orderState := range stateUpdates {
-		orderStateKey := keys.KeyOrderState(orderID)
-		orderStateData, err := proto.Marshal(orderState)
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal order state %s: %w", orderID, err)
-		}
-
-		ws = append(ws, WriteOp{
-			Key:         orderStateKey,
-			Value:       orderStateData,
-			Del:         false,
-			Category:    "orderstate",
-		})
-
-		// 所有使用 stateUpdates 的函数已执行完毕，现在安全地归还 Pool 对象
-		priceKey67, err := db.PriceToKey128(orderState.Price)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert price to key: %w", err)
-		}
-
-		// 閸掔娀娅庨弮褏娈戦張顏呭灇娴溿倗鍌ㄩ敓?
-		oldIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, false, priceKey67, orderID)
-		ws = append(ws, WriteOp{
-			Key:         oldIndexKey,
-			Value:       nil,
-			Del:         true,
-			Category:    "index",
-		})
-
-		// 如果 accountCache 中有更新后的账户，生成对应的 WriteOp
-		if orderState.IsFilled {
-			newIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, true, priceKey67, orderID)
-			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
-			ws = append(ws, WriteOp{
-				Key:         newIndexKey,
-				Value:       indexData,
-				Del:         false,
-				Category:    "index",
-			})
-		} else {
-			// 婵″倹鐏夐張顏勭暚閸忋劍鍨氭禍銈忕礉娣囨繄鏆€閺堫亝鍨氭禍銈囧偍閿?(娴ｈ法鏁ら弬鎵畱 Key 閺嶇厧绱＄悰銉ュ弿 Side)
-			indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
-			ws = append(ws, WriteOp{
-				Key:         oldIndexKey,
-				Value:       indexData,
-				Del:         false,
-				Category:    "index",
-			})
-		}
-	}
-
-	// 閻㈢喐鍨氶幋鎰唉鐠佹澘缍?
-	tradeRecordOps, err := h.generateTradeRecordsFromStates(newOrd, tradeEvents, stateUpdates, pair)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate trade records: %w", err)
-	}
-	ws = append(ws, tradeRecordOps...)
-
-	// 閺囧瓨鏌婄拹锔藉煕娴ｆ瑩顤?
-	// 閿?accountCache 娴肩姴鍙嗛敍宀€鈥樻穱婵嗘倱娑撯偓缁楁柧姘﹂弰鎾冲敶閻ㄥ嫪缍戞０婵呮叏閺€瑙勬Ц缁鳖垳袧閿?
-	accountBalanceOps, err := h.updateAccountBalancesFromStates(tradeEvents, stateUpdates, sv, accountCache)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update account balances: %w", err)
-	}
-	ws = append(ws, accountBalanceOps...)
-
-	// 閹碘偓閺堝濞囬敓?stateUpdates 閻ㄥ嫬鍤遍弫鏉垮嚒閹笛嗩攽鐎瑰本鐦敍宀€骞囬崷銊ョ暔閸忋劌婀磋ぐ鎺曠箷 Pool 鐎电钖?
-	for _, orderState := range stateUpdates {
-		orderStatePool.Put(orderState)
-	}
-
-	return ws, nil
-}
-
-// generateWriteOpsFromTrades ... (濮濄倕顦╅惇浣烘殣閿涘奔绻氶幐浣稿闂堛垻娈戦弴瀛樻煀)
-// 濞夈劍鍓伴敍姝秔dateAccountBalances 閸戣姤鏆熷鑼额潶瀵啰鏁ら敍灞绢劃婢跺嫮娲块幒銉ョ殺閸忚泛鍞寸€硅绔荤粚鐑樺灗閸掔娀娅?
-
-// saveNewOrder 娣囨繂鐡ㄩ弬鎷岊吂閸楁洩绱欓張顏呭灇娴溿倗娈戦幆鍛枌閿?
-// 閻滄澘婀穱婵嗙摠 OrderState 閼板奔绗夐敓?OrderTx閿涘湦rderTx 娴ｆ粈璐熸禍銈嗘閸樼喐鏋冮敓?applyResult 缂佺喍绔存穱婵嗙摠閿?v1_txraw_<txid>閿?
-func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string, accountCache map[string]*pb.Account) ([]WriteOp, error) {
-	ws := make([]WriteOp, 0)
-
-	// 婵″倹鐏?accountCache 娑擃厽婀侀弴瀛樻煀閸氬海娈戠拹锔藉煕閿涘瞼鏁撻幋鎰嚠鎼存梻娈?WriteOp
-	if accountCache != nil {
-		if acc, ok := accountCache[ord.Base.FromAddress]; ok {
-			accountKey := keys.KeyAccount(ord.Base.FromAddress)
-			updatedAccountData, _ := proto.Marshal(acc)
-			ws = append(ws, WriteOp{
-				Key:         accountKey,
-				Value:       updatedAccountData,
-				Del:         false,
-				Category:    "account",
-			})
-		}
-	}
-
-	// 閻㈢喐鍨氶崘鑽ょ波娴ｆ瑩顤傞敓?WriteOp閿涘潝andleAddOrder 瀹告煡鈧俺绻?SetBalance 閸愭瑥鍙?sv閿?
-	if ord.Side == pb.OrderSide_SELL {
-		balKey := keys.KeyBalance(ord.Base.FromAddress, ord.BaseToken)
-		balData, _, _ := sv.Get(balKey)
-		ws = append(ws, WriteOp{Key: balKey, Value: balData, Category: "balance"})
-	} else {
-		balKey := keys.KeyBalance(ord.Base.FromAddress, ord.QuoteToken)
-		balData, _, _ := sv.Get(balKey)
-		ws = append(ws, WriteOp{Key: balKey, Value: balData, Category: "balance"})
-	}
-
-	// 閸掓稑缂?OrderState閿涘牆褰查崣妯煎Ц閹緤绱?
-	orderState := &pb.OrderState{
-		OrderId:          ord.Base.TxId,
-		FilledBase:       "0",
-		FilledQuote:      "0",
-		IsFilled:         false,
-		Status:           pb.OrderStateStatus_ORDER_OPEN,
-		CreateHeight:     ord.Base.ExecutedHeight,
-		LastUpdateHeight: ord.Base.ExecutedHeight,
-		// 閸愭ぞ缍戠€涙顔岄敍灞炬煙娓氭寧鐓￠敓?
-		BaseToken:  ord.BaseToken,
-		QuoteToken: ord.QuoteToken,
-		Amount:     ord.Amount,
-		Price:      ord.Price,
-		Side:       ord.Side,
-		Owner:      ord.Base.FromAddress,
-	}
-
-	orderStateKey := keys.KeyOrderState(ord.Base.TxId)
-	orderStateData, err := proto.Marshal(orderState)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal order state: %w", err)
-	}
-
-	ws = append(ws, WriteOp{
-		Key:         orderStateKey,
-		Value:       orderStateData,
-		Del:         false,
-		Category:    "orderstate",
-	})
-
-	// 閸氬本妞傛穱婵嗙摠鐠併垹宕熺€圭偘缍嬮敍灞间簰娓氳法鍌ㄥ鏇㈠櫢瀵ゆ椽鈧槒绶敍鍦buildOrderPriceIndexes閿涘鍏樺锝呯埗瀹搞儰缍?
-	orderKey := keys.KeyOrderTx(ord.Base.TxId)
-	orderData, _ := proto.Marshal(ord)
-	ws = append(ws, WriteOp{
-		Key:         orderKey,
-		Value:       orderData,
-		Del:         false,
-		Category:    "order",
-	})
-
-	// 4. 鐠囪褰囬悪顒傜彌鐎涙ê鍋嶉惃鍕吂閸楁洖鍨悰銊ヨ嫙濞ｈ濮為弬鎷岊吂閿?(Phase 2 闁插秵鐎敍姘暭娑撹櫣顬囬弫锝呯摠閿?
-	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.Base.TxId)
-	ws = append(ws, WriteOp{
-		Key:         accOrderItemKey,
-		Value:       []byte{1}, // 娴犲懍缍旀稉鐑樼垼鐠佹澘鐡ㄩ敓?
-		Del:         false,
-		Category:    "acc_orders_item",
-	})
-
-	// 閸掓稑缂撴禒閿嬬壐缁便垹绱╅敍鍫濈唨閿?OrderState.IsFilled閿?
-	priceKey67, err := db.PriceToKey128(ord.Price)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert price to key: %w", err)
-	}
-
-	// 创建成交记录
-	priceIndexKey := keys.KeyOrderPriceIndex(pair, ord.Side, orderState.IsFilled, priceKey67, ord.Base.TxId)
-	indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
-	ws = append(ws, WriteOp{
-		Key:         priceIndexKey,
-		Value:       indexData,
-		Del:         false,
-		Category:    "index",
-	})
-
-	return ws, nil
-}
-
-// generateTradeRecords 閺嶈宓侀幘顔兼値娴滃娆㈤悽鐔稿灇閹存劒姘︾拋鏉跨秿
-// 閹绢喖鎮庢禍瀣╂閹存劕顕崙铏瑰箛閿涘澅aker 閿?maker 閸氬嫪绔存稉顏庣礆閿涘矂娓剁憰浣告値楠炶埖鍨氭稉鈧弶鈩冨灇娴溿倛顔囬敓?
-func (h *OrderTxHandler) generateTradeRecords(
-	newOrd *pb.OrderTx,
-	tradeEvents []matching.TradeUpdate,
-	orderUpdates map[string]*pb.OrderTx,
-	pair string,
-) ([]WriteOp, error) {
-	ws := make([]WriteOp, 0)
-
-	// 閺傛媽顓归崡鏇熸Ц taker閿涘本鎸抽崥鍫滅皑娴犺埖鍨氱€电懓鍤敓?
-	// 闁秴宸绘禍瀣╂閿涘本鐦℃稉銈勯嚋娴滃娆㈤悽鐔稿灇娑撯偓閺夆剝鍨氭禍銈堫唶閿?
-	for i := 0; i < len(tradeEvents)-1; i += 2 {
-		takerEv := tradeEvents[i]
-		makerEv := tradeEvents[i+1]
-
-		// 绾喖鐣?taker 閿?maker
-		var takerOrderID, makerOrderID string
-		var tradePrice, tradeAmount string
-		var takerSide pb.OrderSide
-
-		if takerEv.OrderID == newOrd.Base.TxId {
-			takerOrderID = takerEv.OrderID
-			makerOrderID = makerEv.OrderID
-			tradePrice = takerEv.TradePrice.String()
-			tradeAmount = takerEv.TradeAmt.String()
-			takerSide = newOrd.Side
-		} else {
-			takerOrderID = makerEv.OrderID
-			makerOrderID = takerEv.OrderID
-			tradePrice = makerEv.TradePrice.String()
-			tradeAmount = makerEv.TradeAmt.String()
-			if makerOrd, ok := orderUpdates[makerOrderID]; ok {
-				takerSide = makerOrd.Side
-			}
-		}
-
-		// 閻㈢喐鍨氶幋鎰唉 ID閿涘牅濞囬敓?taker 鐠併垹宕?ID + maker 鐠併垹宕?ID + 缁便垹绱╅敓?
-		tradeID := fmt.Sprintf("%s_%s_%d", takerOrderID[:8], makerOrderID[:8], i/2)
-		timestamp := utils.NowRFC3339()
-
-		// 閸掓稑缂撻幋鎰唉鐠佹澘缍?
-		tradeRecord := &pb.TradeRecord{
-			TradeId:      tradeID,
-			Pair:         pair,
-			Price:        tradePrice,
-			Amount:       tradeAmount,
-			MakerOrderId: makerOrderID,
-			TakerOrderId: takerOrderID,
-			TakerSide:    takerSide,
-			Timestamp:    timestamp,
-			Height:       newOrd.Base.ExecutedHeight,
-		}
-
-		tradeData, err := proto.Marshal(tradeRecord)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal trade record: %w", err)
-		}
-
-		// 娴ｈ法鏁ら弮鍫曟？閹村厖缍旈敓?key 閸撳秶绱戦敍宀冾唨閺堚偓閺傛壆娈戦幋鎰唉鐠佹澘缍嶉幒鎺戞躬閸撳秹娼?
-		tradeKey := keys.KeyTradeRecord(pair, utils.NowUnixNano(), tradeID)
-		ws = append(ws, WriteOp{
-			Key:         tradeKey,
-			Value:       tradeData,
-			Del:         false,
-			Category:    "trade",
-		})
-	}
-
-	return ws, nil
-}
-
-// generateTradeRecordsFromStates 娴ｈ法鏁?OrderState 閻㈢喐鍨氶幋鎰唉鐠佹澘缍?
-func (h *OrderTxHandler) generateTradeRecordsFromStates(
-	newOrd *pb.OrderTx,
-	tradeEvents []matching.TradeUpdate,
-	stateUpdates map[string]*pb.OrderState,
-	pair string,
-) ([]WriteOp, error) {
-	ws := make([]WriteOp, 0)
-
-	for i := 0; i < len(tradeEvents)-1; i += 2 {
-		takerEv := tradeEvents[i]
-		makerEv := tradeEvents[i+1]
-
-		var takerOrderID, makerOrderID string
-		var tradePrice, tradeAmount string
-		var takerSide pb.OrderSide
-
-		if takerEv.OrderID == newOrd.Base.TxId {
-			takerOrderID = takerEv.OrderID
-			makerOrderID = makerEv.OrderID
-			tradePrice = takerEv.TradePrice.String()
-			tradeAmount = takerEv.TradeAmt.String()
-			takerSide = newOrd.Side
-		} else {
-			takerOrderID = makerEv.OrderID
-			makerOrderID = takerEv.OrderID
-			tradePrice = makerEv.TradePrice.String()
-			tradeAmount = makerEv.TradeAmt.String()
-			if makerState, ok := stateUpdates[makerOrderID]; ok {
-				takerSide = makerState.Side
-			}
-		}
-
-		// key 格式: "address:token"
-		takerIDShort := takerOrderID
-		if len(takerIDShort) > 8 {
-			takerIDShort = takerIDShort[:8]
-		}
-		makerIDShort := makerOrderID
-		if len(makerIDShort) > 8 {
-			makerIDShort = makerIDShort[:8]
-		}
-		tradeID := fmt.Sprintf("%s_%s_%d", takerIDShort, makerIDShort, i/2)
-		timestamp := utils.NowRFC3339()
-
-		tradeRecord := &pb.TradeRecord{
-			TradeId:      tradeID,
-			Pair:         pair,
-			Price:        tradePrice,
-			Amount:       tradeAmount,
-			MakerOrderId: makerOrderID,
-			TakerOrderId: takerOrderID,
-			TakerSide:    takerSide,
-			Timestamp:    timestamp,
-			Height:       newOrd.Base.ExecutedHeight,
-		}
-
-		tradeData, err := proto.Marshal(tradeRecord)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal trade record: %w", err)
-		}
-
-		tradeKey := keys.KeyTradeRecord(pair, utils.NowUnixNano(), tradeID)
-		ws = append(ws, WriteOp{
-			Key:         tradeKey,
-			Value:       tradeData,
-			Del:         false,
-			Category:    "trade",
-		})
-	}
-
-	return ws, nil
-}
-
-// updateAccountBalancesFromStates 娴ｈ法鏁?OrderState 閺囧瓨鏌婄拹锔藉煕娴ｆ瑩顤傞敍鍫滃▏閻劌鍨庣粋璇茬摠閸岊煉绱?
+// updateAccountBalancesFromStates 鏍规嵁 OrderState 鏇存柊璐︽埛浣欓
 func (h *OrderTxHandler) updateAccountBalancesFromStates(
 	tradeEvents []matching.TradeUpdate,
 	stateUpdates map[string]*pb.OrderState,
@@ -1202,9 +745,377 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 		balKey := keys.KeyBalance(key.addr, key.token)
 		balData, _, _ := sv.Get(balKey)
 		ws = append(ws, WriteOp{
-			Key:         balKey,
-			Value:       balData,
-			Category:    "balance",
+			Key:      balKey,
+			Value:    balData,
+			Category: "balance",
+		})
+	}
+
+	return ws, nil
+}
+
+// generateWriteOpsFromTrades 鏍规嵁鎾悎缁撴灉鐢熸垚 WriteOps
+// 鏇存柊 OrderState 骞跺鐞?OrderTx 鐩稿叧鐨勭姸鎬佸彉鏇淬€?
+func (h *OrderTxHandler) generateWriteOpsFromTrades(
+	newOrd *pb.OrderTx,
+	tradeEvents []matching.TradeUpdate,
+	sv StateView,
+	pair string,
+	accountCache map[string]*pb.Account,
+) ([]WriteOp, error) {
+	ws := make([]WriteOp, 0)
+
+	// 濡傛灉娌℃湁鎴愪氦浜嬩欢锛岀洿鎺ヤ繚瀛樻柊璁㈠崟
+	if len(tradeEvents) == 0 {
+		// saveNewOrder 浼氬鐞嗕綑棰濆喕缁撳拰 OrderState 淇濆瓨
+		return h.saveNewOrder(newOrd, sv, pair, accountCache)
+	}
+
+	// 棰勫鐞?OrderState 鏇存柊
+	stateUpdates := make(map[string]*pb.OrderState) // orderID -> updated OrderState
+
+	for _, ev := range tradeEvents {
+		// 鑾峰彇鎴栧垵濮嬪寲 OrderState
+		var orderState *pb.OrderState
+		if cached, ok := stateUpdates[ev.OrderID]; ok {
+			// 浣跨敤缂撳瓨涓殑鐘舵€?
+			orderState = cached
+		} else if ev.OrderID == newOrd.Base.TxId {
+			// 鏂拌鍗曠殑 OrderState 鍒濆鍖?
+			orderState = &pb.OrderState{
+				OrderId:          newOrd.Base.TxId,
+				FilledBase:       "0",
+				FilledQuote:      "0",
+				IsFilled:         false,
+				Status:           pb.OrderStateStatus_ORDER_OPEN,
+				CreateHeight:     newOrd.Base.ExecutedHeight,
+				LastUpdateHeight: newOrd.Base.ExecutedHeight,
+				BaseToken:        newOrd.BaseToken,
+				QuoteToken:       newOrd.QuoteToken,
+				Amount:           newOrd.Amount,
+				Price:            newOrd.Price,
+				Side:             newOrd.Side,
+				Owner:            newOrd.Base.FromAddress,
+			}
+		} else {
+			// 灏濊瘯浠?DB 鍔犺浇鐜版湁 OrderState
+			orderStateKey := keys.KeyOrderState(ev.OrderID)
+			orderStateData, exists, err := sv.Get(orderStateKey)
+			if err != nil || !exists {
+				// 濡傛灉娌℃湁 OrderState锛屽皾璇曞洖閫€鏌ユ壘 OrderTx锛堝吋瀹规棫鏁版嵁锛?
+				orderKey := keys.KeyOrder(ev.OrderID)
+				orderData, oldExists, oldErr := sv.Get(orderKey)
+				if oldErr != nil || !oldExists {
+					continue
+				}
+				var oldOrderTx pb.OrderTx
+				if err := unmarshalProtoCompat(orderData, &oldOrderTx); err != nil {
+					continue
+				}
+				// 浠?OrderTx 閲嶅缓鍒濆 OrderState
+				orderState = &pb.OrderState{
+					OrderId:     ev.OrderID,
+					FilledBase:  "0",
+					FilledQuote: "0",
+					IsFilled:    false,
+					Status:      pb.OrderStateStatus_ORDER_OPEN,
+					BaseToken:   oldOrderTx.BaseToken,
+					QuoteToken:  oldOrderTx.QuoteToken,
+					Amount:      oldOrderTx.Amount,
+					Price:       oldOrderTx.Price,
+					Side:        oldOrderTx.Side,
+					Owner:       oldOrderTx.Base.FromAddress,
+				}
+			} else {
+				orderState = orderStatePool.Get().(*pb.OrderState)
+				orderState.Reset()
+				if err := unmarshalProtoCompat(orderStateData, orderState); err != nil {
+					orderStatePool.Put(orderState)
+					continue
+				}
+			}
+		}
+
+		// 鏇存柊鎴愪氦閲?
+		filledBase, err := parseBalanceStrict("order filled_base", orderState.FilledBase)
+		if err != nil {
+			return nil, fmt.Errorf("invalid order state filled_base for %s: %w", ev.OrderID, err)
+		}
+		filledQuote, err := parseBalanceStrict("order filled_quote", orderState.FilledQuote)
+		if err != nil {
+			return nil, fmt.Errorf("invalid order state filled_quote for %s: %w", ev.OrderID, err)
+		}
+		tradeAmtBI, err := decimalToBalanceStrict("trade amount", ev.TradeAmt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trade amount for %s: %w", ev.OrderID, err)
+		}
+		tradePriceBI, err := decimalToBalanceStrict("trade price", ev.TradePrice)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trade price for %s: %w", ev.OrderID, err)
+		}
+		tradeQuoteBI, err := SafeMul(tradeAmtBI, tradePriceBI)
+		if err != nil {
+			return nil, fmt.Errorf("trade quote overflow for %s: %w", ev.OrderID, err)
+		}
+		newFilledBase, err := SafeAdd(filledBase, tradeAmtBI)
+		if err != nil {
+			return nil, fmt.Errorf("filled_base overflow for %s: %w", ev.OrderID, err)
+		}
+		newFilledQuote, err := SafeAdd(filledQuote, tradeQuoteBI)
+		if err != nil {
+			return nil, fmt.Errorf("filled_quote overflow for %s: %w", ev.OrderID, err)
+		}
+
+		orderState.FilledBase = newFilledBase.String()
+		orderState.FilledQuote = newFilledQuote.String()
+		orderState.IsFilled = ev.IsFilled
+		if ev.IsFilled {
+			orderState.Status = pb.OrderStateStatus_ORDER_FILLED
+		}
+
+		stateUpdates[ev.OrderID] = orderState
+
+		// 濡傛灉鏄柊璁㈠崟锛岃繕闇€瑕佷繚瀛?OrderTx 鍘熸枃
+		if ev.OrderID == newOrd.Base.TxId {
+			orderKey := keys.KeyOrderTx(newOrd.Base.TxId)
+			orderData, _ := proto.Marshal(newOrd)
+			ws = append(ws, WriteOp{
+				Key:      orderKey,
+				Value:    orderData,
+				Del:      false,
+				Category: "order",
+			})
+		}
+	}
+
+	// 鐢熸垚 OrderState 鐨?WriteOps
+	for orderID, orderState := range stateUpdates {
+		orderStateKey := keys.KeyOrderState(orderID)
+		orderStateData, err := proto.Marshal(orderState)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal order state %s: %w", orderID, err)
+		}
+
+		ws = append(ws, WriteOp{
+			Key:      orderStateKey,
+			Value:    orderStateData,
+			Del:      false,
+			Category: "orderstate",
+		})
+
+		// 澶勭悊绱㈠紩鏇存柊锛氬厛鍒犻櫎鏃х储寮?
+		priceKey67, err := db.PriceToKey128(orderState.Price)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert price to key: %w", err)
+		}
+
+		oldIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, false, priceKey67, orderID)
+		ws = append(ws, WriteOp{
+			Key:      oldIndexKey,
+			Value:    nil,
+			Del:      true,
+			Category: "index",
+		})
+
+		// 濡傛灉鏈垚浜ゅ畬锛屾坊鍔犳柊绱㈠紩锛堟垨鑰呭凡鎴愪氦瀹屼篃鍙兘闇€瑕佽褰曪紝瑙嗛€昏緫鑰屽畾锛岃繖閲岄€昏緫鏄?IsFilled 鍒欏彧璁板綍 Ok=true 鐨勭储寮曪紝鍙兘鐢ㄤ簬鍘嗗彶鏌ヨ锛燂級
+		newIndexKey := keys.KeyOrderPriceIndex(pair, orderState.Side, orderState.IsFilled, priceKey67, orderID)
+		indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
+		ws = append(ws, WriteOp{
+			Key:      newIndexKey,
+			Value:    indexData,
+			Del:      false,
+			Category: "index",
+		})
+	}
+
+	// 鐢熸垚鎴愪氦璁板綍鐨?WriteOps
+	tradeRecordOps, err := h.generateTradeRecordsFromStates(newOrd, tradeEvents, stateUpdates, pair)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate trade records: %w", err)
+	}
+	ws = append(ws, tradeRecordOps...)
+
+	// 鏇存柊璐︽埛浣欓
+	accountBalanceOps, err := h.updateAccountBalancesFromStates(tradeEvents, stateUpdates, sv, accountCache)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update account balances: %w", err)
+	}
+	ws = append(ws, accountBalanceOps...)
+
+	// 褰掕繕瀵硅薄姹?
+	for _, orderState := range stateUpdates {
+		orderStatePool.Put(orderState)
+	}
+
+	return ws, nil
+}
+
+// saveNewOrder 淇濆瓨鏂拌鍗曠殑鍒濆鐘舵€?
+// 鍖呮嫭锛歄rderTx, OrderState, 璐︽埛淇℃伅鏇存柊, 鍐荤粨浣欓鏇存柊, 璁㈠崟绱㈠紩, 璐︽埛璁㈠崟鍒楄〃銆?
+func (h *OrderTxHandler) saveNewOrder(ord *pb.OrderTx, sv StateView, pair string, accountCache map[string]*pb.Account) ([]WriteOp, error) {
+	ws := make([]WriteOp, 0)
+
+	// 淇濆瓨鏇存柊鍚庣殑璐︽埛淇℃伅
+	if accountCache != nil {
+		if acc, ok := accountCache[ord.Base.FromAddress]; ok {
+			accountKey := keys.KeyAccount(ord.Base.FromAddress)
+			updatedAccountData, _ := proto.Marshal(acc)
+			ws = append(ws, WriteOp{
+				Key:      accountKey,
+				Value:    updatedAccountData,
+				Del:      false,
+				Category: "account",
+			})
+		}
+	}
+
+	// 淇濆瓨浣欓鏇存柊锛堝喕缁擄級
+	if ord.Side == pb.OrderSide_SELL {
+		balKey := keys.KeyBalance(ord.Base.FromAddress, ord.BaseToken)
+		balData, _, _ := sv.Get(balKey)
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, Category: "balance"})
+	} else {
+		balKey := keys.KeyBalance(ord.Base.FromAddress, ord.QuoteToken)
+		balData, _, _ := sv.Get(balKey)
+		ws = append(ws, WriteOp{Key: balKey, Value: balData, Category: "balance"})
+	}
+
+	// 鍒涘缓鍒濆 OrderState
+	orderState := &pb.OrderState{
+		OrderId:          ord.Base.TxId,
+		FilledBase:       "0",
+		FilledQuote:      "0",
+		IsFilled:         false,
+		Status:           pb.OrderStateStatus_ORDER_OPEN,
+		CreateHeight:     ord.Base.ExecutedHeight,
+		LastUpdateHeight: ord.Base.ExecutedHeight,
+		BaseToken:        ord.BaseToken,
+		QuoteToken:       ord.QuoteToken,
+		Amount:           ord.Amount,
+		Price:            ord.Price,
+		Side:             ord.Side,
+		Owner:            ord.Base.FromAddress,
+	}
+
+	orderStateKey := keys.KeyOrderState(ord.Base.TxId)
+	orderStateData, err := proto.Marshal(orderState)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal order state: %w", err)
+	}
+
+	ws = append(ws, WriteOp{
+		Key:      orderStateKey,
+		Value:    orderStateData,
+		Del:      false,
+		Category: "orderstate",
+	})
+
+	// 淇濆瓨 OrderTx 鍘熸枃
+	orderKey := keys.KeyOrderTx(ord.Base.TxId)
+	orderData, _ := proto.Marshal(ord)
+	ws = append(ws, WriteOp{
+		Key:      orderKey,
+		Value:    orderData,
+		Del:      false,
+		Category: "order",
+	})
+
+	// 娣诲姞鍒拌处鎴风殑璁㈠崟鍒楄〃
+	accOrderItemKey := keys.KeyAccountOrderItem(ord.Base.FromAddress, ord.Base.TxId)
+	ws = append(ws, WriteOp{
+		Key:      accOrderItemKey,
+		Value:    []byte{1},
+		Del:      false,
+		Category: "acc_orders_item",
+	})
+
+	// 鍒涘缓浠锋牸绱㈠紩
+	priceKey67, err := db.PriceToKey128(ord.Price)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert price to key: %w", err)
+	}
+
+	priceIndexKey := keys.KeyOrderPriceIndex(pair, ord.Side, orderState.IsFilled, priceKey67, ord.Base.TxId)
+	indexData, _ := proto.Marshal(&pb.OrderPriceIndex{Ok: true})
+	ws = append(ws, WriteOp{
+		Key:      priceIndexKey,
+		Value:    indexData,
+		Del:      false,
+		Category: "index",
+	})
+
+	return ws, nil
+}
+
+// generateTradeRecordsFromStates 浠?OrderState 鐢熸垚鎴愪氦璁板綍
+func (h *OrderTxHandler) generateTradeRecordsFromStates(
+	newOrd *pb.OrderTx,
+	tradeEvents []matching.TradeUpdate,
+	stateUpdates map[string]*pb.OrderState,
+	pair string,
+) ([]WriteOp, error) {
+	ws := make([]WriteOp, 0)
+
+	for i := 0; i < len(tradeEvents)-1; i += 2 {
+		takerEv := tradeEvents[i]
+		makerEv := tradeEvents[i+1]
+
+		var takerOrderID, makerOrderID string
+		var tradePrice, tradeAmount string
+		var takerSide pb.OrderSide
+
+		if takerEv.OrderID == newOrd.Base.TxId {
+			takerOrderID = takerEv.OrderID
+			makerOrderID = makerEv.OrderID
+			tradePrice = takerEv.TradePrice.String()
+			tradeAmount = takerEv.TradeAmt.String()
+			takerSide = newOrd.Side
+		} else {
+			takerOrderID = makerEv.OrderID
+			makerOrderID = takerEv.OrderID
+			tradePrice = makerEv.TradePrice.String()
+			tradeAmount = makerEv.TradeAmt.String()
+			if makerState, ok := stateUpdates[makerOrderID]; ok {
+				takerSide = makerState.Side
+			}
+		}
+
+		// key 鏍煎紡: "address:token"
+		takerIDShort := takerOrderID
+		if len(takerIDShort) > 8 {
+			takerIDShort = takerIDShort[:8]
+		}
+		makerIDShort := makerOrderID
+		if len(makerIDShort) > 8 {
+			makerIDShort = makerIDShort[:8]
+		}
+		tradeID := fmt.Sprintf("%s_%s_%d", takerIDShort, makerIDShort, i/2)
+		timestamp := utils.NowRFC3339()
+
+		tradeRecord := &pb.TradeRecord{
+			TradeId:      tradeID,
+			Pair:         pair,
+			Price:        tradePrice,
+			Amount:       tradeAmount,
+			MakerOrderId: makerOrderID,
+			TakerOrderId: takerOrderID,
+			TakerSide:    takerSide,
+			Timestamp:    timestamp,
+			Height:       newOrd.Base.ExecutedHeight,
+		}
+
+		tradeData, err := proto.Marshal(tradeRecord)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal trade record: %w", err)
+		}
+
+		tradeKey := keys.KeyTradeRecord(pair, utils.NowUnixNano(), tradeID)
+		ws = append(ws, WriteOp{
+			Key:      tradeKey,
+			Value:    tradeData,
+			Del:      false,
+			Category: "trade",
 		})
 	}
 

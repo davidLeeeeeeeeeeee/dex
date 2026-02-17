@@ -10,6 +10,14 @@ import (
 	"fmt"
 )
 
+// DkgCommitmentStatus DKG 承诺状态
+type DkgCommitmentStatus string
+
+const (
+	DkgCommitmentStatusCommitted    DkgCommitmentStatus = "COMMITTED"
+	DkgCommitmentStatusDisqualified DkgCommitmentStatus = "DISQUALIFIED"
+)
+
 // DKG 状态常量
 const (
 	DKGStatusNotStarted = "NOT_STARTED"
