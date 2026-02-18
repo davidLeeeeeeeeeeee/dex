@@ -2,6 +2,7 @@ package vm_test
 
 import (
 	"dex/db"
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	"dex/vm"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 // TestOrderBalance_TakerAtomic 验证 Taker 账户在一次交易内的两次余额变更（冻结+扣减）是否原子
@@ -169,4 +171,75 @@ func TestOrderBalance_RemoveOrder(t *testing.T) {
 	aliceUSDT := getE2EBalance(t, dbMgr, aliceAddr, "USDT")
 	assert.Equal(t, "100000", aliceUSDT.Balance)
 	assert.Equal(t, "0", aliceUSDT.OrderFrozenBalance)
+}
+
+func createE2ETestAccount(t *testing.T, dbMgr *db.Manager, address string, balances map[string]string) {
+	account := &pb.Account{Address: address}
+	accountData, err := proto.Marshal(account)
+	require.NoError(t, err)
+	dbMgr.EnqueueSet(keys.KeyAccount(address), string(accountData))
+
+	for token, amount := range balances {
+		bal := &pb.TokenBalanceRecord{
+			Address: address,
+			Token:   token,
+			Balance: &pb.TokenBalance{
+				Balance:            amount,
+				OrderFrozenBalance: "0",
+				MinerLockedBalance: "0",
+			},
+		}
+		balData, err := proto.Marshal(bal)
+		require.NoError(t, err)
+		dbMgr.EnqueueSet(keys.KeyBalance(address, token), string(balData))
+	}
+}
+
+func createSellOrder(txID, fromAddr, baseToken, quoteToken, price, amount string) *pb.AnyTx {
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_OrderTx{
+			OrderTx: &pb.OrderTx{
+				Base: &pb.BaseMessage{
+					TxId:        txID,
+					FromAddress: fromAddr,
+				},
+				BaseToken:  baseToken,
+				QuoteToken: quoteToken,
+				Op:         pb.OrderOp_ADD,
+				Side:       pb.OrderSide_SELL,
+				Price:      price,
+				Amount:     amount,
+			},
+		},
+	}
+}
+
+func createBuyOrder(txID, fromAddr, baseToken, quoteToken, price, amount string) *pb.AnyTx {
+	return &pb.AnyTx{
+		Content: &pb.AnyTx_OrderTx{
+			OrderTx: &pb.OrderTx{
+				Base: &pb.BaseMessage{
+					TxId:        txID,
+					FromAddress: fromAddr,
+				},
+				BaseToken:  baseToken,
+				QuoteToken: quoteToken,
+				Op:         pb.OrderOp_ADD,
+				Side:       pb.OrderSide_BUY,
+				Price:      price,
+				Amount:     amount,
+			},
+		},
+	}
+}
+
+func getE2EBalance(t *testing.T, dbMgr *db.Manager, address, token string) *pb.TokenBalance {
+	raw, err := dbMgr.Get(keys.KeyBalance(address, token))
+	require.NoError(t, err)
+	require.NotNil(t, raw, "balance should exist for %s %s", address, token)
+
+	var rec pb.TokenBalanceRecord
+	require.NoError(t, proto.Unmarshal(raw, &rec))
+	require.NotNil(t, rec.Balance, "balance payload should not be nil")
+	return rec.Balance
 }

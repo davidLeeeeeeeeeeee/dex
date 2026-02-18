@@ -33,6 +33,10 @@ type Executor struct {
 	WitnessService *witness.Service // 见证者服务（纯内存计算模块）
 }
 
+type stateDBSyncer interface {
+	SyncStateUpdates(height uint64, updates []interface{}) (int, error)
+}
+
 func NewExecutor(db iface.DBManager, reg *HandlerRegistry, cache SpecExecCache) *Executor {
 	return NewExecutorWithWitness(db, reg, cache, nil)
 }
@@ -692,9 +696,22 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 	}
 
 	// ========== 第二步：应用所有状态变更 ==========
+	// 在主库队列写入前，先同步 stateDB，避免主库已排队但 stateDB 失败。
+	if syncer, ok := x.DB.(stateDBSyncer); ok && len(res.Diff) > 0 {
+		updates := make([]interface{}, 0, len(res.Diff))
+		for i := range res.Diff {
+			updates = append(updates, &res.Diff[i])
+		}
+		syncAt := time.Now()
+		stateOps, err = syncer.SyncStateUpdates(b.Header.Height, updates)
+		durStateSync += time.Since(syncAt)
+		if err != nil {
+			return fmt.Errorf("sync stateDB updates failed: %w", err)
+		}
+	}
+
 	// 遍历 Diff 中的所有写操作
 	accountUpdates := make([]*WriteOp, 0)
-
 	writeOps = len(res.Diff)
 	diffLoopAt := time.Now()
 	for i := range res.Diff {

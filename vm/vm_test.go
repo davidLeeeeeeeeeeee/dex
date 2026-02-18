@@ -20,9 +20,12 @@ import (
 // ========== Mock数据库实现 ==========
 
 type MockDB struct {
-	mu      sync.RWMutex
-	data    map[string][]byte
-	pending []func()
+	mu              sync.RWMutex
+	data            map[string][]byte
+	pending         []func()
+	stateSyncCalls  int
+	stateSyncHeight uint64
+	stateSyncOps    int
 }
 
 // MockSession 模拟数据库会话
@@ -109,6 +112,30 @@ func (db *MockDB) ForceFlush() error {
 	}
 	db.pending = db.pending[:0]
 	return nil
+}
+
+func (db *MockDB) SyncStateUpdates(height uint64, updates []interface{}) (int, error) {
+	type writeOpInterface interface {
+		GetKey() string
+		GetValue() []byte
+		IsDel() bool
+	}
+
+	count := 0
+	for _, u := range updates {
+		op, ok := u.(writeOpInterface)
+		if !ok || op == nil || op.GetKey() == "" {
+			continue
+		}
+		count++
+	}
+
+	db.mu.Lock()
+	db.stateSyncCalls++
+	db.stateSyncHeight = height
+	db.stateSyncOps = count
+	db.mu.Unlock()
+	return count, nil
 }
 
 func (db *MockDB) Scan(prefix string) (map[string][]byte, error) {

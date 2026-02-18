@@ -5,11 +5,14 @@ import (
 	"dex/interfaces"
 	"dex/logs"
 	"dex/pb"
+	statedb "dex/stateDB"
 	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +61,7 @@ type Manager struct {
 	cachedBlocksMu sync.RWMutex
 	Logger         logs.Logger
 	cfg            *config.Config
+	stateDB        *statedb.DB
 	// Active miner snapshot cached in memory and refreshed by epoch.
 	minerCacheMu      sync.RWMutex
 	minerCacheEpoch   uint64
@@ -121,6 +125,26 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 		}
 		closer.Close()
 	}
+	stateCfg := cfg.Database.StateDB
+	stateDir := strings.TrimSpace(stateCfg.DataDir)
+	switch {
+	case stateDir == "":
+		stateDir = filepath.Join(path, "state")
+	case !filepath.IsAbs(stateDir):
+		stateDir = filepath.Join(path, stateDir)
+	}
+	stateStore, err := statedb.New(statedb.Config{
+		Backend:         stateCfg.Backend,
+		DataDir:         stateDir,
+		ShardHexWidth:   stateCfg.ShardHexWidth,
+		PageSize:        stateCfg.PageSize,
+		CheckpointKeep:  stateCfg.CheckpointKeep,
+		CheckpointEvery: stateCfg.CheckpointEvery,
+	})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to init stateDB: %w", err)
+	}
 
 	manager := &Manager{
 		Db:              db,
@@ -128,6 +152,7 @@ func NewManagerWithConfig(path string, logger logs.Logger, cfg *config.Config) (
 		seq:             seqVal,
 		Logger:          logger,
 		cfg:             cfg,
+		stateDB:         stateStore,
 		minerSampleRand: rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
@@ -312,6 +337,12 @@ func (manager *Manager) Close() {
 	// 4. 关闭 DB
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
+	if manager.stateDB != nil {
+		if err := manager.stateDB.Close(); err != nil {
+			logs.Error("[db.Close] stateDB close failed: %v", err)
+		}
+		manager.stateDB = nil
+	}
 	if manager.Db != nil {
 		_ = manager.Db.Close()
 		manager.Db = nil

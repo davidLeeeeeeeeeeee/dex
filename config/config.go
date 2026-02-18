@@ -1,4 +1,4 @@
-// config/config.go
+﻿// config/config.go
 package config
 
 import (
@@ -59,6 +59,17 @@ type DatabaseConfig struct {
 	BlockCacheSizeDB int64 // Pebble Block Cache 大小（字节）
 	NumMemtables     int   // MemTable 数量
 	NumCompactors    int   // 后台压缩线程数
+	StateDB          StateDBConfig
+}
+
+// StateDBConfig StateDB 镜像配置（统一由主配置管理）
+type StateDBConfig struct {
+	Backend         string // "pebble" (default)
+	DataDir         string // empty/"state" => <main-db-path>/state
+	ShardHexWidth   int
+	PageSize        int
+	CheckpointKeep  int
+	CheckpointEvery uint64 // 0 means use default interval (1000)
 }
 
 // NetworkConfig 网络配置
@@ -178,6 +189,14 @@ func DefaultConfig() *Config {
 			BlockCacheSizeDB:               32 << 20,
 			NumMemtables:                   3,
 			NumCompactors:                  2,
+			StateDB: StateDBConfig{
+				Backend:         "pebble",
+				DataDir:         "state",
+				ShardHexWidth:   1,
+				PageSize:        1000,
+				CheckpointKeep:  10,
+				CheckpointEvery: 17,
+			},
 		},
 		Network: NetworkConfig{
 			BasePort:           6000,

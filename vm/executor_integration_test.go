@@ -369,3 +369,72 @@ func TestCommitFinalizedBlockReexecAgainstLatestState(t *testing.T) {
 		t.Fatalf("unexpected tx2 height, want 2 got %s", string(heightVal))
 	}
 }
+
+func TestCommitFinalizedBlockSyncsStateDB(t *testing.T) {
+	db := NewMockDB()
+
+	aliceAddr := "alice_state_sync"
+	account := &pb.Account{Address: aliceAddr}
+	accountData, _ := proto.Marshal(account)
+	db.data[keys.KeyAccount(aliceAddr)] = accountData
+
+	bal := &pb.TokenBalanceRecord{
+		Balance: &pb.TokenBalance{
+			Balance:            "1000",
+			MinerLockedBalance: "0",
+		},
+	}
+	balData, _ := proto.Marshal(bal)
+	db.data[keys.KeyBalance(aliceAddr, "FB")] = balData
+
+	registry := vm.NewHandlerRegistry()
+	if err := vm.RegisterDefaultHandlers(registry); err != nil {
+		t.Fatal(err)
+	}
+	executor := vm.NewExecutor(db, registry, vm.NewSpecExecLRU(16))
+
+	tx := &pb.AnyTx{
+		Content: &pb.AnyTx_Transaction{
+			Transaction: &pb.Transaction{
+				Base: &pb.BaseMessage{
+					TxId:        "tx_state_sync_001",
+					FromAddress: aliceAddr,
+					Status:      pb.Status_PENDING,
+					Fee:         "1",
+				},
+				To:           "bob_state_sync",
+				TokenAddress: "FB",
+				Amount:       "10",
+			},
+		},
+	}
+
+	block := &pb.Block{
+		BlockHash: "block_state_sync_001",
+		Header: &pb.BlockHeader{
+			PrevBlockHash: "genesis",
+			Height:        1,
+		},
+		Body: []*pb.AnyTx{tx},
+	}
+
+	if err := executor.CommitFinalizedBlock(block); err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+
+	db.mu.RLock()
+	calls := db.stateSyncCalls
+	height := db.stateSyncHeight
+	ops := db.stateSyncOps
+	db.mu.RUnlock()
+
+	if calls == 0 {
+		t.Fatalf("expected stateDB sync to be called at least once")
+	}
+	if height != block.Header.Height {
+		t.Fatalf("unexpected synced height, want %d got %d", block.Header.Height, height)
+	}
+	if ops == 0 {
+		t.Fatalf("expected non-zero synced ops")
+	}
+}
