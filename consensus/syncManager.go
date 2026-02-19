@@ -5,9 +5,11 @@ import (
 	"dex/interfaces"
 	"dex/logs"
 	"dex/pb"
+	statedb "dex/stateDB"
 	"dex/types"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,21 +23,21 @@ import (
 // ============================================
 
 type SyncManager struct {
-	nodeID         types.NodeID
-	node           *Node // 新增
-	transport      interfaces.Transport
-	store          interfaces.BlockStore
-	config         *SyncConfig
-	snapshotConfig *SnapshotConfig // 新增
-	events         interfaces.EventBus
-	Logger         logs.Logger
-	SyncRequests   map[uint32]time.Time
-	nextSyncID     uint32
-	Syncing        bool
-	Mu             sync.RWMutex
-	PeerHeights    map[types.NodeID]uint64
-	lastPoll       time.Time
-	usingSnapshot  bool // 标记是否正在使用快照同步
+	nodeID    types.NodeID
+	node      *Node // 新增
+	transport interfaces.Transport
+	store     interfaces.BlockStore
+	config    *SyncConfig
+
+	events       interfaces.EventBus
+	Logger       logs.Logger
+	SyncRequests map[uint32]time.Time
+	nextSyncID   uint32
+	Syncing      bool
+	Mu           sync.RWMutex
+	PeerHeights  map[types.NodeID]uint64
+	lastPoll     time.Time
+
 	// 采样验证相关字段
 	sampling        bool                    // 是否正在采样验证
 	sampleResponses map[types.NodeID]uint64 // 采样响应: nodeID -> acceptedHeight
@@ -54,13 +56,17 @@ type SyncManager struct {
 	lastChitTriggerAt    time.Time
 }
 
-func NewSyncManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, snapshotConfig *SnapshotConfig, events interfaces.EventBus, logger logs.Logger) *SyncManager {
+type stateSnapshotFetcher interface {
+	FetchStateSnapshotShards(peer types.NodeID, targetHeight uint64) (*types.StateSnapshotShardsResponse, error)
+	FetchStateSnapshotPage(peer types.NodeID, snapshotHeight uint64, shard string, pageSize int, pageToken string) (*types.StateSnapshotPageResponse, error)
+}
+
+func NewSyncManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, events interfaces.EventBus, logger logs.Logger) *SyncManager {
 	return &SyncManager{
 		nodeID:             id,
 		transport:          transport,
 		store:              store,
 		config:             config,
-		snapshotConfig:     snapshotConfig,
 		events:             events,
 		Logger:             logger,
 		SyncRequests:       make(map[uint32]time.Time),
@@ -217,7 +223,7 @@ func (sm *SyncManager) processTimeouts() {
 		if hasTimeout && len(sm.SyncRequests) == 0 {
 			sm.Logger.Warn("[Node %s] All sync requests timed out, resetting Syncing flag", sm.nodeID)
 			sm.Syncing = false
-			sm.usingSnapshot = false
+
 		}
 	}
 
@@ -274,13 +280,12 @@ func (sm *SyncManager) checkAndSync() {
 				quorumHeight, sm.config.QuorumRatio*100)
 			sm.Mu.Unlock()
 
-			// 判断使用快照还是普通同步
 			heightDiff := quorumHeight - localAcceptedHeight
-			if sm.snapshotConfig.Enabled && heightDiff > sm.config.SnapshotThreshold {
-				sm.requestSnapshotSync(quorumHeight)
-			} else {
-				sm.requestSync(localAcceptedHeight+1, minUint64(localAcceptedHeight+sm.config.BatchSize, quorumHeight))
+			if heightDiff > sm.deepLagStateSyncThreshold() {
+				sm.performStateDBFirstSyncThenCatchUp(quorumHeight, localAcceptedHeight)
+				return
 			}
+			sm.requestSync(localAcceptedHeight+1, minUint64(localAcceptedHeight+sm.config.BatchSize, quorumHeight))
 			return
 		}
 
@@ -349,6 +354,34 @@ func (sm *SyncManager) chitMinConfirmPeers() int {
 		return 0
 	}
 	return sm.config.ChitMinConfirmPeers
+}
+
+func (sm *SyncManager) deepLagStateSyncThreshold() uint64 {
+	if sm == nil || sm.config == nil || sm.config.DeepLagStateSyncThreshold == 0 {
+		return 100
+	}
+	return sm.config.DeepLagStateSyncThreshold
+}
+
+func (sm *SyncManager) stateSyncPeers() int {
+	if sm == nil || sm.config == nil || sm.config.StateSyncPeers <= 0 {
+		return 4
+	}
+	return sm.config.StateSyncPeers
+}
+
+func (sm *SyncManager) stateSyncShardConcurrency() int {
+	if sm == nil || sm.config == nil || sm.config.StateSyncShardConcurrency <= 0 {
+		return 8
+	}
+	return sm.config.StateSyncShardConcurrency
+}
+
+func (sm *SyncManager) stateSyncPageSize() int {
+	if sm == nil || sm.config == nil || sm.config.StateSyncPageSize <= 0 {
+		return 1000
+	}
+	return sm.config.StateSyncPageSize
 }
 
 func (sm *SyncManager) resetStaleSyncStateLocked() bool {
@@ -492,6 +525,13 @@ func (sm *SyncManager) evaluatePendingChitTrigger() {
 	sm.Mu.Unlock()
 
 	heightDiff := targetHeight - localAccepted
+	if heightDiff >= sm.chitHardGap() && heightDiff > sm.deepLagStateSyncThreshold() {
+		sm.Logger.Info("[SyncManager] TriggerSyncFromChit: delayed deep lag peer=%s peerHeight=%d localAccepted=%d diff=%d threshold=%d, use stateDB-first catch-up",
+			from, targetHeight, localAccepted, heightDiff, sm.deepLagStateSyncThreshold())
+		sm.performStateDBFirstSyncThenCatchUp(targetHeight, localAccepted)
+		return
+	}
+
 	sm.Logger.Debug("[SyncManager] TriggerSyncFromChit: delayed trigger peer=%s peerHeight=%d localAccepted=%d diff=%d",
 		from, targetHeight, localAccepted, heightDiff)
 	sm.performTriggeredSync(targetHeight, localAccepted, heightDiff)
@@ -533,6 +573,13 @@ func (sm *SyncManager) TriggerSyncFromChit(peerAcceptedHeight uint64, from types
 		sm.lastChitTriggerAt = now
 		sm.Mu.Unlock()
 
+		if heightDiff > sm.deepLagStateSyncThreshold() {
+			sm.Logger.Info("[SyncManager] TriggerSyncFromChit: deep lag detected peer=%s peerHeight=%d localAccepted=%d diff=%d threshold=%d, use stateDB-first catch-up",
+				from, peerAcceptedHeight, localAccepted, heightDiff, sm.deepLagStateSyncThreshold())
+			sm.performStateDBFirstSyncThenCatchUp(peerAcceptedHeight, localAccepted)
+			return
+		}
+
 		sm.Logger.Debug("[SyncManager] TriggerSyncFromChit: hard trigger peer=%s peerHeight=%d localAccepted=%d diff=%d",
 			from, peerAcceptedHeight, localAccepted, heightDiff)
 		sm.performTriggeredSync(peerAcceptedHeight, localAccepted, heightDiff)
@@ -557,12 +604,281 @@ func (sm *SyncManager) TriggerSyncFromChit(peerAcceptedHeight uint64, from types
 
 // performTriggeredSync 执行被触发的同步动作
 func (sm *SyncManager) performTriggeredSync(peerAcceptedHeight, localAccepted, heightDiff uint64) {
-	if sm.snapshotConfig.Enabled && heightDiff > sm.config.SnapshotThreshold {
-		sm.requestSnapshotSync(peerAcceptedHeight)
-	} else {
-		// 使用分片并行同步
-		sm.requestSyncParallel(localAccepted+1, minUint64(localAccepted+sm.config.BatchSize, peerAcceptedHeight))
+	// 使用分片并行同步
+	sm.requestSyncParallel(localAccepted+1, minUint64(localAccepted+sm.config.BatchSize, peerAcceptedHeight))
+}
+
+// performStateDBFirstSyncThenCatchUp 深度落后时先执行 stateDB-first 追赶，再进入常规追块流水线。
+// 优先尝试“分片 + 多 peer”并行下载 stateDB 快照，分担单节点压力；失败时回退到仅区块追赶。
+func (sm *SyncManager) performStateDBFirstSyncThenCatchUp(peerAcceptedHeight, localAccepted uint64) {
+	if peerAcceptedHeight <= localAccepted {
+		return
 	}
+
+	if sm.performDistributedStateDBSync(peerAcceptedHeight) {
+		sm.Logger.Info("[SyncManager] StateDB-first catch-up: distributed state snapshot synced, continue block catch-up")
+	} else {
+		sm.Logger.Warn("[SyncManager] StateDB-first catch-up: distributed state snapshot unavailable/failed, fallback to block-only catch-up")
+	}
+
+	window := sm.deepLagStateSyncThreshold()
+	toHeight := minUint64(localAccepted+window, peerAcceptedHeight)
+	if toHeight < localAccepted+1 {
+		return
+	}
+
+	sm.Logger.Info("[SyncManager] StateDB-first catch-up: syncing heights %d-%d before normal pipeline",
+		localAccepted+1, toHeight)
+	sm.requestSync(localAccepted+1, toHeight)
+}
+
+func (sm *SyncManager) performDistributedStateDBSync(targetHeight uint64) bool {
+	fetcher, ok := sm.transport.(stateSnapshotFetcher)
+	if !ok {
+		return false
+	}
+	realStore, ok := sm.store.(*RealBlockStore)
+	if !ok || realStore == nil || realStore.dbManager == nil {
+		return false
+	}
+
+	peers := sm.selectStateSyncPeers(targetHeight, sm.stateSyncPeers())
+	if len(peers) == 0 {
+		sm.Logger.Warn("[SyncManager] StateDB sync: no peers available for snapshot download")
+		return false
+	}
+
+	var (
+		shardResp *types.StateSnapshotShardsResponse
+		metaPeer  types.NodeID
+	)
+	for _, peer := range peers {
+		resp, err := fetcher.FetchStateSnapshotShards(peer, targetHeight)
+		if err != nil {
+			sm.Logger.Warn("[SyncManager] StateDB sync: fetch shards from %s failed: %v", peer, err)
+			continue
+		}
+		if resp == nil {
+			continue
+		}
+		shardResp = resp
+		metaPeer = peer
+		break
+	}
+	if shardResp == nil {
+		sm.Logger.Warn("[SyncManager] StateDB sync: no shard metadata available")
+		return false
+	}
+
+	snapshotHeight := shardResp.SnapshotHeight
+	if snapshotHeight == 0 {
+		snapshotHeight = targetHeight
+	}
+
+	type shardTask struct {
+		shard string
+		count int64
+	}
+	tasks := make([]shardTask, 0, len(shardResp.Shards))
+	for _, shard := range shardResp.Shards {
+		if shard.Shard == "" || shard.Count <= 0 {
+			continue
+		}
+		tasks = append(tasks, shardTask{shard: shard.Shard, count: shard.Count})
+	}
+	sort.Slice(tasks, func(i, j int) bool {
+		if tasks[i].count == tasks[j].count {
+			return tasks[i].shard < tasks[j].shard
+		}
+		return tasks[i].count > tasks[j].count
+	})
+
+	if len(tasks) == 0 {
+		sm.Logger.Info("[SyncManager] StateDB sync: metadata from %s has no shard items, applying empty snapshot at height %d", metaPeer, snapshotHeight)
+		if err := realStore.dbManager.BuildStateSnapshotFromUpdates(context.Background(), snapshotHeight, nil); err != nil {
+			sm.Logger.Warn("[SyncManager] StateDB sync: apply empty snapshot failed: %v", err)
+			return false
+		}
+		return true
+	}
+
+	type shardResult struct {
+		shard   string
+		peer    types.NodeID
+		updates []statedb.KVUpdate
+		err     error
+	}
+	results := make(chan shardResult, len(tasks))
+	sem := make(chan struct{}, sm.stateSyncShardConcurrency())
+	pageSize := sm.stateSyncPageSize()
+
+	for i, task := range tasks {
+		primaryIdx := i % len(peers)
+		go func(tk shardTask, startIdx int) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			updates, usedPeer, err := sm.fetchSnapshotShardWithFallback(fetcher, peers, startIdx, snapshotHeight, tk.shard, pageSize)
+			results <- shardResult{
+				shard:   tk.shard,
+				peer:    usedPeer,
+				updates: updates,
+				err:     err,
+			}
+		}(task, primaryIdx)
+	}
+
+	allUpdates := make([]statedb.KVUpdate, 0, 4096)
+	perPeerItems := make(map[types.NodeID]int)
+	var firstErr error
+	failed := 0
+
+	for i := 0; i < len(tasks); i++ {
+		res := <-results
+		if res.err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = res.err
+			}
+			sm.Logger.Warn("[SyncManager] StateDB sync: shard %s failed: %v", res.shard, res.err)
+			continue
+		}
+		allUpdates = append(allUpdates, res.updates...)
+		perPeerItems[res.peer] += len(res.updates)
+	}
+
+	if failed > 0 {
+		sm.Logger.Warn("[SyncManager] StateDB sync: %d/%d shard(s) failed (first err: %v)", failed, len(tasks), firstErr)
+		return false
+	}
+
+	if err := realStore.dbManager.BuildStateSnapshotFromUpdates(context.Background(), snapshotHeight, allUpdates); err != nil {
+		sm.Logger.Warn("[SyncManager] StateDB sync: build local snapshot failed: %v", err)
+		return false
+	}
+
+	for peer, cnt := range perPeerItems {
+		sm.Logger.Info("[SyncManager] StateDB sync: peer %s served %d kv item(s)", peer, cnt)
+	}
+	sm.Logger.Info("[SyncManager] StateDB sync complete: height=%d shards=%d totalItems=%d metadataPeer=%s",
+		snapshotHeight, len(tasks), len(allUpdates), metaPeer)
+	return true
+}
+
+func (sm *SyncManager) fetchSnapshotShardWithFallback(
+	fetcher stateSnapshotFetcher,
+	peers []types.NodeID,
+	startIdx int,
+	snapshotHeight uint64,
+	shard string,
+	pageSize int,
+) ([]statedb.KVUpdate, types.NodeID, error) {
+	if len(peers) == 0 {
+		return nil, "", fmt.Errorf("no peers available")
+	}
+
+	var lastErr error
+	for i := 0; i < len(peers); i++ {
+		peer := peers[(startIdx+i)%len(peers)]
+		token := ""
+		updates := make([]statedb.KVUpdate, 0, pageSize)
+
+		for page := 0; page < 1_000_000; page++ {
+			resp, err := fetcher.FetchStateSnapshotPage(peer, snapshotHeight, shard, pageSize, token)
+			if err != nil {
+				lastErr = err
+				updates = nil
+				break
+			}
+			if resp == nil {
+				lastErr = fmt.Errorf("nil page response")
+				updates = nil
+				break
+			}
+
+			for _, item := range resp.Items {
+				if item.Key == "" {
+					continue
+				}
+				valCopy := make([]byte, len(item.Value))
+				copy(valCopy, item.Value)
+				updates = append(updates, statedb.KVUpdate{
+					Key:     item.Key,
+					Value:   valCopy,
+					Deleted: false,
+				})
+			}
+
+			if resp.NextPageToken == "" || resp.NextPageToken == token {
+				return updates, peer, nil
+			}
+			token = resp.NextPageToken
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("all peers exhausted")
+	}
+	return nil, "", fmt.Errorf("fetch shard %s failed: %w", shard, lastErr)
+}
+
+func (sm *SyncManager) selectStateSyncPeers(targetHeight uint64, maxPeers int) []types.NodeID {
+	if maxPeers <= 0 {
+		maxPeers = 1
+	}
+
+	type peerHeight struct {
+		id     types.NodeID
+		height uint64
+	}
+
+	sm.Mu.RLock()
+	candidates := make([]peerHeight, 0, len(sm.PeerHeights))
+	for peerID, h := range sm.PeerHeights {
+		if peerID == "" || peerID == sm.nodeID {
+			continue
+		}
+		if targetHeight == 0 || h >= targetHeight {
+			candidates = append(candidates, peerHeight{id: peerID, height: h})
+		}
+	}
+	sm.Mu.RUnlock()
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].height == candidates[j].height {
+			return candidates[i].id < candidates[j].id
+		}
+		return candidates[i].height > candidates[j].height
+	})
+
+	selected := make([]types.NodeID, 0, maxPeers)
+	seen := make(map[types.NodeID]struct{}, maxPeers)
+	for _, c := range candidates {
+		if _, exists := seen[c.id]; exists {
+			continue
+		}
+		seen[c.id] = struct{}{}
+		selected = append(selected, c.id)
+		if len(selected) >= maxPeers {
+			return selected
+		}
+	}
+
+	extraPeers := sm.transport.SamplePeers(sm.nodeID, maxPeers*2)
+	for _, peer := range extraPeers {
+		if peer == "" || peer == sm.nodeID {
+			continue
+		}
+		if _, exists := seen[peer]; exists {
+			continue
+		}
+		seen[peer] = struct{}{}
+		selected = append(selected, peer)
+		if len(selected) >= maxPeers {
+			break
+		}
+	}
+	return selected
 }
 
 // requestSyncParallel 分片并行同步：将高度范围分配给多个节点同时请求
@@ -710,61 +1026,6 @@ func (sm *SyncManager) evaluateSampleQuorum() (uint64, bool) {
 	return 0, false
 }
 
-// 请求快照同步
-func (sm *SyncManager) requestSnapshotSync(targetHeight uint64) {
-	sm.Mu.Lock()
-	if sm.Syncing {
-		sm.Mu.Unlock()
-		return
-	}
-	sm.Syncing = true
-	sm.usingSnapshot = true
-	syncID := atomic.AddUint32(&sm.nextSyncID, 1)
-	sm.SyncRequests[syncID] = time.Now()
-	// 记录处理中范围
-	rangeKey := fmt.Sprintf("snapshot_%d", targetHeight)
-	sm.InFlightSyncRanges[rangeKey] = time.Now()
-	sm.Mu.Unlock()
-
-	// 找一个高度足够的节点
-	sm.Mu.RLock()
-	var targetPeer types.NodeID = "-1"
-	for peer, height := range sm.PeerHeights {
-		if height >= targetHeight {
-			targetPeer = peer
-			break
-		}
-	}
-	sm.Mu.RUnlock()
-
-	if targetPeer == "-1" {
-		peers := sm.transport.SamplePeers(sm.nodeID, 5)
-		if len(peers) > 0 {
-			targetPeer = peers[0]
-		}
-	}
-
-	if targetPeer != "-1" {
-		Logf("[Node %s] 📸 Requesting SNAPSHOT sync from Node %s (behind by %d blocks)\n",
-			sm.nodeID, targetPeer, targetHeight-sm.store.GetCurrentHeight())
-
-		msg := types.Message{
-			Type:            types.MsgSnapshotRequest,
-			From:            sm.nodeID,
-			SyncID:          syncID,
-			RequestSnapshot: true,
-			Height:          targetHeight,
-		}
-		sm.transport.Send(targetPeer, msg)
-	} else {
-		sm.Mu.Lock()
-		sm.Syncing = false
-		sm.usingSnapshot = false
-		delete(sm.SyncRequests, syncID)
-		sm.Mu.Unlock()
-	}
-}
-
 func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 	sm.Mu.Lock()
 	if sm.Syncing {
@@ -772,7 +1033,6 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 		return
 	}
 
-	// 去重检查
 	rangeKey := fmt.Sprintf("%d-%d", fromHeight, toHeight)
 	if startTime, exists := sm.InFlightSyncRanges[rangeKey]; exists {
 		if time.Since(startTime) < sm.config.Timeout {
@@ -807,120 +1067,15 @@ func (sm *SyncManager) requestSync(fromHeight, toHeight uint64) {
 	if targetPeer != "-1" {
 		Logf("[Node %s] Requesting sync from Node %s for heights %d-%d\n",
 			sm.nodeID, targetPeer, fromHeight, toHeight)
-
-		msg := types.Message{
-			Type:       types.MsgSyncRequest,
-			From:       sm.nodeID,
-			SyncID:     syncID,
-			FromHeight: fromHeight,
-			ToHeight:   toHeight,
-		}
-		sm.transport.Send(targetPeer, msg)
+		sm.transport.Send(targetPeer, types.Message{
+			Type: types.MsgSyncRequest, From: sm.nodeID, SyncID: syncID,
+			FromHeight: fromHeight, ToHeight: toHeight,
+		})
 	} else {
 		sm.Mu.Lock()
 		sm.Syncing = false
 		delete(sm.SyncRequests, syncID)
 		sm.Mu.Unlock()
-	}
-}
-
-// 处理快照请求（新增）
-func (sm *SyncManager) HandleSnapshotRequest(msg types.Message) {
-	// 获取最近的快照
-	snapshot, exists := sm.store.GetLatestSnapshot()
-	if !exists {
-		// 如果没有快照，降级到普通同步
-		sm.HandleSyncRequest(types.Message{
-			Type:       types.MsgSyncRequest,
-			From:       msg.From,
-			SyncID:     msg.SyncID,
-			FromHeight: 1,
-			ToHeight:   minUint64(100, sm.store.GetCurrentHeight()),
-		})
-		return
-	}
-
-	Logf("[Node %s] 📸 Sending snapshot (height %d) to Node %s\n",
-		sm.nodeID, snapshot.Height, msg.From)
-
-	// 更新统计
-	if sm.node != nil {
-		sm.node.Stats.Mu.Lock()
-		sm.node.Stats.SnapshotsServed++
-		sm.node.Stats.Mu.Unlock()
-	}
-
-	response := types.Message{
-		Type:           types.MsgSnapshotResponse,
-		From:           sm.nodeID,
-		SyncID:         msg.SyncID,
-		Snapshot:       snapshot,
-		SnapshotHeight: snapshot.Height,
-	}
-
-	sm.transport.Send(types.NodeID(msg.From), response)
-}
-
-// 处理快照响应（新增）
-func (sm *SyncManager) HandleSnapshotResponse(msg types.Message) {
-	sm.Mu.Lock()
-	defer sm.Mu.Unlock()
-
-	if _, ok := sm.SyncRequests[msg.SyncID]; !ok {
-		return
-	}
-
-	delete(sm.SyncRequests, msg.SyncID)
-
-	if msg.Snapshot == nil {
-		sm.Syncing = false
-		sm.usingSnapshot = false
-		return
-	}
-
-	// 加载快照
-	err := sm.store.LoadSnapshot(msg.Snapshot)
-	if err != nil {
-		Logf("[Node %s] Failed to load snapshot: %v\n", sm.nodeID, err)
-		sm.Syncing = false
-		sm.usingSnapshot = false
-		return
-	}
-
-	// 更新统计
-	if sm.node != nil {
-		sm.node.Stats.Mu.Lock()
-		sm.node.Stats.SnapshotsUsed++
-		sm.node.Stats.Mu.Unlock()
-	}
-
-	Logf("[Node %s] 📸 Successfully loaded snapshot at height %d\n",
-		sm.nodeID, msg.SnapshotHeight)
-
-	// 发布快照加载事件
-	sm.events.PublishAsync(types.BaseEvent{
-		EventType: types.EventSnapshotLoaded,
-		EventData: msg.Snapshot,
-	})
-
-	// 继续同步快照之后的区块
-	currentHeight := sm.store.GetCurrentHeight()
-	maxPeerHeight := uint64(0)
-	for _, height := range sm.PeerHeights {
-		if height > maxPeerHeight {
-			maxPeerHeight = height
-		}
-	}
-
-	sm.Syncing = false
-	sm.usingSnapshot = false
-
-	// 如果还需要更多区块，继续普通同步
-	if maxPeerHeight > currentHeight+1 {
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			sm.requestSync(currentHeight+1, minUint64(currentHeight+sm.config.BatchSize, maxPeerHeight))
-		}()
 	}
 }
 
@@ -930,40 +1085,56 @@ func (sm *SyncManager) HandleSyncRequest(msg types.Message) {
 	Logf("[Node %s] Received sync request from Node %s for heights %d-%d (found %d blocks, shortMode=%v)\n",
 		sm.nodeID, msg.From, msg.FromHeight, msg.ToHeight, len(blocks), msg.SyncShortMode)
 
+	// 强制要求：同步响应中的区块必须携带可验证的 VRF 签名集合。
+	// 对缺少签名集合或序列化失败的区块直接剔除，不发送给对端。
+	responseBlocks := blocks
+	sigSets := make(map[uint64][]byte)
+	if realStore, ok := sm.store.(*RealBlockStore); ok {
+		filtered := make([]*types.Block, 0, len(blocks))
+		for _, block := range blocks {
+			if block == nil {
+				continue
+			}
+			sigSet, exists := realStore.GetSignatureSet(block.Header.Height)
+			if !exists || sigSet == nil {
+				sm.Logger.Warn("[SyncManager] Skip sync block %s at height %d for %s: missing VRF signature set",
+					block.ID, block.Header.Height, msg.From)
+				continue
+			}
+			data, err := proto.Marshal(sigSet)
+			if err != nil {
+				sm.Logger.Warn("[SyncManager] Skip sync block %s at height %d for %s: marshal signature set failed: %v",
+					block.ID, block.Header.Height, msg.From, err)
+				continue
+			}
+			sigSets[block.Header.Height] = data
+			filtered = append(filtered, block)
+		}
+		responseBlocks = filtered
+	} else {
+		sm.Logger.Warn("[SyncManager] Store %T has no signature-set support, returning empty strict sync response", sm.store)
+		responseBlocks = nil
+	}
+
 	response := types.Message{
 		Type:          types.MsgSyncResponse,
 		From:          sm.nodeID,
 		SyncID:        msg.SyncID,
-		Blocks:        blocks,
+		Blocks:        responseBlocks,
 		FromHeight:    msg.FromHeight,
 		ToHeight:      msg.ToHeight,
 		SyncShortMode: msg.SyncShortMode,
 	}
 
-	// 附带签名集合（VRF 共识证据）
-	if realStore, ok := sm.store.(*RealBlockStore); ok {
-		sigSets := make(map[uint64][]byte)
-		for _, block := range blocks {
-			if block == nil {
-				continue
-			}
-			if sigSet, exists := realStore.GetSignatureSet(block.Header.Height); exists {
-				data, err := proto.Marshal(sigSet)
-				if err == nil {
-					sigSets[block.Header.Height] = data
-				}
-			}
-		}
-		if len(sigSets) > 0 {
-			response.SignatureSets = sigSets
-		}
+	if len(sigSets) > 0 {
+		response.SignatureSets = sigSets
 	}
 
 	// 自适应传输模式
 	if msg.SyncShortMode {
 		// 短期落后模式：附带 ShortTxs 用于快速还原
 		response.BlocksShortTxs = make(map[string][]byte)
-		for _, block := range blocks {
+		for _, block := range responseBlocks {
 			if block == nil {
 				continue
 			}
@@ -972,7 +1143,7 @@ func (sm *SyncManager) HandleSyncRequest(msg types.Message) {
 			}
 		}
 	} else {
-		for _, block := range blocks {
+		for _, block := range responseBlocks {
 			if block == nil {
 				continue
 			}
@@ -998,12 +1169,54 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 	delete(sm.InFlightSyncRanges, rangeKey)
 	sm.Mu.Unlock()
 
+	// 强制要求：每个参与同步处理/最终化的高度都必须先通过 VRF 签名集合验证。
+	verifiedSigSets := make(map[uint64]*pb.ConsensusSignatureSet)
+	seenHeights := make(map[uint64]struct{})
+	for _, block := range msg.Blocks {
+		if block == nil {
+			continue
+		}
+		h := block.Header.Height
+		if _, seen := seenHeights[h]; seen {
+			continue
+		}
+		seenHeights[h] = struct{}{}
+
+		sigData, hasSig := msg.SignatureSets[h]
+		if !hasSig || len(sigData) == 0 {
+			sm.Logger.Warn("[SyncManager] Reject sync height %d from %s: missing VRF signature set", h, msg.From)
+			continue
+		}
+
+		var sigSet pb.ConsensusSignatureSet
+		if err := proto.Unmarshal(sigData, &sigSet); err != nil {
+			sm.Logger.Warn("[SyncManager] Reject sync height %d from %s: decode signature set failed: %v", h, msg.From, err)
+			continue
+		}
+		if !VerifySignatureSet(&sigSet, sm.config.SyncAlpha, sm.config.SyncBeta, sm.transport, sm.nodeID) {
+			sm.Logger.Warn("[SyncManager] Reject sync height %d from %s: signature set verification failed", h, msg.From)
+			continue
+		}
+		verifiedSigSets[h] = &sigSet
+	}
+
 	added := 0
 	addErrs := 0
 	var firstAddErr error
 	var firstAddErrBlockID string
 	for _, block := range msg.Blocks {
 		if block == nil {
+			continue
+		}
+
+		if _, ok := verifiedSigSets[block.Header.Height]; !ok {
+			addErrs++
+			if firstAddErr == nil {
+				firstAddErr = fmt.Errorf("missing/invalid VRF signature set")
+				firstAddErrBlockID = block.ID
+			}
+			sm.Logger.Warn("[SyncManager] Skip block %s at height %d from %s: missing/invalid VRF signature set",
+				block.ID, block.Header.Height, msg.From)
 			continue
 		}
 
@@ -1098,23 +1311,15 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 			chosen = cands[0]
 		}
 
-		// VRF 签名集合验证（如果可用）
-		if len(msg.SignatureSets) > 0 {
-			if sigData, hasSig := msg.SignatureSets[nextHeight]; hasSig {
-				var sigSet pb.ConsensusSignatureSet
-				if err := proto.Unmarshal(sigData, &sigSet); err != nil {
-					sm.Logger.Warn("[SyncManager] Failed to decode signature set for height %d: %v", nextHeight, err)
-				} else {
-					if !VerifySignatureSet(&sigSet, sm.config.SyncAlpha, sm.config.SyncBeta, sm.transport, sm.nodeID) {
-						sm.Logger.Warn("[SyncManager] ⚠️ Signature set verification failed for height %d, skipping", nextHeight)
-						break
-					}
-					// 验证通过，存储到本地
-					if realStore, ok := sm.store.(*RealBlockStore); ok {
-						realStore.SetSignatureSet(nextHeight, &sigSet)
-					}
-				}
-			}
+		// 强制要求：最终化前必须有已验证的签名集合。
+		sigSet, hasSig := verifiedSigSets[nextHeight]
+		if !hasSig || sigSet == nil {
+			sm.Logger.Warn("[SyncManager] Missing verified signature set for height %d, stop fast-finalize", nextHeight)
+			break
+		}
+		// 验证通过，存储到本地
+		if realStore, ok := sm.store.(*RealBlockStore); ok {
+			realStore.SetSignatureSet(nextHeight, sigSet)
 		}
 
 		// 尝试最终化该高度（失败会保持 lastAccepted 不变）

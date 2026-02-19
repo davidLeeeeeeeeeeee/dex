@@ -59,19 +59,29 @@ func TestSyncStateUpdatesMirrorsStatefulKeys(t *testing.T) {
 	require.Equal(t, 2, n, "only stateful keys should be mirrored into stateDB")
 	require.NoError(t, mgr.ForceFlush())
 
-	kvAccount, err := mgr.GetKV(accountKey)
+	_, err = mgr.GetKV(accountKey)
+	require.Error(t, err, "stateful key should not be written into KV main DB")
+
+	getAccount, err := mgr.Get(accountKey)
 	require.NoError(t, err)
 	sdbAccount, exists, err := mgr.stateDB.Get(accountKey)
 	require.NoError(t, err)
 	require.True(t, exists)
-	require.Equal(t, kvAccount, sdbAccount)
+	require.Equal(t, getAccount, sdbAccount)
 
-	kvFrost, err := mgr.GetKV(frostKey)
+	_, err = mgr.GetKV(frostKey)
+	require.Error(t, err, "stateful key should not be written into KV main DB")
+
+	getFrost, err := mgr.Get(frostKey)
 	require.NoError(t, err)
 	sdbFrost, exists, err := mgr.stateDB.Get(frostKey)
 	require.NoError(t, err)
 	require.True(t, exists)
-	require.Equal(t, kvFrost, sdbFrost)
+	require.Equal(t, getFrost, sdbFrost)
+
+	kvOnlyRead, err := mgr.GetKV(kvOnlyKey)
+	require.NoError(t, err)
+	require.Equal(t, kvOnlyVal, kvOnlyRead)
 
 	_, exists, err = mgr.stateDB.Get(kvOnlyKey)
 	require.NoError(t, err)

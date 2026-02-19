@@ -225,7 +225,7 @@ func (x *Executor) batchLoadOrderStates(candidates []indexedOrderCandidate) map[
 	}
 	for _, stateKey := range stateKeys {
 		orderID := keyToOrderID[stateKey]
-		orderStateData, err := x.DB.GetKV(stateKey)
+		orderStateData, err := x.DB.Get(stateKey)
 		if err == nil && len(orderStateData) > 0 {
 			stateByOrderID[orderID] = orderStateData
 		}

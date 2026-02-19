@@ -9,7 +9,6 @@ type Config struct {
 	Node      NodeConfig
 	Sync      SyncConfig
 	Gossip    GossipConfig
-	Snapshot  SnapshotConfig
 }
 
 type NetworkConfig struct {
@@ -34,11 +33,20 @@ type NodeConfig struct {
 }
 
 type SyncConfig struct {
-	CheckInterval       time.Duration
-	BehindThreshold     uint64
-	BatchSize           uint64
-	Timeout             time.Duration
-	SnapshotThreshold   uint64
+	CheckInterval   time.Duration
+	BehindThreshold uint64
+	BatchSize       uint64
+	Timeout         time.Duration
+	// DeepLagStateSyncThreshold 深度落后阈值（区块数）。
+	// 当事件驱动同步检测到落后超过该值时，先走 stateDB-first 追赶路径，再进入常规追块流水线。
+	DeepLagStateSyncThreshold uint64
+	// StateSyncPeers 深度落后时用于分片 stateDB 拉取的最大 peer 数。
+	StateSyncPeers int
+	// StateSyncShardConcurrency 分片拉取并发度。
+	StateSyncShardConcurrency int
+	// StateSyncPageSize 单次分页拉取条目数。
+	StateSyncPageSize int
+
 	ShortSyncThreshold  uint64
 	ParallelPeers       int
 	SampleSize          int
@@ -56,12 +64,6 @@ type SyncConfig struct {
 type GossipConfig struct {
 	Fanout   int
 	Interval time.Duration
-}
-
-type SnapshotConfig struct {
-	Interval     uint64
-	MaxSnapshots int
-	Enabled      bool
 }
 
 func DefaultConfig() *Config {
@@ -85,11 +87,17 @@ func DefaultConfig() *Config {
 			ProposalInterval: 3000 * time.Millisecond,
 		},
 		Sync: SyncConfig{
-			CheckInterval:       30 * time.Second,
-			BehindThreshold:     2,
-			BatchSize:           50,
-			Timeout:             10 * time.Second,
-			SnapshotThreshold:   100,
+			CheckInterval:   30 * time.Second,
+			BehindThreshold: 2,
+			BatchSize:       50,
+			Timeout:         10 * time.Second,
+			// 落后超过 100 个块时，先进行 stateDB-first 追赶，再继续常规追块。
+			DeepLagStateSyncThreshold: 100,
+			// stateDB 分片同步默认并发参数（分担单节点压力）。
+			StateSyncPeers:            4,
+			StateSyncShardConcurrency: 8,
+			StateSyncPageSize:         1000,
+
 			ShortSyncThreshold:  20,
 			ParallelPeers:       3,
 			SampleSize:          15,
@@ -106,11 +114,6 @@ func DefaultConfig() *Config {
 		Gossip: GossipConfig{
 			Fanout:   15,
 			Interval: 50 * time.Millisecond,
-		},
-		Snapshot: SnapshotConfig{
-			Interval:     100,
-			MaxSnapshots: 10,
-			Enabled:      true,
 		},
 	}
 }

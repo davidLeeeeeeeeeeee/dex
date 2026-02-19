@@ -14,15 +14,15 @@ import (
 // ============================================
 
 type MessageHandler struct {
-	nodeID          types.NodeID
-	node            *Node
-	isByzantine     bool
-	transport       interfaces.Transport
-	store           interfaces.BlockStore
-	engine          interfaces.ConsensusEngine
-	gossipManager   *GossipManager
-	syncManager     *SyncManager
-	snapshotManager *SnapshotManager
+	nodeID        types.NodeID
+	node          *Node
+	isByzantine   bool
+	transport     interfaces.Transport
+	store         interfaces.BlockStore
+	engine        interfaces.ConsensusEngine
+	gossipManager *GossipManager
+	syncManager   *SyncManager
+
 	events          interfaces.EventBus
 	config          *ConsensusConfig
 	Logger          logs.Logger
@@ -51,11 +51,10 @@ func NewMessageHandler(id types.NodeID, byzantine bool, transport interfaces.Tra
 	}
 }
 
-func (h *MessageHandler) SetManagers(qm *QueryManager, gm *GossipManager, sm *SyncManager, snapMgr *SnapshotManager) {
+func (h *MessageHandler) SetManagers(qm *QueryManager, gm *GossipManager, sm *SyncManager) {
 	h.queryManager = qm
 	h.gossipManager = gm
 	h.syncManager = sm
-	h.snapshotManager = snapMgr
 }
 
 func (h *MessageHandler) SetProposalManager(pm *ProposalManager) {
@@ -98,10 +97,7 @@ func (h *MessageHandler) HandleMsg(msg types.Message) {
 		h.syncManager.HandleHeightQuery(msg)
 	case types.MsgHeightResponse:
 		h.syncManager.HandleHeightResponse(msg)
-	case types.MsgSnapshotRequest: // 新增
-		h.syncManager.HandleSnapshotRequest(msg)
-	case types.MsgSnapshotResponse: // 新增
-		h.syncManager.HandleSnapshotResponse(msg)
+
 	}
 }
 

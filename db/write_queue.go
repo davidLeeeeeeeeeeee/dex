@@ -2,7 +2,9 @@ package db
 
 import (
 	"dex/config"
+	"dex/keys"
 	"dex/logs"
+	statedb "dex/stateDB"
 	"dex/stats"
 	"fmt"
 	"sort"
@@ -466,7 +468,24 @@ func (manager *Manager) flushBatch(batch []WriteTask) error {
 	}
 	b := manager.Db.NewBatch()
 	defer b.Close()
+	stateUpdates := make([]statedb.KVUpdate, 0, len(batch))
+	kvOps := 0
 	for _, task := range batch {
+		key := string(task.Key)
+		if keys.IsStatefulKey(key) {
+			update := statedb.KVUpdate{
+				Key:     key,
+				Deleted: task.Op == OpDelete,
+			}
+			if task.Op == OpSet {
+				valCopy := make([]byte, len(task.Value))
+				copy(valCopy, task.Value)
+				update.Value = valCopy
+			}
+			stateUpdates = append(stateUpdates, update)
+			continue
+		}
+
 		var err error
 		switch task.Op {
 		case OpSet:
@@ -478,10 +497,28 @@ func (manager *Manager) flushBatch(batch []WriteTask) error {
 			logs.Error("[flushBatch] set/delete error: %v", err)
 			return err
 		}
+		kvOps++
 	}
-	if err := b.Commit(pebble.Sync); err != nil {
-		logs.Error("[flushBatch] commit error: %v", err)
-		return err
+	if kvOps > 0 {
+		if err := b.Commit(pebble.Sync); err != nil {
+			logs.Error("[flushBatch] commit error: %v", err)
+			return err
+		}
+	}
+
+	if len(stateUpdates) > 0 {
+		manager.mu.RLock()
+		stateStore := manager.stateDB
+		manager.mu.RUnlock()
+		if stateStore == nil {
+			return fmt.Errorf("stateDB is not initialized")
+		}
+		// height=0 means direct live-state writes (bootstrap/legacy direct DB writes),
+		// without creating checkpoint metadata.
+		if err := stateStore.ApplyAccountUpdate(0, stateUpdates...); err != nil {
+			logs.Error("[flushBatch] stateDB apply error: %v", err)
+			return err
+		}
 	}
 	return nil
 }

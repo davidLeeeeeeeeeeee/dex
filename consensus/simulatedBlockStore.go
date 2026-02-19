@@ -4,9 +4,7 @@ import (
 	"dex/interfaces"
 	"dex/types"
 	"fmt"
-	"sort"
 	"sync"
-	"time"
 )
 
 // ============================================
@@ -21,26 +19,18 @@ type MemoryBlockStore struct {
 	lastAcceptedHeight uint64
 	finalizedBlocks    map[uint64]*types.Block
 	maxHeight          uint64
-
-	// 快照相关
-	snapshots       map[uint64]*types.Snapshot
-	snapshotHeights []uint64 // 有序的快照高度列表
-	maxSnapshots    int
 }
 
 func NewMemoryBlockStore() interfaces.BlockStore {
-	return NewMemoryBlockStoreWithConfig(10)
+	return NewMemoryBlockStoreWithConfig()
 }
 
-func NewMemoryBlockStoreWithConfig(maxSnapshots int) interfaces.BlockStore {
+func NewMemoryBlockStoreWithConfig() interfaces.BlockStore {
 	store := &MemoryBlockStore{
 		blocks:          make(map[string]*types.Block),
 		heightIndex:     make(map[uint64][]*types.Block),
 		finalizedBlocks: make(map[uint64]*types.Block),
 		maxHeight:       0,
-		snapshots:       make(map[uint64]*types.Snapshot),
-		snapshotHeights: make([]uint64, 0),
-		maxSnapshots:    maxSnapshots,
 	}
 
 	// 创世区块
@@ -167,126 +157,6 @@ func (s *MemoryBlockStore) SetFinalized(height uint64, blockID string) error {
 		return nil
 	}
 	return fmt.Errorf("block %s not found", blockID)
-}
-
-// 创建快照
-func (s *MemoryBlockStore) CreateSnapshot(height uint64) (*types.Snapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// 只在已最终化的高度创建快照
-	if height > s.lastAcceptedHeight {
-		return nil, fmt.Errorf("cannot create snapshot beyond last accepted height")
-	}
-
-	snapshot := &types.Snapshot{
-		Height:             height,
-		Timestamp:          time.Now(),
-		FinalizedBlocks:    make(map[uint64]*types.Block),
-		LastAcceptedID:     s.lastAccepted.ID,
-		LastAcceptedHeight: s.lastAcceptedHeight,
-		BlockHashes:        make(map[string]bool),
-	}
-
-	// 复制所有已最终化的区块（到指定高度）
-	for h := uint64(0); h <= height; h++ {
-		if block, exists := s.finalizedBlocks[h]; exists {
-			snapshot.FinalizedBlocks[h] = block
-			snapshot.BlockHashes[block.ID] = true
-		}
-	}
-
-	// 存储快照
-	s.snapshots[height] = snapshot
-	s.snapshotHeights = append(s.snapshotHeights, height)
-	sort.Slice(s.snapshotHeights, func(i, j int) bool {
-		return s.snapshotHeights[i] < s.snapshotHeights[j]
-	})
-
-	// 限制快照数量
-	if len(s.snapshotHeights) > s.maxSnapshots {
-		oldestHeight := s.snapshotHeights[0]
-		delete(s.snapshots, oldestHeight)
-		s.snapshotHeights = s.snapshotHeights[1:]
-	}
-
-	return snapshot, nil
-}
-
-// 加载快照（新增）
-func (s *MemoryBlockStore) LoadSnapshot(snapshot *types.Snapshot) error {
-	if snapshot == nil {
-		return fmt.Errorf("nil snapshot")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// 清空现有数据
-	s.blocks = make(map[string]*types.Block)
-	s.heightIndex = make(map[uint64][]*types.Block)
-	s.finalizedBlocks = make(map[uint64]*types.Block)
-
-	// 加载快照数据
-	for height, block := range snapshot.FinalizedBlocks {
-		s.blocks[block.ID] = block
-		s.heightIndex[height] = []*types.Block{block}
-		s.finalizedBlocks[height] = block
-
-		if height > s.maxHeight {
-			s.maxHeight = height
-		}
-	}
-
-	// 恢复最后接受的区块
-	if lastBlock, exists := snapshot.FinalizedBlocks[snapshot.LastAcceptedHeight]; exists {
-		s.lastAccepted = lastBlock
-		s.lastAcceptedHeight = snapshot.LastAcceptedHeight
-	}
-
-	Logf("[Store] Loaded snapshot at height %d with %d blocks\n",
-		snapshot.Height, len(snapshot.FinalizedBlocks))
-
-	return nil
-}
-
-// 获取最新快照（新增）
-func (s *MemoryBlockStore) GetLatestSnapshot() (*types.Snapshot, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if len(s.snapshotHeights) == 0 {
-		return nil, false
-	}
-
-	latestHeight := s.snapshotHeights[len(s.snapshotHeights)-1]
-	snapshot, exists := s.snapshots[latestHeight]
-	return snapshot, exists
-}
-
-// 获取指定高度或之前的最近快照（新增）
-func (s *MemoryBlockStore) GetSnapshotAtHeight(height uint64) (*types.Snapshot, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// 找到小于等于指定高度的最大快照高度
-	var bestHeight uint64
-	found := false
-
-	for i := len(s.snapshotHeights) - 1; i >= 0; i-- {
-		if s.snapshotHeights[i] <= height {
-			bestHeight = s.snapshotHeights[i]
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return nil, false
-	}
-
-	snapshot, exists := s.snapshots[bestHeight]
-	return snapshot, exists
 }
 
 // GetPendingBlocksCount 获取候选区块数量（未最终化）

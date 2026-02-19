@@ -61,7 +61,7 @@ func (nm *NetworkManager) CreateNodes() {
 	for i := 0; i < nm.config.Network.NumNodes; i++ {
 		nodeID := types.NodeID(strconv.Itoa(i))
 		// 为模拟场景创建 MemoryBlockStore
-		store := NewMemoryBlockStoreWithConfig(nm.config.Snapshot.MaxSnapshots)
+		store := NewMemoryBlockStore()
 
 		// 为模拟节点生成 ECDSA 密钥对并注册公钥
 		keyMgr := utils.NewKeyManager()
@@ -240,8 +240,6 @@ func (nm *NetworkManager) PrintQueryStatistics() {
 	totalChitsResponded := uint32(0)
 	totalGossipsReceived := uint32(0)
 	totalBlocksProposed := uint32(0)
-	totalSnapshotsUsed := uint32(0)   // 新增
-	totalSnapshotsServed := uint32(0) // 新增
 
 	queriesByHeight := make(map[uint64]uint32)
 
@@ -258,8 +256,6 @@ func (nm *NetworkManager) PrintQueryStatistics() {
 		totalChitsResponded += node.Stats.ChitsResponded
 		totalGossipsReceived += node.Stats.GossipsReceived
 		totalBlocksProposed += node.Stats.BlocksProposed
-		totalSnapshotsUsed += node.Stats.SnapshotsUsed
-		totalSnapshotsServed += node.Stats.SnapshotsServed
 
 		for height, count := range node.Stats.QueriesPerHeight {
 			queriesByHeight[height] += count
@@ -277,13 +273,6 @@ func (nm *NetworkManager) PrintQueryStatistics() {
 		Logf("Average chits responded per honest node: %.2f\n", avgChitsResponded)
 		Logf("Total blocks proposed: %d\n", totalBlocksProposed)
 		Logf("Total gossips received: %d\n", totalGossipsReceived)
-
-		// 新增快照统计
-		if nm.config.Snapshot.Enabled {
-			Logf("\n--- Snapshot Statistics ---\n")
-			Logf("Total snapshots used: %d\n", totalSnapshotsUsed)
-			Logf("Total snapshots served: %d\n", totalSnapshotsServed)
-		}
 
 		fmt.Println("\nQueries per height (total across all honest nodes):")
 		for h := uint64(1); h <= uint64(nm.config.Consensus.NumHeights); h++ {

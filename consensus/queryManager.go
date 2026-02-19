@@ -255,11 +255,6 @@ func NewQueryManager(id types.NodeID, transport interfaces.Transport, store inte
 		qm.tryIssueQuery()
 	})
 
-	// 新增：快照加载后也触发查询
-	events.Subscribe(types.EventSnapshotLoaded, func(e interfaces.Event) {
-		qm.tryIssueQuery()
-	})
-
 	events.Subscribe(types.EventBlockReceived, func(e interfaces.Event) {
 		// 只有在空闲时才由区块接收触发
 		if qm.engine.GetActiveQueryCount() == 0 {

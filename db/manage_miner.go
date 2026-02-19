@@ -4,6 +4,7 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+	statedb "dex/stateDB"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -150,16 +151,31 @@ func (mgr *Manager) loadMinerParticipantsFromDB() ([]*pb.Account, error) {
 		copy(accountKey, raw)
 		closer.Close()
 
-		raw2, closer2, err := snap.Get(accountKey)
+		accountBytes, err := mgr.Get(string(accountKey))
 		if err != nil {
-			if errors.Is(err, pebble.ErrNotFound) {
-				continue
+			mgr.mu.RLock()
+			stateReady := mgr.stateDB != nil
+			mgr.mu.RUnlock()
+
+			if !stateReady {
+				// Test-mode fallback: stateDB not initialized, read from KV snapshot.
+				raw2, closer2, err2 := snap.Get(accountKey)
+				if err2 != nil {
+					if errors.Is(err2, pebble.ErrNotFound) {
+						continue
+					}
+					return nil, err2
+				}
+				accountBytes = make([]byte, len(raw2))
+				copy(accountBytes, raw2)
+				closer2.Close()
+			} else {
+				if errors.Is(err, statedb.ErrNotFound) || errors.Is(err, pebble.ErrNotFound) {
+					continue
+				}
+				return nil, err
 			}
-			return nil, err
 		}
-		accountBytes := make([]byte, len(raw2))
-		copy(accountBytes, raw2)
-		closer2.Close()
 
 		account := &pb.Account{}
 		if err := ProtoUnmarshal(accountBytes, account); err != nil {

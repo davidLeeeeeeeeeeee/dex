@@ -11,12 +11,16 @@ func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	seq, err := s.store.NextSequence()
-	if err != nil {
-		return err
+	seq := uint64(0)
+	if height > 0 {
+		nextSeq, err := s.store.NextSequence()
+		if err != nil {
+			return err
+		}
+		seq = nextSeq
 	}
 
-	err = s.store.Update(func(tx kvWriter) error {
+	err := s.store.Update(func(tx kvWriter) error {
 		for _, kv := range kvs {
 			if !keys.IsStatefulKey(kv.Key) {
 				continue
@@ -34,19 +38,21 @@ func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 			}
 		}
 
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, seq)
-		hb := make([]byte, 8)
-		binary.BigEndian.PutUint64(hb, height)
+		if height > 0 {
+			buf := make([]byte, 8)
+			binary.BigEndian.PutUint64(buf, seq)
+			hb := make([]byte, 8)
+			binary.BigEndian.PutUint64(hb, height)
 
-		if err := tx.Set(kMetaH2Seq(height), buf); err != nil {
-			return err
-		}
-		if err := tx.Set(kMetaSeq2H(seq), hb); err != nil {
-			return err
-		}
-		if err := tx.Set(kMetaLastAppliedHeight(), hb); err != nil {
-			return err
+			if err := tx.Set(kMetaH2Seq(height), buf); err != nil {
+				return err
+			}
+			if err := tx.Set(kMetaSeq2H(seq), hb); err != nil {
+				return err
+			}
+			if err := tx.Set(kMetaLastAppliedHeight(), hb); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -54,7 +60,7 @@ func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 		return err
 	}
 
-	if checkpointOf(height, s.checkpointEvery()) {
+	if height > 0 && checkpointOf(height, s.checkpointEvery()) {
 		return s.createCheckpointLocked(height)
 	}
 	return nil

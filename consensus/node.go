@@ -17,17 +17,17 @@ import (
 // ============================================
 
 type Node struct {
-	ID                types.NodeID
-	IsByzantine       bool
-	transport         interfaces.Transport
-	store             interfaces.BlockStore
-	engine            interfaces.ConsensusEngine
-	events            interfaces.EventBus
-	messageHandler    *MessageHandler
-	queryManager      *QueryManager
-	gossipManager     *GossipManager
-	SyncManager       *SyncManager
-	snapshotManager   *SnapshotManager
+	ID             types.NodeID
+	IsByzantine    bool
+	transport      interfaces.Transport
+	store          interfaces.BlockStore
+	engine         interfaces.ConsensusEngine
+	events         interfaces.EventBus
+	messageHandler *MessageHandler
+	queryManager   *QueryManager
+	gossipManager  *GossipManager
+	SyncManager    *SyncManager
+
 	proposalManager   *ProposalManager
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -105,25 +105,23 @@ func NewNodeWithSigner(id types.NodeID, transport interfaces.Transport, store in
 	gossipManager.node = node
 	gossipManager.SetQueryManager(queryManager)
 
-	syncManager := NewSyncManager(id, transport, store, &config.Sync, &config.Snapshot, events, logger)
+	syncManager := NewSyncManager(id, transport, store, &config.Sync, events, logger)
 	syncManager.node = node
 
 	// 注入 SyncManager 到 QueryManager，用于同步期间暂停共识
 	queryManager.SetSyncManager(syncManager)
 
-	snapshotManager := NewSnapshotManager(id, store, &config.Snapshot, events, logger)
-
 	proposalManager := NewProposalManager(id, transport, store, &config.Node, events, logger)
 	proposalManager.node = node
 
-	messageHandler.SetManagers(queryManager, gossipManager, syncManager, snapshotManager)
+	messageHandler.SetManagers(queryManager, gossipManager, syncManager)
 	messageHandler.SetProposalManager(proposalManager)
 
 	node.messageHandler = messageHandler
 	node.queryManager = queryManager
 	node.gossipManager = gossipManager
 	node.SyncManager = syncManager
-	node.snapshotManager = snapshotManager
+
 	node.proposalManager = proposalManager
 
 	return node
@@ -191,7 +189,6 @@ func (n *Node) Start() {
 	n.queryManager.Start(n.ctx)
 	n.gossipManager.Start(n.ctx)
 	n.SyncManager.Start(n.ctx)
-	n.snapshotManager.Start(n.ctx)
 
 	if !n.IsByzantine {
 		n.proposalManager.Start(n.ctx)

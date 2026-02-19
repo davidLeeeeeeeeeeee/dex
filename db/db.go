@@ -3,6 +3,7 @@ package db
 import (
 	"dex/config"
 	"dex/interfaces"
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
 	statedb "dex/stateDB"
@@ -170,7 +171,7 @@ type dbSession struct {
 }
 
 func (s *dbSession) Get(key string) ([]byte, error) {
-	return s.manager.GetKV(key)
+	return s.manager.Get(key)
 }
 
 func (s *dbSession) ApplyStateUpdate(height uint64, updates []interface{}) ([]byte, error) {
@@ -194,8 +195,92 @@ func prefixUpperBound(prefix []byte) []byte {
 	return nil // prefix 全是 0xFF，无上界
 }
 
+func (manager *Manager) readStateKey(key string) ([]byte, error) {
+	manager.mu.RLock()
+	stateStore := manager.stateDB
+	manager.mu.RUnlock()
+	if stateStore == nil {
+		return nil, fmt.Errorf("stateDB is not initialized")
+	}
+	val, exists, err := stateStore.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, statedb.ErrNotFound
+	}
+	return val, nil
+}
+
+func (manager *Manager) readKVKey(key string) ([]byte, error) {
+	manager.mu.RLock()
+	db := manager.Db
+	manager.mu.RUnlock()
+	if db == nil {
+		return nil, fmt.Errorf("database is not initialized or closed")
+	}
+	raw, closer, err := db.Get([]byte(key))
+	if err != nil {
+		return nil, err
+	}
+	defer closer.Close()
+	val := make([]byte, len(raw))
+	copy(val, raw)
+	return val, nil
+}
+
+func (manager *Manager) scanStateByPrefix(prefix string, limit int, reverse bool) (map[string][]byte, error) {
+	manager.mu.RLock()
+	stateStore := manager.stateDB
+	manager.mu.RUnlock()
+	if stateStore == nil {
+		return nil, fmt.Errorf("stateDB is not initialized")
+	}
+
+	items := make(map[string][]byte)
+	if err := stateStore.IterateLatestSnapshot(func(key string, value []byte) error {
+		if !strings.HasPrefix(key, prefix) {
+			return nil
+		}
+		valCopy := make([]byte, len(value))
+		copy(valCopy, value)
+		items[key] = valCopy
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	if limit <= 0 || len(items) <= limit {
+		return items, nil
+	}
+
+	keysSlice := make([]string, 0, len(items))
+	for k := range items {
+		keysSlice = append(keysSlice, k)
+	}
+	sort.Strings(keysSlice)
+	if reverse {
+		for i, j := 0, len(keysSlice)-1; i < j; i, j = i+1, j-1 {
+			keysSlice[i], keysSlice[j] = keysSlice[j], keysSlice[i]
+		}
+	}
+
+	out := make(map[string][]byte, limit)
+	for i, k := range keysSlice {
+		if i >= limit {
+			break
+		}
+		out[k] = items[k]
+	}
+	return out, nil
+}
+
 // Scan scans all keys with the given prefix and returns a map of key-value pairs
 func (manager *Manager) Scan(prefix string) (map[string][]byte, error) {
+	if keys.IsStatefulKey(prefix) {
+		return manager.scanStateByPrefix(prefix, 0, false)
+	}
+
 	result := make(map[string][]byte)
 	p := []byte(prefix)
 	iter, err := manager.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
@@ -218,6 +303,10 @@ func (manager *Manager) Scan(prefix string) (map[string][]byte, error) {
 
 // ScanKVWithLimit 扫描指定前缀的所有键值对，最多返回 limit 条记录
 func (manager *Manager) ScanKVWithLimit(prefix string, limit int) (map[string][]byte, error) {
+	if keys.IsStatefulKey(prefix) {
+		return manager.scanStateByPrefix(prefix, limit, false)
+	}
+
 	result := make(map[string][]byte)
 	p := []byte(prefix)
 	iter, err := manager.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
@@ -245,6 +334,10 @@ func (manager *Manager) ScanKVWithLimit(prefix string, limit int) (map[string][]
 
 // ScanKVWithLimitReverse 反向扫描指定前缀的所有键值对，最多返回 limit 条记录
 func (manager *Manager) ScanKVWithLimitReverse(prefix string, limit int) (map[string][]byte, error) {
+	if keys.IsStatefulKey(prefix) {
+		return manager.scanStateByPrefix(prefix, limit, true)
+	}
+
 	result := make(map[string][]byte)
 	p := []byte(prefix)
 	upper := prefixUpperBound(p)
@@ -274,6 +367,18 @@ func (manager *Manager) ScanKVWithLimitReverse(prefix string, limit int) (map[st
 
 // ScanByPrefix 扫描指定前缀的所有键值对
 func (manager *Manager) ScanByPrefix(prefix string, limit int) (map[string]string, error) {
+	if keys.IsStatefulKey(prefix) {
+		stateItems, err := manager.scanStateByPrefix(prefix, limit, false)
+		if err != nil {
+			return nil, err
+		}
+		result := make(map[string]string, len(stateItems))
+		for k, v := range stateItems {
+			result[k] = string(v)
+		}
+		return result, nil
+	}
+
 	result := make(map[string]string)
 	p := []byte(prefix)
 	iter, err := manager.Db.NewIter(&pebble.IterOptions{LowerBound: p, UpperBound: prefixUpperBound(p)})
@@ -351,82 +456,51 @@ func (manager *Manager) Close() {
 
 // Read 读取键对应的值
 func (manager *Manager) Read(key string) (string, error) {
-	manager.mu.RLock()
-	db := manager.Db
-	manager.mu.RUnlock()
-	if db == nil {
-		return "", fmt.Errorf("database is not initialized or closed")
-	}
-	raw, closer, err := db.Get([]byte(key))
+	raw, err := manager.Get(key)
 	if err != nil {
 		return "", err
 	}
 	val := string(raw)
-	closer.Close()
 	return val, nil
 }
 
 // Get 实现 vm.DBManager 接口，返回 []byte
 func (manager *Manager) Get(key string) ([]byte, error) {
-	manager.mu.RLock()
-	db := manager.Db
-	manager.mu.RUnlock()
-	if db == nil {
-		return nil, fmt.Errorf("database is not initialized or closed")
+	if keys.IsStatefulKey(key) {
+		return manager.readStateKey(key)
 	}
-	raw, closer, err := db.Get([]byte(key))
-	if err != nil {
-		return nil, err
-	}
-	val := make([]byte, len(raw))
-	copy(val, raw)
-	closer.Close()
-	return val, nil
+	return manager.readKVKey(key)
 }
 
 // GetKV 直接从 KV 读取（绕过 StateDB）
 func (manager *Manager) GetKV(key string) ([]byte, error) {
-	manager.mu.RLock()
-	db := manager.Db
-	manager.mu.RUnlock()
-	if db == nil {
-		return nil, fmt.Errorf("database is not initialized or closed")
-	}
-	raw, closer, err := db.Get([]byte(key))
-	if err != nil {
-		return nil, err
-	}
-	val := make([]byte, len(raw))
-	copy(val, raw)
-	closer.Close()
-	return val, nil
+	return manager.readKVKey(key)
 }
 
-func (manager *Manager) GetKVs(keys []string) (map[string][]byte, error) {
-	result := make(map[string][]byte, len(keys))
-	if len(keys) == 0 {
+func (manager *Manager) GetKVs(keyList []string) (map[string][]byte, error) {
+	result := make(map[string][]byte, len(keyList))
+	if len(keyList) == 0 {
 		return result, nil
 	}
-	manager.mu.RLock()
-	db := manager.Db
-	manager.mu.RUnlock()
-	if db == nil {
-		return nil, fmt.Errorf("database is not initialized or closed")
-	}
-	for _, key := range keys {
+	for _, key := range keyList {
 		if key == "" {
 			continue
 		}
-		raw, closer, err := db.Get([]byte(key))
+		var (
+			val []byte
+			err error
+		)
+		if keys.IsStatefulKey(key) {
+			val, err = manager.readStateKey(key)
+		} else {
+			val, err = manager.readKVKey(key)
+		}
 		if err != nil {
-			if err == pebble.ErrNotFound {
+			if err == pebble.ErrNotFound || err == statedb.ErrNotFound {
 				continue
 			}
 			return nil, err
 		}
-		val := make([]byte, len(raw))
-		copy(val, raw)
-		closer.Close()
 		result[key] = val
 	}
 	return result, nil

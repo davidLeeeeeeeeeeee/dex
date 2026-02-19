@@ -19,20 +19,7 @@ func RunLoop() {
 	// config.Sync.SnapshotThreshold = 50  // 落后50个块就用快照
 	// config.Snapshot.Interval = 50        // 每50个块创建一个快照
 
-	fmt.Println("Starting Decoupled Snowman Consensus (With Snapshot Support)...")
-	Logf("Network: %d nodes (%d honest, %d byzantine)\n",
-		config.Network.NumNodes,
-		config.Network.NumNodes-config.Network.NumByzantineNodes,
-		config.Network.NumByzantineNodes)
-	Logf("Heights: %d, Blocks per height: %d\n",
-		config.Consensus.NumHeights,
-		config.Consensus.BlocksPerHeight)
-
-	if config.Snapshot.Enabled {
-		Logf("Snapshot: Enabled (interval=%d, threshold=%d)\n",
-			config.Snapshot.Interval,
-			config.Sync.SnapshotThreshold)
-	}
+	Logf("Starting Decoupled Snowman Consensus...\n")
 
 	network := NewNetworkManager(config)
 	network.CreateNodes()

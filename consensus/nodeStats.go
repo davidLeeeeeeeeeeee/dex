@@ -23,9 +23,8 @@ type NodeStats struct {
 	QueriesPerHeight map[uint64]uint32
 	BlocksProposed   uint32
 	GossipsReceived  uint32
-	SnapshotsUsed    uint32
-	SnapshotsServed  uint32
-	events           interfaces.EventBus
+
+	events interfaces.EventBus
 
 	// ---- 环形缓冲区实现 ----
 	prefHistBuf  []PreferenceSwitch // 固定容量缓冲区

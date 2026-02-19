@@ -80,6 +80,8 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/gossipAnyMsg", hm.HandleBlockGossip)
 	mux.HandleFunc("/chits", hm.HandleChits)
 	mux.HandleFunc("/heightquery", hm.HandleHeightQuery)
+	mux.HandleFunc("/statedb/snapshot/shards", hm.HandleStateSnapshotShards)
+	mux.HandleFunc("/statedb/snapshot/page", hm.HandleStateSnapshotPage)
 	mux.HandleFunc("/pendingblocks", hm.HandlePendingBlocks)
 	// 基本功能
 	mux.HandleFunc("/status", hm.HandleStatus)

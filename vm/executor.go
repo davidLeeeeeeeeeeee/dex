@@ -697,6 +697,8 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 
 	// ========== 第二步：应用所有状态变更 ==========
 	// 在主库队列写入前，先同步 stateDB，避免主库已排队但 stateDB 失败。
+	_, strictStateSeparation := x.DB.(*dbpkg.Manager)
+	stateSynced := false
 	if syncer, ok := x.DB.(stateDBSyncer); ok && len(res.Diff) > 0 {
 		updates := make([]interface{}, 0, len(res.Diff))
 		for i := range res.Diff {
@@ -708,6 +710,7 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		if err != nil {
 			return fmt.Errorf("sync stateDB updates failed: %w", err)
 		}
+		stateSynced = true
 	}
 
 	// 遍历 Diff 中的所有写操作
@@ -719,6 +722,12 @@ func (x *Executor) applyResult(res *SpecResult, b *pb.Block) (err error) {
 		// 第一步：如果是账户更新，标记为需要更新 stake index
 		if !w.Del && (w.Category == "account" || strings.HasPrefix(w.Key, "v1_account_")) {
 			accountUpdates = append(accountUpdates, w)
+		}
+
+		// strict key separation:
+		// once state diff has been persisted to stateDB, do not enqueue stateful keys into KV main DB.
+		if strictStateSeparation && stateSynced && keys.IsStatefulKey(w.Key) {
+			continue
 		}
 
 		// 第二步：写入数据库

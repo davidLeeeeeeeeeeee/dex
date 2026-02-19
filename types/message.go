@@ -25,19 +25,17 @@ func (id NodeID) Last2Mod100() int {
 type MessageType string
 
 const (
-	MsgPullQuery        = "MsgPullQuery"
-	MsgPushQuery        = "MsgPushQuery"
-	MsgChits            = "MsgChits"
-	MsgGet              = "MsgGet" // 请求区块数据
-	MsgPut              = "MsgPut" // 发送区块数据
-	MsgGossip           = "MsgGossip"
-	MsgSyncRequest      = "MsgSyncRequest"
-	MsgSyncResponse     = "MsgSyncResponse"
-	MsgHeightQuery      = "MsgHeightQuery"
-	MsgHeightResponse   = "MsgHeightResponse"
-	MsgSnapshotRequest  = "MsgSnapshotRequest"  // 请求快照
-	MsgSnapshotResponse = "MsgSnapshotResponse" // 快照响应
-	MsgFrost            = "MsgFrost"            // Frost 签名消息
+	MsgPullQuery      = "MsgPullQuery"
+	MsgPushQuery      = "MsgPushQuery"
+	MsgChits          = "MsgChits"
+	MsgGet            = "MsgGet" // 请求区块数据
+	MsgPut            = "MsgPut" // 发送区块数据
+	MsgGossip         = "MsgGossip"
+	MsgSyncRequest    = "MsgSyncRequest"
+	MsgSyncResponse   = "MsgSyncResponse"
+	MsgHeightQuery    = "MsgHeightQuery"
+	MsgHeightResponse = "MsgHeightResponse"
+	MsgFrost          = "MsgFrost" // Frost 签名消息
 )
 
 // 基础消息结构
@@ -67,10 +65,7 @@ type Message struct {
 	BlocksShortTxs map[string][]byte // blockID -> ShortTxs 数据（仅SyncShortMode=true时有效）
 	// For Height Query
 	CurrentHeight uint64
-	// For Snapshot
-	Snapshot        *Snapshot
-	SnapshotHeight  uint64
-	RequestSnapshot bool
+
 	// For Frost
 	FrostPayload []byte // FrostEnvelope 序列化数据
 	// VRF 签名集合（同步时附带共识证据）

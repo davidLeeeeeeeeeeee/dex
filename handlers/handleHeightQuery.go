@@ -30,7 +30,6 @@ func (hm *HandlerManager) HandleHeightQuery(w http.ResponseWriter, r *http.Reque
 		PendingTxCount:     pendingTxCount,
 		IsSyncing:          syncStatus.IsSyncing,
 		SyncTargetHeight:   syncStatus.SyncTargetHeight,
-		IsSnapshotSync:     syncStatus.IsSnapshotSync,
 	}
 
 	data, _ := proto.Marshal(resp)

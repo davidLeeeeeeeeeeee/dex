@@ -21,12 +21,6 @@ type BlockStore interface {
 	GetPendingBlocksCount() int
 	GetPendingBlocks() []*types.Block
 
-	// 快照相关
-	CreateSnapshot(height uint64) (*types.Snapshot, error)
-	LoadSnapshot(snapshot *types.Snapshot) error
-	GetLatestSnapshot() (*types.Snapshot, bool)
-	GetSnapshotAtHeight(height uint64) (*types.Snapshot, bool)
-
 	SetFinalized(height uint64, blockID string) error
 }
 

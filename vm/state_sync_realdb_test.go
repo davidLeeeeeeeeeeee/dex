@@ -60,12 +60,15 @@ func TestCommitFinalizedBlockMirrorsStateIntoStateDB(t *testing.T) {
 		keys.KeyBalance(bob, "FB"),
 	}
 	for _, key := range statefulKeys {
-		kvVal, err := dbMgr.GetKV(key)
-		require.NoError(t, err)
+		_, err := dbMgr.GetKV(key)
+		require.Error(t, err, "stateful key should not be persisted in KV main DB")
 
 		stateVal, exists, err := dbMgr.GetState(key)
 		require.NoError(t, err)
 		require.True(t, exists, "stateDB should contain key %s", key)
-		require.Equal(t, kvVal, stateVal, "stateDB value mismatch for key %s", key)
+
+		getVal, err := dbMgr.Get(key)
+		require.NoError(t, err)
+		require.Equal(t, getVal, stateVal, "stateDB value mismatch for key %s", key)
 	}
 }

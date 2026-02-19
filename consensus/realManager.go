@@ -75,7 +75,7 @@ func InitConsensusManagerWithSimulation(
 	transport := NewRealTransportWithSimulation(nodeID, dbManager, senderMgr, context.Background(), packetLossRate, minLatency, maxLatency)
 
 	// 替换默认的 MemoryBlockStore 为 RealBlockStore
-	realStore := NewRealBlockStore(nodeID, dbManager, config.Snapshot.MaxSnapshots, txPool, globalCfg)
+	realStore := NewRealBlockStore(nodeID, dbManager, txPool, globalCfg)
 	node := NewNode(nodeID, transport, realStore, false, config, logger)
 
 	// 设置EventBus到RealBlockStore
@@ -217,27 +217,6 @@ func (m *ConsensusNodeManager) GetStats() *NodeStats {
 	return m.Node.Stats
 }
 
-// CreateSnapshot 创建快照
-func (m *ConsensusNodeManager) CreateSnapshot(height uint64) error {
-	_, err := m.store.CreateSnapshot(height)
-	if err != nil {
-		return err
-	}
-
-	logs.Info("[ConsensusManager] Created snapshot at height %d", height)
-	return nil
-}
-
-// LoadSnapshot 加载快照
-func (m *ConsensusNodeManager) LoadSnapshot(snapshot *types.Snapshot) error {
-	if err := m.store.LoadSnapshot(snapshot); err != nil {
-		return err
-	}
-
-	logs.Info("[ConsensusManager] Loaded snapshot at height %d", snapshot.Height)
-	return nil
-}
-
 // GetCurrentHeight 获取当前高度
 func (m *ConsensusNodeManager) GetCurrentHeight() uint64 {
 	return m.store.GetCurrentHeight()
@@ -329,7 +308,6 @@ func (m *ConsensusNodeManager) GetPendingBlockBuffer() *PendingBlockBuffer {
 type SyncStatus struct {
 	IsSyncing        bool   // 是否正在同步追赶
 	SyncTargetHeight uint64 // 同步目标高度（网络最高已最终化高度）
-	IsSnapshotSync   bool   // 是否快照同步模式
 }
 
 // GetSyncStatus 获取节点同步状态
@@ -353,6 +331,5 @@ func (m *ConsensusNodeManager) GetSyncStatus() SyncStatus {
 	return SyncStatus{
 		IsSyncing:        sm.Syncing,
 		SyncTargetHeight: maxPeerHeight,
-		IsSnapshotSync:   sm.usingSnapshot,
 	}
 }

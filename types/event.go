@@ -13,8 +13,6 @@ const (
 	EventQueryComplete     EventType = "query.complete"
 	EventSyncComplete      EventType = "sync.complete"
 	EventNewBlock          EventType = "block.new"
-	EventSnapshotCreated   EventType = "snapshot.created" // 新增
-	EventSnapshotLoaded    EventType = "snapshot.loaded"  // 新增
 )
 
 type BaseEvent struct {

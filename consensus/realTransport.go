@@ -163,8 +163,7 @@ func (t *RealTransport) doSend(to types.NodeID, msg types.Message) error {
 		errSend = t.sendSyncRequest(to, targetIP, msg)
 	case types.MsgHeightQuery:
 		errSend = t.sendHeightQuery(to, targetIP, msg)
-	case types.MsgSnapshotRequest:
-		errSend = t.sendSnapshotRequest(to, targetIP, msg)
+
 	default:
 		errSend = fmt.Errorf("unknown message type: %v", msg.Type)
 	}
@@ -351,44 +350,20 @@ func (t *RealTransport) sendHeightQuery(to types.NodeID, targetIP string, msg ty
 	})
 }
 
-func (t *RealTransport) sendSnapshotRequest(to types.NodeID, targetIP string, msg types.Message) error {
-	// 临时方案：通过 PullBlock 拉取高度对应块作为快照通知，确保 Syncing 标志能重置
-	t.senderManager.PullBlock(targetIP, msg.Height, func(dbBlock *pb.Block) {
-		if dbBlock == nil {
-			// 如果没拿到，也要发个空响应，否则 SyncManager 会卡在 Syncing 状态
-			t.inbox <- types.Message{
-				Type:      types.MsgSnapshotResponse,
-				From:      to,
-				SyncID:    msg.SyncID,
-				RequestID: msg.RequestID,
-				Snapshot:  nil,
-			}
-			return
-		}
-
-		block, err := t.adapter.DBBlockToConsensus(dbBlock)
-		if err != nil {
-			return
-		}
-
-		// 包装成简单快照以满足 SyncManager.HandleSnapshotResponse
-		snapshot := &types.Snapshot{
-			Height:             block.Header.Height,
-			LastAcceptedID:     block.ID,
-			LastAcceptedHeight: block.Header.Height,
-		}
-
-		t.inbox <- types.Message{
-			Type:           types.MsgSnapshotResponse,
-			From:           to,
-			SyncID:         msg.SyncID,
-			RequestID:      msg.RequestID,
-			Snapshot:       snapshot,
-			SnapshotHeight: block.Header.Height,
-		}
-	})
-	return nil
+func (t *RealTransport) FetchStateSnapshotShards(peer types.NodeID, targetHeight uint64) (*types.StateSnapshotShardsResponse, error) {
+	if t.senderManager == nil {
+		return nil, fmt.Errorf("sender manager is not initialized")
+	}
+	return t.senderManager.FetchStateSnapshotShards(string(peer), targetHeight)
 }
+
+func (t *RealTransport) FetchStateSnapshotPage(peer types.NodeID, snapshotHeight uint64, shard string, pageSize int, pageToken string) (*types.StateSnapshotPageResponse, error) {
+	if t.senderManager == nil {
+		return nil, fmt.Errorf("sender manager is not initialized")
+	}
+	return t.senderManager.FetchStateSnapshotPage(string(peer), snapshotHeight, shard, pageSize, pageToken)
+}
+
 func (t *RealTransport) GetReceiveQueueLen() int {
 	return len(t.receiveQueue)
 }

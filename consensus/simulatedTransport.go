@@ -41,11 +41,7 @@ func (t *SimulatedTransport) Send(to types.NodeID, msg types.Message) error {
 		return nil // 返回nil表示"发送成功"（发送方不知道丢包）
 	}
 	go func() {
-		// 快照传输延迟更长
 		delay := t.networkLatency
-		if msg.Type == types.MsgSnapshotResponse && msg.Snapshot != nil {
-			delay = delay * 3 // 快照数据更大，传输时间更长
-		}
 		delay += time.Duration(rand.Intn(int(delay / 2)))
 		time.Sleep(delay)
 

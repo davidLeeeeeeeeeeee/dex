@@ -43,11 +43,7 @@ type RealBlockStore struct {
 	lastAcceptedHeight uint64
 	maxHeight          uint64
 
-	// 快照管理
-	snapshots       map[uint64]*types.Snapshot
-	snapshotHeights []uint64
-	maxSnapshots    int
-	nodeID          types.NodeID // 新增
+	nodeID types.NodeID
 
 	// 最终化投票记录（用于调试）
 	finalizationChits map[uint64]*types.FinalizationChits
@@ -64,7 +60,7 @@ type RealBlockStore struct {
 }
 
 // 创建真实的区块存储
-func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots int, pool *txpool.TxPool, cfg *config.Config) interfaces.BlockStore {
+func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, pool *txpool.TxPool, cfg *config.Config) interfaces.BlockStore {
 	// 转换见证者配置
 	var witnessCfg *witness.Config
 	if cfg != nil {
@@ -104,21 +100,17 @@ func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, maxSnapshots 
 	vmExecutor := vm.NewExecutorWithWitnessService(dbManager, registry, cache, witnessSvc)
 
 	store := &RealBlockStore{
-		dbManager:         dbManager,
-		pool:              pool,
-		vmExecutor:        vmExecutor,
-		blockCache:        make(map[string]*types.Block),
-		heightIndex:       make(map[uint64][]*types.Block),
-		finalizedBlocks:   make(map[uint64]*types.Block),
-		snapshots:         make(map[uint64]*types.Snapshot),
-		snapshotHeights:   make([]uint64, 0),
-		maxSnapshots:      maxSnapshots,
-		maxHeight:         0,
-		adapter:           NewConsensusAdapter(dbManager),
-		nodeID:            nodeID, // 记录节点ID
-		finalizationChits: make(map[uint64]*types.FinalizationChits),
-		signatureSets:     make(map[uint64]*pb.ConsensusSignatureSet),
-		// 默认保持保守：每块强刷
+		dbManager:             dbManager,
+		pool:                  pool,
+		vmExecutor:            vmExecutor,
+		blockCache:            make(map[string]*types.Block),
+		heightIndex:           make(map[uint64][]*types.Block),
+		finalizedBlocks:       make(map[uint64]*types.Block),
+		maxHeight:             0,
+		adapter:               NewConsensusAdapter(dbManager),
+		nodeID:                nodeID,
+		finalizationChits:     make(map[uint64]*types.FinalizationChits),
+		signatureSets:         make(map[uint64]*pb.ConsensusSignatureSet),
 		forceFlushEveryN:      1,
 		forceFlushMaxInterval: 0,
 		lastForceFlushAt:      time.Now(),
@@ -628,138 +620,6 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 	return nil
 }
 
-// CreateSnapshot 创建快照
-func (s *RealBlockStore) CreateSnapshot(height uint64) (*types.Snapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if height > s.lastAcceptedHeight {
-		return nil, fmt.Errorf("cannot create snapshot beyond last accepted height")
-	}
-
-	snapshot := &types.Snapshot{
-		Height:             height,
-		Timestamp:          time.Now(),
-		FinalizedBlocks:    make(map[uint64]*types.Block),
-		LastAcceptedID:     s.lastAccepted.ID,
-		LastAcceptedHeight: s.lastAcceptedHeight,
-		BlockHashes:        make(map[string]bool),
-	}
-
-	// 内存优化：不再复制所有历史最终化区块
-	// 快照只需要关键元数据，具体的历史区块可以通过 db 加载
-	// 之前这里线性增长（高度 1000 时，每个快照存 1000 个 block 索引）
-	const keepInSnapshot = 100
-	startH := uint64(0)
-	if height > keepInSnapshot {
-		startH = height - keepInSnapshot
-	}
-
-	for h := startH; h <= height; h++ {
-		if block, exists := s.finalizedBlocks[h]; exists {
-			snapshot.FinalizedBlocks[h] = block
-			snapshot.BlockHashes[block.ID] = true
-		}
-	}
-
-	// 存储快照
-	s.snapshots[height] = snapshot
-	s.snapshotHeights = append(s.snapshotHeights, height)
-
-	// 限制快照数量
-	if len(s.snapshotHeights) > s.maxSnapshots {
-		oldestHeight := s.snapshotHeights[0]
-		delete(s.snapshots, oldestHeight)
-		s.snapshotHeights = s.snapshotHeights[1:]
-	}
-
-	// 持久化快照到数据库
-	// 持久化快照到数据库
-	go func() {
-		logs.SetThreadNodeContext(string(s.nodeID))
-		s.saveSnapshotToDB(snapshot)
-	}()
-
-	logs.Info("[RealBlockStore] Created snapshot at height %d", height)
-
-	return snapshot, nil
-}
-
-// LoadSnapshot 加载快照
-func (s *RealBlockStore) LoadSnapshot(snapshot *types.Snapshot) error {
-	if snapshot == nil {
-		return fmt.Errorf("nil snapshot")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// 清空现有数据
-	s.blockCache = make(map[string]*types.Block)
-	s.heightIndex = make(map[uint64][]*types.Block)
-	s.finalizedBlocks = make(map[uint64]*types.Block)
-
-	// 加载快照数据
-	for height, block := range snapshot.FinalizedBlocks {
-		s.blockCache[block.ID] = block
-		s.heightIndex[height] = []*types.Block{block}
-		s.finalizedBlocks[height] = block
-
-		if height > s.maxHeight {
-			s.maxHeight = height
-		}
-	}
-
-	// 恢复最后接受的区块
-	if lastBlock, exists := snapshot.FinalizedBlocks[snapshot.LastAcceptedHeight]; exists {
-		s.lastAccepted = lastBlock
-		s.lastAcceptedHeight = snapshot.LastAcceptedHeight
-	}
-
-	logs.Info("[RealBlockStore] Loaded snapshot at height %d with %d blocks",
-		snapshot.Height, len(snapshot.FinalizedBlocks))
-
-	return nil
-}
-
-// GetLatestSnapshot 获取最新快照
-func (s *RealBlockStore) GetLatestSnapshot() (*types.Snapshot, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if len(s.snapshotHeights) == 0 {
-		return nil, false
-	}
-
-	latestHeight := s.snapshotHeights[len(s.snapshotHeights)-1]
-	snapshot, exists := s.snapshots[latestHeight]
-	return snapshot, exists
-}
-
-// GetSnapshotAtHeight 获取指定高度或之前的最近快照
-func (s *RealBlockStore) GetSnapshotAtHeight(height uint64) (*types.Snapshot, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var bestHeight uint64
-	found := false
-
-	for i := len(s.snapshotHeights) - 1; i >= 0; i-- {
-		if s.snapshotHeights[i] <= height {
-			bestHeight = s.snapshotHeights[i]
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return nil, false
-	}
-
-	snapshot, exists := s.snapshots[bestHeight]
-	return snapshot, exists
-}
-
 // 内部辅助方法
 
 func (s *RealBlockStore) validateBlock(block *types.Block) error {
@@ -1120,15 +980,6 @@ func (s *RealBlockStore) maybeForceFlushAfterFinalize() {
 
 	s.finalizedSinceLastFlush = 0
 	s.lastForceFlushAt = time.Now()
-}
-
-func (s *RealBlockStore) saveSnapshotToDB(snapshot *types.Snapshot) {
-	// 这里可以实现快照的持久化逻辑
-	// 例如序列化后保存到数据库的特定键下
-	key := fmt.Sprintf("snapshot_%d", snapshot.Height)
-	data, _ := json.Marshal(snapshot)
-	s.dbManager.EnqueueSet(key, string(data))
-	logs.Debug("[RealBlockStore] Snapshot saved at height %d", snapshot.Height)
 }
 
 // cleanupOldData 清理低于指定高度的旧缓存数据（必须持有写锁调用）
