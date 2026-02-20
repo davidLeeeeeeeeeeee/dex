@@ -110,6 +110,13 @@ func TestStateDBReaderAdapter(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Len(t, scanned, 2)
+
+	// 测试 GetMany
+	batch, err := reader.GetMany([]string{"key1", "key2", "missing"})
+	assert.NoError(t, err)
+	assert.Len(t, batch, 2)
+	assert.Equal(t, []byte("value1"), batch["key1"])
+	assert.Equal(t, []byte("value2"), batch["key2"])
 }
 
 // fakeDBGetter fake DB 实现

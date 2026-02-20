@@ -199,3 +199,82 @@ func TestPageCurrentStateAndCheckpointSnapshot(t *testing.T) {
 		t.Fatal("expected k2 in checkpoint page")
 	}
 }
+
+func TestIterateLatestByPrefix(t *testing.T) {
+	cfg := testPebbleConfig(t.TempDir())
+
+	db, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new db failed: %v", err)
+	}
+	defer db.Close()
+
+	updates := []KVUpdate{
+		{Key: "v1_account_pref_a", Value: []byte("a")},
+		{Key: "v1_account_pref_b", Value: []byte("b")},
+		{Key: "v1_order_pref_1", Value: []byte("o1")},
+	}
+	if err := db.ApplyAccountUpdate(1, updates...); err != nil {
+		t.Fatalf("apply batch failed: %v", err)
+	}
+
+	got := map[string]string{}
+	if err := db.IterateLatestByPrefix("v1_account_", func(key string, value []byte) error {
+		got[key] = string(value)
+		return nil
+	}); err != nil {
+		t.Fatalf("iterate by prefix failed: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 account keys, got %d", len(got))
+	}
+	if got["v1_account_pref_a"] != "a" {
+		t.Fatalf("unexpected value for v1_account_pref_a: %q", got["v1_account_pref_a"])
+	}
+	if got["v1_account_pref_b"] != "b" {
+		t.Fatalf("unexpected value for v1_account_pref_b: %q", got["v1_account_pref_b"])
+	}
+	if _, exists := got["v1_order_pref_1"]; exists {
+		t.Fatal("order key should not be returned by account prefix scan")
+	}
+}
+
+func TestGetMany(t *testing.T) {
+	cfg := testPebbleConfig(t.TempDir())
+
+	db, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new db failed: %v", err)
+	}
+	defer db.Close()
+
+	updates := []KVUpdate{
+		{Key: "v1_account_getmany_a", Value: []byte("a")},
+		{Key: "v1_account_getmany_b", Value: []byte("b")},
+	}
+	if err := db.ApplyAccountUpdate(1, updates...); err != nil {
+		t.Fatalf("apply updates failed: %v", err)
+	}
+
+	got, err := db.GetMany([]string{
+		"v1_account_getmany_a",
+		"v1_account_getmany_b",
+		"v1_account_getmany_missing",
+	})
+	if err != nil {
+		t.Fatalf("get many failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 keys, got %d", len(got))
+	}
+	if string(got["v1_account_getmany_a"]) != "a" {
+		t.Fatalf("unexpected value for key a: %q", string(got["v1_account_getmany_a"]))
+	}
+	if string(got["v1_account_getmany_b"]) != "b" {
+		t.Fatalf("unexpected value for key b: %q", string(got["v1_account_getmany_b"]))
+	}
+	if _, exists := got["v1_account_getmany_missing"]; exists {
+		t.Fatal("missing key should not exist in result")
+	}
+}

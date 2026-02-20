@@ -229,6 +229,51 @@ func (manager *Manager) readKVKey(key string) ([]byte, error) {
 	return val, nil
 }
 
+func (manager *Manager) readStateKeys(keys []string) (map[string][]byte, error) {
+	manager.mu.RLock()
+	stateStore := manager.stateDB
+	manager.mu.RUnlock()
+	if stateStore == nil {
+		return nil, fmt.Errorf("stateDB is not initialized")
+	}
+	return stateStore.GetMany(keys)
+}
+
+func (manager *Manager) readKVKeys(keys []string) (map[string][]byte, error) {
+	manager.mu.RLock()
+	db := manager.Db
+	manager.mu.RUnlock()
+	if db == nil {
+		return nil, fmt.Errorf("database is not initialized or closed")
+	}
+
+	out := make(map[string][]byte, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+
+	snap := db.NewSnapshot()
+	defer snap.Close()
+
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		raw, closer, err := snap.Get([]byte(key))
+		if err != nil {
+			if err == pebble.ErrNotFound {
+				continue
+			}
+			return nil, err
+		}
+		val := make([]byte, len(raw))
+		copy(val, raw)
+		closer.Close()
+		out[key] = val
+	}
+	return out, nil
+}
+
 func (manager *Manager) scanStateByPrefix(prefix string, limit int, reverse bool) (map[string][]byte, error) {
 	manager.mu.RLock()
 	stateStore := manager.stateDB
@@ -238,13 +283,8 @@ func (manager *Manager) scanStateByPrefix(prefix string, limit int, reverse bool
 	}
 
 	items := make(map[string][]byte)
-	if err := stateStore.IterateLatestSnapshot(func(key string, value []byte) error {
-		if !strings.HasPrefix(key, prefix) {
-			return nil
-		}
-		valCopy := make([]byte, len(value))
-		copy(valCopy, value)
-		items[key] = valCopy
+	if err := stateStore.IterateLatestByPrefix(prefix, func(key string, value []byte) error {
+		items[key] = value
 		return nil
 	}); err != nil {
 		return nil, err
@@ -482,27 +522,40 @@ func (manager *Manager) GetKVs(keyList []string) (map[string][]byte, error) {
 	if len(keyList) == 0 {
 		return result, nil
 	}
+
+	stateKeys := make([]string, 0, len(keyList))
+	kvKeys := make([]string, 0, len(keyList))
 	for _, key := range keyList {
 		if key == "" {
 			continue
 		}
-		var (
-			val []byte
-			err error
-		)
 		if keys.IsStatefulKey(key) {
-			val, err = manager.readStateKey(key)
+			stateKeys = append(stateKeys, key)
 		} else {
-			val, err = manager.readKVKey(key)
+			kvKeys = append(kvKeys, key)
 		}
+	}
+
+	if len(stateKeys) > 0 {
+		stateValues, err := manager.readStateKeys(stateKeys)
 		if err != nil {
-			if err == pebble.ErrNotFound || err == statedb.ErrNotFound {
-				continue
-			}
 			return nil, err
 		}
-		result[key] = val
+		for k, v := range stateValues {
+			result[k] = v
+		}
 	}
+
+	if len(kvKeys) > 0 {
+		kvValues, err := manager.readKVKeys(kvKeys)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range kvValues {
+			result[k] = v
+		}
+	}
+
 	return result, nil
 }
 
@@ -538,9 +591,22 @@ func (m *Manager) GetMinerByIndex(index uint64) (*pb.Account, error) {
 	if m.IndexMgr == nil {
 		return nil, fmt.Errorf("IndexMgr not initialized")
 	}
-	addr, err := m.IndexMgr.GetAddressByIndex(index)
+	addrOrKey, err := m.IndexMgr.GetAddressByIndex(index)
 	if err != nil {
 		return nil, err
 	}
-	return m.GetAccount(addr)
+	// indexToAccount currently stores account key (e.g. v1_account_<addr>),
+	// not plain address. Support both forms.
+	if keys.IsAccountKey(addrOrKey) {
+		raw, err := m.Get(addrOrKey)
+		if err != nil {
+			return nil, err
+		}
+		account := &pb.Account{}
+		if err := ProtoUnmarshal(raw, account); err != nil {
+			return nil, err
+		}
+		return account, nil
+	}
+	return m.GetAccount(addrOrKey)
 }

@@ -9,24 +9,48 @@ func (s *DB) Get(key string) ([]byte, bool, error) {
 
 	sh := shardOf(key, s.conf.ShardHexWidth)
 	stateKey := kState(sh, key)
-
-	var (
-		result []byte
-		found  bool
-	)
-	err := s.store.View(func(tx kvReader) error {
-		v, err := tx.Get(stateKey)
-		if err != nil {
-			if s.store.IsNotFound(err) {
-				return nil
-			}
-			return err
+	v, err := s.store.Get(stateKey)
+	if err != nil {
+		if s.store.IsNotFound(err) {
+			return nil, false, nil
 		}
-		result = v
-		found = true
+		return nil, false, err
+	}
+	return v, true, nil
+}
+
+// GetMany returns state keys in one snapshot view.
+func (s *DB) GetMany(keys []string) (map[string][]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[string][]byte, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+
+	err := s.store.View(func(tx kvReader) error {
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			sh := shardOf(key, s.conf.ShardHexWidth)
+			stateKey := kState(sh, key)
+			v, err := tx.Get(stateKey)
+			if err != nil {
+				if s.store.IsNotFound(err) {
+					continue
+				}
+				return err
+			}
+			out[key] = v
+		}
 		return nil
 	})
-	return result, found, err
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // Exists checks whether a key exists.
@@ -78,18 +102,19 @@ func (s *DB) PageCurrentDiff(shard string, pageSize int, pageToken string) (Page
 	return out, nil
 }
 
-// IterateLatestSnapshot iterates live state.
-func (s *DB) IterateLatestSnapshot(fn func(key string, value []byte) error) error {
+// IterateLatestByPrefix iterates live state keys under one business prefix.
+func (s *DB) IterateLatestByPrefix(prefix string, fn func(key string, value []byte) error) error {
 	for _, shard := range s.shards {
-		prefix := kStatePrefix(shard)
-		prefixStr := string(prefix)
+		statePrefix := kStatePrefix(shard)
+		statePrefixLen := len(statePrefix)
+		scanPrefix := kState(shard, prefix)
+
 		err := s.store.View(func(tx kvReader) error {
-			return tx.IteratePrefix(prefix, nil, func(key []byte, value []byte) error {
-				k := string(key)
-				if len(k) <= len(prefixStr) || k[:len(prefixStr)] != prefixStr {
+			return tx.IteratePrefix(scanPrefix, nil, func(key []byte, value []byte) error {
+				if len(key) <= statePrefixLen {
 					return nil
 				}
-				return fn(k[len(prefixStr):], append([]byte(nil), value...))
+				return fn(string(key[statePrefixLen:]), append([]byte(nil), value...))
 			})
 		})
 		if err != nil {
@@ -97,4 +122,9 @@ func (s *DB) IterateLatestSnapshot(fn func(key string, value []byte) error) erro
 		}
 	}
 	return nil
+}
+
+// IterateLatestSnapshot iterates live state.
+func (s *DB) IterateLatestSnapshot(fn func(key string, value []byte) error) error {
+	return s.IterateLatestByPrefix("", fn)
 }

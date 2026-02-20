@@ -32,6 +32,29 @@ func (a *planningReaderAdapter) Scan(prefix string, fn func(k string, v []byte) 
 	return a.reader.Scan(prefix, fn)
 }
 
+func (a *planningReaderAdapter) GetMany(keys []string) (map[string][]byte, error) {
+	if bulkReader, ok := a.reader.(interface {
+		GetMany(keys []string) (map[string][]byte, error)
+	}); ok {
+		return bulkReader.GetMany(keys)
+	}
+
+	out := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		v, exists, err := a.reader.Get(key)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			out[key] = v
+		}
+	}
+	return out, nil
+}
+
 // vaultProviderAdapter 适配器：将runtime.VaultCommitteeProvider转换为roast.VaultCommitteeProvider
 type vaultProviderAdapter struct {
 	provider VaultCommitteeProvider
@@ -86,6 +109,29 @@ func (a *workersStateReaderAdapter) Get(key string) ([]byte, bool, error) {
 
 func (a *workersStateReaderAdapter) Scan(prefix string, fn func(k string, v []byte) bool) error {
 	return a.reader.Scan(prefix, fn)
+}
+
+func (a *workersStateReaderAdapter) GetMany(keys []string) (map[string][]byte, error) {
+	if bulkReader, ok := a.reader.(interface {
+		GetMany(keys []string) (map[string][]byte, error)
+	}); ok {
+		return bulkReader.GetMany(keys)
+	}
+
+	out := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		v, exists, err := a.reader.Get(key)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			out[key] = v
+		}
+	}
+	return out, nil
 }
 
 type workersTxSubmitterAdapter struct {
@@ -151,6 +197,29 @@ func (a *workersStateReaderAdapter2) Get(key string) ([]byte, bool, error) {
 
 func (a *workersStateReaderAdapter2) Scan(prefix string, fn func(k string, v []byte) bool) error {
 	return a.reader.Scan(prefix, fn)
+}
+
+func (a *workersStateReaderAdapter2) GetMany(keys []string) (map[string][]byte, error) {
+	if bulkReader, ok := a.reader.(interface {
+		GetMany(keys []string) (map[string][]byte, error)
+	}); ok {
+		return bulkReader.GetMany(keys)
+	}
+
+	out := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		v, exists, err := a.reader.Get(key)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			out[key] = v
+		}
+	}
+	return out, nil
 }
 
 type workersTxSubmitterAdapter2 struct {

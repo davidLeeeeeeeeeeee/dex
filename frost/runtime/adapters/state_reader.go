@@ -14,6 +14,10 @@ type DBGetter interface {
 	Scan(prefix string) (map[string][]byte, error)
 }
 
+type dbBatchGetter interface {
+	GetKVs(keyList []string) (map[string][]byte, error)
+}
+
 // StateDBReader 基于 StateDB/DB 的 ChainStateReader 实现
 type StateDBReader struct {
 	db DBGetter
@@ -52,6 +56,38 @@ func (r *StateDBReader) Scan(prefix string, fn func(k string, v []byte) bool) er
 		}
 	}
 	return nil
+}
+
+// GetMany reads multiple keys and returns existing ones only.
+func (r *StateDBReader) GetMany(keys []string) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+
+	if batchDB, ok := r.db.(dbBatchGetter); ok {
+		return batchDB.GetKVs(keys)
+	}
+
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		data, err := r.db.Get(key)
+		if err != nil {
+			if isNotFoundError(err) {
+				continue
+			}
+			return nil, err
+		}
+		if len(data) == 0 {
+			continue
+		}
+		v := make([]byte, len(data))
+		copy(v, data)
+		out[key] = v
+	}
+	return out, nil
 }
 
 // isNotFoundError 判断是否是 key 不存在错误
@@ -104,6 +140,20 @@ func (r *FakeStateReader) Scan(prefix string, fn func(k string, v []byte) bool) 
 		}
 	}
 	return nil
+}
+
+// GetMany reads multiple keys and returns existing ones only.
+func (r *FakeStateReader) GetMany(keys []string) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if v, ok := r.data[key]; ok && len(v) > 0 {
+			out[key] = v
+		}
+	}
+	return out, nil
 }
 
 // Ensure FakeStateReader implements runtime.ChainStateReader

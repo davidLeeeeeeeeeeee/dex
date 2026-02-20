@@ -155,3 +155,31 @@ func TestStateDBConfigIsAppliedFromMainConfig(t *testing.T) {
 	_, err = os.Stat(cp2)
 	require.NoError(t, err, "checkpoint at earlier epoch boundary should exist")
 }
+
+func TestGetKVsBatchesStateAndKV(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.DefaultConfig()
+	mgr, err := NewManagerWithConfig(root, logs.NewNodeLogger("test", 0), cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { mgr.Close() })
+	mgr.InitWriteQueue(128, 10*time.Millisecond)
+
+	stateKey := keys.KeyAccount("batch_reader")
+	stateVal := []byte("state-v")
+	kvKey := keys.KeyTxRaw("batch_reader_tx")
+	kvVal := []byte("kv-v")
+
+	mgr.EnqueueSet(stateKey, string(stateVal))
+	mgr.EnqueueSet(kvKey, string(kvVal))
+
+	_, err = mgr.SyncStateUpdates(1, toIfaceOps(syncTestOp{key: stateKey, val: stateVal}))
+	require.NoError(t, err)
+	require.NoError(t, mgr.ForceFlush())
+
+	got, err := mgr.GetKVs([]string{stateKey, kvKey, "v1_account_missing_batch"})
+	require.NoError(t, err)
+	require.Equal(t, stateVal, got[stateKey])
+	require.Equal(t, kvVal, got[kvKey])
+	_, exists := got["v1_account_missing_batch"]
+	require.False(t, exists)
+}

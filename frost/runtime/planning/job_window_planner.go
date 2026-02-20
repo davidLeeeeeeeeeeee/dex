@@ -26,6 +26,7 @@ type JobWindowPlanner struct {
 	adapterFactory chainpkg.ChainAdapterFactory
 	maxInFlight    int // 最多并发 job 数（maxInFlightPerChainAsset）
 	transientLogs  map[string][]*pb.FrostPlanningLog
+	transientCache map[uint32]uint64 // 生命期仅在一帧内（单次 Tick）的 Vault 可用余额缓存
 }
 
 // NewJobWindowPlanner 创建新的 Job 窗口规划器
@@ -44,8 +45,9 @@ func NewJobWindowPlanner(stateReader ChainStateReader, adapterFactory chainpkg.C
 // PlanJobWindow 规划 Job 窗口（最多 maxInFlight 个 job）
 // 返回：Job 列表和产生的临时日志（针对未生成 Job 的 withdraw）
 func (p *JobWindowPlanner) PlanJobWindow(chain, asset string) ([]*Job, map[string][]*pb.FrostPlanningLog, error) {
-	// 清空旧日志
+	// 清空旧日志，初始化当前帧(Tick)生命周期的可用余额缓存
 	p.transientLogs = make(map[string][]*pb.FrostPlanningLog)
+	p.transientCache = make(map[uint32]uint64)
 
 	// 1. 扫描连续的 QUEUED withdraw（最多 maxInFlight 个）
 	withdraws, err := p.scanQueuedWithdraws(chain, asset, p.maxInFlight)
@@ -137,6 +139,15 @@ func (p *JobWindowPlanner) planBTCJobWindow(chain, asset string, withdraws []*Sc
 				if err == nil && singleJob != nil {
 					jobs = append(jobs, singleJob)
 					consumedWithdraws[wd.WithdrawID] = true
+
+					// 扣减本地缓存，防止后续的规划仍然觉得余额充足导致双花逻辑上的超采
+					withdrawKey := keys.KeyFrostWithdraw(wd.WithdrawID)
+					if withdrawData, exists, e := p.stateReader.Get(withdrawKey); e == nil && exists {
+						state := &pb.FrostWithdrawState{}
+						if proto.Unmarshal(withdrawData, state) == nil {
+							p.deductVaultBalance(singleJob.VaultID, parseAmount(state.Amount))
+						}
+					}
 				}
 			}
 			continue
@@ -148,6 +159,8 @@ func (p *JobWindowPlanner) planBTCJobWindow(chain, asset string, withdraws []*Sc
 			for _, wd := range batchWithdraws {
 				consumedWithdraws[wd.WithdrawID] = true
 			}
+			// 批量规划成功后从缓存中扣去透支余额，防止当次Tick重用
+			p.deductVaultBalance(vaultID, totalAmount)
 		}
 	}
 
@@ -211,6 +224,7 @@ func (p *JobWindowPlanner) planAccountChainJobWindow(chain, asset string, withdr
 				})
 				jobs = append(jobs, job)
 				consumedWithdraws[withdraws[i].WithdrawID] = true
+				p.deductVaultBalance(vaultID, amount) // 当次扫描成功后直接扣除被占用的余额
 			}
 		} else {
 			// 单 Vault 无法覆盖，尝试 CompositeJob（跨 Vault 组合支付）
@@ -350,6 +364,13 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 
 	// 2. 扫描该 Vault 的所有 UTXO
 	utxoPrefix := fmt.Sprintf("v1_frost_btc_utxo_%d_", vaultID)
+	type utxoCandidate struct {
+		txid    string
+		vout    uint32
+		value   []byte
+		lockKey string
+	}
+	candidates := make([]utxoCandidate, 0)
 	utxos := make([]chainpkg.UTXO, 0)
 
 	err = p.stateReader.Scan(utxoPrefix, func(k string, v []byte) bool {
@@ -365,34 +386,47 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 		if err != nil {
 			return true
 		}
-
-		// 检查是否已锁定
 		lockKey := keys.KeyFrostBtcLockedUtxo(vaultID, txid, uint32(vout))
-		_, locked, _ := p.stateReader.Get(lockKey)
-		if locked {
-			return true // 已锁定，跳过
-		}
-
-		// 解析 UTXO 数据
-		var protoUtxo pb.FrostUtxo
-		if err := proto.Unmarshal(v, &protoUtxo); err != nil {
-			return true
-		}
-
-		utxo := chainpkg.UTXO{
-			TxID:          txid,
-			Vout:          uint32(vout),
-			Amount:        parseAmount(protoUtxo.Amount),
-			ScriptPubKey:  scriptPubKey,
-			ConfirmHeight: protoUtxo.FinalizeHeight,
-		}
-
-		utxos = append(utxos, utxo)
+		valueCopy := make([]byte, len(v))
+		copy(valueCopy, v)
+		candidates = append(candidates, utxoCandidate{
+			txid:    txid,
+			vout:    uint32(vout),
+			value:   valueCopy,
+			lockKey: lockKey,
+		})
 		return true
 	})
 
 	if err != nil {
 		return nil, err
+	}
+
+	lockKeys := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		lockKeys = append(lockKeys, c.lockKey)
+	}
+	lockedMap, err := getMany(p.stateReader, lockKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, c := range candidates {
+		if _, locked := lockedMap[c.lockKey]; locked {
+			continue // 已锁定，跳过
+		}
+		var protoUtxo pb.FrostUtxo
+		if err := proto.Unmarshal(c.value, &protoUtxo); err != nil {
+			continue
+		}
+		utxo := chainpkg.UTXO{
+			TxID:          c.txid,
+			Vout:          c.vout,
+			Amount:        parseAmount(protoUtxo.Amount),
+			ScriptPubKey:  scriptPubKey,
+			ConfirmHeight: protoUtxo.FinalizeHeight,
+		}
+		utxos = append(utxos, utxo)
 	}
 
 	// 按 confirm_height 升序排序（FIFO），同高度按 txid:vout 字典序
@@ -645,12 +679,39 @@ func (p *JobWindowPlanner) selectVault(chain, asset string, amount uint64) (vaul
 
 // calculateVaultAvailableBalance 计算 Vault 的可用余额
 func (p *JobWindowPlanner) calculateVaultAvailableBalance(chain, asset string, vaultID uint32) (uint64, error) {
+	// 帧级缓存（单次 Tick 有效）：避免因为不断 fallback 或者循环导致的 O(N^2) 级回表扫底层 PebbbleDB 的 IO 操作
+	if p.transientCache != nil {
+		if cachedBal, ok := p.transientCache[vaultID]; ok {
+			return cachedBal, nil
+		}
+	}
+
+	var balance uint64
+	var err error
+
 	if chain == "btc" {
 		// BTC：扫描 UTXO 集合，累加未锁定的 UTXO 金额
-		return p.calculateBTCBalance(vaultID)
+		balance, err = p.calculateBTCBalance(vaultID)
 	} else {
 		// 账户链/合约链：遍历 FundsLedger lot FIFO，累加金额
-		return p.calculateAccountChainBalance(chain, asset, vaultID)
+		balance, err = p.calculateAccountChainBalance(chain, asset, vaultID)
+	}
+
+	if err == nil && p.transientCache != nil {
+		p.transientCache[vaultID] = balance
+	}
+	return balance, err
+}
+
+func (p *JobWindowPlanner) deductVaultBalance(vaultID uint32, amount uint64) {
+	if p.transientCache != nil {
+		if bal, ok := p.transientCache[vaultID]; ok {
+			if bal >= amount {
+				p.transientCache[vaultID] = bal - amount
+			} else {
+				p.transientCache[vaultID] = 0 // 防御性归零
+			}
+		}
 	}
 }
 
@@ -659,37 +720,50 @@ func (p *JobWindowPlanner) calculateBTCBalance(vaultID uint32) (uint64, error) {
 	utxoPrefix := fmt.Sprintf("v1_frost_btc_utxo_%d_", vaultID)
 	var total uint64
 
+	type utxoCandidate struct {
+		value   []byte
+		lockKey string
+	}
+	candidates := make([]utxoCandidate, 0)
+	lockKeys := make([]string, 0)
+
 	err := p.stateReader.Scan(utxoPrefix, func(k string, v []byte) bool {
-		// 解析 UTXO key
 		parts := strings.Split(k, "_")
 		if len(parts) < 6 {
 			return true
 		}
 
 		txid := parts[4]
-		voutStr := parts[5]
-		vout, err := strconv.ParseUint(voutStr, 10, 32)
+		vout, err := strconv.ParseUint(parts[5], 10, 32)
 		if err != nil {
 			return true
 		}
 
-		// 检查是否已锁定
-		lockKey := keys.KeyFrostBtcLockedUtxo(vaultID, txid, uint32(vout))
-		_, locked, _ := p.stateReader.Get(lockKey)
-		if locked {
-			return true // 已锁定，跳过
-		}
+		lk := keys.KeyFrostBtcLockedUtxo(vaultID, txid, uint32(vout))
+		lockKeys = append(lockKeys, lk)
 
-		// TODO: 从 v 中解析 UTXO 金额
-		// 这里简化处理，假设可以从 RechargeRequest 中获取
-		// 实际应该从 UTXO 存储的数据中解析
-		// total += utxo.Amount
-
+		valueCopy := append([]byte(nil), v...)
+		candidates = append(candidates, utxoCandidate{value: valueCopy, lockKey: lk})
 		return true
 	})
 
 	if err != nil {
 		return 0, err
+	}
+
+	lockedMap, err := getMany(p.stateReader, lockKeys)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, c := range candidates {
+		if _, locked := lockedMap[c.lockKey]; locked {
+			continue // 已锁定，跳过
+		}
+		var protoUtxo pb.FrostUtxo
+		if err := proto.Unmarshal(c.value, &protoUtxo); err == nil {
+			total += parseAmount(protoUtxo.Amount)
+		}
 	}
 
 	return total, nil
@@ -702,6 +776,7 @@ func (p *JobWindowPlanner) calculateAccountChainBalance(chain, asset string, vau
 	// 实际应该从 head 开始按 FIFO 顺序累加
 	lotPrefix := fmt.Sprintf("v1_frost_funds_lot_%s_%s_%d_", chain, asset, vaultID)
 	var total uint64
+	rechargeKeys := make([]string, 0)
 
 	err := p.stateReader.Scan(lotPrefix, func(k string, v []byte) bool {
 		// v 中存储的是 request_id，需要从 RechargeRequest 获取金额
@@ -709,25 +784,39 @@ func (p *JobWindowPlanner) calculateAccountChainBalance(chain, asset string, vau
 		if requestID == "" {
 			return true
 		}
-
-		rechargeKey := keys.KeyRechargeRequest(requestID)
-		rechargeData, exists, _ := p.stateReader.Get(rechargeKey)
-		if !exists {
-			return true
-		}
-
-		var recharge pb.RechargeRequest
-		if err := proto.Unmarshal(rechargeData, &recharge); err != nil {
-			return true
-		}
-
-		amount, _ := strconv.ParseUint(recharge.Amount, 10, 64)
-		total += amount
+		rechargeKeys = append(rechargeKeys, keys.KeyRechargeRequest(requestID))
 		return true
 	})
 
 	if err != nil {
 		return 0, err
+	}
+
+	rechargeValues, err := getMany(p.stateReader, rechargeKeys)
+	if err != nil {
+		return 0, err
+	}
+
+	amountCache := make(map[string]uint64, len(rechargeValues))
+	for _, rechargeKey := range rechargeKeys {
+		rechargeData, exists := rechargeValues[rechargeKey]
+		if !exists || len(rechargeData) == 0 {
+			continue
+		}
+		amount, cached := amountCache[rechargeKey]
+		if !cached {
+			var recharge pb.RechargeRequest
+			if err := proto.Unmarshal(rechargeData, &recharge); err != nil {
+				continue
+			}
+			parsed, err := strconv.ParseUint(recharge.Amount, 10, 64)
+			if err != nil {
+				continue
+			}
+			amount = parsed
+			amountCache[rechargeKey] = amount
+		}
+		total += amount
 	}
 
 	return total, nil
@@ -811,6 +900,8 @@ func (p *JobWindowPlanner) planCompositeJob(chain, asset string, firstWithdraw *
 			logs.Warn("[JobWindowPlanner] failed to plan sub job for vault %d: %v", id, err)
 			continue
 		}
+
+		p.deductVaultBalance(id, partialAmount) // 从本地临时缓存中安全扣除
 
 		subJobs = append(subJobs, subJob)
 		vaultIDs = append(vaultIDs, id)

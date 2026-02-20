@@ -22,6 +22,7 @@ type kvWriter interface {
 }
 
 type kvStore interface {
+	Get(key []byte) ([]byte, error)
 	View(fn func(tx kvReader) error) error
 	Update(fn func(tx kvWriter) error) error
 	NextSequence() (uint64, error)

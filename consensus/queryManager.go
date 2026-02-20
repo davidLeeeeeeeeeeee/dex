@@ -350,38 +350,9 @@ func (qm *QueryManager) adaptiveQueryFanoutLocked() int {
 	if k < 1 {
 		k = 1
 	}
-
-	controlLen, controlCap, _, ok := qm.senderControlQueueState()
-	if !ok {
-		return k
-	}
-	if controlCap <= 0 {
-		controlCap = 64
-	}
-
-	now := time.Now()
-	if now.Before(qm.controlBackoffUntil) {
-		if k > 4 {
-			return 4
-		}
-		return k
-	}
-
-	usage := float64(controlLen) / float64(controlCap)
-	switch {
-	case usage >= 0.9:
-		if k > 3 {
-			return 3
-		}
-	case usage >= 0.75:
-		if k > 5 {
-			return 5
-		}
-	case usage >= 0.5:
-		if k > 8 {
-			return 8
-		}
-	}
+	// 固定采样规模：每轮都按 K 采样（默认 K=20）。
+	// 背压仅通过 shouldBackoffForSenderPressureLocked 控制“是否发起新查询”，
+	// 不再动态收缩 fanout，保持 Alpha/K 数学假设稳定。
 	return k
 }
 

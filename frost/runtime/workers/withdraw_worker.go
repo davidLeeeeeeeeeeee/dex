@@ -66,6 +66,29 @@ func (a *chainStateReaderAdapter) Scan(prefix string, fn func(k string, v []byte
 	return a.reader.Scan(prefix, fn)
 }
 
+func (a *chainStateReaderAdapter) GetMany(keys []string) (map[string][]byte, error) {
+	if bulkReader, ok := a.reader.(interface {
+		GetMany(keys []string) (map[string][]byte, error)
+	}); ok {
+		return bulkReader.GetMany(keys)
+	}
+
+	out := make(map[string][]byte, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		v, exists, err := a.reader.Get(key)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			out[key] = v
+		}
+	}
+	return out, nil
+}
+
 // WithdrawWorker 提现流程执行器
 type WithdrawWorker struct {
 	scanner        *planning.Scanner

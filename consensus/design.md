@@ -134,7 +134,7 @@ flowchart LR
 
 - 冷却：`queryCooldown=250ms`。
 - 并发：受 `MaxConcurrentQueries` 限制。
-- sender 控制队列拥塞时，自动进入 backoff 并收缩 fanout（自适应）。
+- sender 控制队列拥塞时，自动进入 backoff；fanout 固定为 `K`（默认 20）。
 
 ### 4.3 查询完成与超时
 
@@ -179,11 +179,45 @@ flowchart TD
 
 `ProposalManager.proposeBlock` + `RealBlockProposer.ShouldPropose`：
 
-1. 必须先拿到 `lastHeight` 对应的已最终化父块。
-2. `currentBlocks` 只统计“父链匹配”的候选。
-3. 早窗严格限流，晚窗放宽候选数上限（活性逃生）。
-4. 空块仅允许在最后窗口（`window == lastWindow`）提出。
-5. 提案成功后发布 `EventNewBlock`，并立即触发一次查询。
+1. 当前窗口由 `calculateCurrentWindow()` 按 `time.Since(lastBlockTime)` 计算（配置阶段：`W0->W1->W2->W3`）。
+2. `lastBlockTime` 在 `EventBlockFinalized` 时更新，下一轮窗口从 `W0` 重新开始计时。
+3. 每次 `proposeBlock` 会先执行 `processCachedProposals(currentWindow)`，把 `window <= currentWindow` 的缓存提案入库并发布 `EventNewBlock`。
+4. 必须先拿到 `lastHeight` 对应的已最终化父块。
+5. `currentBlocks` 只统计“父链匹配”的候选。
+6. 早窗严格限流，晚窗放宽候选数上限（活性逃生）。
+7. 空块仅允许在最后窗口（`window == lastWindow`）提出。
+8. 本地提案成功后发布 `EventNewBlock`，并立即触发一次查询。
+
+### 5.3 Window 切换与缓存回放（Mermaid）
+
+```mermaid
+flowchart TD
+    A[EventBlockFinalized] --> B[lastBlockTime = now]
+    T[3s proposeBlock ticker] --> C[elapsed = now - lastBlockTime]
+    B --> C
+
+    C --> D{calculateCurrentWindow}
+    D -->|0-5s| W0[W0]
+    D -->|5-10s| W1[W1]
+    D -->|10-20s| W2[W2]
+    D -->|20s+| W3[W3]
+
+    W0 --> E[processCachedProposals up to currentWindow]
+    W1 --> E
+    W2 --> E
+    W3 --> E
+
+    E --> F{ShouldPropose?}
+    F -->|yes| G[ProposeBlock + EventNewBlock + tryIssueQuery]
+    F -->|no| H[Wait next ticker]
+
+    I[handlePushQuery for acceptedHeight+1] --> J{is future window?}
+    J -->|yes| K[CacheProposal]
+    K --> L[sendChits immediately]
+    K --> M[Wait until window catches up]
+    M --> E
+    J -->|no| N[store.Add + EventNewBlock + sendChits]
+```
 
 ---
 
@@ -201,9 +235,10 @@ flowchart TD
 `handlePushQuery`：
 
 1. 若高度已不新（`<= acceptedHeight`），直接回 `Chits`，不重入 store。
-2. 对“当前待决高度”执行 window 约束；未来窗口块会缓存到 `ProposalManager`。
-3. 若 `store.Add` 返回数据不完整，交给 `PendingBlockBuffer` 异步补课，补齐后再回 `Chits`。
-4. 若缺父块，主动请求父块。
+2. 仅对“当前待决高度（`acceptedHeight+1`）”执行 window 约束；未来窗口块会缓存到 `ProposalManager`。
+3. 即使进入缓存路径，也会立即回 `Chits`，避免对端查询超时导致停滞。
+4. 若 `store.Add` 返回数据不完整，交给 `PendingBlockBuffer` 异步补课，补齐后再回 `Chits`。
+5. 若缺父块，主动请求父块。
 
 ### 6.3 Chits 发送规则
 

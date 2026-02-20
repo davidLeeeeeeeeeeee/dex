@@ -31,6 +31,8 @@ var (
 	genesisConfig *config.GenesisConfig
 	// 恢复开关：false=每次清理 data 从 0 开始；true=尝试复用已有数据继续模拟
 	resumeFromExistingProgress = true
+	// Queue stats monitor is noisy; enable only when explicitly requested.
+	enableQueueStatsMonitor = os.Getenv("DEX_MONITOR_QUEUE_STATS") == "1"
 )
 
 func main() {
@@ -381,7 +383,9 @@ ContinueWithConsensus:
 	// 启动指标监控
 	go monitorMetrics(nodes)
 	// 队列状态监控（每 10s 打印一次）
-	go monitorQueueStats(nodes)
+	if enableQueueStatsMonitor {
+		go monitorQueueStats(nodes)
+	}
 	// 监控进度
 	go monitorProgress(nodes)
 	go monitorMinerParticipantsByEpoch(nodes)

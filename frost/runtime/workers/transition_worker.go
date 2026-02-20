@@ -535,6 +535,11 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec DKGExecutor, session *DKGSession) (map[string][]byte, error) {
 	result := make(map[string][]byte) // dealerID -> share
 
+	commitments, err := w.loadDKGCommitments(session)
+	if err != nil {
+		return nil, err
+	}
+
 	// 1. 扫描该 session 的所有 DKG share（按前缀）
 	sharePrefix := fmt.Sprintf("v1_frost_vault_dkg_share_%s_%d_%s_", session.Chain, session.VaultID, padUint(session.EpochID))
 
@@ -565,8 +570,14 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 			return true
 		}
 
+		commitment, exists := commitments[share.DealerId]
+		if !exists || commitment == nil {
+			w.Logger.Warn("[DKG] missing commitment for dealer=%s", share.DealerId)
+			return true
+		}
+
 		// 验证与 dealer 承诺点一致
-		if ok := w.verifyShareAgainstCommitments(dkgExec, session, share.DealerId, plain, session.MyIndex); !ok {
+		if ok := dkgExec.VerifyShare(plain, commitment.CommitmentPoints, 0, session.MyIndex); !ok {
 			w.Logger.Warn("[DKG] share verification failed for dealer=%s", share.DealerId)
 			return true
 		}
@@ -582,20 +593,27 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 	return result, nil
 }
 
-// verifyShareAgainstCommitments 使用 DKG 执行器校验 share 与 dealer 承诺点一致性
-func (w *TransitionWorker) verifyShareAgainstCommitments(dkgExec DKGExecutor, session *DKGSession, dealerID string, share []byte, receiverIndex int) bool {
-	// 读取 dealer 的 commitment
-	commitKey := fmt.Sprintf("v1_frost_vault_dkg_commit_%s_%d_%s_%s", session.Chain, session.VaultID, padUint(session.EpochID), dealerID)
-	data, exists, err := w.stateReader.Get(commitKey)
-	if err != nil || !exists || len(data) == 0 {
-		return false
+func (w *TransitionWorker) loadDKGCommitments(session *DKGSession) (map[string]*pb.FrostVaultDkgCommitment, error) {
+	commitPrefix := fmt.Sprintf("v1_frost_vault_dkg_commit_%s_%d_%s_", session.Chain, session.VaultID, padUint(session.EpochID))
+	commitments := make(map[string]*pb.FrostVaultDkgCommitment, len(session.Committee))
+
+	err := w.stateReader.Scan(commitPrefix, func(k string, v []byte) bool {
+		dealerID := strings.TrimPrefix(k, commitPrefix)
+		if dealerID == "" {
+			return true
+		}
+		var commit pb.FrostVaultDkgCommitment
+		if err := proto.Unmarshal(v, &commit); err != nil {
+			w.Logger.Warn("[DKG] skip invalid commitment record for dealer=%s: %v", dealerID, err)
+			return true
+		}
+		commitments[dealerID] = &commit
+		return true
+	})
+	if err != nil {
+		return nil, err
 	}
-	var commit pb.FrostVaultDkgCommitment
-	if err := proto.Unmarshal(data, &commit); err != nil {
-		return false
-	}
-	// Verify: 使用 dkgExec 进行验证，以支持不同曲线
-	return dkgExec.VerifyShare(share, commit.CommitmentPoints, 0, receiverIndex) // senderIndex 暂未使用
+	return commitments, nil
 }
 
 // aggregateGroupPubkey 收集所有 dealer 的 a_i0 聚合得到 group_pubkey

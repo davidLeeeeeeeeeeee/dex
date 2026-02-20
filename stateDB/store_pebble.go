@@ -111,6 +111,18 @@ func (s *pebbleStore) View(fn func(tx kvReader) error) error {
 	return fn(&pebbleReader{src: snap})
 }
 
+func (s *pebbleStore) Get(key []byte) ([]byte, error) {
+	v, closer, err := s.db.Get(key)
+	if err != nil {
+		if errors.Is(err, pebble.ErrNotFound) {
+			return nil, ErrKVNotFound
+		}
+		return nil, err
+	}
+	defer closer.Close()
+	return append([]byte(nil), v...), nil
+}
+
 func (s *pebbleStore) Update(fn func(tx kvWriter) error) error {
 	batch := s.db.NewIndexedBatch()
 	defer batch.Close()
