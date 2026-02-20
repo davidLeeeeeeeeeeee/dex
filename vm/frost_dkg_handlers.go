@@ -86,9 +86,9 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		transitionData, err := proto.Marshal(transition)
 		if err == nil {
 			ops = append(ops, WriteOp{
-				Key:         transitionKey,
-				Value:       transitionData,
-				Category:    "frost_vault_transition",
+				Key:      transitionKey,
+				Value:    transitionData,
+				Category: "frost_vault_transition",
 			})
 		}
 	}
@@ -126,13 +126,18 @@ func (h *FrostVaultDkgCommitTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	}
 
 	ops = append(ops, WriteOp{
-		Key:         existingKey,
-		Value:       commitData,
-		Category:    "frost_dkg_commit",
+		Key:      existingKey,
+		Value:    commitData,
+		Category: "frost_dkg_commit",
 	})
 
+	ops = appendTransitionIndexOpsFromWriteSet(ops)
 	for _, op := range ops {
-		sv.Set(op.Key, op.Value)
+		if op.Del {
+			sv.Del(op.Key)
+		} else {
+			sv.Set(op.Key, op.Value)
+		}
 	}
 
 	logs.Debug("[DKGCommit] stored commitment for sender=%s", sender)
@@ -224,9 +229,9 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 		transitionData, err := proto.Marshal(transition)
 		if err == nil {
 			ops = append(ops, WriteOp{
-				Key:         transitionKey,
-				Value:       transitionData,
-				Category:    "frost_vault_transition",
+				Key:      transitionKey,
+				Value:    transitionData,
+				Category: "frost_vault_transition",
 			})
 		}
 	}
@@ -261,13 +266,18 @@ func (h *FrostVaultDkgShareTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Writ
 	}
 
 	ops = append(ops, WriteOp{
-		Key:         existingKey,
-		Value:       shareData,
-		Category:    "frost_dkg_share",
+		Key:      existingKey,
+		Value:    shareData,
+		Category: "frost_dkg_share",
 	})
 
+	ops = appendTransitionIndexOpsFromWriteSet(ops)
 	for _, op := range ops {
-		sv.Set(op.Key, op.Value)
+		if op.Del {
+			sv.Del(op.Key)
+		} else {
+			sv.Set(op.Key, op.Value)
+		}
 	}
 
 	logs.Debug("[DKGShare] stored share dealer=%s -> receiver=%s", dealerID, receiverID)
@@ -379,9 +389,9 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 	}
 
 	ops := []WriteOp{{
-		Key:         complaintKey,
-		Value:       complaintData,
-		Category:    "frost_dkg_complaint",
+		Key:      complaintKey,
+		Value:    complaintData,
+		Category: "frost_dkg_complaint",
 	}}
 
 	// 7. 更新 transition 状态到 Resolving（如果还在 Sharing）
@@ -390,15 +400,20 @@ func (h *FrostVaultDkgComplaintTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]
 		transitionData, err := proto.Marshal(transition)
 		if err == nil {
 			ops = append(ops, WriteOp{
-				Key:         transitionKey,
-				Value:       transitionData,
-				Category:    "frost_vault_transition",
+				Key:      transitionKey,
+				Value:    transitionData,
+				Category: "frost_vault_transition",
 			})
 		}
 	}
 
+	ops = appendTransitionIndexOpsFromWriteSet(ops)
 	for _, op := range ops {
-		sv.Set(op.Key, op.Value)
+		if op.Del {
+			sv.Del(op.Key)
+		} else {
+			sv.Set(op.Key, op.Value)
+		}
 	}
 
 	logs.Debug("[DKGComplaint] stored complaint dealer=%s receiver=%s", dealerID, receiverID)
@@ -551,10 +566,10 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		// 濞夈劍鍓伴敍姘涧濞撳懐鈹栫拠?dealer 閻?commitment閿涘苯鍙炬禒鏍у棘娑撳氦鈧懍绻氶幐浣风瑝閸?
 		// dealer 闂団偓鐟曚線鍣搁弬鐗堝絹娴?commitment 閸?share
 		ops = append(ops, WriteOp{
-			Key:         commitKey,
-			Value:       nil, // 閸掔娀娅?
-			Del:         true,
-			Category:    "frost_dkg_commit",
+			Key:      commitKey,
+			Value:    nil, // 閸掔娀娅?
+			Del:      true,
+			Category: "frost_dkg_commit",
 		})
 	} else {
 		// share 閺冪姵鏅?- dealer 娴ｆ粍浼?
@@ -594,9 +609,9 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to marshal complaint"}, err
 	}
 	ops = append(ops, WriteOp{
-		Key:         complaintKey,
-		Value:       updatedComplaintData,
-		Category:    "frost_dkg_complaint",
+		Key:      complaintKey,
+		Value:    updatedComplaintData,
+		Category: "frost_dkg_complaint",
 	})
 
 	// 閺囧瓨鏌?transition
@@ -605,13 +620,18 @@ func (h *FrostVaultDkgRevealTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to marshal transition"}, err
 	}
 	ops = append(ops, WriteOp{
-		Key:         transitionKey,
-		Value:       updatedTransitionData,
-		Category:    "frost_vault_transition",
+		Key:      transitionKey,
+		Value:    updatedTransitionData,
+		Category: "frost_vault_transition",
 	})
 
+	ops = appendTransitionIndexOpsFromWriteSet(ops)
 	for _, op := range ops {
-		sv.Set(op.Key, op.Value)
+		if op.Del {
+			sv.Del(op.Key)
+		} else {
+			sv.Set(op.Key, op.Value)
+		}
 	}
 
 	logs.Debug("[DKGReveal] resolved complaint dealer=%s receiver=%s valid=%v", dealerID, receiverID, valid)
@@ -622,7 +642,7 @@ func (h *FrostVaultDkgRevealTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
 
-	// 基本参数校验
+// 基本参数校验
 func verifyRevealInDryRun(share, encRand, ciphertext []byte, commitmentPoints [][]byte, receiverIndex int) bool {
 	// 閸╃儤婀伴崣鍌涙殶閺嶏繝鐛?
 	if len(share) == 0 || len(encRand) == 0 || len(ciphertext) == 0 || len(commitmentPoints) == 0 {
@@ -671,7 +691,7 @@ func checkDkgRestartRule(currentN, initialT uint32) bool {
 // TODO: 闁插秴鎯庨弮璺虹箑妞ょ粯娲块弬?DkgCommitDeadline閿涘苯鎯侀崚娆庣窗缁斿宓嗘潻鍥ㄦ埂閵嗗倿娓堕柊宥呮値瑜版挸澧犻崠鍝勬健妤傛ê瀹崇拋锛勭暬閵?
 func handleDkgRestart(transition *pb.VaultTransitionState, newEpochID uint64, fullCommittee []string, thresholdRatio float64) {
 	transition.EpochId = newEpochID
-	transition.NewCommitteeMembers = fullCommittee	// 重新计算门限
+	transition.NewCommitteeMembers = fullCommittee // 重新计算门限
 	transition.DkgN = uint32(len(fullCommittee))
 	// 闁插秵鏌婄拋锛勭暬闂傘劑妾?
 	threshold := int(float64(len(fullCommittee)) * thresholdRatio)
@@ -798,7 +818,7 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 		vault.CommitteeMembers = transition.NewCommitteeMembers
 	}
 	// 鐠佸墽鐤?lifecycle閿涙KG 鐎瑰本鍨氶崥搴礉婵″倹鐏夋潻娆愭Ц妫ｆ牗顐奸崚娑樼紦閿涘ifecycle 娑?KEY_READY
-		// transition 中可能已经有 lifecycle 信息，但 VaultState 本身不存储 lifecycle
+	// transition 中可能已经有 lifecycle 信息，但 VaultState 本身不存储 lifecycle
 	if transition.Lifecycle != "" {
 		// VaultState 的 status 字段用于表示密钥状态：PENDING -> KEY_READY -> ACTIVE
 		// lifecycle 娑撴槒顩﹂崷?VaultTransitionState 娑擃厾顓搁悶?
@@ -815,8 +835,13 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 		{Key: vaultKey, Value: updatedVaultData, Category: "frost_vault_state"},
 	}
 
+	ops = appendTransitionIndexOpsFromWriteSet(ops)
 	for _, op := range ops {
-		sv.Set(op.Key, op.Value)
+		if op.Del {
+			sv.Del(op.Key)
+		} else {
+			sv.Set(op.Key, op.Value)
+		}
 	}
 
 	logs.Debug("[DKGValidationSigned] vault=%d epoch=%d now KEY_READY", vaultID, epochID)
@@ -909,8 +934,13 @@ func (h *FrostVaultTransitionSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView)
 		{Key: newVaultKey, Value: updatedNewVaultData, Category: "frost_vault_state"},
 	}
 
+	ops = appendTransitionIndexOpsFromWriteSet(ops)
 	for _, op := range ops {
-		sv.Set(op.Key, op.Value)
+		if op.Del {
+			sv.Del(op.Key)
+		} else {
+			sv.Set(op.Key, op.Value)
+		}
 	}
 
 	logs.Debug("[TransitionSigned] old_vault=%d -> DRAINING, new_vault=%d -> ACTIVE", oldVaultID, newVaultID)
@@ -962,14 +992,14 @@ func slashBond(sv StateView, address string, bondAmount *big.Int, reason string)
 	balData, _, _ := sv.Get(balanceKey)
 
 	return []WriteOp{{
-		Key:         balanceKey,
-		Value:       balData,
-		Category:    "balance",
+		Key:      balanceKey,
+		Value:    balData,
+		Category: "balance",
 	}}, nil
 }
 
 // slashMinerStake 缂冩碍鐥呴惌鍨紣閻ㄥ嫯宸濋幎濂稿櫨閿?00% 濮ｆ柧绶ラ敍灞肩矤 MinerLockedBalance 娑擃厽澧搁梽銈忕礆
-	// 使用 FB 作为原生代币
+// 使用 FB 作为原生代币
 func slashMinerStake(sv StateView, address string, reason string) ([]WriteOp, error) {
 	// 娴ｈ法鏁?FB 娴ｆ粈璐熼崢鐔烘晸娴狅絽绔?
 	tokenAddr := "FB"
@@ -998,8 +1028,8 @@ func slashMinerStake(sv StateView, address string, reason string) ([]WriteOp, er
 	balData, _, _ := sv.Get(balanceKey)
 
 	return []WriteOp{{
-		Key:         balanceKey,
-		Value:       balData,
-		Category:    "balance",
+		Key:      balanceKey,
+		Value:    balData,
+		Category: "balance",
 	}}, nil
 }

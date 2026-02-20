@@ -71,6 +71,10 @@ func InitConsensusManagerWithSimulation(
 	minLatency, maxLatency time.Duration,
 	globalCfg *config.Config,
 ) *ConsensusNodeManager {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
 	// 创建带网络模拟的 transport
 	transport := NewRealTransportWithSimulation(nodeID, dbManager, senderMgr, context.Background(), packetLossRate, minLatency, maxLatency)
 

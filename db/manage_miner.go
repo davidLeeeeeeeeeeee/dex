@@ -63,6 +63,27 @@ func (mgr *Manager) GetRandomMinersFast(k int) ([]*pb.Account, error) {
 	return accounts, nil
 }
 
+// GetMinerParticipantsSnapshot returns a stable snapshot of current active miners.
+func (mgr *Manager) GetMinerParticipantsSnapshot() ([]*pb.Account, error) {
+	if mgr == nil {
+		return nil, fmt.Errorf("GetMinerParticipantsSnapshot: db manager is nil")
+	}
+	if err := mgr.ensureMinerCacheReady(); err != nil {
+		return nil, err
+	}
+
+	mgr.minerCacheMu.RLock()
+	defer mgr.minerCacheMu.RUnlock()
+
+	if len(mgr.minerParticipants) == 0 {
+		return []*pb.Account{}, nil
+	}
+
+	out := make([]*pb.Account, len(mgr.minerParticipants))
+	copy(out, mgr.minerParticipants)
+	return out, nil
+}
+
 // RefreshMinerParticipantsByHeight refreshes the in-memory miner snapshot when epoch changes.
 func (mgr *Manager) RefreshMinerParticipantsByHeight(height uint64) error {
 	if mgr == nil {

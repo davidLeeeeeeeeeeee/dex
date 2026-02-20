@@ -99,16 +99,16 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		}
 		pkgKey := keys.KeyFrostSignedPackage(jobID, pkgIdx)
 		ops = append(ops, WriteOp{
-			Key:         pkgKey,
-			Value:       pkgData,
-			Category:    "frost_signed_pkg",
+			Key:      pkgKey,
+			Value:    pkgData,
+			Category: "frost_signed_pkg",
 		})
 
 		// 更新计数器
 		ops = append(ops, WriteOp{
-			Key:         countKey,
-			Value:       []byte(strconv.FormatUint(pkgIdx+1, 10)),
-			Category:    "frost_signed_pkg_count",
+			Key:      countKey,
+			Value:    []byte(strconv.FormatUint(pkgIdx+1, 10)),
+			Category: "frost_signed_pkg_count",
 		})
 
 		// 应用到 StateView
@@ -125,6 +125,7 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		templateData := signed.TemplateData
 		inputSigs := signed.InputSigs
 		scriptPubkeys := signed.ScriptPubkeys
+		newlyLockedAmount := big.NewInt(0)
 
 		// 必须提供 template_data 和 input_sigs（新版验签方式）
 		if len(templateData) == 0 {
@@ -222,11 +223,20 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 
 			// 锁定 UTXO（标记为 consumed/spent）
 			ops = append(ops, WriteOp{
-				Key:         lockKey,
-				Value:       []byte(jobID),
-				Category:    "frost_btc_utxo_lock",
+				Key:      lockKey,
+				Value:    []byte(jobID),
+				Category: "frost_btc_utxo_lock",
 			})
+			if input.Amount > 0 {
+				newlyLockedAmount = new(big.Int).Add(newlyLockedAmount, new(big.Int).SetUint64(input.Amount))
+			}
 		}
+
+		// 维护 vault 可用余额聚合 + 推进 BTC UTXO FIFO 头指针
+		if err := subVaultAvailableBalance(sv, chainName, asset, vaultID, newlyLockedAmount); err != nil {
+			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to update vault available balance"}, err
+		}
+		advanceBtcUtxoFIFOHead(sv, vaultID)
 	} else {
 		// 合约链/账户链：标记 lot 为 consumed（按 Vault 分片）
 		// 从 job 的 withdraw_ids 计算总金额，然后从该 Vault 的 FIFO 消耗对应数量的 lot
@@ -307,10 +317,15 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		headKey := keys.KeyFrostFundsLotHead(chainName, asset, vaultID)
 		headValue := strconv.FormatUint(head.Height, 10) + "|" + strconv.FormatUint(head.Seq, 10)
 		ops = append(ops, WriteOp{
-			Key:         headKey,
-			Value:       []byte(headValue),
-			Category:    "frost_funds_lot_head",
+			Key:      headKey,
+			Value:    []byte(headValue),
+			Category: "frost_funds_lot_head",
 		})
+
+		// 维护 vault 可用余额聚合
+		if err := subVaultAvailableBalance(sv, chainName, asset, vaultID, consumedAmount); err != nil {
+			return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to update vault available balance"}, err
+		}
 	}
 
 	// 首次提交：验证并更新 withdraw 状态 QUEUED -> SIGNED
@@ -353,9 +368,9 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		}
 
 		ops = append(ops, WriteOp{
-			Key:         withdrawKey,
-			Value:       updatedData,
-			Category:    "frost_withdraw",
+			Key:      withdrawKey,
+			Value:    updatedData,
+			Category: "frost_withdraw",
 		})
 	}
 
@@ -373,16 +388,16 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	}
 	pkgKey := keys.KeyFrostSignedPackage(jobID, 0)
 	ops = append(ops, WriteOp{
-		Key:         pkgKey,
-		Value:       pkgData,
-		Category:    "frost_signed_pkg",
+		Key:      pkgKey,
+		Value:    pkgData,
+		Category: "frost_signed_pkg",
 	})
 
 	// 写入计数器
 	ops = append(ops, WriteOp{
-		Key:         countKey,
-		Value:       []byte("1"),
-		Category:    "frost_signed_pkg_count",
+		Key:      countKey,
+		Value:    []byte("1"),
+		Category: "frost_signed_pkg_count",
 	})
 
 	// 更新 FIFO head（推进到已签名 withdraw 之后）
@@ -402,9 +417,9 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 	// head 指向下一个待处理的 seq（maxSeq + 1）
 	headKey := keys.KeyFrostWithdrawFIFOHead(chainName, asset)
 	ops = append(ops, WriteOp{
-		Key:         headKey,
-		Value:       []byte(strconv.FormatUint(maxSeq+1, 10)),
-		Category:    "frost_withdraw_head",
+		Key:      headKey,
+		Value:    []byte(strconv.FormatUint(maxSeq+1, 10)),
+		Category: "frost_withdraw_head",
 	})
 
 	// 应用到 StateView

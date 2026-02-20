@@ -17,6 +17,7 @@ import (
 type SuccessRound struct {
 	Round     int                      // 从 1 开始的有效轮次号
 	Timestamp int64                    // 时间戳
+	SeqID     uint32                   // 该轮 query 的采样批次号（用于 VRF 采样重放）
 	Votes     []types.FinalizationChit // 本轮的投票详情
 }
 
@@ -60,7 +61,7 @@ type PreferenceChangedData struct {
 // 这确保了 Snowball 的核心安全性不变量：一旦足够多的节点偏好区块 X 并开始
 // 积累 confidence，其他节点不会仅因 Window 号更大就"免费"切换到区块 Y，
 // 从而防止双重最终化（split-brain）。
-func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]int, alpha int, voteDetails []types.FinalizationChit) {
+func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]int, alpha int, seqID uint32, voteDetails []types.FinalizationChit) {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 
@@ -101,6 +102,7 @@ func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]
 			sb.successHistory = append(sb.successHistory, SuccessRound{
 				Round:     1,
 				Timestamp: time.Now().UnixMilli(),
+				SeqID:     seqID,
 				Votes:     voteDetails,
 			})
 		} else {
@@ -109,6 +111,7 @@ func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]
 			sb.successHistory = append(sb.successHistory, SuccessRound{
 				Round:     sb.confidence,
 				Timestamp: time.Now().UnixMilli(),
+				SeqID:     seqID,
 				Votes:     voteDetails,
 			})
 		}
@@ -151,7 +154,7 @@ func (sb *Snowball) RecordVoteWithDetails(candidates []string, votes map[string]
 
 // RecordVote 兼容旧接口（不记录投票详情）
 func (sb *Snowball) RecordVote(candidates []string, votes map[string]int, alpha int) {
-	sb.RecordVoteWithDetails(candidates, votes, alpha, nil)
+	sb.RecordVoteWithDetails(candidates, votes, alpha, 0, nil)
 }
 
 // extractBlockHash 从 blockID 中提取 hash 部分

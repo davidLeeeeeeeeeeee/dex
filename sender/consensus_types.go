@@ -2,6 +2,7 @@ package sender
 
 import (
 	"dex/pb"
+	"dex/types"
 )
 
 // ============= Message Types =============
@@ -24,10 +25,12 @@ type heightQueryMessage struct {
 
 // syncRequestMessage 用于同步请求
 type syncRequestMessage struct {
-	requestData []byte
-	fromHeight  uint64
-	toHeight    uint64
-	onSuccess   func([]*pb.Block)
+	requestData         []byte
+	fromHeight          uint64
+	toHeight            uint64
+	syncShortMode       bool
+	onSuccess           func([]*pb.Block)
+	onSuccessWithProofs func(*types.SyncBlocksResponse)
 }
 
 // pushQueryMsg 用于发送 PushQuery

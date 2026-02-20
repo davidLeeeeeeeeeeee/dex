@@ -18,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // RealTransport 实现基于HTTP/3的真实网络传输
@@ -312,26 +314,59 @@ func (t *RealTransport) sendGossip(targetIP string, msg types.Message) error {
 	return t.senderManager.BroadcastGossipToTarget(targetIP, payload)
 }
 func (t *RealTransport) sendSyncRequest(to types.NodeID, targetIP string, msg types.Message) error {
-	return t.senderManager.SendSyncRequest(targetIP, msg.FromHeight, msg.ToHeight, func(dbBlocks []*pb.Block) {
-		var blocks []*types.Block
-		for _, dbBlock := range dbBlocks {
-			block, err := t.adapter.DBBlockToConsensus(dbBlock)
-			if err == nil {
-				blocks = append(blocks, block)
+	return t.senderManager.SendSyncRequestWithSignatureSets(targetIP, msg.FromHeight, msg.ToHeight, msg.SyncShortMode, func(syncResp *types.SyncBlocksResponse) {
+		if syncResp == nil || len(syncResp.Blocks) == 0 {
+			return
+		}
+
+		blocks := make([]*types.Block, 0, len(syncResp.Blocks))
+		signatureSets := make(map[uint64][]byte, len(syncResp.Blocks))
+		blocksShortTxs := make(map[string][]byte)
+
+		for _, bundle := range syncResp.Blocks {
+			if len(bundle.BlockBytes) == 0 || len(bundle.SignatureSetBytes) == 0 {
+				continue
+			}
+
+			var dbBlock pb.Block
+			if err := proto.Unmarshal(bundle.BlockBytes, &dbBlock); err != nil {
+				t.Logger.Warn("[RealTransport] Failed to decode sync block at height %d from %s: %v", bundle.Height, to, err)
+				continue
+			}
+
+			block, err := t.adapter.DBBlockToConsensus(&dbBlock)
+			if err != nil {
+				t.Logger.Warn("[RealTransport] Failed to convert sync block at height %d from %s: %v", bundle.Height, to, err)
+				continue
+			}
+
+			blocks = append(blocks, block)
+			signatureSets[block.Header.Height] = bundle.SignatureSetBytes
+			if msg.SyncShortMode && len(dbBlock.ShortTxs) > 0 {
+				blocksShortTxs[block.ID] = dbBlock.ShortTxs
 			}
 		}
 
-		if len(blocks) > 0 {
-			t.inbox <- types.Message{
-				Type:       types.MsgSyncResponse,
-				From:       to,
-				SyncID:     msg.SyncID,
-				RequestID:  msg.RequestID,
-				Blocks:     blocks,
-				FromHeight: msg.FromHeight,
-				ToHeight:   msg.ToHeight,
-			}
+		if len(blocks) == 0 {
+			return
 		}
+
+		respMsg := types.Message{
+			Type:          types.MsgSyncResponse,
+			From:          to,
+			SyncID:        msg.SyncID,
+			RequestID:     msg.RequestID,
+			Blocks:        blocks,
+			FromHeight:    msg.FromHeight,
+			ToHeight:      msg.ToHeight,
+			SyncShortMode: msg.SyncShortMode,
+			SignatureSets: signatureSets,
+		}
+		if len(blocksShortTxs) > 0 {
+			respMsg.BlocksShortTxs = blocksShortTxs
+		}
+
+		t.inbox <- respMsg
 	})
 }
 
@@ -455,21 +490,43 @@ func (t *RealTransport) SamplePeers(exclude types.NodeID, count int) []types.Nod
 	return peers
 }
 
-// GetAllPeers 返回所有已知矿工节点（不含 exclude），用于 VRF 确定性采样
+// GetAllPeers returns all known miner nodes (excluding `exclude`) for VRF sampling.
 func (t *RealTransport) GetAllPeers(exclude types.NodeID) []types.NodeID {
-	allMiners, err := t.dbManager.GetRandomMinersFast(1000) // 取足够多的矿工
+	allMiners, err := t.dbManager.GetMinerParticipantsSnapshot()
 	if err != nil {
 		t.Logger.Error("[RealTransport] GetAllPeers failed: %v", err)
 		return nil
 	}
 
 	peers := make([]types.NodeID, 0, len(allMiners))
+	seen := make(map[types.NodeID]struct{}, len(allMiners))
 	for _, m := range allMiners {
+		if m == nil || m.Address == "" {
+			continue
+		}
 		id := types.NodeID(m.Address)
-		if id != exclude {
-			peers = append(peers, id)
+		if id == exclude {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		peers = append(peers, id)
+	}
+	// Some bootstraps may temporarily miss local index mapping in miner snapshot.
+	// Ensure local address is present so sync verification doesn't false-reject self signer.
+	selfID := types.NodeID(t.address)
+	if selfID != "" && selfID != exclude {
+		if _, exists := seen[selfID]; !exists {
+			seen[selfID] = struct{}{}
+			peers = append(peers, selfID)
 		}
 	}
+
+	sort.Slice(peers, func(i, j int) bool {
+		return peers[i] < peers[j]
+	})
 	return peers
 }
 

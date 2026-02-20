@@ -4,6 +4,7 @@
 package db
 
 import (
+	"dex/keys"
 	"dex/pb"
 
 	"google.golang.org/protobuf/proto"
@@ -31,7 +32,29 @@ func (mgr *Manager) SetFrostVaultTransition(key string, state *pb.VaultTransitio
 		return err
 	}
 	mgr.EnqueueSet(key, string(data))
+	if state != nil {
+		activeKey := keys.KeyFrostVaultTransitionActive(state.Chain, state.VaultId, state.EpochId)
+		if isActiveFrostTransition(state) {
+			mgr.EnqueueSet(activeKey, key)
+		} else {
+			mgr.EnqueueDelete(activeKey)
+		}
+	}
 	return nil
+}
+
+func isActiveFrostTransition(state *pb.VaultTransitionState) bool {
+	if state == nil {
+		return false
+	}
+	switch state.DkgStatus {
+	case "KEY_READY", "FAILED":
+		return false
+	}
+	if state.Lifecycle == "RETIRED" {
+		return false
+	}
+	return true
 }
 
 // ========== DKG Commitment ==========

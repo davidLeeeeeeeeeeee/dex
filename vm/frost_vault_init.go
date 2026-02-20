@@ -247,13 +247,10 @@ func InitVaultTransitions(sv StateView, chain string, epochID uint64, triggerHei
 			Lifecycle:           VaultLifecycleActive,
 		}
 
-		transitionData, err := proto.Marshal(transition)
-		if err != nil {
-			logs.Warn("[InitVaultTransitions] failed to marshal transition for chain=%s vault=%d: %v", chain, vaultID, err)
+		if err := setTransitionStateWithIndex(sv, transitionKey, transition); err != nil {
+			logs.Warn("[InitVaultTransitions] failed to persist transition for chain=%s vault=%d: %v", chain, vaultID, err)
 			continue
 		}
-
-		sv.Set(transitionKey, transitionData)
 		logs.Info("[InitVaultTransitions] initialized transition for chain=%s vault=%d epoch=%d committee=%d",
 			chain, vaultID, effectiveEpoch, len(committeeMembers))
 	}

@@ -376,8 +376,8 @@ flowchart TD
 | `SampleSize` | 15 | `consensus/config.go` |
 | `QuorumRatio` | 0.67 | `consensus/config.go` |
 | `SampleTimeout` | 2s | `consensus/config.go` |
-| `SyncAlpha` | 14 | `consensus/config.go` |
-| `SyncBeta` | 15 | `consensus/config.go` |
+| `Consensus.Alpha` | 14 | `consensus/config.go` |
+| `Consensus.Beta` | 15 | `consensus/config.go` |
 | `DeepLagStateSyncThreshold` | 100 | `consensus/config.go` |
 | `StateSyncPeers` | 4 | `consensus/config.go` |
 | `StateSyncShardConcurrency` | 8 | `consensus/config.go` |

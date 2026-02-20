@@ -1,4 +1,3 @@
-// vm/witness_events.go
 package vm
 
 import (
@@ -41,7 +40,6 @@ func (x *Executor) applyWitnessFinalizedEvents(sv StateView, fallbackHeight uint
 					return err
 				}
 			case witness.EventChallengePeriodStart, witness.EventScopeExpanded, witness.EventRechargeRequested, witness.EventRechargeShelved:
-				// 杩欎簺浜嬩欢鎰忓懗鐫€ RechargeRequest 鐨勭姸鎬佹垨灞炴€у凡缁忔敼鍙橈紝闇€瑕佹寔涔呭寲
 				req, ok := evt.Data.(*pb.RechargeRequest)
 				if !ok || req == nil {
 					continue
@@ -95,50 +93,47 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 
 	chain := stored.NativeChain
 	asset := stored.TokenAddress
-	vaultID := stored.VaultId // 浣跨敤鍏ヨ处鏃跺垎閰嶇殑 vault_id锛屼繚璇佽祫閲戞寜 Vault 鍒嗙墖
+	vaultID := stored.VaultId
 	finalizeHeight := stored.FinalizeHeight
 
-	// 妫€鏌?Vault lifecycle锛欴RAINING 鐨?Vault 涓嶅啀鎺ュ彈鏂板叆璐?
+	creditedAmount, err := ParseBalance(stored.Amount)
+	if err != nil {
+		return fmt.Errorf("invalid recharge amount: %w", err)
+	}
+
 	vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
 	vaultStateData, exists, _ := sv.Get(vaultStateKey)
 	if exists && len(vaultStateData) > 0 {
 		var vaultState pb.FrostVaultState
 		if err := unmarshalProtoCompat(vaultStateData, &vaultState); err == nil {
 			if vaultState.Status == VaultLifecycleDraining {
-				// DRAINING 鐘舵€佺殑 Vault 涓嶅啀鎺ュ彈鏂板叆璐?
-				// DRAINING 状态的 Vault 不再接受新入账
-				// 注意：这里应该拒绝，但由于是 finalized 事件，可能已经发生，记录警告
 				return fmt.Errorf("vault %d is DRAINING, cannot accept new recharge", vaultID)
 			}
 		}
 	}
 
-	// 鍖哄垎 BTC 鍜岃处鎴烽摼/鍚堢害閾剧殑澶勭悊
 	if chain == "btc" {
-		// BTC锛氬啓鍏?UTXO
 		txid := stored.NativeTxHash
 		vout := stored.NativeVout
 
-		// 闄嶇骇澶勭悊锛氶拡瀵规棫鏍煎紡 "txid:vout"
 		if vout == 0 && strings.Contains(txid, ":") {
 			if idx := strings.Index(txid, ":"); idx != -1 {
-				if v, err := strconv.ParseUint(txid[idx+1:], 10, 32); err == nil {
+				if v, e := strconv.ParseUint(txid[idx+1:], 10, 32); e == nil {
 					vout = uint32(v)
 					txid = txid[:idx]
 				}
 			}
 		}
 
-		// 鍐欏叆 UTXO 璇︽儏
 		utxoKey := keys.KeyFrostBtcUtxo(vaultID, txid, vout)
 		utxo := &pb.FrostUtxo{
 			Txid:           txid,
 			Vout:           vout,
-			Amount:         stored.Amount, // 浣跨敤 RechargeRequest 涓殑閲戦
+			Amount:         stored.Amount,
 			VaultId:        vaultID,
 			FinalizeHeight: finalizeHeight,
 			RequestId:      stored.RequestId,
-			ScriptPubkey:   stored.NativeScript, // 鏂板锛氫繚瀛橀攣瀹氳剼鏈互澶囧悗缁彁鐜扮鍚嶄娇鐢?
+			ScriptPubkey:   stored.NativeScript,
 		}
 		utxoData, err := proto.Marshal(utxo)
 		if err != nil {
@@ -146,10 +141,17 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		}
 		sv.Set(utxoKey, utxoData)
 
-		// 鏇存柊 Vault 鐨勮祫閲戣处鏈仛鍚堢姸鎬侊紙鍙€夛紝鐢ㄤ簬鏌ヨ鎬婚锛?
-		// 更新 Vault 的资金账本聚合状态（可选，用于查询总额）
+		utxoSeqKey := keys.KeyFrostBtcUtxoFIFOSeq(vaultID)
+		utxoSeq := readUintSeq(sv, utxoSeqKey) + 1
+		utxoIndexKey := keys.KeyFrostBtcUtxoFIFOIndex(vaultID, utxoSeq)
+		sv.Set(utxoIndexKey, utxoData)
+		sv.Set(utxoSeqKey, []byte(strconv.FormatUint(utxoSeq, 10)))
+
+		utxoHeadKey := keys.KeyFrostBtcUtxoFIFOHead(vaultID)
+		if _, headExists, _ := sv.Get(utxoHeadKey); !headExists {
+			sv.Set(utxoHeadKey, []byte("1"))
+		}
 	} else {
-		// 璐︽埛閾?鍚堢害閾撅細鍐欏叆 lot FIFO
 		seqKey := keys.KeyFrostFundsLotSeq(chain, asset, vaultID, finalizeHeight)
 		seq := readUintSeq(sv, seqKey)
 
@@ -160,7 +162,10 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		sv.Set(seqKey, []byte(strconv.FormatUint(seq, 10)))
 	}
 
-	// 澧炲姞鐢ㄦ埛浣欓锛堜娇鐢ㄥ垎绂诲瓨鍌級
+	if err := addVaultAvailableBalance(sv, chain, asset, vaultID, creditedAmount); err != nil {
+		return fmt.Errorf("failed to add vault available balance chain=%s asset=%s vault=%d: %w", chain, asset, vaultID, err)
+	}
+
 	userAddr := stored.ReceiverAddress
 	if userAddr != "" {
 		userKey := keys.KeyAccount(userAddr)
@@ -172,12 +177,9 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 				return fmt.Errorf("failed to unmarshal user account: %w", err)
 			}
 		} else {
-			userAccount = pb.Account{
-				Address: userAddr,
-			}
+			userAccount = pb.Account{Address: userAddr}
 		}
 
-		// 浣跨敤鍒嗙瀛樺偍璇诲彇浣欓
 		tokenBal := GetBalance(sv, userAddr, stored.TokenAddress)
 
 		currentBalance, err := parseBalanceStrict("balance", tokenBal.Balance)
@@ -198,14 +200,12 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		tokenBal.Balance = newBalance.String()
 		SetBalance(sv, userAddr, stored.TokenAddress, tokenBal)
 
-		// 淇濆瓨璐︽埛锛堜笉鍚綑棰濓級
 		updatedUserData, err := proto.Marshal(&userAccount)
 		if err != nil {
 			return fmt.Errorf("failed to marshal updated user account: %w", err)
 		}
 		sv.Set(userKey, updatedUserData)
 
-		// 淇濆瓨浣欓鏁版嵁
 		balKey := keys.KeyBalance(userAddr, stored.TokenAddress)
 		balData, _, _ := sv.Get(balKey)
 		sv.Set(balKey, balData)

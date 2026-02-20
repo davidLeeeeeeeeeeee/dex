@@ -586,6 +586,39 @@ func (sm *SenderManager) SendSyncRequest(targetAddress string, fromHeight, toHei
 	return nil
 }
 
+// SendSyncRequestWithSignatureSets sends a sync request and returns block bundles with VRF signature sets.
+func (sm *SenderManager) SendSyncRequestWithSignatureSets(
+	targetAddress string,
+	fromHeight,
+	toHeight uint64,
+	syncShortMode bool,
+	onSuccess func(*types.SyncBlocksResponse),
+) error {
+	ip, err := sm.AddressToIP(targetAddress)
+	if err != nil {
+		logs.Debug("[SendSyncRequestWithSignatureSets] failed to get IP for address %s: %v", targetAddress, err)
+		return err
+	}
+
+	msg := &syncRequestMessage{
+		fromHeight:          fromHeight,
+		toHeight:            toHeight,
+		syncShortMode:       syncShortMode,
+		onSuccessWithProofs: onSuccess,
+	}
+
+	task := &SendTask{
+		Target:     ip,
+		Message:    msg,
+		RetryCount: 0,
+		MaxRetries: 0,
+		SendFunc:   doSendSyncRequest,
+		Priority:   PriorityControl,
+	}
+	sm.SendQueue.Enqueue(task)
+	return nil
+}
+
 // Stop 停止SenderManager（包括其队列）
 func (sm *SenderManager) Stop() {
 	if sm.SendQueue != nil {

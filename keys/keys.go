@@ -317,6 +317,12 @@ func KeyFrostVaultFundsLedger(chain, asset string, vaultID uint32) string {
 	return withVer(fmt.Sprintf("frost_funds_%s_%s_%d", chain, asset, vaultID))
 }
 
+// KeyFrostVaultAvailableBalance Vault 可用余额聚合值
+// 例：v1_frost_vault_available_<chain>_<asset>_<vault_id>
+func KeyFrostVaultAvailableBalance(chain, asset string, vaultID uint32) string {
+	return withVer(fmt.Sprintf("frost_vault_available_%s_%s_%d", chain, asset, vaultID))
+}
+
 // KeyFrostBtcUtxo Vault 的 UTXO（按 vault_id 隔离，避免跨 Vault 误签）
 // 例：v1_frost_btc_utxo_<vault_id>_<txid>_<vout>
 func KeyFrostBtcUtxo(vaultID uint32, txid string, vout uint32) string {
@@ -327,6 +333,24 @@ func KeyFrostBtcUtxo(vaultID uint32, txid string, vout uint32) string {
 // 例：v1_frost_btc_locked_utxo_<vault_id>_<txid>_<vout>
 func KeyFrostBtcLockedUtxo(vaultID uint32, txid string, vout uint32) string {
 	return withVer(fmt.Sprintf("frost_btc_locked_utxo_%d_%s_%d", vaultID, txid, vout))
+}
+
+// KeyFrostBtcUtxoFIFOIndex BTC UTXO FIFO 索引
+// 例：v1_frost_btc_utxo_q_<vault_id>_<seq>
+func KeyFrostBtcUtxoFIFOIndex(vaultID uint32, seq uint64) string {
+	return withVer(fmt.Sprintf("frost_btc_utxo_q_%d_%s", vaultID, padUint(seq)))
+}
+
+// KeyFrostBtcUtxoFIFOSeq BTC UTXO FIFO 序号计数器
+// 例：v1_frost_btc_utxo_seq_<vault_id>
+func KeyFrostBtcUtxoFIFOSeq(vaultID uint32) string {
+	return withVer(fmt.Sprintf("frost_btc_utxo_seq_%d", vaultID))
+}
+
+// KeyFrostBtcUtxoFIFOHead BTC UTXO FIFO 头指针
+// 例：v1_frost_btc_utxo_head_<vault_id>
+func KeyFrostBtcUtxoFIFOHead(vaultID uint32) string {
+	return withVer(fmt.Sprintf("frost_btc_utxo_head_%d", vaultID))
 }
 
 // KeyFrostWithdraw 提现请求状态
@@ -393,6 +417,18 @@ func KeyFrostVaultState(chain string, vaultID uint32) string {
 // 例：v1_frost_vault_transition_<chain>_<vault_id>_<epoch_id>
 func KeyFrostVaultTransition(chain string, vaultID uint32, epochID uint64) string {
 	return withVer(fmt.Sprintf("frost_vault_transition_%s_%d_%s", chain, vaultID, padUint(epochID)))
+}
+
+// KeyFrostVaultTransitionActive 活跃 transition 索引
+// 例：v1_frost_vault_transition_active_<chain>_<vault_id>_<epoch_id>
+func KeyFrostVaultTransitionActive(chain string, vaultID uint32, epochID uint64) string {
+	return withVer(fmt.Sprintf("frost_vault_transition_active_%s_%d_%s", chain, vaultID, padUint(epochID)))
+}
+
+// KeyFrostVaultTransitionActivePrefix 活跃 transition 索引前缀
+// 例：v1_frost_vault_transition_active_
+func KeyFrostVaultTransitionActivePrefix() string {
+	return withVer("frost_vault_transition_active_")
 }
 
 // KeyFrostVaultDkgCommit Vault DKG 承诺点

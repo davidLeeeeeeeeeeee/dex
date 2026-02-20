@@ -128,6 +128,10 @@ func registerAllNodes(nodes []*NodeInstance, frostCfg config.FrostConfig) {
 			applyGenesisBalances(account.Address, node.DBManager)
 			node.DBManager.SaveAccount(account)
 		}
+		// j-loop skips i==j, so persist local miner index mapping explicitly.
+		localIndexKey := keys.KeyIndexToAccount(uint64(i))
+		localAccountKey := keys.KeyAccount(node.Address)
+		node.DBManager.EnqueueSet(localIndexKey, localAccountKey)
 
 		// Initializing tokens
 		if err := initGenesisTokens(node.DBManager); err != nil {

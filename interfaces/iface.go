@@ -26,7 +26,7 @@ type BlockStore interface {
 
 type ConsensusEngine interface {
 	Start(ctx context.Context) error
-	RegisterQuery(nodeID types.NodeID, requestID uint32, blockID string, height uint64) string
+	RegisterQuery(nodeID types.NodeID, requestID uint32, blockID string, height uint64, seqID uint32) string
 	SubmitChit(nodeID types.NodeID, queryKey string, preferredID string, chitSignature []byte)
 	GetActiveQueryCount() int
 	GetPreference(height uint64) string

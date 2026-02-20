@@ -798,16 +798,31 @@ func (w *TransitionWorker) CheckTriggerConditions(ctx context.Context, height ui
 
 // StartPendingSessions scans transition states and starts DKG sessions when needed.
 func (w *TransitionWorker) StartPendingSessions(ctx context.Context) error {
-	// 使用更通用的前缀，确保能匹配到 keys.KeyFrostVaultTransition 生成的键
-	prefix := "v1_frost_vault_transition"
+	// 仅扫描活跃 transition 索引，避免全量扫历史 transition
+	prefix := keys.KeyFrostVaultTransitionActivePrefix()
 
 	count := 0
 	err := w.stateReader.Scan(prefix, func(k string, v []byte) bool {
 		count++
-		w.Logger.Debug("[TransitionWorker] Found transition key: %s", k)
+		transitionKey := string(v)
+		if transitionKey == "" {
+			w.Logger.Debug("[TransitionWorker] skip active transition index with empty value: %s", k)
+			return true
+		}
+
+		transitionData, exists, err := w.stateReader.Get(transitionKey)
+		if err != nil {
+			w.Logger.Warn("[TransitionWorker] failed to load transition by index %s -> %s: %v", k, transitionKey, err)
+			return true
+		}
+		if !exists || len(transitionData) == 0 {
+			w.Logger.Debug("[TransitionWorker] transition missing for index %s -> %s", k, transitionKey)
+			return true
+		}
+
 		var state pb.VaultTransitionState
-		if err := proto.Unmarshal(v, &state); err != nil {
-			w.Logger.Error("[TransitionWorker] Failed to unmarshal transition state for key %s: %v", k, err)
+		if err := proto.Unmarshal(transitionData, &state); err != nil {
+			w.Logger.Error("[TransitionWorker] Failed to unmarshal transition state for key %s: %v", transitionKey, err)
 			return true
 		}
 		if state.DkgStatus == "KEY_READY" || state.DkgStatus == "FAILED" {

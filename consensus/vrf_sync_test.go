@@ -32,6 +32,32 @@ func TestSamplePeersDeterministic_SameSeedSameResult(t *testing.T) {
 	}
 }
 
+// TestSamplePeersDeterministic_InputOrderIndependent 同一节点集合（不同顺序）应输出一致结果
+func TestSamplePeersDeterministic_InputOrderIndependent(t *testing.T) {
+	seed := computeVRFSeed("parent-block-abc", 10, 0, "node-01")
+	peersA := makePeerList(20)
+	peersB := make([]types.NodeID, len(peersA))
+	copy(peersB, peersA)
+
+	// Reverse to simulate map iteration / random snapshot order.
+	for i, j := 0, len(peersB)-1; i < j; i, j = i+1, j-1 {
+		peersB[i], peersB[j] = peersB[j], peersB[i]
+	}
+
+	k := 6
+	resultA := samplePeersDeterministic(seed, 3, k, peersA)
+	resultB := samplePeersDeterministic(seed, 3, k, peersB)
+
+	if len(resultA) != len(resultB) {
+		t.Fatalf("expected same result length, got %d and %d", len(resultA), len(resultB))
+	}
+	for i := range resultA {
+		if resultA[i] != resultB[i] {
+			t.Fatalf("order-dependent result at index %d: %s vs %s", i, resultA[i], resultB[i])
+		}
+	}
+}
+
 // TestSamplePeersDeterministic_DiffSeqIDDiffResult 换 SeqID 应输出不同节点集
 func TestSamplePeersDeterministic_DiffSeqIDDiffResult(t *testing.T) {
 	seed := computeVRFSeed("parent-block-abc", 10, 0, "node-01")
@@ -228,6 +254,37 @@ func TestVerifySignatureSet_Valid(t *testing.T) {
 func TestVerifySignatureSet_Nil(t *testing.T) {
 	if VerifySignatureSet(nil, 3, 2, nil, "node-01") {
 		t.Error("nil signature set should fail verification")
+	}
+}
+
+// TestVerifySignatureSet_LocalSignerIncluded 验证节点自己出现在签名集合中时应允许通过
+func TestVerifySignatureSet_LocalSignerIncluded(t *testing.T) {
+	ClearNodePublicKeys()
+	defer ClearNodePublicKeys()
+
+	transport := &mockTransport{
+		peers: []types.NodeID{"node-01", "node-02", "node-03"},
+	}
+	sigSet := &pb.ConsensusSignatureSet{
+		BlockId:  "block-7",
+		Height:   7,
+		ParentId: "block-6",
+		VrfSeed:  []byte("seed-7"),
+		Rounds: []*pb.RoundSignatures{
+			{
+				SeqId: 0,
+				Signatures: []*pb.ChitSignature{
+					{
+						NodeId:      "node-01",
+						PreferredId: "block-7",
+					},
+				},
+			},
+		},
+	}
+
+	if !VerifySignatureSet(sigSet, 1, 1, transport, "node-01") {
+		t.Fatal("local node as signer should not be rejected")
 	}
 }
 

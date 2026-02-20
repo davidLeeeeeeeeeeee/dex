@@ -37,6 +37,7 @@ type QueryContext struct {
 	responded  int
 	startTime  time.Time
 	height     uint64
+	seqID      uint32
 }
 
 func NewSnowmanEngine(nodeID types.NodeID, store interfaces.BlockStore, config *ConsensusConfig, events interfaces.EventBus, logger logs.Logger) interfaces.ConsensusEngine {
@@ -80,7 +81,7 @@ func (e *SnowmanEngine) Start(ctx context.Context) error {
 	return nil
 }
 
-func (e *SnowmanEngine) RegisterQuery(nodeID types.NodeID, requestID uint32, blockID string, height uint64) string {
+func (e *SnowmanEngine) RegisterQuery(nodeID types.NodeID, requestID uint32, blockID string, height uint64, seqID uint32) string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -93,6 +94,7 @@ func (e *SnowmanEngine) RegisterQuery(nodeID types.NodeID, requestID uint32, blo
 		signatures: make(map[types.NodeID][]byte),
 		startTime:  time.Now(),
 		height:     height,
+		seqID:      seqID,
 	}
 
 	return queryKey
@@ -215,7 +217,7 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 			Signature:   ctx.signatures[nodeID], // nil if no signature
 		})
 	}
-	sb.RecordVoteWithDetails(candidates, filteredVotes, e.config.Alpha, voteDetails)
+	sb.RecordVoteWithDetails(candidates, filteredVotes, e.config.Alpha, ctx.seqID, voteDetails)
 
 	newPreference := sb.GetPreference()
 	if newPreference != "" {
@@ -298,7 +300,7 @@ func (e *SnowmanEngine) collectConsensusSignatureSet(height uint64, blockID stri
 			})
 		}
 		rounds = append(rounds, &pb.RoundSignatures{
-			SeqId:      uint32(sr.Round),
+			SeqId:      sr.SeqID,
 			Signatures: chitSigs,
 		})
 	}

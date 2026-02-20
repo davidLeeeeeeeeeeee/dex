@@ -105,7 +105,7 @@ func NewNodeWithSigner(id types.NodeID, transport interfaces.Transport, store in
 	gossipManager.node = node
 	gossipManager.SetQueryManager(queryManager)
 
-	syncManager := NewSyncManager(id, transport, store, &config.Sync, events, logger)
+	syncManager := NewSyncManager(id, transport, store, &config.Sync, &config.Consensus, events, logger)
 	syncManager.node = node
 
 	// 注入 SyncManager 到 QueryManager，用于同步期间暂停共识

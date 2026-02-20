@@ -73,7 +73,7 @@ flowchart LR
 | `SampleSize` | 15 | 高度采样节点数 |
 | `QuorumRatio` | 0.67 | 采样仲裁比例 |
 | `SampleTimeout` | 2s | 采样超时 |
-| `SyncAlpha/SyncBeta` | 14 / 15 | 签名集验阈 |
+| `Consensus Alpha/Beta` | 14 / 15 | 最终化与签名集验阈（单一来源） |
 | `DeepLagStateSyncThreshold` | 100 | 深度落后阈值（stateDB-first 路径） |
 | `StateSyncPeers` | 4 | stateDB 分片同步 peer 上限 |
 | `StateSyncShardConcurrency` | 8 | stateDB 分片并发数 |
@@ -288,7 +288,7 @@ flowchart TD
 
 1. 先尝试入库（含不完整块补课）。
 2. 再按父链做 fast-finalize 推进 `lastAccepted`。
-3. `SignatureSets` 是同步通过验证的必要条件：每个同步高度都必须先通过 `SyncAlpha/SyncBeta` 校验与采样合法性重放，必要时做 ECDSA 验签。
+3. `SignatureSets` 是同步通过验证的必要条件：每个同步高度都必须先通过 `Consensus Alpha/Beta` 校验与采样合法性重放，必要时做 ECDSA 验签。
 4. 仍落后则 50ms 后流水线续传下一批。
 
 > 当前代码未定义 `SnapshotRequest/SnapshotResponse` 消息；stateDB 快照同步通过独立 shard/page 接口完成。

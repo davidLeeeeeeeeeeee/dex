@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"dex/pb"
+	"dex/types"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -81,42 +83,68 @@ func doSendSyncRequest(t *SendTask, client *http.Client) error {
 		return fmt.Errorf("doSendSyncRequest: message is not *syncRequestMessage, got %T", t.Message)
 	}
 
-	var blocks []*pb.Block
-	var lastErr error
-
-	for height := msg.fromHeight; height <= msg.toHeight; height++ {
-		req := &pb.GetBlockRequest{Height: height}
-		payload, err := proto.Marshal(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		respBytes, err := postProtobufAndRead(t, client, "doSendSyncRequest", "/getblock", payload)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		var blockResp pb.GetBlockResponse
-		if err := proto.Unmarshal(respBytes, &blockResp); err != nil {
-			lastErr = err
-			continue
-		}
-		if blockResp.Block != nil {
-			blocks = append(blocks, blockResp.Block)
-		}
+	reqPayload, err := json.Marshal(types.SyncBlocksRequest{
+		FromHeight:    msg.fromHeight,
+		ToHeight:      msg.toHeight,
+		SyncShortMode: msg.syncShortMode,
+	})
+	if err != nil {
+		return fmt.Errorf("doSendSyncRequest: marshal request failed: %w", err)
 	}
 
-	if msg.onSuccess != nil && len(blocks) > 0 {
-		msg.onSuccess(blocks)
+	url := fmt.Sprintf("https://%s/getsyncblocks", t.Target)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqPayload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("doSendSyncRequest: read body failed: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("doSendSyncRequest: status=%d body=%s", resp.StatusCode, string(respBytes))
+	}
+
+	var syncResp types.SyncBlocksResponse
+	if err := json.Unmarshal(respBytes, &syncResp); err != nil {
+		return fmt.Errorf("doSendSyncRequest: decode json failed: %w", err)
+	}
+	if syncResp.Error != "" {
+		return fmt.Errorf("doSendSyncRequest: remote error: %s", syncResp.Error)
+	}
+	if len(syncResp.Blocks) == 0 {
+		return fmt.Errorf("doSendSyncRequest: no blocks fetched for heights %d-%d", msg.fromHeight, msg.toHeight)
+	}
+
+	if msg.onSuccessWithProofs != nil {
+		msg.onSuccessWithProofs(&syncResp)
 		return nil
 	}
-	if len(blocks) == 0 && lastErr != nil {
-		return fmt.Errorf("no blocks fetched for heights %d-%d: %v", msg.fromHeight, msg.toHeight, lastErr)
-	}
-	if len(blocks) == 0 {
-		return fmt.Errorf("no blocks fetched for heights %d-%d", msg.fromHeight, msg.toHeight)
+
+	if msg.onSuccess != nil {
+		blocks := make([]*pb.Block, 0, len(syncResp.Blocks))
+		for _, bundle := range syncResp.Blocks {
+			if len(bundle.BlockBytes) == 0 {
+				continue
+			}
+			var b pb.Block
+			if err := proto.Unmarshal(bundle.BlockBytes, &b); err != nil {
+				continue
+			}
+			blocks = append(blocks, &b)
+		}
+		if len(blocks) == 0 {
+			return fmt.Errorf("doSendSyncRequest: decoded 0 blocks for heights %d-%d", msg.fromHeight, msg.toHeight)
+		}
+		msg.onSuccess(blocks)
 	}
 	return nil
 }

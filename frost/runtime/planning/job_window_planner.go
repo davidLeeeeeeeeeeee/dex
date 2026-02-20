@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -340,20 +339,23 @@ func (p *JobWindowPlanner) planBTCJob(chain, asset string, vaultID uint32, keyEp
 	}, nil
 }
 
-// selectBTCUTXOs 选择 BTC UTXO（按 confirm_height 升序，FIFO）
+// selectBTCUTXOs 选择 BTC UTXO（按 FIFO 索引顺序，不扫描 UTXO 全前缀）
 func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmount uint64) ([]chainpkg.UTXO, error) {
-	// 1. 获取 VaultState 以获取 groupPubKey (用于 scriptPubKey)
+	// 1. 读取 VaultState，构建 Taproot scriptPubKey
 	vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
 	vaultStateData, exists, err := p.stateReader.Get(vaultStateKey)
-	if err != nil || !exists {
-		return nil, fmt.Errorf("vault state not found for vault %d (chain %s)", vaultID, chain)
+	if err != nil {
+		return nil, err
 	}
-	var vaultState pb.FrostVaultState
-	if err := proto.Unmarshal(vaultStateData, &vaultState); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal vault state: %v", err)
+	if !exists || len(vaultStateData) == 0 {
+		return nil, fmt.Errorf("vault state not found for chain=%s vault=%d", chain, vaultID)
 	}
 
-	// Taproot scriptPubKey = OP_1 <32-byte-X-only-pubkey>
+	var vaultState pb.FrostVaultState
+	if err := proto.Unmarshal(vaultStateData, &vaultState); err != nil {
+		return nil, err
+	}
+
 	var scriptPubKey []byte
 	if len(vaultState.GroupPubkey) == 32 {
 		scriptPubKey = make([]byte, 34)
@@ -362,96 +364,68 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 		copy(scriptPubKey[2:], vaultState.GroupPubkey)
 	}
 
-	// 2. 扫描该 Vault 的所有 UTXO
-	utxoPrefix := fmt.Sprintf("v1_frost_btc_utxo_%d_", vaultID)
-	type utxoCandidate struct {
-		txid    string
-		vout    uint32
-		value   []byte
-		lockKey string
+	// 2. 按 head/seq 从 FIFO 索引顺序读取
+	headKey := keys.KeyFrostBtcUtxoFIFOHead(vaultID)
+	seqKey := keys.KeyFrostBtcUtxoFIFOSeq(vaultID)
+
+	head := uint64(1)
+	if headData, headExists, e := p.stateReader.Get(headKey); e != nil {
+		return nil, e
+	} else if headExists && len(headData) > 0 {
+		if parsed, pe := strconv.ParseUint(string(headData), 10, 64); pe == nil && parsed > 0 {
+			head = parsed
+		}
 	}
-	candidates := make([]utxoCandidate, 0)
-	utxos := make([]chainpkg.UTXO, 0)
 
-	err = p.stateReader.Scan(utxoPrefix, func(k string, v []byte) bool {
-		// 解析 UTXO key: v1_frost_btc_utxo_<vault_id>_<txid>_<vout>
-		parts := strings.Split(k, "_")
-		if len(parts) < 6 {
-			return true // 继续扫描
-		}
-
-		txid := parts[4]
-		voutStr := parts[5]
-		vout, err := strconv.ParseUint(voutStr, 10, 32)
-		if err != nil {
-			return true
-		}
-		lockKey := keys.KeyFrostBtcLockedUtxo(vaultID, txid, uint32(vout))
-		valueCopy := make([]byte, len(v))
-		copy(valueCopy, v)
-		candidates = append(candidates, utxoCandidate{
-			txid:    txid,
-			vout:    uint32(vout),
-			value:   valueCopy,
-			lockKey: lockKey,
-		})
-		return true
-	})
-
+	seqData, exists, err := p.stateReader.Get(seqKey)
 	if err != nil {
 		return nil, err
 	}
-
-	lockKeys := make([]string, 0, len(candidates))
-	for _, c := range candidates {
-		lockKeys = append(lockKeys, c.lockKey)
+	if !exists || len(seqData) == 0 {
+		return nil, fmt.Errorf("insufficient UTXOs: need %d, got 0", needAmount)
 	}
-	lockedMap, err := getMany(p.stateReader, lockKeys)
-	if err != nil {
-		return nil, err
+	maxSeq, err := strconv.ParseUint(string(seqData), 10, 64)
+	if err != nil || maxSeq == 0 || head > maxSeq {
+		return nil, fmt.Errorf("insufficient UTXOs: need %d, got 0", needAmount)
 	}
 
-	for _, c := range candidates {
-		if _, locked := lockedMap[c.lockKey]; locked {
-			continue // 已锁定，跳过
-		}
-		var protoUtxo pb.FrostUtxo
-		if err := proto.Unmarshal(c.value, &protoUtxo); err != nil {
-			continue
-		}
-		utxo := chainpkg.UTXO{
-			TxID:          c.txid,
-			Vout:          c.vout,
-			Amount:        parseAmount(protoUtxo.Amount),
-			ScriptPubKey:  scriptPubKey,
-			ConfirmHeight: protoUtxo.FinalizeHeight,
-		}
-		utxos = append(utxos, utxo)
-	}
-
-	// 按 confirm_height 升序排序（FIFO），同高度按 txid:vout 字典序
-	sort.Slice(utxos, func(i, j int) bool {
-		if utxos[i].ConfirmHeight != utxos[j].ConfirmHeight {
-			return utxos[i].ConfirmHeight < utxos[j].ConfirmHeight
-		}
-		if utxos[i].TxID != utxos[j].TxID {
-			return utxos[i].TxID < utxos[j].TxID
-		}
-		return utxos[i].Vout < utxos[j].Vout
-	})
-
-	// 贪心选择：累加直到 >= needAmount
 	selected := make([]chainpkg.UTXO, 0)
 	var total uint64
-	for _, utxo := range utxos {
-		if utxo.Amount == 0 {
-			continue // 跳过金额为 0 的 UTXO
+	for seq := head; seq <= maxSeq && total < needAmount; seq++ {
+		indexKey := keys.KeyFrostBtcUtxoFIFOIndex(vaultID, seq)
+		utxoData, idxExists, e := p.stateReader.Get(indexKey)
+		if e != nil {
+			return nil, e
 		}
-		selected = append(selected, utxo)
-		total += utxo.Amount
-		if total >= needAmount {
-			break
+		if !idxExists || len(utxoData) == 0 {
+			continue
 		}
+
+		var protoUtxo pb.FrostUtxo
+		if e := proto.Unmarshal(utxoData, &protoUtxo); e != nil {
+			continue
+		}
+
+		lockKey := keys.KeyFrostBtcLockedUtxo(vaultID, protoUtxo.Txid, protoUtxo.Vout)
+		if lockVal, locked, e := p.stateReader.Get(lockKey); e != nil {
+			return nil, e
+		} else if locked && len(lockVal) > 0 {
+			continue
+		}
+
+		amount := parseAmount(protoUtxo.Amount)
+		if amount == 0 {
+			continue
+		}
+
+		selected = append(selected, chainpkg.UTXO{
+			TxID:          protoUtxo.Txid,
+			Vout:          protoUtxo.Vout,
+			Amount:        amount,
+			ScriptPubKey:  scriptPubKey,
+			ConfirmHeight: protoUtxo.FinalizeHeight,
+		})
+		total += amount
 	}
 
 	if total < needAmount {
@@ -679,28 +653,31 @@ func (p *JobWindowPlanner) selectVault(chain, asset string, amount uint64) (vaul
 
 // calculateVaultAvailableBalance 计算 Vault 的可用余额
 func (p *JobWindowPlanner) calculateVaultAvailableBalance(chain, asset string, vaultID uint32) (uint64, error) {
-	// 帧级缓存（单次 Tick 有效）：避免因为不断 fallback 或者循环导致的 O(N^2) 级回表扫底层 PebbbleDB 的 IO 操作
+	// 帧级缓存（单次 Tick 有效）
 	if p.transientCache != nil {
 		if cachedBal, ok := p.transientCache[vaultID]; ok {
 			return cachedBal, nil
 		}
 	}
 
-	var balance uint64
-	var err error
-
-	if chain == "btc" {
-		// BTC：扫描 UTXO 集合，累加未锁定的 UTXO 金额
-		balance, err = p.calculateBTCBalance(vaultID)
-	} else {
-		// 账户链/合约链：遍历 FundsLedger lot FIFO，累加金额
-		balance, err = p.calculateAccountChainBalance(chain, asset, vaultID)
+	// 读取聚合可用余额，避免运行时扫描 lot/utxo
+	balanceKey := keys.KeyFrostVaultAvailableBalance(chain, asset, vaultID)
+	balanceData, exists, err := p.stateReader.Get(balanceKey)
+	if err != nil {
+		return 0, err
+	}
+	if !exists || len(balanceData) == 0 {
+		if p.transientCache != nil {
+			p.transientCache[vaultID] = 0
+		}
+		return 0, nil
 	}
 
-	if err == nil && p.transientCache != nil {
+	balance := parseAmount(string(balanceData))
+	if p.transientCache != nil {
 		p.transientCache[vaultID] = balance
 	}
-	return balance, err
+	return balance, nil
 }
 
 func (p *JobWindowPlanner) deductVaultBalance(vaultID uint32, amount uint64) {

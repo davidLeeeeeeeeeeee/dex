@@ -28,6 +28,8 @@ type SyncManager struct {
 	transport interfaces.Transport
 	store     interfaces.BlockStore
 	config    *SyncConfig
+	alpha     int
+	beta      int
 
 	events       interfaces.EventBus
 	Logger       logs.Logger
@@ -61,12 +63,20 @@ type stateSnapshotFetcher interface {
 	FetchStateSnapshotPage(peer types.NodeID, snapshotHeight uint64, shard string, pageSize int, pageToken string) (*types.StateSnapshotPageResponse, error)
 }
 
-func NewSyncManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, events interfaces.EventBus, logger logs.Logger) *SyncManager {
+func NewSyncManager(id types.NodeID, transport interfaces.Transport, store interfaces.BlockStore, config *SyncConfig, consensusCfg *ConsensusConfig, events interfaces.EventBus, logger logs.Logger) *SyncManager {
+	alpha := 1
+	beta := 1
+	if consensusCfg != nil {
+		alpha = consensusCfg.Alpha
+		beta = consensusCfg.Beta
+	}
 	return &SyncManager{
 		nodeID:             id,
 		transport:          transport,
 		store:              store,
 		config:             config,
+		alpha:              alpha,
+		beta:               beta,
 		events:             events,
 		Logger:             logger,
 		SyncRequests:       make(map[uint32]time.Time),
@@ -1171,6 +1181,7 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 
 	// 强制要求：每个参与同步处理/最终化的高度都必须先通过 VRF 签名集合验证。
 	verifiedSigSets := make(map[uint64]*pb.ConsensusSignatureSet)
+	rejectedSigReasons := make(map[uint64]string)
 	seenHeights := make(map[uint64]struct{})
 	for _, block := range msg.Blocks {
 		if block == nil {
@@ -1184,17 +1195,22 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 
 		sigData, hasSig := msg.SignatureSets[h]
 		if !hasSig || len(sigData) == 0 {
-			sm.Logger.Warn("[SyncManager] Reject sync height %d from %s: missing VRF signature set", h, msg.From)
+			reason := "missing VRF signature set"
+			rejectedSigReasons[h] = reason
+			sm.Logger.Warn("[SyncManager] Reject sync height %d from %s: %s", h, msg.From, reason)
 			continue
 		}
 
 		var sigSet pb.ConsensusSignatureSet
 		if err := proto.Unmarshal(sigData, &sigSet); err != nil {
-			sm.Logger.Warn("[SyncManager] Reject sync height %d from %s: decode signature set failed: %v", h, msg.From, err)
+			reason := fmt.Sprintf("decode signature set failed: %v", err)
+			rejectedSigReasons[h] = reason
+			sm.Logger.Warn("[SyncManager] Reject sync height %d from %s: %s", h, msg.From, reason)
 			continue
 		}
-		if !VerifySignatureSet(&sigSet, sm.config.SyncAlpha, sm.config.SyncBeta, sm.transport, sm.nodeID) {
-			sm.Logger.Warn("[SyncManager] Reject sync height %d from %s: signature set verification failed", h, msg.From)
+		if ok, reason := verifySignatureSetDetailed(&sigSet, sm.alpha, sm.beta, sm.transport, sm.nodeID); !ok {
+			rejectedSigReasons[h] = reason
+			sm.Logger.Warn("[SyncManager] Reject sync height %d from %s: signature set verification failed (%s)", h, msg.From, reason)
 			continue
 		}
 		verifiedSigSets[h] = &sigSet
@@ -1211,12 +1227,16 @@ func (sm *SyncManager) HandleSyncResponse(msg types.Message) {
 
 		if _, ok := verifiedSigSets[block.Header.Height]; !ok {
 			addErrs++
+			reason := rejectedSigReasons[block.Header.Height]
+			if reason == "" {
+				reason = "missing/invalid VRF signature set"
+			}
 			if firstAddErr == nil {
-				firstAddErr = fmt.Errorf("missing/invalid VRF signature set")
+				firstAddErr = fmt.Errorf("VRF signature set rejected: %s", reason)
 				firstAddErrBlockID = block.ID
 			}
-			sm.Logger.Warn("[SyncManager] Skip block %s at height %d from %s: missing/invalid VRF signature set",
-				block.ID, block.Header.Height, msg.From)
+			sm.Logger.Warn("[SyncManager] Skip block %s at height %d from %s: VRF signature set rejected (%s)",
+				block.ID, block.Header.Height, msg.From, reason)
 			continue
 		}
 
@@ -1457,7 +1477,7 @@ func VerifySignatureSet(sigSet *pb.ConsensusSignatureSet, alpha, beta int, trans
 
 	// 步骤 3：采样合法性（重演 VRF 确定性采样，确认每个签名者在合法采样集中）
 	if transport != nil && len(sigSet.VrfSeed) > 0 {
-		allPeers := transport.GetAllPeers(localNodeID)
+		allPeers := transport.GetAllPeers("")
 		if len(allPeers) > 0 {
 			// 用 K = len(allPeers) 作为上限（采样集不会超过全部节点数）
 			k := len(allPeers)
@@ -1504,4 +1524,68 @@ func VerifySignatureSet(sigSet *pb.ConsensusSignatureSet, alpha, beta int, trans
 	}
 
 	return true
+}
+
+func verifySignatureSetDetailed(sigSet *pb.ConsensusSignatureSet, alpha, beta int, transport interfaces.Transport, localNodeID types.NodeID) (bool, string) {
+	if sigSet == nil {
+		return false, "nil signature set"
+	}
+
+	if alpha <= 0 {
+		alpha = 1
+	}
+	if beta <= 0 {
+		beta = 1
+	}
+
+	if len(sigSet.Rounds) < beta {
+		return false, fmt.Sprintf("rounds=%d < beta=%d", len(sigSet.Rounds), beta)
+	}
+
+	for i, round := range sigSet.Rounds {
+		if len(round.Signatures) < alpha {
+			return false, fmt.Sprintf("round[%d] signatures=%d < alpha=%d", i, len(round.Signatures), alpha)
+		}
+	}
+
+	if transport != nil && len(sigSet.VrfSeed) > 0 {
+		allPeers := transport.GetAllPeers("")
+		if len(allPeers) > 0 {
+			k := len(allPeers)
+			for _, round := range sigSet.Rounds {
+				sampled := samplePeersDeterministic(sigSet.VrfSeed, round.SeqId, k, allPeers)
+				sampledSet := make(map[string]bool, len(sampled))
+				for _, p := range sampled {
+					sampledSet[string(p)] = true
+				}
+
+				for _, sig := range round.Signatures {
+					if !sampledSet[sig.NodeId] {
+						return false, fmt.Sprintf("node %s not in sampled set (seq=%d peers=%d local=%s)",
+							sig.NodeId, round.SeqId, len(allPeers), localNodeID)
+					}
+				}
+			}
+		}
+	}
+
+	hasPublicKeys := false
+	nodePublicKeysMu.RLock()
+	hasPublicKeys = len(nodePublicKeys) > 0
+	nodePublicKeysMu.RUnlock()
+	if hasPublicKeys {
+		for _, round := range sigSet.Rounds {
+			for _, sig := range round.Signatures {
+				if len(sig.Signature) == 0 {
+					continue
+				}
+				digest := ComputeChitDigest(sig.PreferredId, sigSet.Height, sigSet.VrfSeed, round.SeqId)
+				if !VerifyChitSignature(sig.NodeId, digest, sig.Signature) {
+					return false, fmt.Sprintf("ECDSA signature verify failed for node %s seq=%d", sig.NodeId, round.SeqId)
+				}
+			}
+		}
+	}
+
+	return true, ""
 }

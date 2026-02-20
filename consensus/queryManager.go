@@ -10,6 +10,7 @@ import (
 	"dex/types"
 	"encoding/binary"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -86,9 +87,12 @@ func samplePeersDeterministic(seed []byte, seqID uint32, k int, allPeers []types
 	rngSeed := int64(binary.BigEndian.Uint64(randSeed[:8]))
 	rng := rand.New(rand.NewSource(rngSeed))
 
-	// 复制一份避免修改原切片
+	// 复制一份避免修改原切片，并先排序消除来源顺序噪声（map 遍历/随机快照）。
 	peers := make([]types.NodeID, len(allPeers))
 	copy(peers, allPeers)
+	sort.Slice(peers, func(i, j int) bool {
+		return peers[i] < peers[j]
+	})
 
 	// Fisher-Yates 洗牌（只需洗前 k 个位置）
 	for i := 0; i < k; i++ {
@@ -135,7 +139,7 @@ func (qm *QueryManager) issueQuery() {
 		return
 	}
 	requestID, _ := secureRandUint32()
-	queryKey := qm.engine.RegisterQuery(qm.nodeID, requestID, blockID, block.Header.Height)
+	queryKey := qm.engine.RegisterQuery(qm.nodeID, requestID, blockID, block.Header.Height, qm.seqID)
 
 	poll := &Poll{
 		requestID: requestID,

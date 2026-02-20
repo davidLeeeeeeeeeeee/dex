@@ -52,8 +52,6 @@ type SyncConfig struct {
 	SampleSize          int
 	QuorumRatio         float64
 	SampleTimeout       time.Duration
-	SyncAlpha           int
-	SyncBeta            int
 	ChitSoftGap         uint64
 	ChitHardGap         uint64
 	ChitGracePeriod     time.Duration
@@ -103,8 +101,6 @@ func DefaultConfig() *Config {
 			SampleSize:          15,
 			QuorumRatio:         0.67,
 			SampleTimeout:       2 * time.Second,
-			SyncAlpha:           14,
-			SyncBeta:            15,
 			ChitSoftGap:         1,
 			ChitHardGap:         3,
 			ChitGracePeriod:     1 * time.Second,
