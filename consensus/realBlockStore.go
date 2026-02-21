@@ -620,6 +620,14 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 			} else {
 				logs.Info("[RealBlockStore] Async compaction for order indexes finished at height %d, cost: %v", h, time.Since(start))
 			}
+
+			logs.Info("[RealBlockStore] Starting async compaction for state orderstates at height %d...", h)
+			start = time.Now()
+			if err := s.dbManager.CompactStateOrderStates(); err != nil {
+				logs.Warn("[RealBlockStore] Async compaction for state orderstates failed at height %d: %v", h, err)
+			} else {
+				logs.Info("[RealBlockStore] Async compaction for state orderstates finished at height %d, cost: %v", h, time.Since(start))
+			}
 		}(height)
 	}
 

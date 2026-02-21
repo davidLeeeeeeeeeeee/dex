@@ -278,3 +278,38 @@ func TestGetMany(t *testing.T) {
 		t.Fatal("missing key should not exist in result")
 	}
 }
+
+func TestCompactBusinessPrefix(t *testing.T) {
+	cfg := testPebbleConfig(t.TempDir())
+
+	db, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new db failed: %v", err)
+	}
+	defer db.Close()
+
+	updates := []KVUpdate{
+		{Key: "v1_orderstate_compact_a", Value: []byte("oa")},
+		{Key: "v1_orderstate_compact_b", Value: []byte("ob")},
+		{Key: "v1_account_compact_a", Value: []byte("aa")},
+	}
+	if err := db.ApplyAccountUpdate(1, updates...); err != nil {
+		t.Fatalf("apply updates failed: %v", err)
+	}
+
+	if err := db.CompactBusinessPrefix("v1_orderstate_"); err != nil {
+		t.Fatalf("compact orderstate prefix failed: %v", err)
+	}
+
+	val, exists, err := db.Get("v1_orderstate_compact_a")
+	if err != nil {
+		t.Fatalf("get orderstate key failed: %v", err)
+	}
+	if !exists || string(val) != "oa" {
+		t.Fatalf("unexpected compacted key state, exists=%v value=%q", exists, string(val))
+	}
+
+	if err := db.CompactBusinessPrefix(""); err == nil {
+		t.Fatal("expected empty prefix compact to fail")
+	}
+}
