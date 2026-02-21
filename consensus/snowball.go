@@ -222,6 +222,10 @@ func selectBestCandidate(candidates []string) string {
 			if h < bestHash {
 				bestHash = h
 				bestBlock = cid
+			} else if h == bestHash {
+				if cid < bestBlock {
+					bestBlock = cid
+				}
 			}
 		}
 	}

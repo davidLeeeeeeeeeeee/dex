@@ -130,16 +130,34 @@ func normalizeWriteQueueKeyBucket(key string) string {
 		return "balance"
 	case strings.HasPrefix(keyNoVer, "acc_order_"):
 		return "acc_order"
-	case strings.HasPrefix(keyNoVer, "frost_planning_log"):
-		return "frost_planning_log"
+	case strings.HasPrefix(keyNoVer, "frost_"):
+		return "frost"
+	case strings.HasPrefix(keyNoVer, "pair:"):
+		return "pair_index"
+	case strings.HasPrefix(keyNoVer, "trade_"):
+		return "trade"
+	case strings.HasPrefix(keyNoVer, "txraw_"):
+		return "txraw"
+	case strings.HasPrefix(keyNoVer, "vmtx_fbbal_"):
+		return "vmtx_fbbal"
+	case strings.HasPrefix(keyNoVer, "vm_tx_"):
+		return "vm_tx"
+	case strings.HasPrefix(keyNoVer, "vm_applied_"):
+		return "vm_applied"
 	}
+
+	// 应对那些没有下划线但含有冒号或管道符的情况（避免 fallback 返回极高基数的 key）
+	if idx := strings.IndexAny(keyNoVer, ":|"); idx > 0 {
+		return keyNoVer[:idx]
+	}
+
+	// 兜底：取第一个部分作为桶名称，切断极高基数
 	parts := strings.Split(keyNoVer, "_")
-	if len(parts) >= 2 {
-		bucket := parts[0] + "_" + parts[1]
-		if len(bucket) > 48 {
-			return parts[0]
+	if len(parts) > 0 && len(parts[0]) > 0 {
+		if len(parts[0]) > 48 {
+			return parts[0][:48]
 		}
-		return bucket
+		return parts[0]
 	}
 	if len(keyNoVer) > 48 {
 		return keyNoVer[:48] + "..."

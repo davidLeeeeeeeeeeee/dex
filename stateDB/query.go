@@ -1,6 +1,17 @@
 package statedb
 
-import "errors"
+import (
+	"bytes"
+	"dex/logs"
+	"errors"
+	"sort"
+	"time"
+)
+
+const (
+	stateDBGetManyProbeDebugThreshold = 5 * time.Millisecond
+	stateDBGetManyProbeWarnThreshold  = 50 * time.Millisecond
+)
 
 // Get returns one key from stateDB live storage.
 func (s *DB) Get(key string) ([]byte, bool, error) {
@@ -20,16 +31,103 @@ func (s *DB) Get(key string) ([]byte, bool, error) {
 }
 
 // GetMany returns state keys in one snapshot view.
-func (s *DB) GetMany(keys []string) (map[string][]byte, error) {
+func (s *DB) GetMany(keys []string) (out map[string][]byte, err error) {
+	startAt := time.Now()
+	mode := "init"
+	shardGroups := 0
+	defer func() {
+		cost := time.Since(startAt)
+		if err == nil && cost < stateDBGetManyProbeDebugThreshold {
+			return
+		}
+		if err != nil || cost >= stateDBGetManyProbeWarnThreshold {
+			logs.Warn(
+				"[StateDB][GetMany] mode=%s keys=%d hits=%d shards=%d cost=%s err=%v",
+				mode, len(keys), len(out), shardGroups, cost, err,
+			)
+			return
+		}
+		logs.Debug(
+			"[StateDB][GetMany] mode=%s keys=%d hits=%d shards=%d cost=%s",
+			mode, len(keys), len(out), shardGroups, cost,
+		)
+	}()
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	out := make(map[string][]byte, len(keys))
+	out = make(map[string][]byte, len(keys))
 	if len(keys) == 0 {
+		mode = "empty"
 		return out, nil
 	}
 
-	err := s.store.View(func(tx kvReader) error {
+	// Pebble fast path: group by shard + sorted seek on a single snapshot/iterator.
+	if ps, ok := s.store.(*pebbleStore); ok {
+		mode = "pebble_seek"
+		keysByShard := make(map[string][]string, len(s.shards))
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			sh := shardOf(key, s.conf.ShardHexWidth)
+			keysByShard[sh] = append(keysByShard[sh], key)
+		}
+		shardGroups = len(keysByShard)
+		if len(keysByShard) == 0 {
+			mode = "empty_filtered"
+			return out, nil
+		}
+
+		shards := make([]string, 0, len(keysByShard))
+		for sh := range keysByShard {
+			shards = append(shards, sh)
+		}
+		sort.Strings(shards)
+
+		snap := ps.db.NewSnapshot()
+		defer snap.Close()
+		iter, err := snap.NewIter(nil)
+		if err != nil {
+			return nil, err
+		}
+		defer iter.Close()
+
+		for _, sh := range shards {
+			shardKeys := keysByShard[sh]
+			sort.Strings(shardKeys)
+			uniq := shardKeys[:0]
+			prev := ""
+			for _, key := range shardKeys {
+				if key == prev {
+					continue
+				}
+				uniq = append(uniq, key)
+				prev = key
+			}
+			for _, key := range uniq {
+				stateKey := []byte(kState(sh, key))
+				if !iter.SeekGE(stateKey) {
+					break
+				}
+				if !bytes.Equal(iter.Key(), stateKey) {
+					continue
+				}
+				val := iter.Value()
+				copied := make([]byte, len(val))
+				copy(copied, val)
+				out[key] = copied
+			}
+		}
+		if err := iter.Error(); err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+
+	// Generic fallback for non-pebble backends.
+	mode = "fallback_get"
+	err = s.store.View(func(tx kvReader) error {
 		for _, key := range keys {
 			if key == "" {
 				continue

@@ -102,65 +102,49 @@ func (e *SnowmanEngine) RegisterQuery(nodeID types.NodeID, requestID uint32, blo
 
 // SubmitChit 提交来自特定节点的投票响应（Chit）
 func (e *SnowmanEngine) SubmitChit(nodeID types.NodeID, queryKey string, preferredID string, chitSignature []byte) {
+	var completedCtx *QueryContext
+	shouldProcess := false
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// 检查查询是否存在，以及该节点是否已经对该查询投过票（防止重复计票）
 	ctx, exists := e.activeQueries[queryKey]
 	if !exists {
+		e.mu.Unlock()
 		return
 	}
 	if _, voted := ctx.voters[nodeID]; voted {
+		e.mu.Unlock()
 		return
 	}
-
-	// 记录该节点的选票及其偏好的区块 ID
 	ctx.voters[nodeID] = preferredID
 	ctx.votes[preferredID]++
-	ctx.responded++ // 增加已收到的响应计数
-
-	// 存储 VRF 签名（用于签名集合证据）
+	ctx.responded++
 	if len(chitSignature) > 0 {
 		ctx.signatures[nodeID] = chitSignature
 	}
-
-	// --- 优化结算逻辑 ---
-	// 判定是否结算的两个维度：
-	// 1. 提前胜出：某个候选块已经获得了 Alpha 张票。此时无论后续 K-responded 结果如何，该块在这一轮都已经胜出。
-	// 2. 采样完成：已经收到了全部 K 个预期的响应。此时无论各块票数如何，都必须根据当前统计结果由于 Snowball 进行状态更新。
-
-	hasWinner := false
-	if preferredID != "" && ctx.votes[preferredID] >= e.config.Alpha {
-		hasWinner = true
-	}
-
+	hasWinner := preferredID != "" && ctx.votes[preferredID] >= e.config.Alpha
 	if hasWinner || ctx.responded >= e.config.K {
-		// 处理本次查询收集到的所有选票，并更新 Snowball 状态
-		reason := e.processVotes(ctx)
-		// 查询任务完成，从活跃查询映射中移除
 		delete(e.activeQueries, queryKey)
-		// 异步发布查询完成事件，通知系统其他部分
-		e.events.PublishAsync(types.BaseEvent{
-			EventType: types.EventQueryComplete,
-			EventData: QueryCompleteData{Reason: reason, QueryKeys: []string{queryKey}},
-		})
+		completedCtx = ctx
+		shouldProcess = true
 	}
+	e.mu.Unlock()
+	if !shouldProcess {
+		return
+	}
+	// Process outside e.mu to avoid holding the engine lock on finalize-heavy path.
+	reason := e.processVotes(completedCtx)
+	e.events.PublishAsync(types.BaseEvent{
+		EventType: types.EventQueryComplete,
+		EventData: QueryCompleteData{Reason: reason, QueryKeys: []string{queryKey}},
+	})
 }
-
 func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
-	sb, exists := e.snowballs[ctx.height]
-	if !exists {
-		sb = NewSnowball(e.events)
-		e.snowballs[ctx.height] = sb
-	}
+	sb := e.getOrCreateSnowball(ctx.height)
 
-	// 获取父区块（height-1 的已最终化区块）
-	// 只有父区块已最终化的候选区块才能参与共识
+	// Only blocks whose parent is already finalized can participate.
 	var parentBlock *types.Block
 	if ctx.height > 0 {
 		parent, ok := e.store.GetFinalizedAtHeight(ctx.height - 1)
 		if !ok {
-			// 父区块尚未最终化，无法对当前高度进行共识
 			logs.Debug("[Engine] Parent block at height %d not finalized, skipping vote processing for height %d",
 				ctx.height-1, ctx.height)
 			return "parent_missing"
@@ -168,11 +152,9 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 		parentBlock = parent
 	}
 
-	// 候选区块：只包含那些 ParentID 指向已最终化父区块的区块
 	candidates := make([]string, 0)
 	blocks := e.store.GetByHeight(ctx.height)
 	for _, block := range blocks {
-		// 对于 height > 0 的区块，必须验证父区块链接
 		if ctx.height > 0 && parentBlock != nil {
 			if block.Header.ParentID != parentBlock.ID {
 				logs.Debug("[Engine] Block %s rejected from candidates: parent mismatch (expected %s, got %s)",
@@ -183,13 +165,11 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 		candidates = append(candidates, block.ID)
 	}
 
-	// 如果没有有效候选，直接返回
 	if len(candidates) == 0 {
 		logs.Debug("[Engine] No valid candidates for height %d (all blocks have wrong parent)", ctx.height)
 		return "candidates_missing"
 	}
 
-	//核心：统计投票
 	candidateSet := make(map[string]bool, len(candidates))
 	for _, id := range candidates {
 		candidateSet[id] = true
@@ -207,7 +187,7 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 		logs.Debug("[Engine] Dropped %d vote(s) for non-candidate blocks at height %d (query=%s)",
 			droppedVotes, ctx.height, ctx.queryKey)
 	}
-	// 构建投票详情（附带 VRF 签名）
+
 	voteDetails := make([]types.FinalizationChit, 0, len(ctx.voters))
 	for nodeID, preferredID := range ctx.voters {
 		voteDetails = append(voteDetails, types.FinalizationChit{
@@ -221,13 +201,13 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 
 	newPreference := sb.GetPreference()
 	if newPreference != "" {
+		e.mu.Lock()
 		e.preferences[ctx.height] = newPreference
+		e.mu.Unlock()
 	}
 
 	if sb.CanFinalize(e.config.Beta) && newPreference != "" {
-		// 收集最终化时的全部投票历史
 		chits := e.collectFinalizationChits(ctx.height, newPreference)
-		// 组装 VRF 签名集合证据
 		sigSet := e.collectConsensusSignatureSet(ctx.height, newPreference)
 		e.finalizeBlock(ctx.height, newPreference, chits, sigSet)
 	}
@@ -235,8 +215,21 @@ func (e *SnowmanEngine) processVotes(ctx *QueryContext) string {
 }
 
 // collectFinalizationChits 从 Snowball 获取有效轮次的投票历史
+func (e *SnowmanEngine) getOrCreateSnowball(height uint64) *Snowball {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	sb, exists := e.snowballs[height]
+	if !exists {
+		sb = NewSnowball(e.events)
+		e.snowballs[height] = sb
+	}
+	return sb
+}
+
 func (e *SnowmanEngine) collectFinalizationChits(height uint64, blockID string) *types.FinalizationChits {
+	e.mu.RLock()
 	sb := e.snowballs[height]
+	e.mu.RUnlock()
 	if sb == nil {
 		return nil
 	}
@@ -269,7 +262,9 @@ func (e *SnowmanEngine) collectFinalizationChits(height uint64, blockID string) 
 
 // collectConsensusSignatureSet 从 Snowball 有效轮次历史中提取签名集合
 func (e *SnowmanEngine) collectConsensusSignatureSet(height uint64, blockID string) *pb.ConsensusSignatureSet {
+	e.mu.RLock()
 	sb := e.snowballs[height]
+	e.mu.RUnlock()
 	if sb == nil {
 		return nil
 	}
@@ -337,7 +332,9 @@ func (e *SnowmanEngine) finalizeBlock(height uint64, blockID string, chits *type
 		}
 	}
 
+	e.mu.RLock()
 	sb := e.snowballs[height]
+	e.mu.RUnlock()
 	if sb != nil {
 		sb.Finalize()
 	}
@@ -362,33 +359,30 @@ type QueryCompleteData struct {
 }
 
 func (e *SnowmanEngine) checkTimeouts() {
-	e.mu.Lock()
 	now := time.Now()
-	var expiredCount int
+	expiredCtxs := make([]*QueryContext, 0)
 	var expiredKeys []string
-
-	// 找出所有超时的查询
+	e.mu.Lock()
 	for k, ctx := range e.activeQueries {
 		if now.Sub(ctx.startTime) > e.config.QueryTimeout {
-			// 重要：即使超时，也要把当前收到的这些票处理掉（可能已经够 Alpha 了）
-			e.processVotes(ctx)
-
+			expiredCtxs = append(expiredCtxs, ctx)
 			expiredKeys = append(expiredKeys, k)
 			delete(e.activeQueries, k)
-			expiredCount++
 		}
 	}
 	e.mu.Unlock()
-
-	if expiredCount > 0 {
-		logs.Debug("[Engine] Query timeout: %d expired. Still processed available votes before deletion.", expiredCount)
+	// Process timed-out query votes outside e.mu.
+	for _, ctx := range expiredCtxs {
+		e.processVotes(ctx)
+	}
+	if len(expiredCtxs) > 0 {
+		logs.Debug("[Engine] Query timeout: %d expired. Still processed available votes before deletion.", len(expiredCtxs))
 		e.events.PublishAsync(types.BaseEvent{
 			EventType: types.EventQueryComplete,
 			EventData: QueryCompleteData{Reason: "timeout", QueryKeys: expiredKeys},
 		})
 	}
 }
-
 func (e *SnowmanEngine) GetActiveQueryCount() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -457,3 +451,5 @@ func (e *SnowmanEngine) GetPendingHeightsState() []*HeightState {
 	}
 	return result
 }
+
+

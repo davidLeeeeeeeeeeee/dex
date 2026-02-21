@@ -610,6 +610,19 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 		}
 	}
 
+	// 每 50 个区块触发一次异步 Compaction，清理底层订单索引废弃游标（Tombstones）缓解扫描卡顿
+	if height > 0 && height%50 == 0 {
+		go func(h uint64) {
+			logs.Info("[RealBlockStore] Starting async compaction for order indexes at height %d...", h)
+			start := time.Now()
+			if err := s.dbManager.CompactOrderIndexes(); err != nil {
+				logs.Warn("[RealBlockStore] Async compaction for order indexes failed at height %d: %v", h, err)
+			} else {
+				logs.Info("[RealBlockStore] Async compaction for order indexes finished at height %d, cost: %v", h, time.Since(start))
+			}
+		}(height)
+	}
+
 	// 第五步：发布事件（不持锁）
 	if events != nil {
 		events.PublishAsync(types.BaseEvent{

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"dex/config"
 	"dex/interfaces"
 	"dex/keys"
@@ -18,6 +19,11 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+)
+
+const (
+	dbReadKVKeysProbeDebugThreshold = 5 * time.Millisecond
+	dbReadKVKeysProbeWarnThreshold  = 50 * time.Millisecond
 )
 
 // Manager 封装 PebbleDB 的管理器
@@ -239,7 +245,28 @@ func (manager *Manager) readStateKeys(keys []string) (map[string][]byte, error) 
 	return stateStore.GetMany(keys)
 }
 
-func (manager *Manager) readKVKeys(keys []string) (map[string][]byte, error) {
+func (manager *Manager) readKVKeys(keys []string) (out map[string][]byte, err error) {
+	startAt := time.Now()
+	mode := "seek"
+	uniqCount := 0
+	defer func() {
+		cost := time.Since(startAt)
+		if err == nil && cost < dbReadKVKeysProbeDebugThreshold {
+			return
+		}
+		if err != nil || cost >= dbReadKVKeysProbeWarnThreshold {
+			logs.Warn(
+				"[DB][readKVKeys] mode=%s keys=%d uniq=%d hits=%d cost=%s err=%v",
+				mode, len(keys), uniqCount, len(out), cost, err,
+			)
+			return
+		}
+		logs.Debug(
+			"[DB][readKVKeys] mode=%s keys=%d uniq=%d hits=%d cost=%s",
+			mode, len(keys), uniqCount, len(out), cost,
+		)
+	}()
+
 	manager.mu.RLock()
 	db := manager.Db
 	manager.mu.RUnlock()
@@ -247,29 +274,54 @@ func (manager *Manager) readKVKeys(keys []string) (map[string][]byte, error) {
 		return nil, fmt.Errorf("database is not initialized or closed")
 	}
 
-	out := make(map[string][]byte, len(keys))
+	out = make(map[string][]byte, len(keys))
 	if len(keys) == 0 {
+		mode = "empty"
 		return out, nil
 	}
 
-	snap := db.NewSnapshot()
-	defer snap.Close()
-
+	sorted := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
 		if key == "" {
 			continue
 		}
-		raw, closer, err := snap.Get([]byte(key))
-		if err != nil {
-			if err == pebble.ErrNotFound {
-				continue
-			}
-			return nil, err
+		if _, ok := seen[key]; ok {
+			continue
 		}
+		seen[key] = struct{}{}
+		sorted = append(sorted, key)
+	}
+	if len(sorted) == 0 {
+		mode = "empty_filtered"
+		return out, nil
+	}
+	uniqCount = len(sorted)
+	sort.Strings(sorted)
+
+	snap := db.NewSnapshot()
+	defer snap.Close()
+	iter, err := snap.NewIter(nil)
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	for _, key := range sorted {
+		target := []byte(key)
+		if !iter.SeekGE(target) {
+			break
+		}
+		if !bytes.Equal(iter.Key(), target) {
+			continue
+		}
+		raw := iter.Value()
 		val := make([]byte, len(raw))
 		copy(val, raw)
-		closer.Close()
 		out[key] = val
+	}
+	if err := iter.Error(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -609,4 +661,25 @@ func (m *Manager) GetMinerByIndex(index uint64) (*pb.Account, error) {
 		return account, nil
 	}
 	return m.GetAccount(addrOrKey)
+}
+
+// CompactOrderIndexes 强制对订单价格索引区间进行后台物理合并，清除 Tombstone
+func (manager *Manager) CompactOrderIndexes() error {
+	manager.mu.RLock()
+	db := manager.Db
+	manager.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("database is not initialized or closed")
+	}
+
+	startStr := "pair:"
+	if keys.KeyVersion != "" {
+		startStr = keys.KeyVersion + "_pair:"
+	}
+	start := []byte(startStr)
+	end := prefixUpperBound(start)
+
+	// 调用底层 Pebble 的 Compact
+	// 注意 Compact 会阻塞执行直到合并完成，所以调用方应在 goroutine 中调用
+	return db.Compact(start, end, true)
 }
