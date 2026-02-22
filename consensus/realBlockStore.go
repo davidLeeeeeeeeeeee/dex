@@ -514,20 +514,38 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 	// 注意：提交成功前不推进 finalized，保证「共识 finalized」与「状态已落盘」一致。
 	commitStart := time.Now()
 	var txCount int
+	var (
+		durLoadPB        time.Duration
+		durVMCommit      time.Duration
+		durPoolRemove    time.Duration
+		durMaterialize   time.Duration
+		durSaveBlock     time.Duration
+		durFinalizeFlush time.Duration
+		cacheHitPB       bool
+		loadedPBFromDB   bool
+	)
+
 	// 优先使用完整的 pb.Block（包含交易）
+	loadPBAt := time.Now()
 	pbBlock, exists := GetCachedBlock(block.ID)
+	cacheHitPB = exists && isCompleteBlockPayload(pbBlock)
 	if (!exists || !isCompleteBlockPayload(pbBlock)) && s.dbManager != nil {
 		if dbBlock, err := s.dbManager.GetBlockByID(blockID); err == nil && isCompleteBlockPayload(dbBlock) {
 			pbBlock = dbBlock
 			exists = true
+			loadedPBFromDB = true
 			CacheBlock(dbBlock)
 		}
 	}
+	durLoadPB += time.Since(loadPBAt)
+
 	if exists && isCompleteBlockPayload(pbBlock) {
+		vmCommitAt := time.Now()
 		if err := s.vmExecutor.CommitFinalizedBlock(pbBlock); err != nil {
 			logs.Error("[RealBlockStore] VM CommitFinalizedBlock failed for block %s: %v", block.ID, err)
 			return fmt.Errorf("vm commit failed: %w", err)
 		}
+		durVMCommit += time.Since(vmCommitAt)
 		txCount = len(pbBlock.Body)
 		logs.Info("[RealBlockStore] VM committed finalized block %s with %d txs at height %d",
 			block.ID, txCount, height)
@@ -535,22 +553,31 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 		// 从交易池移除已执行的交易
 		// 注意：交易原文的保存已由 VM 的 applyResult 统一处理（使用 SaveTxRaw）
 		// 区块存储层不再保存交易，避免重复写入和索引混乱
+		poolRemoveAt := time.Now()
 		for _, tx := range pbBlock.Body {
 			if base := tx.GetBase(); base != nil {
 				s.pool.RemoveAnyTx(base.TxId)
 			}
 		}
+		durPoolRemove += time.Since(poolRemoveAt)
 
 		// 保存区块元数据与正文（用于 /getblock、sync 等按 blockID 查询）。
 		// 这里使用 VM 回执回填后的副本，确保最终化区块中的 tx.status 与 VM 结果一致。
+		materializeAt := time.Now()
 		finalizedPBBlock := s.materializeFinalizedBlock(pbBlock)
+		durMaterialize += time.Since(materializeAt)
+
+		saveBlockAt := time.Now()
 		if err := s.dbManager.SaveBlock(finalizedPBBlock); err != nil {
 			logs.Error("[RealBlockStore] Failed to save finalized block %s: %v", block.ID, err)
 			return fmt.Errorf("save finalized block failed: %w", err)
 		}
+		durSaveBlock += time.Since(saveBlockAt)
 		CacheBlock(finalizedPBBlock)
 		// 避免每块都强制刷盘导致共识主路径阻塞，改为按策略批量/间隔刷盘。
+		finalizeFlushAt := time.Now()
 		s.maybeForceFlushAfterFinalize()
+		durFinalizeFlush += time.Since(finalizeFlushAt)
 	} else {
 		// 兜底：若缓存缺失，至少确认区块已在 DB 中可见；否则不能推进 finalized。
 		if _, err := s.dbManager.GetBlockByID(blockID); err != nil {
@@ -564,7 +591,10 @@ func (s *RealBlockStore) SetFinalized(height uint64, blockID string) error {
 	}
 
 	if duration := time.Since(commitStart); duration > 200*time.Millisecond {
-		logs.Info("[RealBlockStore] SLOW Finalization: block=%s, txs=%d, duration=%v", block.ID, txCount, duration)
+		logs.Info(
+			"[RealBlockStore] SLOW Finalization: block=%s, txs=%d, duration=%v, loadPB=%v, vmCommit=%v, poolRemove=%v, materialize=%v, saveBlock=%v, finalizeFlush=%v, cacheHit=%t, loadedFromDB=%t",
+			block.ID, txCount, duration, durLoadPB, durVMCommit, durPoolRemove, durMaterialize, durSaveBlock, durFinalizeFlush, cacheHitPB, loadedPBFromDB,
+		)
 	}
 
 	// 第三步：持久化成功后再推进内存最终化状态

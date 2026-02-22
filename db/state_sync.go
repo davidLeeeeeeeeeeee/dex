@@ -2,8 +2,12 @@ package db
 
 import (
 	"dex/keys"
+	"dex/logs"
 	statedb "dex/stateDB"
+	"time"
 )
+
+const stateSyncSlowThreshold = 300 * time.Millisecond
 
 type stateWriteOp interface {
 	GetKey() string
@@ -14,6 +18,12 @@ type stateWriteOp interface {
 // SyncStateUpdates mirrors VM diff writes into StateDB at finalized height.
 // It returns the number of accepted updates forwarded to StateDB.
 func (manager *Manager) SyncStateUpdates(height uint64, updates []interface{}) (int, error) {
+	startAt := time.Now()
+	var (
+		buildKVsDur time.Duration
+		applyDur    time.Duration
+	)
+
 	manager.mu.RLock()
 	stateStore := manager.stateDB
 	manager.mu.RUnlock()
@@ -21,6 +31,7 @@ func (manager *Manager) SyncStateUpdates(height uint64, updates []interface{}) (
 		return 0, nil
 	}
 
+	buildAt := time.Now()
 	kvs := make([]statedb.KVUpdate, 0, len(updates))
 	for _, u := range updates {
 		op, ok := u.(stateWriteOp)
@@ -46,12 +57,28 @@ func (manager *Manager) SyncStateUpdates(height uint64, updates []interface{}) (
 			Deleted: op.IsDel(),
 		})
 	}
+	buildKVsDur = time.Since(buildAt)
 
 	if len(kvs) == 0 {
 		return 0, nil
 	}
-	if err := stateStore.ApplyAccountUpdate(height, kvs...); err != nil {
+
+	applyAt := time.Now()
+	err := stateStore.ApplyAccountUpdate(height, kvs...)
+	applyDur = time.Since(applyAt)
+	if err != nil {
 		return 0, err
+	}
+
+	totalDur := time.Since(startAt)
+	cfg := stateStore.Config()
+	checkpointEvery := cfg.CheckpointEvery
+	checkpointBoundary := checkpointEvery > 0 && height > 0 && height%checkpointEvery == 0
+	if totalDur >= stateSyncSlowThreshold || (checkpointBoundary && totalDur >= 100*time.Millisecond) {
+		logs.Warn(
+			"[StateSync][Slow] height=%d updates=%d stateful=%d total=%s build=%s apply=%s checkpointEvery=%d checkpointBoundary=%t",
+			height, len(updates), len(kvs), totalDur, buildKVsDur, applyDur, checkpointEvery, checkpointBoundary,
+		)
 	}
 	return len(kvs), nil
 }

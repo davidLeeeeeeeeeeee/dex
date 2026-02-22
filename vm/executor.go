@@ -177,6 +177,7 @@ func (x *Executor) PreExecuteBlock(b *pb.Block) (*SpecResult, error) {
 }
 
 func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult, err error) {
+	deepProbeEnabled := isVMDeepProbeEnabled()
 	startAt := time.Now()
 	var (
 		durRebuild      time.Duration
@@ -193,6 +194,8 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 		diffOps         int
 		pairCount       int
 		failedTxCount   int
+		pairBooks       map[string]*matching.OrderBook
+		rebuildStats    *orderBookRebuildStats
 	)
 	failureReasons := make(map[string]int)
 	failedSamples := make([]string, 0, 5)
@@ -237,6 +240,22 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 				height, hash, total, durRebuild, durAppliedCheck, durDryRun, durApplyWS, durWitness, durRewards, durDiff,
 				txSeen, txExecuted, pairCount, wsOps, diffOps, dryRunErrors, valid, reason,
 			)
+			if deepProbeEnabled && rebuildStats != nil {
+				logs.Warn(
+					"[VM][Probe][SlowPreExecute][RebuildEx] height=%d hash=%s pairs=%d cand=%d stateKeys=%d stateHits=%d loadedState=%d loadedLegacy=%d scan=%s stateLoad=%s loadBook=%s",
+					height,
+					hash,
+					rebuildStats.pairs,
+					rebuildStats.candidates,
+					rebuildStats.stateKeys,
+					rebuildStats.stateHits,
+					rebuildStats.loadedFromState,
+					rebuildStats.loadedLegacy,
+					rebuildStats.durScan,
+					rebuildStats.durStateLoad,
+					rebuildStats.durLoadBook,
+				)
+			}
 		}
 		maybeLogVMProbeSummary(time.Now())
 	}()
@@ -280,7 +299,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 
 	// Step 2 & 3: 一次性重建所有订单簿
 	rebuildAt := time.Now()
-	pairBooks, err := x.rebuildOrderBooksForPairs(pairs, pairOrderBounds)
+	pairBooks, rebuildStats, err = x.rebuildOrderBooksForPairs(pairs, pairOrderBounds, deepProbeEnabled)
 	durRebuild += time.Since(rebuildAt)
 	if err != nil {
 		return &SpecResult{

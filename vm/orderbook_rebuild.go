@@ -7,6 +7,7 @@ import (
 	"dex/pb"
 	"sort"
 	"strings"
+	"time"
 )
 
 const orderBookRebuildSideLimit = 500
@@ -56,13 +57,30 @@ type indexedOrderCandidate struct {
 	indexData []byte
 }
 
+type orderBookRebuildStats struct {
+	pairs           int
+	candidates      int
+	stateKeys       int
+	stateHits       int
+	loadedFromState int
+	loadedLegacy    int
+	durScan         time.Duration
+	durStateLoad    time.Duration
+	durLoadBook     time.Duration
+}
+
 // rebuildOrderBooksForPairs 为给定的交易对重建内存订单簿
 func (x *Executor) rebuildOrderBooksForPairs(
 	pairs []string,
 	pairBounds map[string]pairOrderPriceBounds,
-) (map[string]*matching.OrderBook, error) {
+	collectStats bool,
+) (map[string]*matching.OrderBook, *orderBookRebuildStats, error) {
+	var stats *orderBookRebuildStats
+	if collectStats {
+		stats = &orderBookRebuildStats{pairs: len(pairs)}
+	}
 	if len(pairs) == 0 {
-		return make(map[string]*matching.OrderBook), nil
+		return make(map[string]*matching.OrderBook), stats, nil
 	}
 
 	pairBooks := make(map[string]*matching.OrderBook, len(pairs))
@@ -75,40 +93,108 @@ func (x *Executor) rebuildOrderBooksForPairs(
 		// 2. 加载该交易对的活跃限价单 (未完全成交)
 		// 2. 分别加载买盘和卖盘的未成交订单 (is_filled:false)
 		if !bounds.hasBuy && !bounds.hasSell {
-			if buyOrders, err := x.scanOrderIndexesForSide(
-				pair, pb.OrderSide_BUY, "", "", orderBookRebuildSideLimit, true,
-			); err == nil {
-				candidates = append(candidates, buyOrders...)
-			}
-			if sellOrders, err := x.scanOrderIndexesForSide(
-				pair, pb.OrderSide_SELL, "", "", orderBookRebuildSideLimit, false,
-			); err == nil {
-				candidates = append(candidates, sellOrders...)
-			}
-		} else {
-			if bounds.hasSell {
+			if stats != nil {
+				scanAt := time.Now()
 				if buyOrders, err := x.scanOrderIndexesForSide(
-					pair, pb.OrderSide_BUY, bounds.minSellPriceKey, "", orderBookRebuildSideLimit, true,
+					pair, pb.OrderSide_BUY, "", "", orderBookRebuildSideLimit, true,
 				); err == nil {
 					candidates = append(candidates, buyOrders...)
 				}
-			}
-			if bounds.hasBuy {
+				stats.durScan += time.Since(scanAt)
+
+				scanAt = time.Now()
 				if sellOrders, err := x.scanOrderIndexesForSide(
-					pair, pb.OrderSide_SELL, "", bounds.maxBuyPriceKey, orderBookRebuildSideLimit, false,
+					pair, pb.OrderSide_SELL, "", "", orderBookRebuildSideLimit, false,
+				); err == nil {
+					candidates = append(candidates, sellOrders...)
+				}
+				stats.durScan += time.Since(scanAt)
+			} else {
+				if buyOrders, err := x.scanOrderIndexesForSide(
+					pair, pb.OrderSide_BUY, "", "", orderBookRebuildSideLimit, true,
+				); err == nil {
+					candidates = append(candidates, buyOrders...)
+				}
+				if sellOrders, err := x.scanOrderIndexesForSide(
+					pair, pb.OrderSide_SELL, "", "", orderBookRebuildSideLimit, false,
 				); err == nil {
 					candidates = append(candidates, sellOrders...)
 				}
 			}
+		} else {
+			if bounds.hasSell {
+				if stats != nil {
+					scanAt := time.Now()
+					if buyOrders, err := x.scanOrderIndexesForSide(
+						pair, pb.OrderSide_BUY, bounds.minSellPriceKey, "", orderBookRebuildSideLimit, true,
+					); err == nil {
+						candidates = append(candidates, buyOrders...)
+					}
+					stats.durScan += time.Since(scanAt)
+				} else {
+					if buyOrders, err := x.scanOrderIndexesForSide(
+						pair, pb.OrderSide_BUY, bounds.minSellPriceKey, "", orderBookRebuildSideLimit, true,
+					); err == nil {
+						candidates = append(candidates, buyOrders...)
+					}
+				}
+			}
+			if bounds.hasBuy {
+				if stats != nil {
+					scanAt := time.Now()
+					if sellOrders, err := x.scanOrderIndexesForSide(
+						pair, pb.OrderSide_SELL, "", bounds.maxBuyPriceKey, orderBookRebuildSideLimit, false,
+					); err == nil {
+						candidates = append(candidates, sellOrders...)
+					}
+					stats.durScan += time.Since(scanAt)
+				} else {
+					if sellOrders, err := x.scanOrderIndexesForSide(
+						pair, pb.OrderSide_SELL, "", bounds.maxBuyPriceKey, orderBookRebuildSideLimit, false,
+					); err == nil {
+						candidates = append(candidates, sellOrders...)
+					}
+				}
+			}
 		}
-		stateByOrderID := x.batchLoadOrderStates(candidates)
-		for _, candidate := range candidates {
-			x.loadOrderToBook(candidate.orderID, candidate.indexData, stateByOrderID[candidate.orderID], ob)
+
+		if stats != nil {
+			stats.candidates += len(candidates)
+		}
+
+		var (
+			stateByOrderID map[string][]byte
+			stateKeys      int
+		)
+		if stats != nil {
+			stateLoadAt := time.Now()
+			stateByOrderID, stateKeys = x.batchLoadOrderStates(candidates)
+			stats.durStateLoad += time.Since(stateLoadAt)
+			stats.stateKeys += stateKeys
+			stats.stateHits += len(stateByOrderID)
+		} else {
+			stateByOrderID, _ = x.batchLoadOrderStates(candidates)
+		}
+
+		if stats != nil {
+			loadBookAt := time.Now()
+			for _, candidate := range candidates {
+				if x.loadOrderToBook(candidate.orderID, candidate.indexData, stateByOrderID[candidate.orderID], ob) {
+					stats.loadedFromState++
+				} else {
+					stats.loadedLegacy++
+				}
+			}
+			stats.durLoadBook += time.Since(loadBookAt)
+		} else {
+			for _, candidate := range candidates {
+				x.loadOrderToBook(candidate.orderID, candidate.indexData, stateByOrderID[candidate.orderID], ob)
+			}
 		}
 		pairBooks[pair] = ob
 	}
 
-	return pairBooks, nil
+	return pairBooks, stats, nil
 }
 
 // scanOrderIndexesForSide scans order-price index keys for a side, optionally by price range.
@@ -193,10 +279,10 @@ func appendOrderCandidates(
 	return dst
 }
 
-func (x *Executor) batchLoadOrderStates(candidates []indexedOrderCandidate) map[string][]byte {
+func (x *Executor) batchLoadOrderStates(candidates []indexedOrderCandidate) (map[string][]byte, int) {
 	stateByOrderID := make(map[string][]byte, len(candidates))
 	if len(candidates) == 0 {
-		return stateByOrderID
+		return stateByOrderID, 0
 	}
 	stateKeys := make([]string, 0, len(candidates))
 	keyToOrderID := make(map[string]string, len(candidates))
@@ -220,7 +306,7 @@ func (x *Executor) batchLoadOrderStates(candidates []indexedOrderCandidate) map[
 					stateByOrderID[orderID] = val
 				}
 			}
-			return stateByOrderID
+			return stateByOrderID, len(stateKeys)
 		}
 	}
 	for _, stateKey := range stateKeys {
@@ -230,17 +316,17 @@ func (x *Executor) batchLoadOrderStates(candidates []indexedOrderCandidate) map[
 			stateByOrderID[orderID] = orderStateData
 		}
 	}
-	return stateByOrderID
+	return stateByOrderID, len(stateKeys)
 }
 
-func (x *Executor) loadOrderToBook(orderID string, indexData []byte, orderStateData []byte, ob *matching.OrderBook) {
+func (x *Executor) loadOrderToBook(orderID string, indexData []byte, orderStateData []byte, ob *matching.OrderBook) bool {
 	if len(orderStateData) > 0 {
 		var orderState pb.OrderState
 		if err := unmarshalProtoCompat(orderStateData, &orderState); err == nil {
 			matchOrder, _ := convertOrderStateToMatchingOrder(&orderState)
 			if matchOrder != nil {
 				ob.AddOrderWithoutMatch(matchOrder)
-				return
+				return true
 			}
 		}
 	}
@@ -249,8 +335,10 @@ func (x *Executor) loadOrderToBook(orderID string, indexData []byte, orderStateD
 		matchOrder, _ := convertToMatchingOrderLegacy(&orderTx)
 		if matchOrder != nil {
 			ob.AddOrderWithoutMatch(matchOrder)
+			return false
 		}
 	}
+	return false
 }
 
 func extractOrderIDFromIndexKey(indexKey string) string {

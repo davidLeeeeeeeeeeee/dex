@@ -3,6 +3,7 @@ package vm
 import (
 	"dex/logs"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -10,13 +11,18 @@ import (
 	"time"
 )
 
-var vmFailedSummarySeen sync.Map
+var (
+	vmFailedSummarySeen sync.Map
+	vmDeepProbeOnce     sync.Once
+	vmDeepProbeEnabled  bool
+)
 
 const (
 	vmProbeReportInterval  = 10 * time.Second
 	vmProbeSlowPreExecute  = 1500 * time.Millisecond
 	vmProbeSlowCommitBlock = 1500 * time.Millisecond
 	vmProbeSlowApplyResult = 1200 * time.Millisecond
+	vmDeepProbeEnv         = "DEX_VM_DEEP_PROBE"
 )
 
 type vmExecutorProbeStats struct {
@@ -55,6 +61,19 @@ type vmExecutorProbeStats struct {
 }
 
 var vmProbe vmExecutorProbeStats
+
+func isVMDeepProbeEnabled() bool {
+	vmDeepProbeOnce.Do(func() {
+		switch strings.TrimSpace(strings.ToLower(os.Getenv(vmDeepProbeEnv))) {
+		case "1", "true", "yes", "on", "enable", "enabled":
+			vmDeepProbeEnabled = true
+		}
+		if vmDeepProbeEnabled {
+			logs.Info("[VM][Probe] Deep rebuild probe enabled by env %s=1", vmDeepProbeEnv)
+		}
+	})
+	return vmDeepProbeEnabled
+}
 
 func addProbeDuration(dst *atomic.Uint64, d time.Duration) {
 	if d <= 0 {
