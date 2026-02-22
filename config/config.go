@@ -195,7 +195,7 @@ func DefaultConfig() *Config {
 				ShardHexWidth:   1,
 				PageSize:        1000,
 				CheckpointKeep:  10,
-				CheckpointEvery: 17,
+				CheckpointEvery: 50,
 			},
 		},
 		Network: NetworkConfig{

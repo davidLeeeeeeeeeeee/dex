@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	stateDBGetManyProbeDebugThreshold = 5 * time.Millisecond
-	stateDBGetManyProbeWarnThreshold  = 50 * time.Millisecond
+	stateDBGetManyProbeDebugThreshold   = 5 * time.Millisecond
+	stateDBGetManyProbeWarnThreshold    = 50 * time.Millisecond
+	stateDBGetManyLockWaitWarnThreshold = 20 * time.Millisecond
 )
 
 // Get returns one key from stateDB live storage.
@@ -35,25 +36,28 @@ func (s *DB) GetMany(keys []string) (out map[string][]byte, err error) {
 	startAt := time.Now()
 	mode := "init"
 	shardGroups := 0
+	lockWait := time.Duration(0)
 	defer func() {
 		cost := time.Since(startAt)
 		if err == nil && cost < stateDBGetManyProbeDebugThreshold {
 			return
 		}
-		if err != nil || cost >= stateDBGetManyProbeWarnThreshold {
+		if err != nil || cost >= stateDBGetManyProbeWarnThreshold || lockWait >= stateDBGetManyLockWaitWarnThreshold {
 			logs.Warn(
-				"[StateDB][GetMany] mode=%s keys=%d hits=%d shards=%d cost=%s err=%v",
-				mode, len(keys), len(out), shardGroups, cost, err,
+				"[StateDB][GetMany] mode=%s keys=%d hits=%d shards=%d cost=%s lockWait=%s err=%v",
+				mode, len(keys), len(out), shardGroups, cost, lockWait, err,
 			)
 			return
 		}
 		logs.Debug(
-			"[StateDB][GetMany] mode=%s keys=%d hits=%d shards=%d cost=%s",
-			mode, len(keys), len(out), shardGroups, cost,
+			"[StateDB][GetMany] mode=%s keys=%d hits=%d shards=%d cost=%s lockWait=%s",
+			mode, len(keys), len(out), shardGroups, cost, lockWait,
 		)
 	}()
 
+	lockWaitAt := time.Now()
 	s.mu.RLock()
+	lockWait = time.Since(lockWaitAt)
 	defer s.mu.RUnlock()
 
 	out = make(map[string][]byte, len(keys))

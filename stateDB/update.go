@@ -2,29 +2,76 @@ package statedb
 
 import (
 	"dex/keys"
+	"dex/logs"
 	"encoding/binary"
+	"time"
+)
+
+const (
+	stateDBApplyProbeWarnThreshold      = 300 * time.Millisecond
+	stateDBApplyCheckpointInfoThreshold = 80 * time.Millisecond
+	stateDBApplyLockWaitWarnThreshold   = 20 * time.Millisecond
 )
 
 // ApplyAccountUpdate applies state updates at the given block height.
 // New architecture: write-through into live DB, no in-memory diff window.
-func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
+func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) (err error) {
+	startAt := time.Now()
+	checkpointBoundary := height > 0 && checkpointOf(height, s.checkpointEvery())
+	var (
+		durLockWait        time.Duration
+		durNextSeq         time.Duration
+		durWriteBatch      time.Duration
+		durCheckpointQueue time.Duration
+		statefulCount      int
+		checkpointQueued   bool
+	)
+	defer func() {
+		total := time.Since(startAt)
+		if err == nil &&
+			total < stateDBApplyCheckpointInfoThreshold &&
+			durLockWait < stateDBApplyLockWaitWarnThreshold {
+			return
+		}
+		if err != nil ||
+			total >= stateDBApplyProbeWarnThreshold ||
+			durLockWait >= stateDBApplyLockWaitWarnThreshold ||
+			(checkpointBoundary && total >= stateDBApplyCheckpointInfoThreshold) {
+			logs.Warn(
+				"[StateDB][Apply] height=%d updates=%d stateful=%d total=%s lockWait=%s nextSeq=%s writeBatch=%s checkpoint=%s boundary=%t queued=%t err=%v",
+				height, len(kvs), statefulCount, total, durLockWait, durNextSeq, durWriteBatch, durCheckpointQueue, checkpointBoundary, checkpointQueued, err,
+			)
+		}
+	}()
+
+	lockWaitAt := time.Now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	durLockWait = time.Since(lockWaitAt)
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 
 	seq := uint64(0)
 	if height > 0 {
+		nextSeqAt := time.Now()
 		nextSeq, err := s.store.NextSequence()
+		durNextSeq = time.Since(nextSeqAt)
 		if err != nil {
 			return err
 		}
 		seq = nextSeq
 	}
 
-	err := s.store.Update(func(tx kvWriter) error {
+	writeBatchAt := time.Now()
+	err = s.store.Update(func(tx kvWriter) error {
 		for _, kv := range kvs {
 			if !keys.IsStatefulKey(kv.Key) {
 				continue
 			}
+			statefulCount++
 			sh := shardOf(kv.Key, s.conf.ShardHexWidth)
 			stateKey := kState(sh, kv.Key)
 			if kv.Deleted {
@@ -56,12 +103,17 @@ func (s *DB) ApplyAccountUpdate(height uint64, kvs ...KVUpdate) error {
 		}
 		return nil
 	})
+	durWriteBatch = time.Since(writeBatchAt)
 	if err != nil {
 		return err
 	}
+	s.mu.Unlock()
+	locked = false
 
-	if height > 0 && checkpointOf(height, s.checkpointEvery()) {
-		return s.createCheckpointLocked(height)
+	if checkpointBoundary {
+		checkpointAt := time.Now()
+		checkpointQueued = s.enqueueCheckpoint(height)
+		durCheckpointQueue = time.Since(checkpointAt)
 	}
 	return nil
 }

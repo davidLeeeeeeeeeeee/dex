@@ -19,10 +19,11 @@ var (
 
 const (
 	vmProbeReportInterval  = 10 * time.Second
-	vmProbeSlowPreExecute  = 1500 * time.Millisecond
-	vmProbeSlowCommitBlock = 1500 * time.Millisecond
-	vmProbeSlowApplyResult = 1200 * time.Millisecond
+	vmProbeSlowPreExecute  = 100 * time.Millisecond
+	vmProbeSlowCommitBlock = 100 * time.Millisecond
+	vmProbeSlowApplyResult = 800 * time.Millisecond
 	vmDeepProbeEnv         = "DEX_VM_DEEP_PROBE"
+	vmDeepProbeDefaultOn   = true
 )
 
 type vmExecutorProbeStats struct {
@@ -64,13 +65,25 @@ var vmProbe vmExecutorProbeStats
 
 func isVMDeepProbeEnabled() bool {
 	vmDeepProbeOnce.Do(func() {
-		switch strings.TrimSpace(strings.ToLower(os.Getenv(vmDeepProbeEnv))) {
+		raw := strings.TrimSpace(strings.ToLower(os.Getenv(vmDeepProbeEnv)))
+		switch raw {
+		case "":
+			vmDeepProbeEnabled = vmDeepProbeDefaultOn
 		case "1", "true", "yes", "on", "enable", "enabled":
 			vmDeepProbeEnabled = true
+		case "0", "false", "no", "off", "disable", "disabled":
+			vmDeepProbeEnabled = false
+		default:
+			vmDeepProbeEnabled = vmDeepProbeDefaultOn
+			logs.Warn(
+				"[VM][Probe] Invalid %s=%q, fallback to default enabled=%t",
+				vmDeepProbeEnv, raw, vmDeepProbeDefaultOn,
+			)
 		}
-		if vmDeepProbeEnabled {
-			logs.Info("[VM][Probe] Deep rebuild probe enabled by env %s=1", vmDeepProbeEnv)
-		}
+		logs.Info(
+			"[VM][Probe] Deep rebuild probe enabled=%t (env %s=%q, default=%t)",
+			vmDeepProbeEnabled, vmDeepProbeEnv, raw, vmDeepProbeDefaultOn,
+		)
 	})
 	return vmDeepProbeEnabled
 }

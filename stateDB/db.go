@@ -1,6 +1,7 @@
 package statedb
 
 import (
+	"dex/logs"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type DB struct {
@@ -18,9 +20,23 @@ type DB struct {
 
 	mu sync.RWMutex
 
+	checkpointReqCh  chan uint64
+	checkpointStopCh chan struct{}
+	checkpointDoneCh chan struct{}
+
+	closeOnce sync.Once
+	closeErr  error
+
 	// precomputed shards
 	shards []string
 }
+
+const (
+	stateDBCheckpointProbeWarnThreshold  = 100 * time.Millisecond
+	stateDBCheckpointStageWarnThreshold  = 20 * time.Millisecond
+	stateDBCheckpointProbeInfoThreshold  = 20 * time.Millisecond
+	stateDBCheckpointWorkerWarnThreshold = 300 * time.Millisecond
+)
 
 func New(cfg Config) (*DB, error) {
 	if cfg.Backend == "" {
@@ -79,20 +95,34 @@ func New(cfg Config) (*DB, error) {
 		}
 	}
 
-	return &DB{
-		conf:           cfg,
-		store:          store,
-		liveDir:        liveDir,
-		checkpointsDir: checkpointsDir,
-		shards:         shards,
-	}, nil
+	db := &DB{
+		conf:             cfg,
+		store:            store,
+		liveDir:          liveDir,
+		checkpointsDir:   checkpointsDir,
+		checkpointReqCh:  make(chan uint64, 1),
+		checkpointStopCh: make(chan struct{}),
+		checkpointDoneCh: make(chan struct{}),
+		shards:           shards,
+	}
+	go db.checkpointWorker()
+	return db, nil
 }
 
 func (s *DB) Close() error {
-	if s.store == nil {
-		return nil
-	}
-	return s.store.Close()
+	s.closeOnce.Do(func() {
+		if s.checkpointStopCh != nil {
+			close(s.checkpointStopCh)
+			if s.checkpointDoneCh != nil {
+				<-s.checkpointDoneCh
+			}
+		}
+		if s.store != nil {
+			s.closeErr = s.store.Close()
+			s.store = nil
+		}
+	})
+	return s.closeErr
 }
 
 // Config returns a copy of current effective runtime config.
@@ -109,6 +139,97 @@ func checkpointOf(height uint64, every uint64) bool {
 
 func (s *DB) checkpointEvery() uint64 {
 	return s.conf.CheckpointEvery
+}
+
+func (s *DB) enqueueCheckpoint(height uint64) bool {
+	if height == 0 {
+		return false
+	}
+	for {
+		select {
+		case <-s.checkpointStopCh:
+			return false
+		default:
+		}
+		select {
+		case s.checkpointReqCh <- height:
+			return true
+		case <-s.checkpointStopCh:
+			return false
+		default:
+			// queue is full, coalesce queued height with latest height
+			select {
+			case queued := <-s.checkpointReqCh:
+				if queued > height {
+					height = queued
+				}
+			case <-s.checkpointStopCh:
+				return false
+			default:
+			}
+		}
+	}
+}
+
+func (s *DB) checkpointWorker() {
+	defer close(s.checkpointDoneCh)
+
+	var (
+		pendingHeight uint64
+		hasPending    bool
+	)
+	for {
+		if !hasPending {
+			select {
+			case h := <-s.checkpointReqCh:
+				pendingHeight = h
+				hasPending = true
+			case <-s.checkpointStopCh:
+				// Drain pending requests and coalesce to latest before exit.
+				for {
+					select {
+					case h := <-s.checkpointReqCh:
+						if !hasPending || h > pendingHeight {
+							pendingHeight = h
+						}
+						hasPending = true
+					default:
+						if !hasPending {
+							return
+						}
+						goto RUN
+					}
+				}
+			}
+		}
+
+		// Coalesce burst requests to the latest height.
+		for {
+			select {
+			case h := <-s.checkpointReqCh:
+				if h > pendingHeight {
+					pendingHeight = h
+				}
+			default:
+				goto RUN
+			}
+		}
+
+	RUN:
+		startAt := time.Now()
+		s.mu.Lock()
+		err := s.createCheckpointLocked(pendingHeight)
+		s.mu.Unlock()
+		cost := time.Since(startAt)
+		if err != nil || cost >= stateDBCheckpointWorkerWarnThreshold {
+			logs.Warn(
+				"[StateDB][CheckpointWorker] height=%d total=%s err=%v",
+				pendingHeight, cost, err,
+			)
+		}
+		pendingHeight = 0
+		hasPending = false
+	}
 }
 
 func (s *DB) checkpointPath(height uint64) string {
@@ -180,34 +301,90 @@ func (s *DB) pruneOldCheckpointsLocked() error {
 	})
 }
 
-func (s *DB) createCheckpointLocked(height uint64) error {
+func (s *DB) createCheckpointLocked(height uint64) (err error) {
+	startAt := time.Now()
+	var (
+		durRemove     time.Duration
+		durMkdir      time.Duration
+		durCheckpoint time.Duration
+		durMeta       time.Duration
+		durPrune      time.Duration
+	)
 	cpPath := s.checkpointPath(height)
+	defer func() {
+		total := time.Since(startAt)
+		if err == nil &&
+			total < stateDBCheckpointProbeInfoThreshold &&
+			durCheckpoint < stateDBCheckpointStageWarnThreshold &&
+			durPrune < stateDBCheckpointStageWarnThreshold {
+			return
+		}
+		if err != nil ||
+			total >= stateDBCheckpointProbeWarnThreshold ||
+			durCheckpoint >= stateDBCheckpointStageWarnThreshold ||
+			durPrune >= stateDBCheckpointStageWarnThreshold {
+			logs.Warn(
+				"[StateDB][Checkpoint] height=%d total=%s remove=%s mkdir=%s checkpoint=%s meta=%s prune=%s path=%s err=%v",
+				height, total, durRemove, durMkdir, durCheckpoint, durMeta, durPrune, cpPath, err,
+			)
+		}
+	}()
 
 	// If a stale directory already exists at the same height, replace it.
-	if err := os.RemoveAll(cpPath); err != nil {
+	removeAt := time.Now()
+	if err = os.RemoveAll(cpPath); err != nil {
+		durRemove = time.Since(removeAt)
 		return err
 	}
-	if err := os.MkdirAll(s.checkpointsDir, 0o755); err != nil {
-		return err
-	}
+	durRemove = time.Since(removeAt)
 
-	if err := s.store.Checkpoint(cpPath, true); err != nil {
+	mkdirAt := time.Now()
+	if err = os.MkdirAll(s.checkpointsDir, 0o755); err != nil {
+		durMkdir = time.Since(mkdirAt)
 		return err
 	}
+	durMkdir = time.Since(mkdirAt)
 
-	if err := s.store.Update(func(tx kvWriter) error {
-		if err := tx.Set(kCpLatest(), u64ToBytes(height)); err != nil {
+	checkpointAt := time.Now()
+	if err = s.store.Checkpoint(cpPath, true); err != nil {
+		durCheckpoint = time.Since(checkpointAt)
+		return err
+	}
+	durCheckpoint = time.Since(checkpointAt)
+
+	metaAt := time.Now()
+	err = s.store.Update(func(tx kvWriter) error {
+		latest := height
+		if latestRaw, getErr := tx.Get(kCpLatest()); getErr == nil {
+			if len(latestRaw) >= 8 {
+				if h := bytesToU64(latestRaw); h > latest {
+					latest = h
+				}
+			}
+		} else if !s.store.IsNotFound(getErr) {
+			return getErr
+		}
+
+		if err := tx.Set(kCpLatest(), u64ToBytes(latest)); err != nil {
 			return err
 		}
 		if err := tx.Set(kCpIndex(height), u64ToBytes(height)); err != nil {
 			return err
 		}
 		return nil
-	}); err != nil {
+	})
+	durMeta = time.Since(metaAt)
+	if err != nil {
 		return err
 	}
 
-	return s.pruneOldCheckpointsLocked()
+	pruneAt := time.Now()
+	err = s.pruneOldCheckpointsLocked()
+	durPrune = time.Since(pruneAt)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *DB) openCheckpointStore(height uint64) (kvStore, error) {

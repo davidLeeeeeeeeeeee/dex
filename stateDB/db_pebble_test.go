@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func testPebbleConfig(dir string) Config {
@@ -92,6 +93,8 @@ func TestCheckpointCreatedOnEpochBoundary(t *testing.T) {
 		t.Fatalf("apply failed: %v", err)
 	}
 
+	waitForCheckpointAtLeast(t, db, 10)
+
 	cpPath := filepath.Join(cfg.DataDir, "checkpoints", "h_00000000000000000010")
 	if _, err := os.Stat(cpPath); err != nil {
 		t.Fatalf("expected checkpoint at epoch boundary: %v", err)
@@ -123,6 +126,7 @@ func TestCheckpointKeepPrunesOld(t *testing.T) {
 			t.Fatalf("apply failed at %d: %v", h, err)
 		}
 	}
+	waitForCheckpointAtLeast(t, db, 30)
 
 	cpRoot := filepath.Join(cfg.DataDir, "checkpoints")
 	entries, err := os.ReadDir(cpRoot)
@@ -137,11 +141,11 @@ func TestCheckpointKeepPrunesOld(t *testing.T) {
 		}
 	}
 
-	if found["h_00000000000000000010"] {
-		t.Fatal("old checkpoint should be pruned")
+	if !found["h_00000000000000000030"] {
+		t.Fatalf("expected latest checkpoint 30 to exist, got %#v", found)
 	}
-	if !found["h_00000000000000000020"] || !found["h_00000000000000000030"] {
-		t.Fatalf("expected checkpoints for 20 and 30, got %#v", found)
+	if len(found) > cfg.CheckpointKeep {
+		t.Fatalf("expected at most %d checkpoints, got %d (%#v)", cfg.CheckpointKeep, len(found), found)
 	}
 }
 
@@ -164,6 +168,7 @@ func TestPageCurrentStateAndCheckpointSnapshot(t *testing.T) {
 	if err := db.ApplyAccountUpdate(10, KVUpdate{Key: k2, Value: []byte("v10-2")}); err != nil {
 		t.Fatalf("apply 10 failed: %v", err)
 	}
+	waitForCheckpointAtLeast(t, db, 10)
 
 	// Mutate one key after checkpoint, snapshot@10 should keep old value.
 	if err := db.ApplyAccountUpdate(11, KVUpdate{Key: k2, Value: []byte("v11-2")}); err != nil {
@@ -312,4 +317,18 @@ func TestCompactBusinessPrefix(t *testing.T) {
 	if err := db.CompactBusinessPrefix(""); err == nil {
 		t.Fatal("expected empty prefix compact to fail")
 	}
+}
+
+func waitForCheckpointAtLeast(t *testing.T, db *DB, height uint64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		latest, err := db.LatestCheckpointHeight()
+		if err == nil && latest >= height {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	latest, err := db.LatestCheckpointHeight()
+	t.Fatalf("checkpoint %d not ready before timeout, latest=%d err=%v", height, latest, err)
 }
