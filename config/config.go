@@ -37,6 +37,9 @@ type ServerConfig struct {
 	HTTPTimeout        time.Duration // 30 * time.Second
 	MaxRequestBodySize int64         // 10 << 20 (10MB)
 
+	// 限流配置
+	RateLimits map[string]float64 // 针对不同路径的 RPS 配置
+
 	// 证书配置
 	CertValidityDays    int // 365
 	TLSSessionCacheSize int // 128
@@ -175,6 +178,58 @@ func DefaultConfig() *Config {
 			QUICAllow0RTT:       true,
 			HTTPTimeout:         30 * time.Second,
 			MaxRequestBodySize:  10 << 20,
+			RateLimits: map[string]float64{
+				// 共识与 P2P 消息 (最高频)
+				"/pushquery":               5000,
+				"/pullquery":               5000,
+				"/gossipAnyMsg":            5000,
+				"/chits":                   5000,
+				"/heightquery":             2000,
+				"/statedb/snapshot/shards": 500,
+				"/statedb/snapshot/page":   500,
+				"/pendingblocks":           1000,
+				"/frostmsg":                5000,
+
+				// 核心业务与提交交易 (高频)
+				"/tx":                 3000,
+				"/getdata":            3000,
+				"/batchgetdata":       3000,
+				"/getblock":           2000,
+				"/getsyncblocks":      2000,
+				"/getrecentblocks":    2000,
+				"/getaccount":         2000,
+				"/getaccountbalances": 2000,
+				"/gettxreceipt":       2000,
+				"/getblockbyid":       2000,
+				"/getchits":           1000,
+
+				// 查询接口 (中高频)
+				"/frost/withdraw/status":         1000,
+				"/frost/withdraws":               1000,
+				"/frost/vault/group_pubkey":      1000,
+				"/frost/vault/transition_status": 1000,
+				"/frost/vault/dkg_commitments":   1000,
+				"/frost/withdraw/list":           1000,
+				"/frost/dkg/list":                1000,
+				"/witness/requests":              1000,
+				"/witness/list":                  1000,
+				"/trades":                        1000,
+				"/gettoken":                      1000,
+				"/frost/config":                  500,
+				"/frost/signed_package":          500,
+				"/gettokenregistry":              500,
+				"/orderbook":                     300,
+
+				// 运维与节点管理状态 (低频)
+				"/status":          200,
+				"/nodes":           200,
+				"/put":             100,
+				"/frost/health":    100,
+				"/frost/metrics":   100,
+				"/logs":            50,
+				"/orderbook/debug": 50,
+				"/frost/rescan":    10,
+			},
 			CertValidityDays:    365,
 			TLSSessionCacheSize: 128,
 		},

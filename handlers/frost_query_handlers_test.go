@@ -26,7 +26,7 @@ func setupTestHandlerManager(t *testing.T) *HandlerManager {
 	defer dbManager.Close()
 
 	// 创建 HandlerManager
-	handlerManager := NewHandlerManager(dbManager, nil, "8080", "addr", nil, nil, logs.NewNodeLogger("test", 0))
+	handlerManager := NewHandlerManager(dbManager, nil, "8080", "addr", nil, nil, logs.NewNodeLogger("test", 0), nil)
 	return handlerManager
 }
 

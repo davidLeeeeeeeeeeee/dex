@@ -173,6 +173,7 @@ func initializeNode(node *NodeInstance, cfg *config.Config) error {
 		senderManager,
 		txPool,
 		node.Logger,
+		cfg,
 	)
 	node.HandlerManager = handlerManager
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dex/config"
 	"dex/consensus"
 	"dex/db"
 	"dex/logs"
@@ -35,6 +36,9 @@ type HandlerManager struct {
 	// Frost 消息处理器
 	frostMsgHandler FrostMsgHandler
 	Logger          logs.Logger
+
+	// API 速率限制器
+	rateLimiter *RateLimiter
 }
 
 // NewHandlerManager 创建新的处理器管理器
@@ -45,9 +49,14 @@ func NewHandlerManager(
 	senderMgr *sender.SenderManager,
 	txPool *txpool.TxPool, // 只注入TxPool
 	logger logs.Logger,
+	cfg *config.Config,
 ) *HandlerManager {
 	// 创建 LRU 缓存，容量设为 10000
 	seenBlocksCache, _ := lru.New(100)
+	var rateLimits map[string]float64
+	if cfg != nil {
+		rateLimits = cfg.Server.RateLimits
+	}
 	return &HandlerManager{
 		dbManager:        dbMgr,
 		consensusManager: consensusMgr,
@@ -59,6 +68,7 @@ func NewHandlerManager(
 		Stats:            stats.NewStats(),
 		seenBlocksCache:  seenBlocksCache,
 		Logger:           logger,
+		rateLimiter:      NewRateLimiter(rateLimits),
 	}
 }
 
@@ -74,57 +84,62 @@ func (hm *HandlerManager) SetFrostMsgHandler(handler FrostMsgHandler) {
 
 // RegisterRoutes 注册所有路由
 func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
+	// 辅助绑定函数，自带速率限制
+	bind := func(path string, handler http.HandlerFunc) {
+		mux.HandleFunc(path, hm.rateLimiter.LimitMiddleware(path, handler, hm.Logger))
+	}
+
 	// Snowman共识相关
-	mux.HandleFunc("/pushquery", hm.HandlePushQuery)
-	mux.HandleFunc("/pullquery", hm.HandlePullQuery)
-	mux.HandleFunc("/gossipAnyMsg", hm.HandleBlockGossip)
-	mux.HandleFunc("/chits", hm.HandleChits)
-	mux.HandleFunc("/heightquery", hm.HandleHeightQuery)
-	mux.HandleFunc("/statedb/snapshot/shards", hm.HandleStateSnapshotShards)
-	mux.HandleFunc("/statedb/snapshot/page", hm.HandleStateSnapshotPage)
-	mux.HandleFunc("/pendingblocks", hm.HandlePendingBlocks)
+	bind("/pushquery", hm.HandlePushQuery)
+	bind("/pullquery", hm.HandlePullQuery)
+	bind("/gossipAnyMsg", hm.HandleBlockGossip)
+	bind("/chits", hm.HandleChits)
+	bind("/heightquery", hm.HandleHeightQuery)
+	bind("/statedb/snapshot/shards", hm.HandleStateSnapshotShards)
+	bind("/statedb/snapshot/page", hm.HandleStateSnapshotPage)
+	bind("/pendingblocks", hm.HandlePendingBlocks)
 	// 基本功能
-	mux.HandleFunc("/status", hm.HandleStatus)
-	mux.HandleFunc("/tx", hm.HandleTx)
-	mux.HandleFunc("/getblock", hm.HandleGetBlock)
-	mux.HandleFunc("/getsyncblocks", hm.HandleGetSyncBlocks)
-	mux.HandleFunc("/getchits", hm.HandleGetChits) // 获取区块最终化投票信息
-	mux.HandleFunc("/getrecentblocks", hm.HandleGetRecentBlocks)
-	mux.HandleFunc("/getdata", hm.HandleGetData)
-	mux.HandleFunc("/gettxreceipt", hm.HandleGetTxReceipt)
-	mux.HandleFunc("/batchgetdata", hm.HandleBatchGetTx)
-	mux.HandleFunc("/getaccount", hm.HandleGetAccount)
-	mux.HandleFunc("/getaccountbalances", hm.HandleGetAccountBalances)
-	mux.HandleFunc("/nodes", hm.HandleNodes)
-	mux.HandleFunc("/getblockbyid", hm.HandleGet)
-	mux.HandleFunc("/put", hm.HandlePut)
-	mux.HandleFunc("/logs", hm.HandleLogs)
+	bind("/status", hm.HandleStatus)
+	bind("/tx", hm.HandleTx)
+	bind("/getblock", hm.HandleGetBlock)
+	bind("/getsyncblocks", hm.HandleGetSyncBlocks)
+	bind("/getchits", hm.HandleGetChits) // 获取区块最终化投票信息
+	bind("/getrecentblocks", hm.HandleGetRecentBlocks)
+	bind("/getdata", hm.HandleGetData)
+	bind("/gettxreceipt", hm.HandleGetTxReceipt)
+	bind("/batchgetdata", hm.HandleBatchGetTx)
+	bind("/getaccount", hm.HandleGetAccount)
+	bind("/getaccountbalances", hm.HandleGetAccountBalances)
+	bind("/nodes", hm.HandleNodes)
+	bind("/getblockbyid", hm.HandleGet)
+	bind("/put", hm.HandlePut)
+	bind("/logs", hm.HandleLogs)
 	// Frost P2P
-	mux.HandleFunc("/frostmsg", hm.HandleFrostMsg)
+	bind("/frostmsg", hm.HandleFrostMsg)
 	// Frost 只读查询 API
-	mux.HandleFunc("/frost/config", hm.HandleGetFrostConfig)
-	mux.HandleFunc("/frost/withdraw/status", hm.HandleGetWithdrawStatus)
-	mux.HandleFunc("/frost/withdraws", hm.HandleListWithdraws)
-	mux.HandleFunc("/frost/vault/group_pubkey", hm.HandleGetVaultGroupPubKey)
-	mux.HandleFunc("/frost/vault/transition_status", hm.HandleGetVaultTransitionStatus)
-	mux.HandleFunc("/frost/vault/dkg_commitments", hm.HandleGetVaultDkgCommitments)
-	mux.HandleFunc("/frost/signed_package", hm.HandleDownloadSignedPackage)
+	bind("/frost/config", hm.HandleGetFrostConfig)
+	bind("/frost/withdraw/status", hm.HandleGetWithdrawStatus)
+	bind("/frost/withdraws", hm.HandleListWithdraws)
+	bind("/frost/vault/group_pubkey", hm.HandleGetVaultGroupPubKey)
+	bind("/frost/vault/transition_status", hm.HandleGetVaultTransitionStatus)
+	bind("/frost/vault/dkg_commitments", hm.HandleGetVaultDkgCommitments)
+	bind("/frost/signed_package", hm.HandleDownloadSignedPackage)
 	// Frost 查询接口（供 Explorer 使用）
-	mux.HandleFunc("/frost/withdraw/list", hm.HandleFrostWithdrawList)
-	mux.HandleFunc("/frost/dkg/list", hm.HandleFrostDkgList)
-	mux.HandleFunc("/witness/requests", hm.HandleWitnessRequests)
-	mux.HandleFunc("/witness/list", hm.HandleWitnessList)
+	bind("/frost/withdraw/list", hm.HandleFrostWithdrawList)
+	bind("/frost/dkg/list", hm.HandleFrostDkgList)
+	bind("/witness/requests", hm.HandleWitnessRequests)
+	bind("/witness/list", hm.HandleWitnessList)
 	// 订单簿和成交记录
-	mux.HandleFunc("/orderbook", hm.HandleOrderBook)
-	mux.HandleFunc("/orderbook/debug", hm.HandleOrderBookDebug)
-	mux.HandleFunc("/trades", hm.HandleTrades)
+	bind("/orderbook", hm.HandleOrderBook)
+	bind("/orderbook/debug", hm.HandleOrderBookDebug)
+	bind("/trades", hm.HandleTrades)
 	// Token 查询
-	mux.HandleFunc("/gettoken", hm.HandleGetToken)
-	mux.HandleFunc("/gettokenregistry", hm.HandleGetTokenRegistry)
+	bind("/gettoken", hm.HandleGetToken)
+	bind("/gettokenregistry", hm.HandleGetTokenRegistry)
 	// Frost 管理接口
-	mux.HandleFunc("/frost/health", hm.HandleGetHealth)
-	mux.HandleFunc("/frost/metrics", hm.HandleGetMetrics)
-	mux.HandleFunc("/frost/rescan", hm.HandleForceRescan)
+	bind("/frost/health", hm.HandleGetHealth)
+	bind("/frost/metrics", hm.HandleGetMetrics)
+	bind("/frost/rescan", hm.HandleForceRescan)
 }
 
 // 添加身份验证方法
