@@ -1,0 +1,3020 @@
+{
+  "nested": {
+    "pb": {
+      "options": {
+        "go_package": "dex/pb;pb"
+      },
+      "nested": {
+        "Token": {
+          "fields": {
+            "address": {
+              "type": "string",
+              "id": 1
+            },
+            "symbol": {
+              "type": "string",
+              "id": 2
+            },
+            "name": {
+              "type": "string",
+              "id": 3
+            },
+            "owner": {
+              "type": "string",
+              "id": 4
+            },
+            "totalSupply": {
+              "type": "string",
+              "id": 5
+            },
+            "canMint": {
+              "type": "bool",
+              "id": 6
+            }
+          }
+        },
+        "TokenRegistry": {
+          "fields": {
+            "token_count": {
+              "type": "uint64",
+              "id": 2
+            }
+          },
+          "reserved": [
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "TokenRecord": {
+          "fields": {
+            "token": {
+              "type": "Token",
+              "id": 1
+            }
+          }
+        },
+        "SignAlgo": {
+          "values": {
+            "SIGN_ALGO_UNSPECIFIED": 0,
+            "SIGN_ALGO_ECDSA_P256": 1,
+            "SIGN_ALGO_BLS_BN256_G2": 2,
+            "SIGN_ALGO_SCHNORR_SECP256K1_BIP340": 3,
+            "SIGN_ALGO_SCHNORR_ALT_BN128": 4,
+            "SIGN_ALGO_ED25519": 5,
+            "SIGN_ALGO_ECDSA_SECP256K1": 6
+          }
+        },
+        "PublicKeys": {
+          "fields": {
+            "keys": {
+              "keyType": "int32",
+              "type": "bytes",
+              "id": 1
+            }
+          }
+        },
+        "BaseMessage": {
+          "fields": {
+            "tx_id": {
+              "type": "string",
+              "id": 1
+            },
+            "from_address": {
+              "type": "string",
+              "id": 2
+            },
+            "executed_height": {
+              "type": "uint64",
+              "id": 3
+            },
+            "public_keys": {
+              "type": "PublicKeys",
+              "id": 4
+            },
+            "signature": {
+              "type": "bytes",
+              "id": 5
+            },
+            "fee": {
+              "type": "string",
+              "id": 6
+            },
+            "status": {
+              "type": "Status",
+              "id": 7
+            },
+            "nonce": {
+              "type": "uint64",
+              "id": 8
+            },
+            "status_text": {
+              "type": "string",
+              "id": 9
+            }
+          }
+        },
+        "Receipt": {
+          "fields": {
+            "tx_id": {
+              "type": "string",
+              "id": 1
+            },
+            "status": {
+              "type": "string",
+              "id": 2
+            },
+            "error": {
+              "type": "string",
+              "id": 3
+            },
+            "block_height": {
+              "type": "uint64",
+              "id": 4
+            },
+            "timestamp": {
+              "type": "int64",
+              "id": 5
+            },
+            "gas_used": {
+              "type": "uint64",
+              "id": 6
+            },
+            "fee": {
+              "type": "string",
+              "id": 7
+            },
+            "logs": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 8
+            }
+          }
+        },
+        "GetReceiptResponse": {
+          "fields": {
+            "receipt": {
+              "type": "Receipt",
+              "id": 1
+            },
+            "error": {
+              "type": "string",
+              "id": 2
+            }
+          }
+        },
+        "Account": {
+          "fields": {
+            "address": {
+              "type": "string",
+              "id": 1
+            },
+            "public_keys": {
+              "type": "PublicKeys",
+              "id": 2
+            },
+            "nonce": {
+              "type": "uint64",
+              "id": 3
+            },
+            "unclaimed_reward": {
+              "type": "string",
+              "id": 8
+            },
+            "last_acc_reward": {
+              "type": "string",
+              "id": 9
+            },
+            "is_miner": {
+              "type": "bool",
+              "id": 10
+            },
+            "ip": {
+              "type": "string",
+              "id": 11
+            },
+            "index": {
+              "type": "uint64",
+              "id": 12
+            },
+            "code": {
+              "type": "string",
+              "id": 13
+            }
+          },
+          "reserved": [
+            [
+              4,
+              4
+            ],
+            [
+              5,
+              5
+            ]
+          ]
+        },
+        "AccountOrders": {
+          "fields": {
+            "orders": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 1
+            }
+          }
+        },
+        "TokenBalanceRecord": {
+          "fields": {
+            "address": {
+              "type": "string",
+              "id": 1
+            },
+            "token": {
+              "type": "string",
+              "id": 2
+            },
+            "balance": {
+              "type": "TokenBalance",
+              "id": 3
+            }
+          }
+        },
+        "TokenBalance": {
+          "fields": {
+            "balance": {
+              "type": "string",
+              "id": 1
+            },
+            "miner_locked_balance": {
+              "type": "string",
+              "id": 3
+            },
+            "liquid_locked_balance": {
+              "type": "string",
+              "id": 4
+            },
+            "witness_locked_balance": {
+              "type": "string",
+              "id": 5
+            },
+            "leverage_locked_balance": {
+              "type": "string",
+              "id": 6
+            },
+            "order_frozen_balance": {
+              "type": "string",
+              "id": 7
+            }
+          }
+        },
+        "BlockHeader": {
+          "fields": {
+            "height": {
+              "type": "uint64",
+              "id": 1
+            },
+            "prev_block_hash": {
+              "type": "string",
+              "id": 2
+            },
+            "timestamp": {
+              "type": "int64",
+              "id": 3
+            },
+            "state_root": {
+              "type": "bytes",
+              "id": 4
+            },
+            "txs_hash": {
+              "type": "string",
+              "id": 5
+            },
+            "miner": {
+              "type": "string",
+              "id": 6
+            },
+            "window": {
+              "type": "int32",
+              "id": 7
+            },
+            "vrf_proof": {
+              "type": "bytes",
+              "id": 8
+            },
+            "vrf_output": {
+              "type": "bytes",
+              "id": 9
+            },
+            "bls_public_key": {
+              "type": "bytes",
+              "id": 10
+            }
+          }
+        },
+        "Block": {
+          "fields": {
+            "block_hash": {
+              "type": "string",
+              "id": 1
+            },
+            "header": {
+              "type": "BlockHeader",
+              "id": 2
+            },
+            "body": {
+              "rule": "repeated",
+              "type": "AnyTx",
+              "id": 3
+            },
+            "accumulated_reward": {
+              "type": "string",
+              "id": 4
+            },
+            "bit_map": {
+              "type": "bytes",
+              "id": 5
+            },
+            "miner_signature": {
+              "type": "bytes",
+              "id": 6
+            },
+            "short_txs": {
+              "type": "bytes",
+              "id": 7
+            }
+          }
+        },
+        "BlockReward": {
+          "fields": {
+            "height": {
+              "type": "uint64",
+              "id": 1
+            },
+            "miner": {
+              "type": "string",
+              "id": 2
+            },
+            "miner_reward": {
+              "type": "string",
+              "id": 3
+            },
+            "witness_reward": {
+              "type": "string",
+              "id": 4
+            },
+            "total_fees": {
+              "type": "string",
+              "id": 5
+            },
+            "block_reward": {
+              "type": "string",
+              "id": 6
+            },
+            "timestamp": {
+              "type": "int64",
+              "id": 7
+            }
+          }
+        },
+        "OrderPriceIndex": {
+          "fields": {
+            "ok": {
+              "type": "bool",
+              "id": 1
+            }
+          }
+        },
+        "TradeRecord": {
+          "fields": {
+            "trade_id": {
+              "type": "string",
+              "id": 1
+            },
+            "pair": {
+              "type": "string",
+              "id": 2
+            },
+            "price": {
+              "type": "string",
+              "id": 3
+            },
+            "amount": {
+              "type": "string",
+              "id": 4
+            },
+            "maker_order_id": {
+              "type": "string",
+              "id": 5
+            },
+            "taker_order_id": {
+              "type": "string",
+              "id": 6
+            },
+            "taker_side": {
+              "type": "OrderSide",
+              "id": 7
+            },
+            "timestamp": {
+              "type": "string",
+              "id": 8
+            },
+            "height": {
+              "type": "uint64",
+              "id": 9
+            }
+          }
+        },
+        "IssueTokenTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "token_name": {
+              "type": "string",
+              "id": 2
+            },
+            "token_symbol": {
+              "type": "string",
+              "id": 3
+            },
+            "total_supply": {
+              "type": "string",
+              "id": 4
+            },
+            "canMint": {
+              "type": "bool",
+              "id": 5
+            }
+          }
+        },
+        "FreezeTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "token_addr": {
+              "type": "string",
+              "id": 2
+            },
+            "target_addr": {
+              "type": "string",
+              "id": 3
+            },
+            "freeze": {
+              "type": "bool",
+              "id": 4
+            }
+          }
+        },
+        "Transaction": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "to": {
+              "type": "string",
+              "id": 2
+            },
+            "token_address": {
+              "type": "string",
+              "id": 3
+            },
+            "amount": {
+              "type": "string",
+              "id": 4
+            }
+          }
+        },
+        "OrderSide": {
+          "values": {
+            "BUY": 0,
+            "SELL": 1
+          }
+        },
+        "OrderTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "base_token": {
+              "type": "string",
+              "id": 2
+            },
+            "quote_token": {
+              "type": "string",
+              "id": 3
+            },
+            "op": {
+              "type": "OrderOp",
+              "id": 4
+            },
+            "op_target_id": {
+              "type": "string",
+              "id": 5
+            },
+            "amount": {
+              "type": "string",
+              "id": 6
+            },
+            "price": {
+              "type": "string",
+              "id": 7
+            },
+            "side": {
+              "type": "OrderSide",
+              "id": 8
+            }
+          },
+          "reserved": [
+            [
+              9,
+              9
+            ],
+            [
+              10,
+              10
+            ],
+            [
+              11,
+              11
+            ]
+          ]
+        },
+        "OrderState": {
+          "fields": {
+            "order_id": {
+              "type": "string",
+              "id": 1
+            },
+            "filled_base": {
+              "type": "string",
+              "id": 2
+            },
+            "filled_quote": {
+              "type": "string",
+              "id": 3
+            },
+            "is_filled": {
+              "type": "bool",
+              "id": 4
+            },
+            "status": {
+              "type": "OrderStateStatus",
+              "id": 5
+            },
+            "create_height": {
+              "type": "uint64",
+              "id": 6
+            },
+            "last_update_height": {
+              "type": "uint64",
+              "id": 7
+            },
+            "base_token": {
+              "type": "string",
+              "id": 8
+            },
+            "quote_token": {
+              "type": "string",
+              "id": 9
+            },
+            "amount": {
+              "type": "string",
+              "id": 10
+            },
+            "price": {
+              "type": "string",
+              "id": 11
+            },
+            "side": {
+              "type": "OrderSide",
+              "id": 12
+            },
+            "owner": {
+              "type": "string",
+              "id": 13
+            }
+          }
+        },
+        "OrderStateStatus": {
+          "values": {
+            "ORDER_OPEN": 0,
+            "ORDER_FILLED": 1,
+            "ORDER_CANCELLED": 2
+          }
+        },
+        "MinerTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "op": {
+              "type": "OrderOp",
+              "id": 2
+            },
+            "amount": {
+              "type": "string",
+              "id": 3
+            }
+          }
+        },
+        "AnyTx": {
+          "oneofs": {
+            "content": {
+              "oneof": [
+                "issue_token_tx",
+                "freeze_tx",
+                "transaction",
+                "order_tx",
+                "miner_tx",
+                "witness_stake_tx",
+                "witness_request_tx",
+                "witness_vote_tx",
+                "witness_challenge_tx",
+                "arbitration_vote_tx",
+                "witness_claim_reward_tx",
+                "frost_withdraw_request_tx",
+                "frost_withdraw_signed_tx",
+                "frost_vault_dkg_commit_tx",
+                "frost_vault_dkg_share_tx",
+                "frost_vault_dkg_complaint_tx",
+                "frost_vault_dkg_reveal_tx",
+                "frost_vault_dkg_validation_signed_tx",
+                "frost_vault_transition_signed_tx"
+              ]
+            }
+          },
+          "fields": {
+            "issue_token_tx": {
+              "type": "IssueTokenTx",
+              "id": 1
+            },
+            "freeze_tx": {
+              "type": "FreezeTx",
+              "id": 2
+            },
+            "transaction": {
+              "type": "Transaction",
+              "id": 3
+            },
+            "order_tx": {
+              "type": "OrderTx",
+              "id": 4
+            },
+            "miner_tx": {
+              "type": "MinerTx",
+              "id": 6
+            },
+            "witness_stake_tx": {
+              "type": "WitnessStakeTx",
+              "id": 7
+            },
+            "witness_request_tx": {
+              "type": "WitnessRequestTx",
+              "id": 8
+            },
+            "witness_vote_tx": {
+              "type": "WitnessVoteTx",
+              "id": 9
+            },
+            "witness_challenge_tx": {
+              "type": "WitnessChallengeTx",
+              "id": 10
+            },
+            "arbitration_vote_tx": {
+              "type": "ArbitrationVoteTx",
+              "id": 11
+            },
+            "witness_claim_reward_tx": {
+              "type": "WitnessClaimRewardTx",
+              "id": 12
+            },
+            "frost_withdraw_request_tx": {
+              "type": "FrostWithdrawRequestTx",
+              "id": 13
+            },
+            "frost_withdraw_signed_tx": {
+              "type": "FrostWithdrawSignedTx",
+              "id": 14
+            },
+            "frost_vault_dkg_commit_tx": {
+              "type": "FrostVaultDkgCommitTx",
+              "id": 15
+            },
+            "frost_vault_dkg_share_tx": {
+              "type": "FrostVaultDkgShareTx",
+              "id": 16
+            },
+            "frost_vault_dkg_complaint_tx": {
+              "type": "FrostVaultDkgComplaintTx",
+              "id": 17
+            },
+            "frost_vault_dkg_reveal_tx": {
+              "type": "FrostVaultDkgRevealTx",
+              "id": 18
+            },
+            "frost_vault_dkg_validation_signed_tx": {
+              "type": "FrostVaultDkgValidationSignedTx",
+              "id": 19
+            },
+            "frost_vault_transition_signed_tx": {
+              "type": "FrostVaultTransitionSignedTx",
+              "id": 20
+            }
+          }
+        },
+        "OrderOp": {
+          "values": {
+            "ADD": 0,
+            "REMOVE": 1
+          }
+        },
+        "Status": {
+          "values": {
+            "PENDING": 0,
+            "FAILED": 1,
+            "SUCCEED": 2
+          }
+        },
+        "NodeInfo": {
+          "fields": {
+            "public_keys": {
+              "type": "PublicKeys",
+              "id": 1
+            },
+            "ip": {
+              "type": "string",
+              "id": 2
+            },
+            "is_online": {
+              "type": "bool",
+              "id": 3
+            }
+          }
+        },
+        "NodeList": {
+          "fields": {
+            "nodes": {
+              "rule": "repeated",
+              "type": "NodeInfo",
+              "id": 1
+            }
+          }
+        },
+        "ClientInfo": {
+          "fields": {
+            "ip": {
+              "type": "string",
+              "id": 1
+            },
+            "authed": {
+              "type": "bool",
+              "id": 2
+            },
+            "public_keys": {
+              "type": "PublicKeys",
+              "id": 3
+            }
+          }
+        },
+        "HandshakeRequest": {
+          "fields": {
+            "client_id": {
+              "type": "string",
+              "id": 1
+            },
+            "public_keys": {
+              "type": "PublicKeys",
+              "id": 2
+            },
+            "signature": {
+              "type": "bytes",
+              "id": 3
+            }
+          }
+        },
+        "HandshakeResponse": {
+          "fields": {
+            "status": {
+              "type": "string",
+              "id": 1
+            }
+          }
+        },
+        "StatusRequest": {
+          "fields": {
+            "address": {
+              "type": "string",
+              "id": 1
+            }
+          }
+        },
+        "StatusResponse": {
+          "fields": {
+            "status": {
+              "type": "string",
+              "id": 1
+            },
+            "info": {
+              "type": "string",
+              "id": 2
+            }
+          }
+        },
+        "GetData": {
+          "fields": {
+            "tx_id": {
+              "type": "string",
+              "id": 1
+            },
+            "address": {
+              "type": "string",
+              "id": 2
+            }
+          }
+        },
+        "GetBlockRequest": {
+          "fields": {
+            "height": {
+              "type": "uint64",
+              "id": 1
+            }
+          }
+        },
+        "GetBlockResponse": {
+          "fields": {
+            "block": {
+              "type": "Block",
+              "id": 1
+            },
+            "error": {
+              "type": "string",
+              "id": 2
+            }
+          }
+        },
+        "BatchGetShortTxRequest": {
+          "fields": {
+            "short_hashes": {
+              "rule": "repeated",
+              "type": "bytes",
+              "id": 1
+            },
+            "address": {
+              "type": "string",
+              "id": 2
+            }
+          }
+        },
+        "BatchGetShortTxResponse": {
+          "fields": {
+            "transactions": {
+              "rule": "repeated",
+              "type": "AnyTx",
+              "id": 1
+            }
+          }
+        },
+        "CheckPointInfo": {
+          "fields": {
+            "height": {
+              "type": "uint64",
+              "id": 1
+            },
+            "txs_hash": {
+              "type": "string",
+              "id": 2
+            },
+            "aggregate_signature": {
+              "type": "bytes",
+              "id": 3
+            },
+            "bit_map": {
+              "type": "bytes",
+              "id": 4
+            },
+            "txs": {
+              "type": "bytes",
+              "id": 5
+            }
+          }
+        },
+        "GetConsensusStateRequest": {
+          "fields": {}
+        },
+        "PushQuery": {
+          "fields": {
+            "request_id": {
+              "type": "uint32",
+              "id": 1
+            },
+            "address": {
+              "type": "string",
+              "id": 2
+            },
+            "deadline": {
+              "type": "uint64",
+              "id": 3
+            },
+            "container_is_block": {
+              "type": "bool",
+              "id": 4
+            },
+            "container": {
+              "type": "bytes",
+              "id": 5
+            },
+            "requested_height": {
+              "type": "uint64",
+              "id": 6
+            },
+            "block_id": {
+              "type": "string",
+              "id": 7
+            },
+            "signature": {
+              "type": "bytes",
+              "id": 8
+            },
+            "nonce": {
+              "type": "uint64",
+              "id": 9
+            },
+            "vrf_seed": {
+              "type": "bytes",
+              "id": 10
+            },
+            "seq_id": {
+              "type": "uint32",
+              "id": 11
+            }
+          }
+        },
+        "PullQuery": {
+          "fields": {
+            "request_id": {
+              "type": "uint32",
+              "id": 1
+            },
+            "address": {
+              "type": "string",
+              "id": 2
+            },
+            "deadline": {
+              "type": "uint64",
+              "id": 3
+            },
+            "block_id": {
+              "type": "string",
+              "id": 4
+            },
+            "requested_height": {
+              "type": "uint64",
+              "id": 5
+            },
+            "vrf_seed": {
+              "type": "bytes",
+              "id": 6
+            },
+            "seq_id": {
+              "type": "uint32",
+              "id": 7
+            }
+          }
+        },
+        "Chits": {
+          "fields": {
+            "request_id": {
+              "type": "uint32",
+              "id": 1
+            },
+            "address": {
+              "type": "string",
+              "id": 2
+            },
+            "preferred_block": {
+              "type": "string",
+              "id": 3
+            },
+            "accepted_block": {
+              "type": "string",
+              "id": 4
+            },
+            "preferred_block_at_height": {
+              "type": "uint64",
+              "id": 5
+            },
+            "accepted_height": {
+              "type": "uint64",
+              "id": 6
+            },
+            "bitmap": {
+              "type": "bytes",
+              "id": 7
+            },
+            "chit_signature": {
+              "type": "bytes",
+              "id": 8
+            }
+          }
+        },
+        "ChitSignature": {
+          "fields": {
+            "node_id": {
+              "type": "string",
+              "id": 1
+            },
+            "preferred_id": {
+              "type": "string",
+              "id": 2
+            },
+            "signature": {
+              "type": "bytes",
+              "id": 3
+            }
+          }
+        },
+        "RoundSignatures": {
+          "fields": {
+            "seq_id": {
+              "type": "uint32",
+              "id": 1
+            },
+            "signatures": {
+              "rule": "repeated",
+              "type": "ChitSignature",
+              "id": 2
+            }
+          }
+        },
+        "ConsensusSignatureSet": {
+          "fields": {
+            "block_id": {
+              "type": "string",
+              "id": 1
+            },
+            "height": {
+              "type": "uint64",
+              "id": 2
+            },
+            "parent_id": {
+              "type": "string",
+              "id": 3
+            },
+            "vrf_seed": {
+              "type": "bytes",
+              "id": 4
+            },
+            "rounds": {
+              "rule": "repeated",
+              "type": "RoundSignatures",
+              "id": 5
+            }
+          }
+        },
+        "HeightResponse": {
+          "fields": {
+            "LastAcceptedHeight": {
+              "type": "uint64",
+              "id": 1
+            },
+            "CurrentHeight": {
+              "type": "uint64",
+              "id": 2
+            },
+            "address": {
+              "type": "string",
+              "id": 3
+            },
+            "pending_blocks_count": {
+              "type": "uint32",
+              "id": 4
+            },
+            "pending_tx_count": {
+              "type": "uint32",
+              "id": 5
+            },
+            "is_syncing": {
+              "type": "bool",
+              "id": 6
+            },
+            "sync_target_height": {
+              "type": "uint64",
+              "id": 7
+            },
+            "is_snapshot_sync": {
+              "type": "bool",
+              "id": 8
+            }
+          }
+        },
+        "GetBlockByIDRequest": {
+          "fields": {
+            "block_id": {
+              "type": "string",
+              "id": 1
+            }
+          }
+        },
+        "PendingBlockInfo": {
+          "fields": {
+            "block_id": {
+              "type": "string",
+              "id": 1
+            },
+            "height": {
+              "type": "uint64",
+              "id": 2
+            },
+            "parent_id": {
+              "type": "string",
+              "id": 3
+            },
+            "proposer": {
+              "type": "string",
+              "id": 4
+            },
+            "window": {
+              "type": "int32",
+              "id": 5
+            },
+            "votes": {
+              "type": "int32",
+              "id": 6
+            },
+            "is_preferred": {
+              "type": "bool",
+              "id": 7
+            }
+          }
+        },
+        "HeightConsensusState": {
+          "fields": {
+            "height": {
+              "type": "uint64",
+              "id": 1
+            },
+            "preference": {
+              "type": "string",
+              "id": 2
+            },
+            "confidence": {
+              "type": "int32",
+              "id": 3
+            },
+            "finalized": {
+              "type": "bool",
+              "id": 4
+            }
+          }
+        },
+        "PendingBlocksResponse": {
+          "fields": {
+            "blocks": {
+              "rule": "repeated",
+              "type": "PendingBlockInfo",
+              "id": 1
+            },
+            "height_states": {
+              "rule": "repeated",
+              "type": "HeightConsensusState",
+              "id": 2
+            }
+          }
+        },
+        "WitnessStatus": {
+          "values": {
+            "WITNESS_CANDIDATE": 0,
+            "WITNESS_ACTIVE": 1,
+            "WITNESS_UNSTAKING": 2,
+            "WITNESS_EXITED": 3,
+            "WITNESS_SLASHED": 4
+          }
+        },
+        "WitnessVoteType": {
+          "values": {
+            "VOTE_PASS": 0,
+            "VOTE_FAIL": 1,
+            "VOTE_ABSTAIN": 2
+          }
+        },
+        "RechargeRequestStatus": {
+          "values": {
+            "RECHARGE_PENDING": 0,
+            "RECHARGE_VOTING": 1,
+            "RECHARGE_CONSENSUS_PASS": 2,
+            "RECHARGE_CONSENSUS_FAIL": 3,
+            "RECHARGE_CHALLENGE_PERIOD": 4,
+            "RECHARGE_CHALLENGED": 5,
+            "RECHARGE_ARBITRATION": 6,
+            "RECHARGE_FINALIZED": 7,
+            "RECHARGE_REJECTED": 8,
+            "RECHARGE_SHELVED": 9
+          }
+        },
+        "WitnessInfo": {
+          "fields": {
+            "address": {
+              "type": "string",
+              "id": 1
+            },
+            "stake_amount": {
+              "type": "string",
+              "id": 2
+            },
+            "pending_reward": {
+              "type": "string",
+              "id": 3
+            },
+            "status": {
+              "type": "WitnessStatus",
+              "id": 4
+            },
+            "unstake_height": {
+              "type": "uint64",
+              "id": 5
+            },
+            "total_witness_count": {
+              "type": "uint64",
+              "id": 6
+            },
+            "pass_count": {
+              "type": "uint64",
+              "id": 7
+            },
+            "fail_count": {
+              "type": "uint64",
+              "id": 8
+            },
+            "abstain_count": {
+              "type": "uint64",
+              "id": 9
+            },
+            "slashed_count": {
+              "type": "uint64",
+              "id": 10
+            },
+            "pending_tasks": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 11
+            },
+            "shelved_arbitrations": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 12
+            },
+            "total_reward": {
+              "type": "string",
+              "id": 13
+            }
+          }
+        },
+        "WitnessStakeTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "op": {
+              "type": "OrderOp",
+              "id": 2
+            },
+            "amount": {
+              "type": "string",
+              "id": 3
+            }
+          }
+        },
+        "WitnessRequestTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "native_chain": {
+              "type": "string",
+              "id": 2
+            },
+            "native_tx_hash": {
+              "type": "string",
+              "id": 3
+            },
+            "token_address": {
+              "type": "string",
+              "id": 4
+            },
+            "amount": {
+              "type": "string",
+              "id": 5
+            },
+            "receiver_address": {
+              "type": "string",
+              "id": 6
+            },
+            "memo": {
+              "type": "string",
+              "id": 7
+            },
+            "recharge_fee": {
+              "type": "string",
+              "id": 8
+            },
+            "native_vout": {
+              "type": "uint32",
+              "id": 9
+            },
+            "native_script": {
+              "type": "bytes",
+              "id": 10
+            }
+          }
+        },
+        "WitnessVote": {
+          "fields": {
+            "request_id": {
+              "type": "string",
+              "id": 1
+            },
+            "witness_address": {
+              "type": "string",
+              "id": 2
+            },
+            "vote_type": {
+              "type": "WitnessVoteType",
+              "id": 3
+            },
+            "reason": {
+              "type": "string",
+              "id": 4
+            },
+            "timestamp": {
+              "type": "uint64",
+              "id": 5
+            },
+            "tx_id": {
+              "type": "string",
+              "id": 6
+            }
+          }
+        },
+        "WitnessVoteTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "vote": {
+              "type": "WitnessVote",
+              "id": 2
+            }
+          }
+        },
+        "RechargeRequest": {
+          "fields": {
+            "request_id": {
+              "type": "string",
+              "id": 1
+            },
+            "native_chain": {
+              "type": "string",
+              "id": 2
+            },
+            "native_tx_hash": {
+              "type": "string",
+              "id": 3
+            },
+            "token_address": {
+              "type": "string",
+              "id": 4
+            },
+            "amount": {
+              "type": "string",
+              "id": 5
+            },
+            "receiver_address": {
+              "type": "string",
+              "id": 6
+            },
+            "requester_address": {
+              "type": "string",
+              "id": 7
+            },
+            "status": {
+              "type": "RechargeRequestStatus",
+              "id": 8
+            },
+            "create_height": {
+              "type": "uint64",
+              "id": 9
+            },
+            "deadline_height": {
+              "type": "uint64",
+              "id": 10
+            },
+            "finalize_height": {
+              "type": "uint64",
+              "id": 11
+            },
+            "round": {
+              "type": "uint32",
+              "id": 12
+            },
+            "selected_witnesses": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 13
+            },
+            "votes": {
+              "rule": "repeated",
+              "type": "WitnessVote",
+              "id": 14
+            },
+            "pass_count": {
+              "type": "uint32",
+              "id": 15
+            },
+            "fail_count": {
+              "type": "uint32",
+              "id": 16
+            },
+            "abstain_count": {
+              "type": "uint32",
+              "id": 17
+            },
+            "challenge_id": {
+              "type": "string",
+              "id": 18
+            },
+            "recharge_fee": {
+              "type": "string",
+              "id": 19
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 20
+            },
+            "native_vout": {
+              "type": "uint32",
+              "id": 21
+            },
+            "native_script": {
+              "type": "bytes",
+              "id": 22
+            }
+          }
+        },
+        "WitnessChallengeTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "request_id": {
+              "type": "string",
+              "id": 2
+            },
+            "stake_amount": {
+              "type": "string",
+              "id": 3
+            },
+            "reason": {
+              "type": "string",
+              "id": 4
+            },
+            "evidence": {
+              "type": "string",
+              "id": 5
+            }
+          }
+        },
+        "ChallengeStatus": {
+          "values": {
+            "CHALLENGE_ACTIVE": 0,
+            "CHALLENGE_SHELVED": 1,
+            "CHALLENGE_FINALIZED": 2
+          }
+        },
+        "ChallengeRecord": {
+          "fields": {
+            "challenge_id": {
+              "type": "string",
+              "id": 1
+            },
+            "request_id": {
+              "type": "string",
+              "id": 2
+            },
+            "challenger_address": {
+              "type": "string",
+              "id": 3
+            },
+            "stake_amount": {
+              "type": "string",
+              "id": 4
+            },
+            "reason": {
+              "type": "string",
+              "id": 5
+            },
+            "create_height": {
+              "type": "uint64",
+              "id": 6
+            },
+            "deadline_height": {
+              "type": "uint64",
+              "id": 7
+            },
+            "arbitration_round": {
+              "type": "uint32",
+              "id": 8
+            },
+            "arbitrators": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 9
+            },
+            "arbitration_votes": {
+              "rule": "repeated",
+              "type": "WitnessVote",
+              "id": 10
+            },
+            "pass_count": {
+              "type": "uint32",
+              "id": 11
+            },
+            "fail_count": {
+              "type": "uint32",
+              "id": 12
+            },
+            "challenge_success": {
+              "type": "bool",
+              "id": 13
+            },
+            "finalized": {
+              "type": "bool",
+              "id": 14
+            },
+            "consensus_threshold": {
+              "type": "uint32",
+              "id": 15
+            },
+            "status": {
+              "type": "ChallengeStatus",
+              "id": 16
+            },
+            "evidence": {
+              "type": "string",
+              "id": 17
+            }
+          }
+        },
+        "RechargeRequestListRequest": {
+          "fields": {
+            "limit": {
+              "type": "int32",
+              "id": 1
+            }
+          }
+        },
+        "RechargeRequestList": {
+          "fields": {
+            "requests": {
+              "rule": "repeated",
+              "type": "RechargeRequest",
+              "id": 1
+            }
+          }
+        },
+        "FrostWithdrawListRequest": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "asset": {
+              "type": "string",
+              "id": 2
+            }
+          }
+        },
+        "FrostWithdrawStateList": {
+          "fields": {
+            "states": {
+              "rule": "repeated",
+              "type": "FrostWithdrawState",
+              "id": 1
+            }
+          }
+        },
+        "VaultTransitionStateList": {
+          "fields": {
+            "states": {
+              "rule": "repeated",
+              "type": "VaultTransitionState",
+              "id": 1
+            }
+          }
+        },
+        "WitnessInfoList": {
+          "fields": {
+            "witnesses": {
+              "rule": "repeated",
+              "type": "WitnessInfo",
+              "id": 1
+            }
+          }
+        },
+        "ArbitrationVoteTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "challenge_id": {
+              "type": "string",
+              "id": 2
+            },
+            "vote": {
+              "type": "WitnessVote",
+              "id": 3
+            }
+          }
+        },
+        "WitnessClaimRewardTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            }
+          }
+        },
+        "WitnessConfig": {
+          "fields": {
+            "consensus_threshold": {
+              "type": "uint32",
+              "id": 1
+            },
+            "abstain_threshold": {
+              "type": "uint32",
+              "id": 2
+            },
+            "voting_period_blocks": {
+              "type": "uint64",
+              "id": 3
+            },
+            "challenge_period_blocks": {
+              "type": "uint64",
+              "id": 4
+            },
+            "arbitration_period_blocks": {
+              "type": "uint64",
+              "id": 5
+            },
+            "unstake_lock_blocks": {
+              "type": "uint64",
+              "id": 6
+            },
+            "min_stake_amount": {
+              "type": "string",
+              "id": 7
+            },
+            "challenge_stake_amount": {
+              "type": "string",
+              "id": 8
+            },
+            "initial_witness_count": {
+              "type": "uint32",
+              "id": 9
+            },
+            "expand_multiplier": {
+              "type": "uint32",
+              "id": 10
+            },
+            "max_rounds": {
+              "type": "uint32",
+              "id": 11
+            }
+          }
+        },
+        "FrostWithdrawRequestTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "chain": {
+              "type": "string",
+              "id": 2
+            },
+            "asset": {
+              "type": "string",
+              "id": 3
+            },
+            "to": {
+              "type": "string",
+              "id": 4
+            },
+            "amount": {
+              "type": "string",
+              "id": 5
+            }
+          }
+        },
+        "FrostWithdrawSignedTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "job_id": {
+              "type": "string",
+              "id": 2
+            },
+            "signed_package_bytes": {
+              "type": "bytes",
+              "id": 3
+            },
+            "withdraw_ids": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 4
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 5
+            },
+            "key_epoch": {
+              "type": "uint64",
+              "id": 6
+            },
+            "template_hash": {
+              "type": "bytes",
+              "id": 7
+            },
+            "chain": {
+              "type": "string",
+              "id": 8
+            },
+            "asset": {
+              "type": "string",
+              "id": 9
+            },
+            "utxo_inputs": {
+              "rule": "repeated",
+              "type": "UtxoInput",
+              "id": 10
+            },
+            "template_data": {
+              "type": "bytes",
+              "id": 11
+            },
+            "input_sigs": {
+              "rule": "repeated",
+              "type": "bytes",
+              "id": 12
+            },
+            "script_pubkeys": {
+              "rule": "repeated",
+              "type": "bytes",
+              "id": 13
+            }
+          }
+        },
+        "UtxoInput": {
+          "fields": {
+            "txid": {
+              "type": "string",
+              "id": 1
+            },
+            "vout": {
+              "type": "uint32",
+              "id": 2
+            },
+            "amount": {
+              "type": "uint64",
+              "id": 3
+            },
+            "script_pubkey": {
+              "type": "bytes",
+              "id": 4
+            }
+          }
+        },
+        "FrostUtxo": {
+          "fields": {
+            "txid": {
+              "type": "string",
+              "id": 1
+            },
+            "vout": {
+              "type": "uint32",
+              "id": 2
+            },
+            "amount": {
+              "type": "string",
+              "id": 3
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 4
+            },
+            "finalize_height": {
+              "type": "uint64",
+              "id": 5
+            },
+            "request_id": {
+              "type": "string",
+              "id": 6
+            },
+            "script_pubkey": {
+              "type": "bytes",
+              "id": 7
+            }
+          }
+        },
+        "FrostPlanningLog": {
+          "fields": {
+            "step": {
+              "type": "string",
+              "id": 1
+            },
+            "status": {
+              "type": "string",
+              "id": 2
+            },
+            "message": {
+              "type": "string",
+              "id": 3
+            },
+            "timestamp": {
+              "type": "uint64",
+              "id": 4
+            }
+          }
+        },
+        "FrostWithdrawState": {
+          "fields": {
+            "withdraw_id": {
+              "type": "string",
+              "id": 1
+            },
+            "tx_id": {
+              "type": "string",
+              "id": 2
+            },
+            "seq": {
+              "type": "uint64",
+              "id": 3
+            },
+            "chain": {
+              "type": "string",
+              "id": 4
+            },
+            "asset": {
+              "type": "string",
+              "id": 5
+            },
+            "to": {
+              "type": "string",
+              "id": 6
+            },
+            "amount": {
+              "type": "string",
+              "id": 7
+            },
+            "request_height": {
+              "type": "uint64",
+              "id": 8
+            },
+            "status": {
+              "type": "string",
+              "id": 9
+            },
+            "job_id": {
+              "type": "string",
+              "id": 10
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 11
+            },
+            "planning_logs": {
+              "rule": "repeated",
+              "type": "FrostPlanningLog",
+              "id": 12
+            }
+          }
+        },
+        "FrostWithdrawPlanningLogTx": {
+          "fields": {
+            "reporter": {
+              "type": "string",
+              "id": 1
+            },
+            "withdraw_id": {
+              "type": "string",
+              "id": 2
+            },
+            "logs": {
+              "rule": "repeated",
+              "type": "FrostPlanningLog",
+              "id": 3
+            }
+          }
+        },
+        "FrostSignedPackage": {
+          "fields": {
+            "job_id": {
+              "type": "string",
+              "id": 1
+            },
+            "idx": {
+              "type": "uint64",
+              "id": 2
+            },
+            "signed_package_bytes": {
+              "type": "bytes",
+              "id": 3
+            },
+            "submit_height": {
+              "type": "uint64",
+              "id": 4
+            },
+            "submitter": {
+              "type": "string",
+              "id": 5
+            }
+          }
+        },
+        "FrostVaultState": {
+          "fields": {
+            "vault_id": {
+              "type": "uint32",
+              "id": 1
+            },
+            "chain": {
+              "type": "string",
+              "id": 2
+            },
+            "key_epoch": {
+              "type": "uint64",
+              "id": 3
+            },
+            "group_pubkey": {
+              "type": "bytes",
+              "id": 4
+            },
+            "sign_algo": {
+              "type": "SignAlgo",
+              "id": 5
+            },
+            "status": {
+              "type": "string",
+              "id": 6
+            },
+            "active_since_height": {
+              "type": "uint64",
+              "id": 7
+            },
+            "committee_members": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 8
+            }
+          }
+        },
+        "VaultTransitionState": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 2
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 3
+            },
+            "sign_algo": {
+              "type": "SignAlgo",
+              "id": 4
+            },
+            "trigger_height": {
+              "type": "uint64",
+              "id": 5
+            },
+            "old_committee_members": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 6
+            },
+            "new_committee_members": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 7
+            },
+            "dkg_status": {
+              "type": "string",
+              "id": 8
+            },
+            "dkg_session_id": {
+              "type": "string",
+              "id": 9
+            },
+            "dkg_threshold_t": {
+              "type": "uint32",
+              "id": 10
+            },
+            "dkg_n": {
+              "type": "uint32",
+              "id": 11
+            },
+            "dkg_commit_deadline": {
+              "type": "uint64",
+              "id": 12
+            },
+            "dkg_dispute_deadline": {
+              "type": "uint64",
+              "id": 13
+            },
+            "old_group_pubkey": {
+              "type": "bytes",
+              "id": 14
+            },
+            "new_group_pubkey": {
+              "type": "bytes",
+              "id": 15
+            },
+            "validation_status": {
+              "type": "string",
+              "id": 16
+            },
+            "validation_msg_hash": {
+              "type": "bytes",
+              "id": 17
+            },
+            "lifecycle": {
+              "type": "string",
+              "id": 18
+            },
+            "dkg_sharing_deadline": {
+              "type": "uint64",
+              "id": 19
+            }
+          }
+        },
+        "FrostEnvelope": {
+          "fields": {
+            "from": {
+              "type": "string",
+              "id": 1
+            },
+            "to": {
+              "type": "string",
+              "id": 2
+            },
+            "kind": {
+              "type": "FrostEnvelopeKind",
+              "id": 3
+            },
+            "payload": {
+              "type": "bytes",
+              "id": 4
+            },
+            "sig": {
+              "type": "bytes",
+              "id": 5
+            },
+            "job_id": {
+              "type": "string",
+              "id": 6
+            },
+            "seq": {
+              "type": "uint64",
+              "id": 7
+            }
+          }
+        },
+        "FrostEnvelopeKind": {
+          "values": {
+            "FROST_ENVELOPE_KIND_UNSPECIFIED": 0,
+            "FROST_ENVELOPE_KIND_DKG_ROUND1": 1,
+            "FROST_ENVELOPE_KIND_DKG_ROUND2": 2,
+            "FROST_ENVELOPE_KIND_SIGN_NONCE": 3,
+            "FROST_ENVELOPE_KIND_SIGN_SHARE": 4,
+            "FROST_ENVELOPE_KIND_ROAST_REQUEST": 5,
+            "FROST_ENVELOPE_KIND_ROAST_RESPONSE": 6
+          }
+        },
+        "FrostVaultDkgCommitTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "chain": {
+              "type": "string",
+              "id": 2
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 3
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 4
+            },
+            "sign_algo": {
+              "type": "SignAlgo",
+              "id": 5
+            },
+            "commitment_points": {
+              "rule": "repeated",
+              "type": "bytes",
+              "id": 6
+            },
+            "a_i0": {
+              "type": "bytes",
+              "id": 7
+            }
+          }
+        },
+        "FrostVaultDkgShareTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "chain": {
+              "type": "string",
+              "id": 2
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 3
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 4
+            },
+            "dealer_id": {
+              "type": "string",
+              "id": 5
+            },
+            "receiver_id": {
+              "type": "string",
+              "id": 6
+            },
+            "ciphertext": {
+              "type": "bytes",
+              "id": 7
+            }
+          }
+        },
+        "FrostVaultDkgCommitment": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 2
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 3
+            },
+            "miner_address": {
+              "type": "string",
+              "id": 4
+            },
+            "sign_algo": {
+              "type": "SignAlgo",
+              "id": 5
+            },
+            "commitment_points": {
+              "rule": "repeated",
+              "type": "bytes",
+              "id": 6
+            },
+            "a_i0": {
+              "type": "bytes",
+              "id": 7
+            },
+            "commit_height": {
+              "type": "uint64",
+              "id": 8
+            }
+          }
+        },
+        "FrostVaultDkgShare": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 2
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 3
+            },
+            "dealer_id": {
+              "type": "string",
+              "id": 4
+            },
+            "receiver_id": {
+              "type": "string",
+              "id": 5
+            },
+            "ciphertext": {
+              "type": "bytes",
+              "id": 6
+            },
+            "share_height": {
+              "type": "uint64",
+              "id": 7
+            }
+          }
+        },
+        "FrostVaultDkgComplaintTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "chain": {
+              "type": "string",
+              "id": 2
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 3
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 4
+            },
+            "dealer_id": {
+              "type": "string",
+              "id": 5
+            },
+            "receiver_id": {
+              "type": "string",
+              "id": 6
+            },
+            "bond": {
+              "type": "string",
+              "id": 7
+            }
+          }
+        },
+        "FrostVaultDkgRevealTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "chain": {
+              "type": "string",
+              "id": 2
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 3
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 4
+            },
+            "dealer_id": {
+              "type": "string",
+              "id": 5
+            },
+            "receiver_id": {
+              "type": "string",
+              "id": 6
+            },
+            "share": {
+              "type": "bytes",
+              "id": 7
+            },
+            "enc_rand": {
+              "type": "bytes",
+              "id": 8
+            }
+          }
+        },
+        "FrostVaultDkgComplaint": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 2
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 3
+            },
+            "dealer_id": {
+              "type": "string",
+              "id": 4
+            },
+            "receiver_id": {
+              "type": "string",
+              "id": 5
+            },
+            "bond": {
+              "type": "string",
+              "id": 6
+            },
+            "complaint_height": {
+              "type": "uint64",
+              "id": 7
+            },
+            "reveal_deadline": {
+              "type": "uint64",
+              "id": 8
+            },
+            "status": {
+              "type": "string",
+              "id": 9
+            }
+          }
+        },
+        "FrostVaultDkgValidationSignedTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "chain": {
+              "type": "string",
+              "id": 2
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 3
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 4
+            },
+            "msg_hash": {
+              "type": "bytes",
+              "id": 5
+            },
+            "new_group_pubkey": {
+              "type": "bytes",
+              "id": 6
+            },
+            "signature": {
+              "type": "bytes",
+              "id": 7
+            }
+          }
+        },
+        "FrostVaultTransitionSignedTx": {
+          "fields": {
+            "base": {
+              "type": "BaseMessage",
+              "id": 1
+            },
+            "chain": {
+              "type": "string",
+              "id": 2
+            },
+            "old_vault_id": {
+              "type": "uint32",
+              "id": 3
+            },
+            "new_vault_id": {
+              "type": "uint32",
+              "id": 4
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 5
+            },
+            "msg_hash": {
+              "type": "bytes",
+              "id": 6
+            },
+            "signature": {
+              "type": "bytes",
+              "id": 7
+            }
+          }
+        },
+        "FrostTop10000": {
+          "fields": {
+            "height": {
+              "type": "uint64",
+              "id": 1
+            },
+            "indices": {
+              "rule": "repeated",
+              "type": "uint64",
+              "id": 2
+            },
+            "addresses": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 3
+            },
+            "public_keys": {
+              "rule": "repeated",
+              "type": "bytes",
+              "id": 4
+            },
+            "update_height": {
+              "type": "uint64",
+              "id": 5
+            }
+          }
+        },
+        "FrostVaultConfig": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "sign_algo": {
+              "type": "SignAlgo",
+              "id": 2
+            },
+            "vault_count": {
+              "type": "uint32",
+              "id": 3
+            },
+            "committee_size": {
+              "type": "uint32",
+              "id": 4
+            },
+            "threshold_ratio": {
+              "type": "float",
+              "id": 5
+            },
+            "selection_seed_rule": {
+              "type": "string",
+              "id": 6
+            },
+            "vault_refs": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 7
+            },
+            "deposit_allocation_rule": {
+              "type": "string",
+              "id": 8
+            }
+          }
+        },
+        "ChainCfg": {
+          "fields": {
+            "sign_algo": {
+              "type": "string",
+              "id": 1
+            },
+            "frost_variant": {
+              "type": "string",
+              "id": 2
+            },
+            "vaults_per_chain": {
+              "type": "int32",
+              "id": 3
+            }
+          }
+        },
+        "GetFrostConfigResponse": {
+          "fields": {
+            "enabled": {
+              "type": "bool",
+              "id": 1
+            },
+            "supported_chains": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 2
+            },
+            "default_threshold": {
+              "type": "double",
+              "id": 3
+            },
+            "vault_count": {
+              "type": "int32",
+              "id": 4
+            },
+            "committee_size": {
+              "type": "int32",
+              "id": 5
+            },
+            "min_withdraw": {
+              "type": "string",
+              "id": 6
+            },
+            "chains": {
+              "keyType": "string",
+              "type": "ChainCfg",
+              "id": 7
+            }
+          }
+        },
+        "GetWithdrawStatusResponse": {
+          "fields": {
+            "lot_id": {
+              "type": "string",
+              "id": 1
+            },
+            "chain": {
+              "type": "string",
+              "id": 2
+            },
+            "status": {
+              "type": "string",
+              "id": 3
+            },
+            "amount": {
+              "type": "string",
+              "id": 4
+            },
+            "receiver": {
+              "type": "string",
+              "id": 5
+            },
+            "height": {
+              "type": "uint64",
+              "id": 6
+            },
+            "tx_hash": {
+              "type": "string",
+              "id": 7
+            },
+            "planning_logs": {
+              "rule": "repeated",
+              "type": "FrostPlanningLog",
+              "id": 8
+            }
+          }
+        },
+        "ListWithdrawsResponse": {
+          "fields": {
+            "withdraws": {
+              "rule": "repeated",
+              "type": "GetWithdrawStatusResponse",
+              "id": 1
+            },
+            "total": {
+              "type": "int32",
+              "id": 2
+            }
+          }
+        },
+        "GetVaultGroupPubKeyResponse": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 2
+            },
+            "key_epoch": {
+              "type": "uint64",
+              "id": 3
+            },
+            "group_pubkey": {
+              "type": "string",
+              "id": 4
+            },
+            "sign_algo": {
+              "type": "string",
+              "id": 5
+            },
+            "status": {
+              "type": "string",
+              "id": 6
+            }
+          }
+        },
+        "GetVaultTransitionStatusResponse": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 2
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 3
+            },
+            "sign_algo": {
+              "type": "string",
+              "id": 4
+            },
+            "trigger_height": {
+              "type": "uint64",
+              "id": 5
+            },
+            "old_committee_members": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 6
+            },
+            "new_committee_members": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 7
+            },
+            "dkg_status": {
+              "type": "string",
+              "id": 8
+            },
+            "dkg_session_id": {
+              "type": "string",
+              "id": 9
+            },
+            "dkg_threshold_t": {
+              "type": "uint32",
+              "id": 10
+            },
+            "dkg_n": {
+              "type": "uint32",
+              "id": 11
+            },
+            "dkg_commit_deadline": {
+              "type": "uint64",
+              "id": 12
+            },
+            "dkg_dispute_deadline": {
+              "type": "uint64",
+              "id": 13
+            },
+            "old_group_pubkey": {
+              "type": "string",
+              "id": 14
+            },
+            "new_group_pubkey": {
+              "type": "string",
+              "id": 15
+            },
+            "validation_status": {
+              "type": "string",
+              "id": 16
+            },
+            "lifecycle": {
+              "type": "string",
+              "id": 17
+            }
+          }
+        },
+        "DkgCommitmentInfo": {
+          "fields": {
+            "participant": {
+              "type": "string",
+              "id": 1
+            },
+            "commitment_points": {
+              "rule": "repeated",
+              "type": "string",
+              "id": 2
+            },
+            "commit_height": {
+              "type": "uint64",
+              "id": 3
+            }
+          }
+        },
+        "GetVaultDkgCommitmentsResponse": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "vault_id": {
+              "type": "uint32",
+              "id": 2
+            },
+            "epoch_id": {
+              "type": "uint64",
+              "id": 3
+            },
+            "commitments": {
+              "rule": "repeated",
+              "type": "DkgCommitmentInfo",
+              "id": 4
+            },
+            "total": {
+              "type": "int32",
+              "id": 5
+            }
+          }
+        },
+        "DownloadSignedPackageResponse": {
+          "fields": {
+            "job_id": {
+              "type": "string",
+              "id": 1
+            },
+            "idx": {
+              "type": "uint64",
+              "id": 2
+            },
+            "signed_package_bytes": {
+              "type": "string",
+              "id": 3
+            },
+            "submit_height": {
+              "type": "uint64",
+              "id": 4
+            },
+            "submitter": {
+              "type": "string",
+              "id": 5
+            }
+          }
+        },
+        "HealthResponse": {
+          "fields": {
+            "status": {
+              "type": "string",
+              "id": 1
+            },
+            "uptime": {
+              "type": "string",
+              "id": 2
+            },
+            "version": {
+              "type": "string",
+              "id": 3
+            },
+            "go_version": {
+              "type": "string",
+              "id": 4
+            },
+            "num_cpu": {
+              "type": "int32",
+              "id": 5
+            }
+          }
+        },
+        "ChannelStat": {
+          "fields": {
+            "name": {
+              "type": "string",
+              "id": 1
+            },
+            "module": {
+              "type": "string",
+              "id": 2
+            },
+            "len": {
+              "type": "int32",
+              "id": 3
+            },
+            "cap": {
+              "type": "int32",
+              "id": 4
+            },
+            "usage": {
+              "type": "double",
+              "id": 5
+            }
+          }
+        },
+        "MetricsResponse": {
+          "fields": {
+            "heap_alloc": {
+              "type": "uint64",
+              "id": 1
+            },
+            "heap_sys": {
+              "type": "uint64",
+              "id": 2
+            },
+            "num_goroutine": {
+              "type": "int32",
+              "id": 3
+            },
+            "frost_jobs": {
+              "type": "int32",
+              "id": 4
+            },
+            "frost_withdraws": {
+              "type": "int32",
+              "id": 5
+            },
+            "api_call_stats": {
+              "keyType": "string",
+              "type": "uint64",
+              "id": 6
+            },
+            "channel_stats": {
+              "rule": "repeated",
+              "type": "ChannelStat",
+              "id": 7
+            }
+          }
+        },
+        "ForceRescanRequest": {
+          "fields": {
+            "chain": {
+              "type": "string",
+              "id": 1
+            },
+            "from_height": {
+              "type": "uint64",
+              "id": 2
+            }
+          }
+        },
+        "ForceRescanResponse": {
+          "fields": {
+            "success": {
+              "type": "bool",
+              "id": 1
+            },
+            "message": {
+              "type": "string",
+              "id": 2
+            }
+          }
+        },
+        "LogsRequest": {
+          "fields": {
+            "max_lines": {
+              "type": "int32",
+              "id": 1
+            }
+          }
+        },
+        "LogLine": {
+          "fields": {
+            "timestamp": {
+              "type": "string",
+              "id": 1
+            },
+            "level": {
+              "type": "string",
+              "id": 2
+            },
+            "message": {
+              "type": "string",
+              "id": 3
+            }
+          }
+        },
+        "LogsResponse": {
+          "fields": {
+            "logs": {
+              "rule": "repeated",
+              "type": "LogLine",
+              "id": 1
+            }
+          }
+        },
+        "BlockSummary": {
+          "fields": {
+            "height": {
+              "type": "uint64",
+              "id": 1
+            },
+            "block_hash": {
+              "type": "string",
+              "id": 2
+            },
+            "txs_hash": {
+              "type": "string",
+              "id": 3
+            },
+            "miner": {
+              "type": "string",
+              "id": 4
+            },
+            "tx_count": {
+              "type": "int32",
+              "id": 5
+            },
+            "accumulated_reward": {
+              "type": "string",
+              "id": 6
+            },
+            "window": {
+              "type": "int32",
+              "id": 7
+            },
+            "state_root": {
+              "type": "string",
+              "id": 8
+            }
+          }
+        },
+        "GetRecentBlocksRequest": {
+          "fields": {
+            "count": {
+              "type": "int32",
+              "id": 1
+            }
+          }
+        },
+        "GetRecentBlocksResponse": {
+          "fields": {
+            "blocks": {
+              "rule": "repeated",
+              "type": "BlockSummary",
+              "id": 1
+            }
+          }
+        },
+        "GetAccountRequest": {
+          "fields": {
+            "address": {
+              "type": "string",
+              "id": 1
+            }
+          }
+        },
+        "GetAccountResponse": {
+          "fields": {
+            "account": {
+              "type": "Account",
+              "id": 1
+            },
+            "error": {
+              "type": "string",
+              "id": 2
+            },
+            "balances": {
+              "keyType": "string",
+              "type": "TokenBalance",
+              "id": 3
+            }
+          }
+        },
+        "GetAccountBalancesRequest": {
+          "fields": {
+            "address": {
+              "type": "string",
+              "id": 1
+            }
+          }
+        },
+        "GetAccountBalancesResponse": {
+          "fields": {
+            "balances": {
+              "keyType": "string",
+              "type": "TokenBalance",
+              "id": 1
+            },
+            "error": {
+              "type": "string",
+              "id": 2
+            }
+          }
+        },
+        "GetTokenRequest": {
+          "fields": {
+            "token_address": {
+              "type": "string",
+              "id": 1
+            }
+          }
+        },
+        "GetTokenResponse": {
+          "fields": {
+            "token": {
+              "type": "Token",
+              "id": 1
+            }
+          }
+        },
+        "GetTokenRegistryResponse": {
+          "fields": {
+            "registry": {
+              "type": "TokenRegistry",
+              "id": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

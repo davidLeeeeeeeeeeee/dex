@@ -355,6 +355,10 @@ func main() {
 	mux.HandleFunc("/api/orderbook/debug", srv.handleOrderBookDebug)
 	mux.HandleFunc("/api/trades", srv.handleTrades)
 	mux.HandleFunc("/api/pendingblocks", srv.handlePendingBlocks)
+	// 钱包专用 API（普通 JSON，无需 Protobuf）
+	mux.HandleFunc("/api/wallet/submittx", srv.handleWalletSubmitTx)
+	mux.HandleFunc("/api/wallet/nonce", srv.handleWalletNonce)
+	mux.HandleFunc("/api/wallet/receipt", srv.handleWalletReceipt)
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	log.Printf("Explorer listening at http://%s (ui: %s, data: %s)", *listenAddr, webDir, *dataDir)
@@ -913,12 +917,21 @@ func (s *server) handleAddress(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if fetchErr != nil || account == nil {
-		errMsg := "account not found"
-		if fetchErr != nil {
-			errMsg = fetchErr.Error()
+	if fetchErr != nil && account == nil {
+		// 账户存在但查询出错时才报错；账户不存在时返回余额全0
+		if fetchErr.Error() != "account not found" {
+			writeJSON(w, addressResponse{Error: fetchErr.Error()})
+			return
 		}
-		writeJSON(w, addressResponse{Error: errMsg})
+	}
+
+	if account == nil {
+		// 新地址，返回全0余额（nonce=0，无余额）
+		writeJSON(w, addressResponse{Account: &accountInfo{
+			Address:  req.Address,
+			Nonce:    0,
+			Balances: map[string]*tokenBalance{},
+		}})
 		return
 	}
 

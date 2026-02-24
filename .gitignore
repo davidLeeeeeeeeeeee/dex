@@ -14,3 +14,7 @@ explorer_data/
 .gocache/
 sender/tx_data.jsonl
 logs/logs.txt
+wallet/node_modules/
+wallet/dist/popup/assets/index-U_ojHtub.js
+wallet/dist/icons/icon.svg
+wallet/dist/
