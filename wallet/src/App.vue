@@ -13,7 +13,7 @@ function bg(msg: any): Promise<any> {
 }
 
 // ─── 页面路由 ─────────────────────────────────────────────────────────────────
-type Page = 'lock' | 'setup' | 'main' | 'send' | 'settings'
+type Page = 'lock' | 'setup' | 'main' | 'send' | 'settings' | 'approve'
 const page = ref<Page>('lock')
 const setupTab = ref<'create' | 'import'>('create')
 
@@ -44,13 +44,28 @@ const sendLoading = ref(false)
 const explorerUrl = ref('http://127.0.0.1:8080')
 const nodeAddr = ref('')
 
+const pendingRequests = ref<any[]>([])
+
+async function checkPendingRequests() {
+  const res = await bg({ type: 'GET_PENDING_REQUESTS' })
+  pendingRequests.value = res.requests || []
+  if (pendingRequests.value.length > 0) {
+    page.value = 'approve'
+  }
+}
+
+
 // ─── 初始化 ──────────────────────────────────────────────────────────────────
 onMounted(async () => {
   try {
     const { has } = await bg({ type: 'HAS_WALLET' })
     if (!has) { page.value = 'setup'; return }
     const { unlocked } = await bg({ type: 'IS_UNLOCKED' })
-    if (unlocked) { await loadMain(); page.value = 'main' }
+    if (unlocked) { 
+      await loadMain()
+      await checkPendingRequests()
+      if (page.value !== 'approve') page.value = 'main'
+    }
     else page.value = 'lock'
   } catch { page.value = 'lock' }
 })
@@ -63,7 +78,8 @@ async function unlock() {
     address.value = res.address
     unlockPassword.value = ''
     await loadMain()
-    page.value = 'main'
+    await checkPendingRequests()
+    if (page.value !== 'approve') page.value = 'main'
   } catch (e: any) { lockError.value = e.message }
 }
 
@@ -81,7 +97,9 @@ async function createWallet() {
   try {
     const res = await bg({ type: 'CREATE_WALLET', mnemonic: generatedMnemonic.value, password: createPassword.value })
     address.value = res.address
-    await loadMain(); page.value = 'main'
+    await loadMain()
+    await checkPendingRequests()
+    if (page.value !== 'approve') page.value = 'main'
   } catch (e: any) { setupError.value = e.message }
 }
 
@@ -92,7 +110,9 @@ async function importWallet() {
   try {
     const res = await bg({ type: 'IMPORT_WALLET', mnemonic: importMnemonic.value.trim(), password: importPassword.value })
     address.value = res.address
-    await loadMain(); page.value = 'main'
+    await loadMain()
+    await checkPendingRequests()
+    if (page.value !== 'approve') page.value = 'main'
   } catch (e: any) { setupError.value = e.message }
 }
 
@@ -130,6 +150,24 @@ async function confirmSend() {
   } catch (e: any) { sendError.value = `发送失败：${e.message}` }
   finally { sendLoading.value = false }
 }
+
+// ─── 审批请求管理 ─────────────────────────────────────────────────────────────
+async function approveRequest(id: number) {
+  try {
+    await bg({ type: 'APPROVE_REQUEST', id })
+    await checkPendingRequests()
+    if (pendingRequests.value.length === 0) window.close()
+  } catch (e: any) { alert('Approve Failed: ' + e.message) }
+}
+
+async function rejectRequest(id: number) {
+  try {
+    await bg({ type: 'REJECT_REQUEST', id })
+    await checkPendingRequests()
+    if (pendingRequests.value.length === 0) window.close()
+  } catch (e: any) { alert('Reject Failed: ' + e.message) }
+}
+
 
 // ─── 设置 ────────────────────────────────────────────────────────────────────
 async function openSettings() {
@@ -307,6 +345,29 @@ function otherBalances() {
       <div class="card danger-card">
         <p class="danger-hint">危险操作 — 不可撤销</p>
         <button class="btn-danger" @click="resetWallet">重置钱包</button>
+      </div>
+    </div>
+
+    <!-- ── 审批页 ──────────────────────────────────────────────── -->
+    <div v-else-if="page === 'approve'" class="page">
+      <nav class="top-nav">
+        <span class="nav-title">签名授权请求</span>
+        <span></span>
+      </nav>
+      <div v-if="pendingRequests.length > 0" class="card">
+        <p class="hint">来源: {{ pendingRequests[0].url }}</p>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <label class="field-label">操作类型</label>
+          <div class="field-input">{{ pendingRequests[0].txDesc.type }}</div>
+          
+          <label class="field-label">操作详情</label>
+          <pre class="field-input" style="white-space: pre-wrap; word-break: break-all; font-size: 11px; max-height: 200px; overflow-y: auto;">{{ JSON.stringify(pendingRequests[0].txDesc, null, 2) }}</pre>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+          <button class="btn-ghost" style="flex:1" @click="rejectRequest(pendingRequests[0].id)">拒绝</button>
+          <button class="btn-primary" style="flex:1" @click="approveRequest(pendingRequests[0].id)">批准</button>
+        </div>
       </div>
     </div>
 

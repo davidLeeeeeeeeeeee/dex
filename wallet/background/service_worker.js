@@ -21,7 +21,9 @@ import { toBase64 } from '../lib/crypto.js';
 
 // ─── 会话状态（内存）────────────────────────────────────────────────────────
 
-const _session = { unlocked: false, phrase: null, accounts: [], selectedIndex: 0 };
+const _session = { unlocked: false, phrase: null, accounts: [], selectedIndex: 0, pendingRequests: [] };
+
+let _reqIdCounter = 0;
 
 function requireUnlocked() {
     if (!_session.unlocked) throw new Error('Wallet is locked');
@@ -33,13 +35,64 @@ function selectedAccount() {
 
 // ─── 消息处理 ────────────────────────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+    // 拦截来自 DApp 的交易请求
+    if (sender.tab && (msg.type === 'SEND_TX' || msg.type === 'SIGN_TX')) {
+        const reqId = ++_reqIdCounter;
+        _session.pendingRequests.push({
+            id: reqId,
+            type: msg.type,
+            txDesc: msg.txDesc,
+            reply,
+            url: sender.tab.url || sender.url
+        });
+
+        chrome.windows.create({
+            url: 'popup/index.html',
+            type: 'popup',
+            width: 360,
+            height: 600,
+            focused: true
+        });
+        return true; // Wait for async reply
+    }
+
     handleMessage(msg).then(reply).catch(e => reply({ error: e.message }));
     return true; // 异步应答
 });
 
 async function handleMessage(msg) {
     switch (msg.type) {
+
+        // ── 签名请求审批 ────────────────────────────────────────────────────────
+        case 'GET_PENDING_REQUESTS':
+            return { requests: _session.pendingRequests.map(r => ({ id: r.id, type: r.type, txDesc: r.txDesc, url: r.url })) };
+
+        case 'APPROVE_REQUEST': {
+            const reqIdx = _session.pendingRequests.findIndex(r => r.id === msg.id);
+            if (reqIdx === -1) throw new Error('Request not found');
+            const req = _session.pendingRequests[reqIdx];
+            _session.pendingRequests.splice(reqIdx, 1);
+
+            try {
+                // 内部直接调用，跳过 tab 检查
+                const res = await handleMessage({ type: req.type, txDesc: req.txDesc });
+                req.reply(res);
+                return { ok: true };
+            } catch (e) {
+                req.reply({ error: e.message });
+                throw e;
+            }
+        }
+
+        case 'REJECT_REQUEST': {
+            const reqIdx = _session.pendingRequests.findIndex(r => r.id === msg.id);
+            if (reqIdx === -1) throw new Error('Request not found');
+            const req = _session.pendingRequests[reqIdx];
+            _session.pendingRequests.splice(reqIdx, 1);
+            req.reply({ error: 'User rejected the request' });
+            return { ok: true };
+        }
 
         // ── 钱包初始化 ──────────────────────────────────────────────────────────
 

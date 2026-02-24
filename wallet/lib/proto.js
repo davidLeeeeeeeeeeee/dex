@@ -1,28 +1,18 @@
 /**
  * lib/proto.js
- * 基于 protobufjs 封装 AnyTx 的序列化与签名组装
- *
- * 注意：此文件在构建时被 esbuild bundle，会一并打包 protobufjs 和 data.proto 的 JSON 描述符
+ * 基于 pbjs 静态生成的序列化模块封装 AnyTx 的序列化与签名组装
+ * 彻底移除了运行时的 JSON load 以及 Root 反射，避免 Chrome MV3 里的 unsafe-eval 报错。
  */
 
-import protobuf from 'protobufjs/light.js';
 import { sign, exportPubKeyDer, toHex } from './crypto.js';
 
-// data.proto 的 JSON descriptor（由 pbjs -t json pb/data.proto 生成并内联）
-// 在执行 npm run build 之前须先运行：
-//   npx pbjs -t json ../pb/data.proto -o lib/data_proto.json
-import protoJson from './data_proto.json' assert { type: 'json' };
+// 直接导入通过 npx pbjs -t static-module 提前静态生成的类代码
+import { pb } from './data_proto.js';
 
-let _root = null;
-function root() {
-    if (!_root) _root = protobuf.Root.fromJSON(protoJson);
-    return _root;
-}
-
-const AnyTx = () => root().lookupType('pb.AnyTx');
-const Transaction = () => root().lookupType('pb.Transaction');
-const BaseMessage = () => root().lookupType('pb.BaseMessage');
-const PublicKeys = () => root().lookupType('pb.PublicKeys');
+const AnyTx = () => pb.AnyTx;
+const Transaction = () => pb.Transaction;
+const BaseMessage = () => pb.BaseMessage;
+const PublicKeys = () => pb.PublicKeys;
 
 /**
  * 构造并签名一笔 Transaction（转账），返回已签名的 AnyTx protobuf 字节
@@ -105,26 +95,26 @@ export async function buildAndSign(txDesc, { fromAddress, nonce, privateKey, pub
             });
 
         case 'order': {
-            const OrderTx = () => root().lookupType('pb.OrderTx');
-            const OrderOp = root().lookupEnum('pb.OrderOp');
-            const OrderSide = root().lookupEnum('pb.OrderSide');
+            const OrderTx = () => pb.OrderTx;
+            const OrderOp = pb.OrderOp;
+            const OrderSide = pb.OrderSide;
             const tx = OrderTx().create({
                 base: base(),
                 baseToken: txDesc.baseToken,
                 quoteToken: txDesc.quoteToken,
-                op: OrderOp.values.ADD,
+                op: OrderOp.ADD,
                 amount: txDesc.amount,
                 price: txDesc.price,
-                side: txDesc.side === 'SELL' ? OrderSide.values.SELL : OrderSide.values.BUY,
+                side: txDesc.side === 'SELL' ? OrderSide.SELL : OrderSide.BUY,
             });
             return signAndWrap({ orderTx: tx });
         }
 
         case 'witness_vote': {
-            const WitnessVoteTx = () => root().lookupType('pb.WitnessVoteTx');
-            const WitnessVote = () => root().lookupType('pb.WitnessVote');
-            const WitnessVoteType = root().lookupEnum('pb.WitnessVoteType');
-            const voteType = txDesc.vote === 'FAIL' ? WitnessVoteType.values.VOTE_FAIL : WitnessVoteType.values.VOTE_PASS;
+            const WitnessVoteTx = () => pb.WitnessVoteTx;
+            const WitnessVote = () => pb.WitnessVote;
+            const WitnessVoteType = pb.WitnessVoteType;
+            const voteType = txDesc.vote === 'FAIL' ? WitnessVoteType.VOTE_FAIL : WitnessVoteType.VOTE_PASS;
             const tx = WitnessVoteTx().create({
                 base: base(),
                 vote: WitnessVote().create({ requestId: txDesc.requestId, voteType }),
@@ -133,7 +123,7 @@ export async function buildAndSign(txDesc, { fromAddress, nonce, privateKey, pub
         }
 
         case 'witness_challenge': {
-            const WitnessChallengeTx = () => root().lookupType('pb.WitnessChallengeTx');
+            const WitnessChallengeTx = () => pb.WitnessChallengeTx;
             const tx = WitnessChallengeTx().create({
                 base: base(),
                 requestId: txDesc.requestId,
@@ -145,7 +135,7 @@ export async function buildAndSign(txDesc, { fromAddress, nonce, privateKey, pub
         }
 
         case 'recharge_request': {
-            const WitnessRequestTx = () => root().lookupType('pb.WitnessRequestTx');
+            const WitnessRequestTx = () => pb.WitnessRequestTx;
             const tx = WitnessRequestTx().create({
                 base: base(),
                 nativeChain: txDesc.chain,
@@ -160,7 +150,7 @@ export async function buildAndSign(txDesc, { fromAddress, nonce, privateKey, pub
         }
 
         case 'frost_withdraw': {
-            const FrostWithdrawRequestTx = () => root().lookupType('pb.FrostWithdrawRequestTx');
+            const FrostWithdrawRequestTx = () => pb.FrostWithdrawRequestTx;
             const tx = FrostWithdrawRequestTx().create({
                 base: base(),
                 chain: txDesc.chain,
@@ -181,3 +171,4 @@ export async function buildAndSign(txDesc, { fromAddress, nonce, privateKey, pub
 export function decodeAnyTx(bytes) {
     return AnyTx().decode(bytes);
 }
+
