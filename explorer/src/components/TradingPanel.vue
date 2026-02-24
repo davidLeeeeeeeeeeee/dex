@@ -2,6 +2,7 @@
 import { ref, onMounted, watch, onUnmounted } from 'vue'
 import { fetchOrderBook, fetchRecentTrades } from '../api'
 import type { OrderBookData, TradeRecord } from '../types'
+import { wallet } from '../walletStore'
 
 const props = defineProps<{
   nodes: string[]
@@ -74,7 +75,44 @@ watch([selectedNode, selectedPair], () => { loadData() })
 let refreshTimer: number | null = null
 onMounted(() => { refreshTimer = window.setInterval(loadData, 5000) })
 onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
+
+// ── 下单区域 ──
+type OrderSide = 'BUY' | 'SELL'
+const orderSide = ref<OrderSide>('BUY')
+const orderPrice = ref('')
+const orderAmount = ref('')
+const orderLoading = ref(false)
+const orderResult = ref('')
+
+async function submitOrder() {
+  if (!wallet.connected) return alert('请先连接钱包')
+  if (!orderPrice.value || !orderAmount.value) return alert('请填写价格和数量')
+  if (!window.frostbit) return alert('请先安装 FrostBit Wallet 扩展')
+  orderLoading.value = true
+  orderResult.value = ''
+  try {
+    const [baseToken, quoteToken] = selectedPair.value.split('_')
+    await window.frostbit.sendTransaction({
+      type: 'order',
+      side: orderSide.value,
+      pair: selectedPair.value,
+      baseToken,
+      quoteToken,
+      price: orderPrice.value,
+      amount: orderAmount.value,
+    })
+    orderResult.value = `${orderSide.value === 'BUY' ? '买单' : '卖单'} 已提交！`
+    orderPrice.value = ''
+    orderAmount.value = ''
+    setTimeout(loadData, 1500)
+  } catch (e: any) {
+    orderResult.value = '错误: ' + (e.message || e)
+  } finally {
+    orderLoading.value = false
+  }
+}
 </script>
+
 
 <template>
   <div class="trading-viewport">
@@ -183,6 +221,50 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
         </div>
       </section>
     </div>
+
+    <!-- 下单区域 -->
+    <section class="panel place-order-section">
+      <div class="section-header">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        <h3>Place Order</h3>
+        <span v-if="wallet.connected" class="wallet-pill connected">
+          {{ wallet.address.slice(0,8) }}…{{ wallet.address.slice(-6) }}
+        </span>
+        <span v-else class="wallet-pill disconnected">未连接钱包</span>
+      </div>
+
+      <template v-if="!wallet.connected">
+        <div class="order-notice">请先点击右上角"连接钱包"后即可下单</div>
+      </template>
+
+      <template v-else>
+        <!-- BUY / SELL 切换 -->
+        <div class="side-tabs">
+          <button :class="['side-btn buy', { active: orderSide === 'BUY' }]" @click="orderSide = 'BUY'">BUY</button>
+          <button :class="['side-btn sell', { active: orderSide === 'SELL' }]" @click="orderSide = 'SELL'">SELL</button>
+        </div>
+
+        <div class="order-fields">
+          <div class="o-field">
+            <label>价格</label>
+            <input v-model="orderPrice" type="number" min="0" step="any" class="o-input" placeholder="0.00" />
+          </div>
+          <div class="o-field">
+            <label>数量</label>
+            <input v-model="orderAmount" type="number" min="0" step="any" class="o-input" placeholder="0.00" />
+          </div>
+        </div>
+
+        <button
+          :class="['submit-order-btn', orderSide.toLowerCase()]"
+          @click="submitOrder"
+          :disabled="orderLoading"
+        >
+          {{ orderLoading ? '提交中…' : (orderSide === 'BUY' ? '买入 ' : '卖出 ') + selectedPair.replace('_','/') }}
+        </button>
+        <div v-if="orderResult" class="order-result" :class="{ error: orderResult.startsWith('错误') }">{{ orderResult }}</div>
+      </template>
+    </section>
   </div>
 </template>
 
@@ -294,4 +376,29 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 @media (max-width: 1024px) {
   .trading-core-grid { grid-template-columns: 1fr; }
 }
+
+/* Place Order */
+.place-order-section { margin-top: 8px; }
+.wallet-pill { font-size: 0.65rem; font-weight: 700; padding: 3px 10px; border-radius: 99px; }
+.wallet-pill.connected { background: rgba(16,185,129,0.1); color: #34d399; border: 1px solid rgba(16,185,129,0.2); }
+.wallet-pill.disconnected { background: rgba(239,68,68,0.08); color: #f87171; border: 1px solid rgba(239,68,68,0.15); }
+.order-notice { font-size: 0.85rem; color: #475569; padding: 20px; text-align: center; }
+.side-tabs { display: flex; gap: 0; background: rgba(0,0,0,0.3); border-radius: 10px; padding: 4px; margin-bottom: 18px; }
+.side-btn { flex: 1; border: none; background: transparent; color: #64748b; padding: 9px; border-radius: 7px; font-size: 0.9rem; font-weight: 800; cursor: pointer; transition: all 0.2s; }
+.side-btn.buy.active { background: rgba(16,185,129,0.2); color: #10b981; }
+.side-btn.sell.active { background: rgba(239,68,68,0.15); color: #ef4444; }
+.order-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+.o-field { display: flex; flex-direction: column; gap: 6px; }
+.o-field label { font-size: 0.65rem; font-weight: 800; color: #475569; text-transform: uppercase; }
+.o-input { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; color: #fff; padding: 10px 12px; font-size: 0.9rem; outline: none; transition: border-color 0.2s; }
+.o-input:focus { border-color: rgba(99,102,241,0.5); }
+.submit-order-btn { width: 100%; padding: 13px; border: none; border-radius: 11px; font-size: 0.95rem; font-weight: 800; cursor: pointer; transition: all 0.2s; letter-spacing: 0.02em; }
+.submit-order-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.submit-order-btn.buy { background: linear-gradient(135deg,#10b981,#34d399); color: #fff; box-shadow: 0 4px 20px rgba(16,185,129,0.3); }
+.submit-order-btn.buy:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
+.submit-order-btn.sell { background: linear-gradient(135deg,#ef4444,#f87171); color: #fff; box-shadow: 0 4px 20px rgba(239,68,68,0.3); }
+.submit-order-btn.sell:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
+.order-result { margin-top: 12px; font-size: 0.8rem; color: #34d399; padding: 10px; background: rgba(16,185,129,0.08); border-radius: 9px; }
+.order-result.error { color: #f87171; background: rgba(239,68,68,0.08); }
 </style>
+

@@ -14,8 +14,11 @@ import WitnessList from './components/frost/WitnessList.vue'
 import TradingPanel from './components/TradingPanel.vue'
 import TxDetail from './components/TxDetail.vue'
 import PendingBlocksModal from './components/PendingBlocksModal.vue'
+import WalletConnector from './components/WalletConnector.vue'
+import WitnessMinerPanel from './components/WitnessMinerPanel.vue'
+import BridgePanel from './components/BridgePanel.vue'
 
-type TabType = 'overview' | 'search' | 'trading' | 'withdrawals' | 'recharges' | 'dkg'
+type TabType = 'overview' | 'search' | 'trading' | 'withdrawals' | 'recharges' | 'dkg' | 'witness_miner' | 'bridge'
 
 // Tab 状态
 const activeTab = ref<TabType>('overview')
@@ -26,6 +29,8 @@ const navigationNodes = [
   {id: 'trading' as TabType, icon: '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8 a3 3 0 1 1 -3.2 -4.8"/>', label: 'DEX Pool'},
   {id: 'withdrawals' as TabType, icon: '<path d="M3 21h18"/><path d="M3 10h18"/><path d="m5 6 7-3 7 3"/><path d="M4 10v11"/><path d="M20 10v11"/>', label: 'Withdraws'},
   {id: 'recharges' as TabType, icon: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>', label: 'Witness'},
+  {id: 'witness_miner' as TabType, icon: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>', label: 'Miner'},
+  {id: 'bridge' as TabType, icon: '<path d="M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"/><line x1="4" y1="21" x2="20" y2="21"/>', label: 'Bridge'},
   {id: 'dkg' as TabType, icon: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>', label: 'Frost DKG'}
 ]
 
@@ -229,6 +234,7 @@ onMounted(() => {
               <div class="p-dot"></div>
               <span>NETWORK OPERATIONAL</span>
            </div>
+           <WalletConnector />
         </div>
       </div>
     </header>
@@ -322,6 +328,30 @@ onMounted(() => {
             </select>
           </div>
           <DkgTimeline v-if="selectedProtocolNode" :node="selectedProtocolNode" />
+        </div>
+      </main>
+
+      <main v-else-if="activeTab === 'witness_miner'" class="p-layout protocol-mode animate-fade-in">
+        <div class="protocol-wrap">
+          <div class="p-selector">
+            <label>Witness Node Context</label>
+            <select v-model="selectedProtocolNode" class="p-select">
+              <option v-for="node in nodes" :key="node" :value="node">{{ node }}</option>
+            </select>
+          </div>
+          <WitnessMinerPanel v-if="selectedProtocolNode" :node="selectedProtocolNode" />
+        </div>
+      </main>
+
+      <main v-else-if="activeTab === 'bridge'" class="p-layout protocol-mode animate-fade-in">
+        <div class="protocol-wrap">
+          <div class="p-selector">
+            <label>Bridge Node Context</label>
+            <select v-model="selectedProtocolNode" class="p-select">
+              <option v-for="node in nodes" :key="node" :value="node">{{ node }}</option>
+            </select>
+          </div>
+          <BridgePanel v-if="selectedProtocolNode" :node="selectedProtocolNode" />
         </div>
       </main>
     </div>

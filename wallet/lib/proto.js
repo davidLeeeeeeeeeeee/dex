@@ -5,7 +5,7 @@
  * 注意：此文件在构建时被 esbuild bundle，会一并打包 protobufjs 和 data.proto 的 JSON 描述符
  */
 
-import protobuf from 'protobufjs';
+import protobuf from 'protobufjs/light.js';
 import { sign, exportPubKeyDer, toHex } from './crypto.js';
 
 // data.proto 的 JSON descriptor（由 pbjs -t json pb/data.proto 生成并内联）
@@ -82,21 +82,100 @@ export async function buildAndSignTransferTx({ fromAddress, toAddress, tokenAddr
  * txDesc 格式：{ type: 'transaction', to, tokenAddress, amount }
  */
 export async function buildAndSign(txDesc, { fromAddress, nonce, privateKey, pubKeyDer }) {
+    const base = () => {
+        const pubKeysMsg = PublicKeys().create({ keys: { 1: pubKeyDer } });
+        return BaseMessage().create({ fromAddress, nonce, publicKeys: pubKeysMsg, fee: '0' });
+    };
+    const signAndWrap = async (anyTxContent) => {
+        const draft = AnyTx().encode(AnyTx().create(anyTxContent)).finish();
+        const hashBuf = await crypto.subtle.digest('SHA-256', draft);
+        const txId = toHex(new Uint8Array(hashBuf));
+        const sig = await sign(privateKey, draft);
+        // 设置 txId 和 signature
+        Object.values(anyTxContent)[0].base.txId = txId;
+        Object.values(anyTxContent)[0].base.signature = sig;
+        return AnyTx().encode(AnyTx().create(anyTxContent)).finish();
+    };
+
     switch (txDesc.type) {
         case 'transaction':
             return buildAndSignTransferTx({
-                fromAddress,
-                toAddress: txDesc.to,
-                tokenAddress: txDesc.tokenAddress,
-                amount: txDesc.amount,
-                nonce,
-                privateKey,
-                pubKeyDer,
+                fromAddress, toAddress: txDesc.to, tokenAddress: txDesc.tokenAddress,
+                amount: txDesc.amount, nonce, privateKey, pubKeyDer,
             });
+
+        case 'order': {
+            const OrderTx = () => root().lookupType('pb.OrderTx');
+            const OrderOp = root().lookupEnum('pb.OrderOp');
+            const OrderSide = root().lookupEnum('pb.OrderSide');
+            const tx = OrderTx().create({
+                base: base(),
+                baseToken: txDesc.baseToken,
+                quoteToken: txDesc.quoteToken,
+                op: OrderOp.values.ADD,
+                amount: txDesc.amount,
+                price: txDesc.price,
+                side: txDesc.side === 'SELL' ? OrderSide.values.SELL : OrderSide.values.BUY,
+            });
+            return signAndWrap({ orderTx: tx });
+        }
+
+        case 'witness_vote': {
+            const WitnessVoteTx = () => root().lookupType('pb.WitnessVoteTx');
+            const WitnessVote = () => root().lookupType('pb.WitnessVote');
+            const WitnessVoteType = root().lookupEnum('pb.WitnessVoteType');
+            const voteType = txDesc.vote === 'FAIL' ? WitnessVoteType.values.VOTE_FAIL : WitnessVoteType.values.VOTE_PASS;
+            const tx = WitnessVoteTx().create({
+                base: base(),
+                vote: WitnessVote().create({ requestId: txDesc.requestId, voteType }),
+            });
+            return signAndWrap({ witnessVoteTx: tx });
+        }
+
+        case 'witness_challenge': {
+            const WitnessChallengeTx = () => root().lookupType('pb.WitnessChallengeTx');
+            const tx = WitnessChallengeTx().create({
+                base: base(),
+                requestId: txDesc.requestId,
+                stakeAmount: txDesc.stakeAmount || '100',
+                reason: txDesc.reason || '',
+                evidence: txDesc.evidence || '',
+            });
+            return signAndWrap({ witnessChallengeTx: tx });
+        }
+
+        case 'recharge_request': {
+            const WitnessRequestTx = () => root().lookupType('pb.WitnessRequestTx');
+            const tx = WitnessRequestTx().create({
+                base: base(),
+                nativeChain: txDesc.chain,
+                nativeTxHash: txDesc.nativeTxHash,
+                tokenAddress: txDesc.tokenAddress || '',
+                amount: txDesc.amount || '',
+                receiverAddress: txDesc.receiverAddress,
+                memo: txDesc.memo || '',
+                rechargeFee: txDesc.rechargeFee || '0',
+            });
+            return signAndWrap({ witnessRequestTx: tx });
+        }
+
+        case 'frost_withdraw': {
+            const FrostWithdrawRequestTx = () => root().lookupType('pb.FrostWithdrawRequestTx');
+            const tx = FrostWithdrawRequestTx().create({
+                base: base(),
+                chain: txDesc.chain,
+                asset: txDesc.asset,
+                to: txDesc.toAddress,
+                amount: txDesc.amount,
+            });
+            return signAndWrap({ frostWithdrawRequestTx: tx });
+        }
+
         default:
             throw new Error(`Unsupported tx type: ${txDesc.type}`);
     }
 }
+
 
 /** 解析 AnyTx 字节（调试用） */
 export function decodeAnyTx(bytes) {

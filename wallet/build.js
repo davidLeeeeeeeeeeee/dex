@@ -45,6 +45,15 @@ const buildOptions = [
         target: 'chrome120',
         sourcemap: isWatch ? 'inline' : false,
     },
+    {
+        entryPoints: ['content/inpage.js'],
+        bundle: true,
+        outdir: `${OUT}/content`,
+        format: 'iife',
+        platform: 'browser',
+        target: 'chrome120',
+        sourcemap: isWatch ? 'inline' : false,
+    },
 ];
 
 async function main() {

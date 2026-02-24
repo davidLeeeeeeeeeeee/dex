@@ -4,12 +4,39 @@ import mermaid from 'mermaid'
 import { fetchWitnessRequests } from '../../api'
 import type { WitnessRequest } from '../../types'
 import ProtocolModal from './ProtocolModal.vue'
+import { wallet } from '../../walletStore'
 
 const props = defineProps<{
   node: string
 }>()
 
 const emit = defineEmits(['select-tx'])
+
+// 挑战相关状态
+const challengingId = ref('')
+const challengeResult = ref<Record<string, string>>({})
+
+async function submitChallenge(req: WitnessRequest) {
+  if (!window.frostbit) return alert('请先安装 FrostBit Wallet 扩展')
+  if (!wallet.connected) return alert('请先连接钱包后再发起挑战')
+  const rid = req.request_id || ''
+  challengingId.value = rid
+  challengeResult.value[rid] = ''
+  try {
+    await window.frostbit.sendTransaction({
+      type: 'witness_challenge',
+      requestId: rid,
+      stakeAmount: '100',
+      reason: '用户发起挑战',
+    })
+    challengeResult.value[rid] = '挑战已提交！'
+    setTimeout(loadRequests, 2000)
+  } catch (e: any) {
+    challengeResult.value[rid] = '错误: ' + (e.message || e)
+  } finally {
+    challengingId.value = ''
+  }
+}
 
 const requests = ref<WitnessRequest[]>([])
 const loading = ref(false)
@@ -367,10 +394,26 @@ const handleSelectTx = (txId: string) => {
               <div class="v-dot abstain" v-if="req.abstain_count"></div>
               <span v-if="req.abstain_count">{{ req.abstain_count }} Abstain</span>
             </div>
-            <div class="details-toggle">
-              Trace Breakdown
-              <svg :class="{ 'rotated': expandedRequests.has(req.request_id || '') }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
+            <div style="display:flex;align-items:center;gap:12px">
+              <!-- 挑战按钮：仅在挑战期显示 -->
+              <button
+                v-if="req.status && req.status.includes('CHALLENGE_PERIOD')"
+                class="challenge-btn"
+                :disabled="challengingId === req.request_id"
+                @click.stop="submitChallenge(req)"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                {{ challengingId === req.request_id ? '提交中…' : '🚨 发起挑战' }}
+              </button>
+              <div class="details-toggle">
+                Trace Breakdown
+                <svg :class="{ 'rotated': expandedRequests.has(req.request_id || '') }" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
+              </div>
             </div>
+          </div>
+          <!-- 挑战结果提示 -->
+          <div v-if="challengeResult[req.request_id || '']" class="challenge-result" :class="{ error: challengeResult[req.request_id || '']?.startsWith('错误') }">
+            {{ challengeResult[req.request_id || ''] }}
           </div>
         </div>
 
@@ -804,6 +847,19 @@ const handleSelectTx = (txId: string) => {
 /* Transitions */
 .expand-enter-active, .expand-leave-active { transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1); max-height: 1000px; overflow: hidden; }
 .expand-enter-from, .expand-leave-to { max-height: 0; opacity: 0; }
+
+.challenge-btn {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.7rem; font-weight: 800; color: #fbbf24;
+  background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.25);
+  padding: 4px 12px; border-radius: 8px; cursor: pointer; transition: all 0.2s;
+  white-space: nowrap;
+}
+.challenge-btn:hover:not(:disabled) { background: #f59e0b; color: #111; }
+.challenge-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.challenge-result { font-size: 0.75rem; color: #34d399; padding: 6px 12px; background: rgba(16,185,129,0.08); border-radius: 8px; margin-top: 8px; }
+.challenge-result.error { color: #f87171; background: rgba(239,68,68,0.08); }
+
 
 .empty-state { text-align: center; padding: 80px 20px; color: #64748b; }
 .empty-icon { margin-bottom: 16px; opacity: 0.5; }
