@@ -14,7 +14,7 @@ import {
     saveKeystore, loadKeystore, hasKeystore, clearKeystore,
     saveImportedKeys, loadImportedAccounts, hasImportedKeys,
 } from '../lib/keystore.js';
-import { buildAndSign } from '../lib/proto.js';
+import { buildAndSign, decodeAnyTx } from '../lib/proto.js';
 import { getAccount, getAccountBalances, sendTx, getTxReceipt } from '../lib/rpc.js';
 import { toBase64 } from '../lib/crypto.js';
 
@@ -30,6 +30,12 @@ function requireUnlocked() {
 
 function selectedAccount() {
     return _session.accounts[_session.selectedIndex];
+}
+
+function readAccountNonce(accountInfo) {
+    if (typeof accountInfo?.nonce === 'number') return accountInfo.nonce;
+    if (typeof accountInfo?.account?.nonce === 'number') return accountInfo.account.nonce;
+    return 0;
 }
 
 // ─── 消息处理 ────────────────────────────────────────────────────────────────
@@ -203,13 +209,23 @@ async function handleMessage(msg) {
             const acc = selectedAccount();
             const { txDesc } = msg;
             const accountInfo = await getAccount(acc.address);
-            const nonce = (accountInfo?.account?.nonce ?? 0) + 1;
+            const nonce = readAccountNonce(accountInfo) + 1;
             const txBytes = await buildAndSign(txDesc, {
                 fromAddress: acc.address, nonce,
                 privateKey: acc.privateKey, pubKeyDer: acc.pubKeyDer,
             });
-            await sendTx(txBytes);
-            return { ok: true };
+            const submitRes = await sendTx(txBytes);
+            if (submitRes?.ok !== true) throw new Error('submit tx failed');
+
+            const anyTx = decodeAnyTx(txBytes);
+            let txId = '';
+            for (const key of Object.keys(anyTx)) {
+                if (anyTx[key] && anyTx[key].base && anyTx[key].base.txId) {
+                    txId = anyTx[key].base.txId;
+                    break;
+                }
+            }
+            return { ok: true, txId };
         }
 
         // ── 签名（DApp 调用）──────────────────────────────────────────────────
@@ -219,7 +235,7 @@ async function handleMessage(msg) {
             const acc = selectedAccount();
             const { txDesc } = msg;
             const accountInfo = await getAccount(acc.address);
-            const nonce = (accountInfo?.account?.nonce ?? 0) + 1;
+            const nonce = readAccountNonce(accountInfo) + 1;
             const txBytes = await buildAndSign(txDesc, {
                 fromAddress: acc.address, nonce,
                 privateKey: acc.privateKey, pubKeyDer: acc.pubKeyDer,

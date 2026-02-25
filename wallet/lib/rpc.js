@@ -52,7 +52,9 @@ async function postJSON(path, body) {
  */
 export async function getAccount(address) {
     const node = await getDefaultNode();
-    return postJSON('/api/wallet/nonce', { node, address });
+    const res = await postJSON('/api/wallet/nonce', { node, address });
+    if (res?.error) throw new Error(res.error);
+    return res;
 }
 
 /**
@@ -75,7 +77,9 @@ export async function getAccountBalances(address) {
 export async function sendTx(anyTxBytes) {
     const node = await getDefaultNode();
     const tx = toBase64(anyTxBytes);
-    return postJSON('/api/wallet/submittx', { node, tx });
+    const res = await postJSON('/api/wallet/submittx', { node, tx });
+    if (res?.error) throw new Error(res.error);
+    return res;
 }
 
 /**

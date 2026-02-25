@@ -46,6 +46,7 @@ const sendTo = ref('')
 const sendAmount = ref('')
 const sendStatus = ref('')
 const sendError = ref('')
+const sendTxId = ref('')
 const sendLoading = ref(false)
 
 const explorerUrl = ref('http://127.0.0.1:8080')
@@ -177,13 +178,14 @@ async function lock() {
 
 // ─── 发送 ────────────────────────────────────────────────────────────────────
 async function confirmSend() {
-  sendError.value = ''; sendStatus.value = ''
+  sendError.value = ''; sendStatus.value = ''; sendTxId.value = ''
   if (!sendTo.value.trim()) return (sendError.value = '请输入接收地址')
   const amt = parseFloat(sendAmount.value)
   if (!amt || amt <= 0) return (sendError.value = '请输入有效金额')
   sendLoading.value = true
   try {
-    await bg({ type: 'SEND_TX', txDesc: { type: 'transaction', to: sendTo.value.trim(), tokenAddress: sendToken.value, amount: sendAmount.value } })
+    const res = await bg({ type: 'SEND_TX', txDesc: { type: 'transaction', to: sendTo.value.trim(), tokenAddress: sendToken.value, amount: sendAmount.value } })
+    sendTxId.value = res.txId || ''
     sendStatus.value = '✅ 交易已提交'
     sendTo.value = ''; sendAmount.value = ''
   } catch (e: any) { sendError.value = `发送失败：${e.message}` }
@@ -235,6 +237,15 @@ function shortAddr(addr: string) {
 
 function copyAddr() {
   if (address.value) navigator.clipboard.writeText(address.value)
+}
+
+function copyTxId() {
+  if (sendTxId.value) {
+    navigator.clipboard.writeText(sendTxId.value)
+    const old = sendStatus.value
+    sendStatus.value = '✅ 已复制完整 TxID'
+    setTimeout(() => { if (sendStatus.value === '✅ 已复制完整 TxID') sendStatus.value = old }, 2000)
+  }
 }
 
 function fbBalance() {
@@ -379,6 +390,10 @@ function otherBalances() {
         <input class="field-input" type="text" v-model="sendAmount" placeholder="0.00" />
         <p v-if="sendError" class="msg-error">{{ sendError }}</p>
         <p v-if="sendStatus" class="msg-success">{{ sendStatus }}</p>
+        <div v-if="sendTxId" class="hint" style="display: flex; gap: 8px; align-items: center; margin-top: -6px;">
+          <span>TxID: {{ shortAddr(sendTxId) }}</span>
+          <button class="btn-ghost" style="padding: 2px 6px; font-size: 11px; margin: 0; min-width: auto;" @click="copyTxId">复制完整 TxID</button>
+        </div>
         <button class="btn-primary mt-2" @click="confirmSend" :disabled="sendLoading">
           {{ sendLoading ? '发送中…' : '确认发送' }}
         </button>

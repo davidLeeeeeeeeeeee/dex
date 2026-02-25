@@ -138,6 +138,10 @@ func (s *server) handleWalletNonce(w http.ResponseWriter, r *http.Request) {
 	if node == "" && len(s.defaultNodes) > 0 {
 		node = s.defaultNodes[0]
 	}
+	if node == "" && s.nodeDB == nil {
+		writeJSON(w, walletNonceResponse{Address: req.Address, Error: "no node available"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
 	defer cancel()
@@ -146,8 +150,33 @@ func (s *server) handleWalletNonce(w http.ResponseWriter, r *http.Request) {
 	if node != "" {
 		protoReq := &pb.GetAccountRequest{Address: req.Address}
 		var protoResp pb.GetAccountResponse
-		if err := s.fetchProto(ctx, node, "/getaccount", protoReq, &protoResp); err == nil && protoResp.Account != nil {
-			nonce = protoResp.Account.Nonce
+		if err := s.fetchProto(ctx, node, "/getaccount", protoReq, &protoResp); err == nil {
+			if protoResp.Error != "" && !strings.Contains(strings.ToLower(protoResp.Error), "not found") {
+				writeJSON(w, walletNonceResponse{
+					Address: req.Address,
+					Error:   "failed to fetch nonce from node: " + protoResp.Error,
+				})
+				return
+			}
+			if protoResp.Account != nil {
+				nonce = protoResp.Account.Nonce
+			}
+		} else if s.nodeDB != nil {
+			if acc, localErr := localGetAccount(s.nodeDB, req.Address); localErr == nil && acc != nil {
+				nonce = acc.Nonce
+			} else {
+				writeJSON(w, walletNonceResponse{
+					Address: req.Address,
+					Error:   "failed to fetch nonce from node: " + err.Error(),
+				})
+				return
+			}
+		} else {
+			writeJSON(w, walletNonceResponse{
+				Address: req.Address,
+				Error:   "failed to fetch nonce from node: " + err.Error(),
+			})
+			return
 		}
 	} else if s.nodeDB != nil {
 		if acc, err := localGetAccount(s.nodeDB, req.Address); err == nil && acc != nil {
