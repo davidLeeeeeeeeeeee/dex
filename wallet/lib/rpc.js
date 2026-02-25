@@ -13,9 +13,24 @@ async function getExplorerUrl() {
     return (explorerUrl || 'http://127.0.0.1:8080').replace(/\/$/, '');
 }
 
+let _cachedNode = '';
+
 async function getDefaultNode() {
     const { nodeAddr } = await chrome.storage.local.get('nodeAddr');
-    return nodeAddr || '';
+    if (nodeAddr) return nodeAddr;
+    // 未手动设置时，自动从 Explorer 获取节点列表并使用第一个
+    if (_cachedNode) return _cachedNode;
+    try {
+        const base = await getExplorerUrl();
+        const res = await fetch(`${base}/api/nodes`, { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+            const data = await res.json();
+            const first = data.nodes?.[0] || '';
+            _cachedNode = first;
+            return first;
+        }
+    } catch (_) { }
+    return '';
 }
 
 async function postJSON(path, body) {

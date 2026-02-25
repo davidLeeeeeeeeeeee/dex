@@ -18,10 +18,14 @@ Use this skill when you need to quickly route a task to the right module before 
   - `cmd/main/main.go`
   - `cmd/main/node.go`
   - `cmd/main/bootstrap.go`
+  - `cmd/main/simulator.go` (local testnet traffic engine)
 - Explorer entry:
   - `cmd/explorer/main.go`
   - `cmd/explorer/syncer/syncer.go`
   - `explorer/src/App.vue`
+- Wallet entry:
+  - `wallet/background/service_worker.js`
+  - `wallet/src/App.vue`
 - Protocol definition:
   - `pb/data.proto`
 
@@ -54,7 +58,9 @@ Key files:
 | tx queue, pending, dedupe | `txpool` | `txpool/` |
 | P2P sending/retry/backoff | `sender` | `sender/` |
 | frontend explorer UI/API | `explorer` | `explorer/`, `cmd/explorer/` |
+| wallet extension, DApp sig popup | `wallet` | `wallet/` |
 | config/defaults/bootstrap params | `config` | `config/`, `cmd/main/bootstrap.go` |
+| testnet tx simulator & chaos traffic | `project_overview` | `cmd/main/simulator.go` |
 
 ## Current Notes
 

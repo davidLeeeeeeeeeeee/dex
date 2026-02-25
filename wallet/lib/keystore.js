@@ -4,17 +4,19 @@
  *
  * 推导路径：m/44'/9999'/0'/0/<index>（9999 = FrostBit coin type）
  *
- * 技术路线：
- *   1. @scure/bip32 推导 BIP-32 子节点 → 得到 32 字节 raw 私钥
- *   2. @noble/curves/p256 计算对应的公钥点 (x, y)
- *   3. 构造完整 P-256 JWK 导入 WebCrypto — 可直接用于签名和导出 spki
+ * 地址格式：P2WPKH bech32（bc1q...），与节点 DeriveBtcBech32Address 一致
+ *   Hash160(压缩公钥) → bech32 encode，hrp='bc', witness_ver=0
  */
 
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import { HDKey } from '@scure/bip32';
 import { p256 } from '@noble/curves/p256';
-import { exportPubKeyDer, toHex } from './crypto.js';
+import { secp256k1 } from '@noble/curves/secp256k1';
+import { sha256 } from '@noble/hashes/sha256';
+import { ripemd160 } from '@noble/hashes/ripemd160';
+import { bech32 } from '@scure/base';
+import { exportPubKeyDer, toHex, fromHex } from './crypto.js';
 
 const COIN_TYPE = 9999;
 const BASE_PATH = `m/44'/${COIN_TYPE}'/0'/0`;
@@ -24,22 +26,42 @@ const BASE_PATH = `m/44'/${COIN_TYPE}'/0'/0`;
 export const generateMnemonicPhrase = () => generateMnemonic(wordlist, 128);
 export const isMnemonicValid = (phrase) => validateMnemonic(phrase, wordlist);
 
-// ─── 密钥推导 ─────────────────────────────────────────────────────────────
+// ─── 地址推导（P2WPKH bech32 bc1q...）────────────────────────────────────
 
 /**
- * 从助记词推导第 index 个账户
- * @returns {Promise<{privateKey: CryptoKey, pubKeyDer: Uint8Array, address: string}>}
+ * 从 secp256k1 压缩公钥字节（33字节）派生 bc1q 地址
+ * Hash160 = RIPEMD160(SHA256(compressedPubKey))
+ * 与 Go 的 btcutil.Hash160 + NewAddressWitnessPubKeyHash 完全对齐
  */
+export function deriveAddress(compressedPubKey) {
+    const hash160 = ripemd160(sha256(compressedPubKey));
+    const words = bech32.toWords(hash160);
+    return bech32.encode('bc', new Uint8Array([0, ...words]));
+}
+
+// ─── 密钥推导（BIP-32，助记词）───────────────────────────────────────────
+
 export async function deriveAccount(phrase, index = 0) {
     const seed = mnemonicToSeedSync(phrase);
     const child = HDKey.fromMasterSeed(seed).derive(`${BASE_PATH}/${index}`);
-    const rawPriv = child.privateKey; // Uint8Array 32字节
+    return _accountFromRawPriv(child.privateKey);
+}
 
-    // 用 @noble/curves 从私钥原始字节计算 P-256 公钥点 (uncompressed: 04||x||y)
-    const pubPoint = p256.getPublicKey(rawPriv, false); // 65字节 04||x||y
-    const x = pubPoint.slice(1, 33);
-    const y = pubPoint.slice(33, 65);
+export async function deriveAccountFromRawHex(hexKey) {
+    const raw = fromHex(hexKey.trim().replace(/^0x/, ''));
+    if (raw.length !== 32) throw new Error(`Invalid key length: ${raw.length}`);
+    return _accountFromRawPriv(raw);
+}
 
+/** 内部：从 32字节私钥字节同时派生 secp256k1 地址 + P-256 签名密钥 */
+async function _accountFromRawPriv(rawPriv) {
+    // ── 地址：secp256k1 压缩公钥 → Hash160 → bc1q（与节点 Go 端完全一致）
+    const pubCompressed = secp256k1.getPublicKey(rawPriv, true); // 33字节
+
+    // ── 签名：P-256（WebCrypto 原生支持）
+    const pubUncompressed = p256.getPublicKey(rawPriv, false); // 65字节 04||x||y
+    const x = pubUncompressed.slice(1, 33);
+    const y = pubUncompressed.slice(33, 65);
     const toB64u = (buf) => btoa(String.fromCharCode(...buf))
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 
@@ -55,24 +77,16 @@ export async function deriveAccount(phrase, index = 0) {
     }, ALGO, true, ['verify']);
 
     const pubKeyDer = await exportPubKeyDer(publicKey);
-    const address = deriveAddress(pubKeyDer);
-    return { privateKey, pubKeyDer, address };
+    const address = deriveAddress(pubCompressed);
+    return { privateKey, pubKeyDer, rawPriv, address };
 }
 
-/**
- * 从公钥 spki DER 字节派生地址
- * 取未压缩点的 x 分量前 20 字节，以 0x 为前缀
- */
-export function deriveAddress(pubKeyDer) {
-    const point = pubKeyDer.slice(-65); // 04 || x(32) || y(32)
-    return '0x' + toHex(point.slice(1, 21));
-}
-
-// ─── AES-GCM 加密存储 ─────────────────────────────────────────────────────
+// ─── AES-GCM 加密存储（助记词）──────────────────────────────────────────
 
 const STORAGE_KEY = 'frostbit_keystore';
+const IMPORTED_KEY = 'frostbit_imported_keys';
 
-export async function saveKeystore(phrase, password) {
+async function _aesEncrypt(plaintext, password) {
     const enc = new TextEncoder();
     const km = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
     const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -81,18 +95,11 @@ export async function saveKeystore(phrase, password) {
         km, { name: 'AES-GCM', length: 256 }, false, ['encrypt']
     );
     const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, enc.encode(phrase));
-    await chrome.storage.local.set({
-        [STORAGE_KEY]: {
-            salt: Array.from(salt), iv: Array.from(iv),
-            ct: Array.from(new Uint8Array(ct)), version: 1,
-        }
-    });
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, enc.encode(plaintext));
+    return { salt: Array.from(salt), iv: Array.from(iv), ct: Array.from(new Uint8Array(ct)), version: 1 };
 }
 
-export async function loadKeystore(password) {
-    const { [STORAGE_KEY]: ks } = await chrome.storage.local.get(STORAGE_KEY);
-    if (!ks) throw new Error('No keystore found');
+async function _aesDecrypt(ks, password) {
     const enc = new TextEncoder();
     const km = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
     const aesKey = await crypto.subtle.deriveKey(
@@ -105,11 +112,49 @@ export async function loadKeystore(password) {
     return new TextDecoder().decode(plain);
 }
 
+export async function saveKeystore(phrase, password) {
+    await chrome.storage.local.set({ [STORAGE_KEY]: await _aesEncrypt(phrase, password) });
+}
+
+export async function loadKeystore(password) {
+    const { [STORAGE_KEY]: ks } = await chrome.storage.local.get(STORAGE_KEY);
+    if (!ks) throw new Error('No keystore found');
+    return _aesDecrypt(ks, password);
+}
+
 export async function hasKeystore() {
     const { [STORAGE_KEY]: ks } = await chrome.storage.local.get(STORAGE_KEY);
     return !!ks;
 }
 
 export async function clearKeystore() {
-    await chrome.storage.local.remove(STORAGE_KEY);
+    await chrome.storage.local.remove([STORAGE_KEY, IMPORTED_KEY]);
+}
+
+// ─── 导入账户存储（hex 私钥列表）────────────────────────────────────────
+
+/**
+ * 将 hex 私钥数组加密保存（JSON 序列化后 AES-GCM）
+ * @param {string[]} hexKeys
+ */
+export async function saveImportedKeys(hexKeys, password) {
+    const payload = JSON.stringify(hexKeys);
+    await chrome.storage.local.set({ [IMPORTED_KEY]: await _aesEncrypt(payload, password) });
+}
+
+/**
+ * 解密还原 hex 私钥数组，再派生账户
+ * @returns {Promise<Array>} 账户对象数组
+ */
+export async function loadImportedAccounts(password) {
+    const { [IMPORTED_KEY]: ks } = await chrome.storage.local.get(IMPORTED_KEY);
+    if (!ks) return [];
+    const json = await _aesDecrypt(ks, password);
+    const hexKeys = JSON.parse(json);
+    return Promise.all(hexKeys.map(k => deriveAccountFromRawHex(k)));
+}
+
+export async function hasImportedKeys() {
+    const { [IMPORTED_KEY]: ks } = await chrome.storage.local.get(IMPORTED_KEY);
+    return !!ks;
 }

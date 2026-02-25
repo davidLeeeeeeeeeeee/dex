@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"dex/pb"
+	"dex/utils"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -40,15 +41,34 @@ func (v *TestValidator) CheckAnyTx(tx *pb.AnyTx) error {
 	return nil
 }
 
-// generatePrivateKeys 生成指定数量的私钥 (确定性生成，方便测试)
+// generatePrivateKeys 生成指定数量的私钥 (确定性生成)，并将私钥+地址保存到 miner_keys.txt
 func generatePrivateKeys(count int) []string {
 	keys := make([]string, count)
 	for i := 0; i < count; i++ {
-		seed := fmt.Sprintf("node_seed_%d", i)
-		hash := sha256.Sum256([]byte(seed))
+		hash := sha256.Sum256([]byte(fmt.Sprintf("node_seed_%d", i)))
 		keys[i] = hex.EncodeToString(hash[:])
 	}
+	savePrivateKeysToFile(keys)
 	return keys
+}
+
+// savePrivateKeysToFile 将私钥和对应 bc1 地址写入 miner_keys.txt
+func savePrivateKeysToFile(keys []string) {
+	var sb strings.Builder
+	for i, k := range keys {
+		addr := ""
+		if privK, err := utils.ParseSecp256k1PrivateKey(k); err == nil {
+			if a, err := utils.DeriveBtcBech32Address(privK); err == nil {
+				addr = a
+			}
+		}
+		sb.WriteString(fmt.Sprintf("# index: %d  address: %s\n%s\n", i, addr, k))
+	}
+	if err := os.WriteFile("miner_keys.txt", []byte(sb.String()), 0600); err != nil {
+		fmt.Printf("⚠️  Failed to save miner_keys.txt: %v\n", err)
+	} else {
+		fmt.Printf("🔑 Saved %d miner keys to miner_keys.txt\n", len(keys))
+	}
 }
 
 // 生成自签名证书

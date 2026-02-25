@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
 // ─── Chrome 消息通信 ──────────────────────────────────────────────────────────
 function bg(msg: any): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -19,9 +21,11 @@ const setupTab = ref<'create' | 'import'>('create')
 
 // ─── 全局状态 ─────────────────────────────────────────────────────────────────
 const address = ref('')
+const accounts = ref<string[]>([])
 const balances = ref<Record<string, any>>({})
 const loadingBalance = ref(false)
 const generatedMnemonic = ref('')
+const showAccountList = ref(false)
 
 // ─── 表单字段 ─────────────────────────────────────────────────────────────────
 const unlockPassword = ref('')
@@ -33,6 +37,9 @@ const setupError = ref('')
 
 const importMnemonic = ref('')
 const importPassword = ref('')
+const importFileStatus = ref('')
+const importFileError = ref('')
+const importKeysText = ref('')
 
 const sendToken = ref('FB')
 const sendTo = ref('')
@@ -120,14 +127,46 @@ async function importWallet() {
 async function loadMain() {
   loadingBalance.value = true
   try {
-    const { accounts } = await bg({ type: 'GET_ACCOUNTS' })
-    address.value = accounts?.[0] ?? ''
+    const res = await bg({ type: 'GET_ACCOUNTS' })
+    accounts.value = res.accounts ?? []
+    // 保留当前选中的地址；只有地址不在列表中时才切到第 0 个
+    if (!address.value || !accounts.value.includes(address.value))
+      address.value = accounts.value[0] ?? ''
     if (!address.value) return
-    const res = await bg({ type: 'GET_BALANCES', address: address.value })
-    balances.value = res.balances ?? {}
+    const bal = await bg({ type: 'GET_BALANCES', address: address.value })
+    balances.value = bal.balances ?? {}
   } catch (e: any) {
     if (e.message.includes('locked')) { page.value = 'lock'; return }
   } finally { loadingBalance.value = false }
+}
+
+async function selectAccount(index: number) {
+  await bg({ type: 'SELECT_ACCOUNT', index })
+  address.value = accounts.value[index]
+  showAccountList.value = false
+  loadingBalance.value = true
+  try {
+    const bal = await bg({ type: 'GET_BALANCES', address: address.value })
+    balances.value = bal.balances ?? {}
+  } finally { loadingBalance.value = false }
+}
+
+// ─── 从文本批量导入账户 ──────────────────────────────────────────────────────
+async function importAccountsFromText() {
+  importFileStatus.value = ''
+  importFileError.value = ''
+  const hexKeys = importKeysText.value.split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#') && /^[0-9a-fA-F]{64}$/.test(l))
+  if (!hexKeys.length) { importFileError.value = '未找到有效私钥，请粘贴 miner_keys.txt 内容'; return }
+  if (!importPassword.value) { importFileError.value = '请先输入钱包密码'; return }
+  try {
+    const res = await bg({ type: 'IMPORT_ACCOUNTS_FILE', hexKeys, password: importPassword.value })
+    importKeysText.value = ''
+    importFileStatus.value = `✅ 成功导入 ${res.added.length} 个账户`
+    await loadMain()
+    page.value = 'main'
+  } catch (e: any) { importFileError.value = `导入失败：${e.message}` }
 }
 
 async function lock() {
@@ -263,17 +302,35 @@ function otherBalances() {
         <input class="field-input" type="password" v-model="importPassword" placeholder="至少8位" />
         <p v-if="setupError" class="msg-error">{{ setupError }}</p>
         <button class="btn-primary mt-2" @click="importWallet">导入钱包</button>
+        <div class="divider">或</div>
+        <label class="field-label">批量导入账户（粘贴 miner_keys.txt 内容）</label>
+        <p class="hint">将 miner_keys.txt 内容全部复制后粘贴到下方，支持 # 注释行</p>
+        <textarea class="field-input" rows="4" v-model="importKeysText" placeholder="# index: 0  address: bc1q...&#10;aabb...hex...&#10;# index: 1..." style="font-family: monospace; font-size: 11px;"></textarea>
+        <button class="btn-secondary mt-2" @click="importAccountsFromText">📥 导入账户</button>
+        <p v-if="importFileError" class="msg-error">{{ importFileError }}</p>
+        <p v-if="importFileStatus" class="msg-success">{{ importFileStatus }}</p>
       </div>
     </div>
 
     <!-- ── 主页 ───────────────────────────────────────────────── -->
     <div v-else-if="page === 'main'" class="page">
       <nav class="top-nav">
-        <div class="addr-row" @click="copyAddr" title="点击复制地址">
-          <code class="addr-code">{{ shortAddr(address) }}</code>
-          <span class="copy-icon">⎘</span>
+        <div class="addr-dropdown">
+          <div class="addr-row" @click="showAccountList = !showAccountList" title="切换账户">
+            <code class="addr-code">{{ shortAddr(address) }}</code>
+            <span class="copy-icon">{{ showAccountList ? '▲' : '▼' }}</span>
+          </div>
+          <div v-if="showAccountList" class="account-list">
+            <div v-for="(addr, idx) in accounts" :key="addr"
+              :class="['account-item', addr === address && 'account-item-active']"
+              @click="selectAccount(idx)">
+              <code>{{ shortAddr(addr) }}</code>
+              <span v-if="addr === address" class="checkmark">✓</span>
+            </div>
+          </div>
         </div>
         <div class="nav-actions">
+          <button class="btn-icon" @click="copyAddr" title="复制地址">⎘</button>
           <button class="btn-icon" @click="openSettings" title="设置">⚙</button>
           <button class="btn-icon" @click="lock" title="锁定">🔒</button>
         </div>
@@ -317,7 +374,7 @@ function otherBalances() {
           <option value="USDT">USDT — Tether USD</option>
         </select>
         <label class="field-label">接收地址</label>
-        <input class="field-input" type="text" v-model="sendTo" placeholder="0x..." />
+        <input class="field-input" type="text" v-model="sendTo" placeholder="bc1q..." />
         <label class="field-label">金额</label>
         <input class="field-input" type="text" v-model="sendAmount" placeholder="0.00" />
         <p v-if="sendError" class="msg-error">{{ sendError }}</p>
@@ -677,4 +734,49 @@ textarea.field-input { resize: none; line-height: 1.5; }
 }
 .mt-2 { margin-top: 4px; }
 .mt-3 { margin-top: 6px; }
+
+/* ── Account Dropdown ────────────────────────────────────── */
+.addr-dropdown { position: relative; }
+
+.account-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: #1c2128;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  min-width: 200px;
+  z-index: 100;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+
+.account-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #8b949e;
+  font-family: 'JetBrains Mono', monospace;
+  transition: background 0.12s;
+}
+.account-item:hover { background: #21262d; color: #e6edf3; }
+.account-item-active { color: #58a6ff; }
+.checkmark { color: #3fb950; font-weight: 700; }
+
+/* ── File Input ────────────────────────────────────────── */
+.file-input {
+  background: #21262d;
+  border: 1px dashed #30363d;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #8b949e;
+  font-size: 12px;
+  cursor: pointer;
+  width: 100%;
+  transition: border-color 0.15s;
+}
+.file-input:hover { border-color: #58a6ff; }
 </style>

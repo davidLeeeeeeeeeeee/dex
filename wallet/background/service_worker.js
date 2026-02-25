@@ -2,18 +2,17 @@
  * background/service_worker.js
  * Chrome Extension Service Worker — 密钥管理中枢 & 消息路由
  *
- * 所有涉及私钥的操作在此处执行，popup 和 content_script 通过
- * chrome.runtime.sendMessage 与其通信。
- *
  * 会话内存（内存，不落盘）：
- *   _session.phrase   解锁后的明文助记词
- *   _session.accounts [{address, privateKey(CryptoKey), pubKeyDer}]
- *   _session.unlocked bool
+ *   _session.phrase       解锁后的明文助记词（可为 null，纯导入账户时）
+ *   _session.accounts     [{address, privateKey(CryptoKey), pubKeyDer, rawPriv}]
+ *   _session.unlocked     bool
+ *   _session.selectedIndex int
  */
 
 import {
-    generateMnemonicPhrase, isMnemonicValid, deriveAccount,
+    generateMnemonicPhrase, isMnemonicValid, deriveAccount, deriveAccountFromRawHex,
     saveKeystore, loadKeystore, hasKeystore, clearKeystore,
+    saveImportedKeys, loadImportedAccounts, hasImportedKeys,
 } from '../lib/keystore.js';
 import { buildAndSign } from '../lib/proto.js';
 import { getAccount, getAccountBalances, sendTx, getTxReceipt } from '../lib/rpc.js';
@@ -40,25 +39,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (sender.tab && (msg.type === 'SEND_TX' || msg.type === 'SIGN_TX')) {
         const reqId = ++_reqIdCounter;
         _session.pendingRequests.push({
-            id: reqId,
-            type: msg.type,
-            txDesc: msg.txDesc,
-            reply,
-            url: sender.tab.url || sender.url
+            id: reqId, type: msg.type, txDesc: msg.txDesc,
+            reply, url: sender.tab.url || sender.url
         });
-
-        chrome.windows.create({
-            url: 'popup/index.html',
-            type: 'popup',
-            width: 360,
-            height: 600,
-            focused: true
-        });
-        return true; // Wait for async reply
+        chrome.windows.create({ url: 'popup/index.html', type: 'popup', width: 360, height: 600, focused: true });
+        return true;
     }
-
     handleMessage(msg).then(reply).catch(e => reply({ error: e.message }));
-    return true; // 异步应答
+    return true;
 });
 
 async function handleMessage(msg) {
@@ -71,33 +59,25 @@ async function handleMessage(msg) {
         case 'APPROVE_REQUEST': {
             const reqIdx = _session.pendingRequests.findIndex(r => r.id === msg.id);
             if (reqIdx === -1) throw new Error('Request not found');
-            const req = _session.pendingRequests[reqIdx];
-            _session.pendingRequests.splice(reqIdx, 1);
-
+            const req = _session.pendingRequests.splice(reqIdx, 1)[0];
             try {
-                // 内部直接调用，跳过 tab 检查
                 const res = await handleMessage({ type: req.type, txDesc: req.txDesc });
                 req.reply(res);
                 return { ok: true };
-            } catch (e) {
-                req.reply({ error: e.message });
-                throw e;
-            }
+            } catch (e) { req.reply({ error: e.message }); throw e; }
         }
 
         case 'REJECT_REQUEST': {
             const reqIdx = _session.pendingRequests.findIndex(r => r.id === msg.id);
             if (reqIdx === -1) throw new Error('Request not found');
-            const req = _session.pendingRequests[reqIdx];
-            _session.pendingRequests.splice(reqIdx, 1);
-            req.reply({ error: 'User rejected the request' });
+            _session.pendingRequests.splice(reqIdx, 1)[0].reply({ error: 'User rejected the request' });
             return { ok: true };
         }
 
         // ── 钱包初始化 ──────────────────────────────────────────────────────────
 
         case 'HAS_WALLET':
-            return { has: await hasKeystore() };
+            return { has: (await hasKeystore()) || (await hasImportedKeys()) };
 
         case 'GENERATE_MNEMONIC':
             return { mnemonic: generateMnemonicPhrase() };
@@ -106,7 +86,6 @@ async function handleMessage(msg) {
             const { mnemonic, password } = msg;
             if (!isMnemonicValid(mnemonic)) throw new Error('Invalid mnemonic');
             await saveKeystore(mnemonic, password);
-            // 自动解锁
             _session.phrase = mnemonic;
             _session.accounts = [await deriveAccount(mnemonic, 0)];
             _session.selectedIndex = 0;
@@ -128,11 +107,18 @@ async function handleMessage(msg) {
         // ── 锁定/解锁 ──────────────────────────────────────────────────────────
 
         case 'UNLOCK': {
-            const phrase = await loadKeystore(msg.password); // 密码错误会抛出
-            _session.phrase = phrase;
-            _session.accounts = [await deriveAccount(phrase, 0)];
+            const hasMain = await hasKeystore();
+            if (hasMain) {
+                const phrase = await loadKeystore(msg.password);
+                _session.phrase = phrase;
+                _session.accounts = [await deriveAccount(phrase, 0)];
+            }
+            // 加载导入账户（这里卋 password 就是导入时用的密码）
+            const imported = await loadImportedAccounts(msg.password);
+            _session.accounts.push(...imported);
             _session.selectedIndex = 0;
             _session.unlocked = true;
+            if (_session.accounts.length === 0) throw new Error('No accounts found for this password');
             return { address: _session.accounts[0].address };
         }
 
@@ -153,6 +139,7 @@ async function handleMessage(msg) {
 
         case 'ADD_ACCOUNT': {
             requireUnlocked();
+            if (!_session.phrase) throw new Error('No mnemonic (imported-key wallet cannot add derived accounts)');
             const idx = _session.accounts.length;
             const acc = await deriveAccount(_session.phrase, idx);
             _session.accounts.push(acc);
@@ -165,6 +152,41 @@ async function handleMessage(msg) {
                 throw new Error('Invalid account index');
             _session.selectedIndex = msg.index;
             return { address: selectedAccount().address };
+
+        /**
+         * 批量从 hex 私钥列表导入账户
+         * 无需预先解锁；导入后直接建立会话
+         */
+        case 'IMPORT_ACCOUNTS_FILE': {
+            const { hexKeys, password } = msg;
+            if (!Array.isArray(hexKeys) || hexKeys.length === 0)
+                throw new Error('No keys provided');
+
+            // 派生新账户
+            const existing = new Set(_session.unlocked ? _session.accounts.map(a => a.address) : []);
+            const newAccounts = [];
+            for (const k of hexKeys) {
+                const acc = await deriveAccountFromRawHex(k);
+                if (!existing.has(acc.address)) { existing.add(acc.address); newAccounts.push(acc); }
+            }
+
+            // 合并并保存全部 imported keys
+            const allImportedAccounts = (_session.unlocked ? _session.accounts.filter(a => a.rawPriv) : []).concat(newAccounts);
+            const allHex = allImportedAccounts.map(a =>
+                Array.from(a.rawPriv).map(b => b.toString(16).padStart(2, '0')).join('')
+            );
+            await saveImportedKeys(allHex, password);
+
+            // 建立/更新会话
+            if (_session.unlocked) {
+                _session.accounts.push(...newAccounts);
+            } else {
+                _session.accounts = newAccounts;
+                _session.selectedIndex = 0;
+                _session.unlocked = true;
+            }
+            return { added: newAccounts.map(a => a.address) };
+        }
 
         // ── 余额查询 ───────────────────────────────────────────────────────────
 
@@ -180,20 +202,13 @@ async function handleMessage(msg) {
             requireUnlocked();
             const acc = selectedAccount();
             const { txDesc } = msg;
-
-            // 拉取最新 nonce
             const accountInfo = await getAccount(acc.address);
             const nonce = (accountInfo?.account?.nonce ?? 0) + 1;
-
             const txBytes = await buildAndSign(txDesc, {
-                fromAddress: acc.address,
-                nonce,
-                privateKey: acc.privateKey,
-                pubKeyDer: acc.pubKeyDer,
+                fromAddress: acc.address, nonce,
+                privateKey: acc.privateKey, pubKeyDer: acc.pubKeyDer,
             });
-
             await sendTx(txBytes);
-            // txId 已在 buildAndSign 内计算并嵌入 base，此处简单返回已发送
             return { ok: true };
         }
 
@@ -206,10 +221,8 @@ async function handleMessage(msg) {
             const accountInfo = await getAccount(acc.address);
             const nonce = (accountInfo?.account?.nonce ?? 0) + 1;
             const txBytes = await buildAndSign(txDesc, {
-                fromAddress: acc.address,
-                nonce,
-                privateKey: acc.privateKey,
-                pubKeyDer: acc.pubKeyDer,
+                fromAddress: acc.address, nonce,
+                privateKey: acc.privateKey, pubKeyDer: acc.pubKeyDer,
             });
             return { signedTx: toBase64(txBytes) };
         }
