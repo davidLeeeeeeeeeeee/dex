@@ -32,9 +32,9 @@
         version: '0.1.0',
 
         requestAccounts: async () => {
-            const res = await send({ type: 'GET_ACCOUNTS' });
-            if (!res?.accounts?.length) throw new Error('钱包未解锁，请先点击扩展图标并解锁');
-            return res.accounts;
+            const res = await send({ type: 'GET_SELECTED_ACCOUNT' });
+            if (!res?.address) throw new Error('钱包未解锁，请先点击扩展图标并解锁');
+            return [res.address];
         },
 
         getAccounts: async () => {

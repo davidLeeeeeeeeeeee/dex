@@ -24,8 +24,34 @@ const _session = { unlocked: false, phrase: null, accounts: [], selectedIndex: 0
 
 let _reqIdCounter = 0;
 
-function requireUnlocked() {
-    if (!_session.unlocked) throw new Error('Wallet is locked');
+async function tryRehydrateSession() {
+    if (_session.unlocked) return true;
+    const { sessionPassword } = await chrome.storage.session.get('sessionPassword');
+    if (!sessionPassword) return false;
+
+    try {
+        const hasMain = await hasKeystore();
+        if (hasMain) {
+            const phrase = await loadKeystore(sessionPassword);
+            _session.phrase = phrase;
+            _session.accounts = [await deriveAccount(phrase, 0)];
+        } else {
+            _session.phrase = null;
+            _session.accounts = [];
+        }
+        const imported = await loadImportedAccounts(sessionPassword);
+        _session.accounts.push(...imported);
+        _session.selectedIndex = 0;
+        _session.unlocked = true;
+        return true;
+    } catch (e) {
+        await chrome.storage.session.remove('sessionPassword');
+        return false;
+    }
+}
+
+async function requireUnlocked() {
+    if (!(await tryRehydrateSession())) throw new Error('Wallet is locked');
 }
 
 function selectedAccount() {
@@ -41,8 +67,15 @@ function readAccountNonce(accountInfo) {
 // ─── 消息处理 ────────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+    // 每次收到请求时重置休眠锁定倒计时（实现“真实的无操作 5 分钟后锁定”）
+    chrome.storage.session.get('sessionPassword').then(({ sessionPassword }) => {
+        if (sessionPassword) {
+            chrome.alarms.create('auto_lock', { delayInMinutes: 5 });
+        }
+    });
+
     // 拦截来自 DApp 的交易请求
-    if (sender.tab && (msg.type === 'SEND_TX' || msg.type === 'SIGN_TX')) {
+    if (sender.tab && (msg.type === 'SEND_TX' || msg.type === 'SIGN_TX' || msg.type === 'SIGN_MESSAGE')) {
         const reqId = ++_reqIdCounter;
         _session.pendingRequests.push({
             id: reqId, type: msg.type, txDesc: msg.txDesc,
@@ -96,6 +129,8 @@ async function handleMessage(msg) {
             _session.accounts = [await deriveAccount(mnemonic, 0)];
             _session.selectedIndex = 0;
             _session.unlocked = true;
+            await chrome.storage.session.set({ sessionPassword: password });
+            chrome.alarms.create('auto_lock', { delayInMinutes: 5 });
             return { address: _session.accounts[0].address };
         }
 
@@ -107,6 +142,8 @@ async function handleMessage(msg) {
             _session.accounts = [await deriveAccount(mnemonic, 0)];
             _session.selectedIndex = 0;
             _session.unlocked = true;
+            await chrome.storage.session.set({ sessionPassword: password });
+            chrome.alarms.create('auto_lock', { delayInMinutes: 5 });
             return { address: _session.accounts[0].address };
         }
 
@@ -118,6 +155,9 @@ async function handleMessage(msg) {
                 const phrase = await loadKeystore(msg.password);
                 _session.phrase = phrase;
                 _session.accounts = [await deriveAccount(phrase, 0)];
+            } else {
+                _session.phrase = null;
+                _session.accounts = [];
             }
             // 加载导入账户（这里卋 password 就是导入时用的密码）
             const imported = await loadImportedAccounts(msg.password);
@@ -125,6 +165,8 @@ async function handleMessage(msg) {
             _session.selectedIndex = 0;
             _session.unlocked = true;
             if (_session.accounts.length === 0) throw new Error('No accounts found for this password');
+            await chrome.storage.session.set({ sessionPassword: msg.password });
+            chrome.alarms.create('auto_lock', { delayInMinutes: 5 });
             return { address: _session.accounts[0].address };
         }
 
@@ -132,19 +174,25 @@ async function handleMessage(msg) {
             _session.unlocked = false;
             _session.phrase = null;
             _session.accounts = [];
+            await chrome.storage.session.remove('sessionPassword');
+            chrome.alarms.clear('auto_lock');
             return { ok: true };
 
         case 'IS_UNLOCKED':
-            return { unlocked: _session.unlocked };
+            return { unlocked: await tryRehydrateSession() };
 
         // ── 账户 ───────────────────────────────────────────────────────────────
 
         case 'GET_ACCOUNTS':
-            requireUnlocked();
+            await requireUnlocked();
             return { accounts: _session.accounts.map(a => a.address) };
 
+        case 'GET_SELECTED_ACCOUNT':
+            await requireUnlocked();
+            return { address: selectedAccount().address };
+
         case 'ADD_ACCOUNT': {
-            requireUnlocked();
+            await requireUnlocked();
             if (!_session.phrase) throw new Error('No mnemonic (imported-key wallet cannot add derived accounts)');
             const idx = _session.accounts.length;
             const acc = await deriveAccount(_session.phrase, idx);
@@ -153,7 +201,7 @@ async function handleMessage(msg) {
         }
 
         case 'SELECT_ACCOUNT':
-            requireUnlocked();
+            await requireUnlocked();
             if (msg.index < 0 || msg.index >= _session.accounts.length)
                 throw new Error('Invalid account index');
             _session.selectedIndex = msg.index;
@@ -197,7 +245,7 @@ async function handleMessage(msg) {
         // ── 余额查询 ───────────────────────────────────────────────────────────
 
         case 'GET_BALANCES': {
-            requireUnlocked();
+            await requireUnlocked();
             const addr = msg.address || selectedAccount().address;
             return getAccountBalances(addr);
         }
@@ -205,7 +253,7 @@ async function handleMessage(msg) {
         // ── 转账 ───────────────────────────────────────────────────────────────
 
         case 'SEND_TX': {
-            requireUnlocked();
+            await requireUnlocked();
             const acc = selectedAccount();
             const { txDesc } = msg;
             const accountInfo = await getAccount(acc.address);
@@ -231,7 +279,7 @@ async function handleMessage(msg) {
         // ── 签名（DApp 调用）──────────────────────────────────────────────────
 
         case 'SIGN_TX': {
-            requireUnlocked();
+            await requireUnlocked();
             const acc = selectedAccount();
             const { txDesc } = msg;
             const accountInfo = await getAccount(acc.address);
@@ -244,7 +292,7 @@ async function handleMessage(msg) {
         }
 
         case 'SIGN_MESSAGE': {
-            requireUnlocked();
+            await requireUnlocked();
             const acc = selectedAccount();
             const msgBytes = new TextEncoder().encode(msg.message);
             const { sign } = await import('../lib/crypto.js');
@@ -278,6 +326,8 @@ async function handleMessage(msg) {
             _session.unlocked = false;
             _session.phrase = null;
             _session.accounts = [];
+            await chrome.storage.session.remove('sessionPassword');
+            chrome.alarms.clear('auto_lock');
             return { ok: true };
 
         default:
@@ -285,12 +335,12 @@ async function handleMessage(msg) {
     }
 }
 
-// 自动锁定：5 分钟无操作
-chrome.alarms.create('auto_lock', { periodInMinutes: 5 });
-chrome.alarms.onAlarm.addListener(a => {
-    if (a.name === 'auto_lock' && _session.unlocked) {
+// 自动锁定：无操作后触发
+chrome.alarms.onAlarm.addListener(async a => {
+    if (a.name === 'auto_lock') {
         _session.unlocked = false;
         _session.phrase = null;
         _session.accounts = [];
+        await chrome.storage.session.remove('sessionPassword');
     }
 });
