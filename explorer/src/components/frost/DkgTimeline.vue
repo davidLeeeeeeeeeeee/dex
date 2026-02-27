@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { fetchFrostDKGSessions } from '../../api'
+import type { DKGSession, DKGAssetDepositItem } from '../../types'
 import ProtocolModal from './ProtocolModal.vue'
 
 const props = defineProps<{
   node: string
 }>()
 
-const sessions = ref<any[]>([])
+const sessions = ref<DKGSession[]>([])
 const loading = ref(false)
 const error = ref('')
 
@@ -50,12 +51,40 @@ function getProgress(status: string): number {
   return map[status] || 0
 }
 
+function getAssetLabel(asset: string): string {
+  if (!asset) return 'native'
+  const normalized = asset.trim()
+  if (!normalized || normalized.toLowerCase() === 'native') return 'native'
+  if (normalized.length <= 16) return normalized
+  return `${normalized.slice(0, 8)}...${normalized.slice(-6)}`
+}
+
+function getStatusLabel(status: string): string {
+  if (!status) return 'UNKNOWN'
+  return status.replace('RECHARGE_', '').replace(/_/g, ' ')
+}
+
+function getStatusClass(status: string): string {
+  if (status === 'RECHARGE_FINALIZED') return 'ok'
+  if (status === 'RECHARGE_REJECTED' || status === 'RECHARGE_CONSENSUS_FAIL') return 'bad'
+  return 'pending'
+}
+
+function getAssetRequestCount(session: DKGSession): number {
+  if (!session.asset_deposits || session.asset_deposits.length === 0) return 0
+  return session.asset_deposits.reduce((sum, asset) => sum + asset.deposits.length, 0)
+}
+
+function isDepositFinalized(deposit: DKGAssetDepositItem): boolean {
+  return deposit.status === 'RECHARGE_FINALIZED'
+}
+
 // Modal state
 const modalVisible = ref(false)
 const modalTitle = ref('')
 const mermaidDefinition = ref('')
 
-const openFlow = (session: any) => {
+const openFlow = (session: DKGSession) => {
   modalTitle.value = `DKG Flow: ${session.chain} Vault #${session.vault_id}`
   const status = session.dkg_status
   const isActive = session.lifecycle === 'ACTIVE'
@@ -153,6 +182,14 @@ const toggleExpand = (id: string) => {
                 <span class="metric">Epoch <b>{{ s.epoch_id }}</b></span>
                 <span class="metric"><b>{{ s.dkg_threshold_t }}</b> / {{ s.dkg_n }} Members</span>
               </div>
+              <div class="asset-preview">
+                <span class="asset-preview-label">Assets | {{ getAssetRequestCount(s) }} requests</span>
+                <div v-if="s.managed_assets && s.managed_assets.length > 0" class="asset-chip-list">
+                  <span v-for="asset in s.managed_assets.slice(0, 3)" :key="asset" class="asset-chip">{{ getAssetLabel(asset) }}</span>
+                  <span v-if="s.managed_assets.length > 3" class="asset-chip more">+{{ s.managed_assets.length - 3 }}</span>
+                </div>
+                <span v-else class="asset-empty">none</span>
+              </div>
             </div>
           </div>
 
@@ -221,6 +258,34 @@ const toggleExpand = (id: string) => {
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
               </button>
             </div>
+          </div>
+
+          <!-- Asset Deposit Section -->
+          <div class="asset-section">
+            <h4 class="section-title">Managed Assets & Deposit Requests</h4>
+            <div v-if="s.asset_deposits && s.asset_deposits.length > 0" class="asset-ledger-list">
+              <div v-for="assetGroup in s.asset_deposits" :key="assetGroup.asset" class="asset-ledger-card">
+                <div class="asset-ledger-head">
+                  <span class="asset-ledger-name">{{ getAssetLabel(assetGroup.asset) }}</span>
+                  <span class="asset-ledger-count">{{ assetGroup.deposits.length }} request(s)</span>
+                </div>
+                <div class="deposit-list">
+                  <div v-for="deposit in assetGroup.deposits" :key="deposit.request_id" class="deposit-row">
+                    <div class="deposit-top">
+                      <code class="deposit-request-id">{{ deposit.request_id }}</code>
+                      <button @click.stop="copyToClipboard(deposit.request_id)" class="deposit-copy-btn">Copy</button>
+                    </div>
+                    <div class="deposit-meta">
+                      <span :class="['deposit-status', getStatusClass(deposit.status)]">{{ getStatusLabel(deposit.status) }}</span>
+                      <span v-if="deposit.amount" class="deposit-amount">{{ deposit.amount }}</span>
+                      <span v-if="deposit.finalize_height" class="deposit-height">#{{ deposit.finalize_height }}</span>
+                      <span v-if="isDepositFinalized(deposit)" class="deposit-finalized">FINALIZED</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="asset-empty-state">No deposit requests recorded for this vault yet.</div>
           </div>
 
           <!-- Committee Section -->
@@ -438,6 +503,48 @@ const toggleExpand = (id: string) => {
   display: flex;
   gap: 12px;
   margin-top: 6px;
+}
+
+.asset-preview {
+  margin-top: 10px;
+}
+
+.asset-preview-label {
+  display: block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.asset-chip-list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.asset-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.asset-chip.more {
+  color: #cbd5e1;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.asset-empty {
+  font-size: 0.68rem;
+  color: #475569;
 }
 
 .metric {
@@ -679,6 +786,139 @@ const toggleExpand = (id: string) => {
 }
 
 .icon-btn:hover { background: #10b981; color: #fff; transform: translateY(-2px); }
+
+.asset-section {
+  margin-bottom: 28px;
+}
+
+.asset-ledger-list {
+  display: grid;
+  gap: 12px;
+}
+
+.asset-ledger-card {
+  background: rgba(2, 132, 199, 0.05);
+  border: 1px solid rgba(2, 132, 199, 0.14);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.asset-ledger-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.asset-ledger-name {
+  font-size: 0.78rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: #93c5fd;
+}
+
+.asset-ledger-count {
+  font-size: 0.68rem;
+  color: #64748b;
+}
+
+.deposit-list {
+  display: grid;
+  gap: 8px;
+}
+
+.deposit-row {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.deposit-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.deposit-request-id {
+  color: #cbd5e1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  word-break: break-all;
+}
+
+.deposit-copy-btn {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(15, 23, 42, 0.8);
+  color: #cbd5e1;
+  border-radius: 8px;
+  padding: 2px 8px;
+  font-size: 0.66rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.deposit-copy-btn:hover {
+  color: #fff;
+  border-color: rgba(99, 102, 241, 0.5);
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.deposit-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.deposit-status {
+  font-size: 0.62rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px;
+  text-transform: uppercase;
+}
+
+.deposit-status.ok {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.deposit-status.pending {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.deposit-status.bad {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.deposit-amount,
+.deposit-height {
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.deposit-finalized {
+  font-size: 0.62rem;
+  color: #22c55e;
+  letter-spacing: 0.06em;
+}
+
+.asset-empty-state {
+  color: #64748b;
+  font-size: 0.82rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px dashed rgba(100, 116, 139, 0.35);
+  border-radius: 12px;
+  padding: 14px;
+}
 
 .committee-section {
   padding-top: 24px;

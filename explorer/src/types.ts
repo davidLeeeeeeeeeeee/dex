@@ -323,6 +323,18 @@ export interface WitnessInfo {
 }
 
 // DKG 会话
+export interface DKGAssetDepositItem {
+  request_id: string
+  status: string
+  amount?: string
+  finalize_height?: number
+}
+
+export interface DKGAssetDepositsByAsset {
+  asset: string
+  deposits: DKGAssetDepositItem[]
+}
+
 export interface DKGSession {
   chain: string
   vault_id: number
@@ -339,6 +351,9 @@ export interface DKGSession {
   dkg_dispute_deadline: number
   validation_status: string
   lifecycle: string
+  new_group_pubkey?: string
+  managed_assets?: string[]
+  asset_deposits?: DKGAssetDepositsByAsset[]
 }
 
 // 交易历史记录

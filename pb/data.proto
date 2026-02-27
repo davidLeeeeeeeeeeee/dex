@@ -580,6 +580,7 @@ message WitnessVoteTx {
 }
 
 // 入账请求记录
+// 是“入账流程的状态记录”，不是用户直接提交的交易类型。
 message RechargeRequest {
   string request_id = 1; // 请求ID（= WitnessRequestTx的TxId）
   string native_chain = 2; // 原生链标识

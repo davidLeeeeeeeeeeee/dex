@@ -397,7 +397,7 @@ func (s *TxSimulator) runOrderScenario() {
 		}
 
 		// 每次生成 10-20 笔订单
-		orderCount := 1 + mrand.Intn(2)
+		orderCount := 1 + mrand.Intn(3)
 		for i := 0; i < orderCount; i++ {
 			if s.paused.Load() {
 				break

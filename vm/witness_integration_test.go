@@ -140,6 +140,25 @@ func TestWitnessRequestTxHandler(t *testing.T) {
 	tokenData, _ := proto.Marshal(token)
 	db.data[keys.KeyToken("0xUSDT")] = tokenData
 
+	// 准备链上 Vault 配置和状态（按链读取 vault_count + 仅 KEY_READY/ACTIVE 可分配）
+	vaultCfg := &pb.FrostVaultConfig{
+		Chain:          "eth",
+		VaultCount:     5,
+		CommitteeSize:  4,
+		ThresholdRatio: 0.67,
+	}
+	vaultCfgData, _ := proto.Marshal(vaultCfg)
+	db.data[keys.KeyFrostVaultConfig("eth", 0)] = vaultCfgData
+	for vaultID := uint32(0); vaultID < vaultCfg.VaultCount; vaultID++ {
+		vaultState := &pb.FrostVaultState{
+			Chain:   "eth",
+			VaultId: vaultID,
+			Status:  vm.VaultStatusKeyReady,
+		}
+		vaultStateData, _ := proto.Marshal(vaultState)
+		db.data[keys.KeyFrostVaultState("eth", vaultID)] = vaultStateData
+	}
+
 	// 创建入账请求交易
 	requestTx := &pb.AnyTx{
 		Content: &pb.AnyTx_WitnessRequestTx{
