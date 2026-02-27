@@ -103,3 +103,19 @@ When core code changes, update these files together:
 3. Affected module skill files in `.agent/skills/*/SKILL.md`
 4. `.agent/docs/retrieval_index.md`
 5. `.agent/workflows/` if operational procedures change
+
+## 全网一致性工程原则（无 State Hash 强校验场景）
+
+1. 状态真源必须在 DB/StateView，内存结构（map/slice/cache）只能做性能优化，不能承载最终业务语义。
+2. 任何会影响 `WriteOp`、交易提交、索引更新、日志上报顺序的遍历都必须确定化。
+3. 禁止直接 `range map` 产出可观察结果；必须先提取 key 并排序后再处理。
+4. 批量读取接口若返回 `map`（如 `GetMany/GetKVs`），后续使用必须显式排序。
+5. VM/Handler 要满足“同输入 -> 同输出（内容与顺序）”，至少保证 `Diff` 和关键副作用顺序稳定。
+6. 新增缓存时必须注明：缓存失效/重启后不影响最终状态，只影响性能。
+7. 关键路径优先使用可重放、可审计的数据结构与流程，避免隐式随机性。
+
+## 编写与实现约束
+
+1. 用中文。`task.md` 和实现说明类 `md` 都用中文。
+2. 代码在逻辑等价前提下保持精简，能一行写完不展开成三行。
+3. 始终坚持奥卡姆剃刀原则：如无必要，勿增实体。

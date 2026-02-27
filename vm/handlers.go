@@ -4,6 +4,7 @@ import (
 	"dex/pb"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -56,6 +57,7 @@ func (r *HandlerRegistry) List() []string {
 	for k := range r.m {
 		kinds = append(kinds, k)
 	}
+	sort.Strings(kinds)
 	return kinds
 }
 

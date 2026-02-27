@@ -23,6 +23,22 @@ import { toBase64 } from '../lib/crypto.js';
 const _session = { unlocked: false, phrase: null, accounts: [], selectedIndex: 0, pendingRequests: [] };
 
 let _reqIdCounter = 0;
+const LOCAL_TX_HISTORY_KEY = 'frostbit_local_tx_history_v1';
+const LOCAL_TX_HISTORY_LIMIT = 500;
+
+async function getLocalTxHistory() {
+    const { [LOCAL_TX_HISTORY_KEY]: items } = await chrome.storage.local.get(LOCAL_TX_HISTORY_KEY);
+    return Array.isArray(items) ? items : [];
+}
+
+async function appendLocalTxHistory(item) {
+    const items = await getLocalTxHistory();
+    items.unshift(item);
+    if (items.length > LOCAL_TX_HISTORY_LIMIT) {
+        items.length = LOCAL_TX_HISTORY_LIMIT;
+    }
+    await chrome.storage.local.set({ [LOCAL_TX_HISTORY_KEY]: items });
+}
 
 async function tryRehydrateSession() {
     if (_session.unlocked) return true;
@@ -273,7 +289,29 @@ async function handleMessage(msg) {
                     break;
                 }
             }
+
+            await appendLocalTxHistory({
+                localId: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                createdAt: Date.now(),
+                fromAddress: acc.address,
+                txType: txDesc?.type || '',
+                toAddress: txDesc?.to || txDesc?.toAddress || '',
+                tokenAddress: txDesc?.tokenAddress || txDesc?.asset || '',
+                amount: txDesc?.amount || '',
+                txId,
+                txDesc,
+            });
+
             return { ok: true, txId };
+        }
+
+        case 'GET_LOCAL_TX_HISTORY': {
+            await requireUnlocked();
+            const address = msg.address || selectedAccount().address;
+            const limit = Number.isFinite(msg.limit) ? Math.max(1, Math.floor(msg.limit)) : 200;
+            const all = await getLocalTxHistory();
+            const filtered = all.filter(item => item?.fromAddress === address);
+            return { items: filtered.slice(0, limit) };
         }
 
         // ── 签名（DApp 调用）──────────────────────────────────────────────────
@@ -326,6 +364,7 @@ async function handleMessage(msg) {
             _session.unlocked = false;
             _session.phrase = null;
             _session.accounts = [];
+            await chrome.storage.local.remove(LOCAL_TX_HISTORY_KEY);
             await chrome.storage.session.remove('sessionPassword');
             chrome.alarms.clear('auto_lock');
             return { ok: true };

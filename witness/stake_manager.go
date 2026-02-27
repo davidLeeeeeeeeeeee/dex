@@ -5,6 +5,7 @@ package witness
 import (
 	"dex/pb"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/shopspring/decimal"
@@ -322,6 +323,7 @@ func (sm *StakeManager) GetActiveWitnesses() []*pb.WitnessInfo {
 			result = append(result, info)
 		}
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Address < result[j].Address })
 	return result
 }
 
@@ -339,6 +341,7 @@ func (sm *StakeManager) GetWitnessCandidates() []*WitnessCandidate {
 			IsActive:    info.Status == pb.WitnessStatus_WITNESS_ACTIVE,
 		})
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Address < result[j].Address })
 	return result
 }
 
@@ -351,6 +354,7 @@ func (sm *StakeManager) GetAllWitnesses() []*pb.WitnessInfo {
 	for _, info := range sm.witnesses {
 		result = append(result, info)
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Address < result[j].Address })
 	return result
 }
 

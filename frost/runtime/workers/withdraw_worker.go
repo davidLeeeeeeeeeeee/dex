@@ -5,6 +5,7 @@ package workers
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync/atomic"
 	"time"
 
@@ -160,7 +161,13 @@ func (w *WithdrawWorker) ProcessWindow(ctx context.Context, chain, asset string)
 	}
 
 	// 汇报产生的临时日志（针对未成功规划 job 的 withdraw）
-	for withdrawID, logs := range transientLogs {
+	withdrawIDs := make([]string, 0, len(transientLogs))
+	for withdrawID := range transientLogs {
+		withdrawIDs = append(withdrawIDs, withdrawID)
+	}
+	sort.Strings(withdrawIDs)
+	for _, withdrawID := range withdrawIDs {
+		logs := transientLogs[withdrawID]
 		w.reportPlanningLogs(ctx, &planning.Job{
 			JobID:       "planning_failed",
 			WithdrawIDs: []string{withdrawID},

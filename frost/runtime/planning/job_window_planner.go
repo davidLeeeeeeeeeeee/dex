@@ -88,14 +88,6 @@ func (p *JobWindowPlanner) planBTCJobWindow(chain, asset string, withdraws []*Sc
 		batchWithdraws := make([]*ScanResult, 0)
 		var totalAmount uint64
 
-		// 选择 Vault（需要知道总金额，先估算）
-		// 简化：先选择第一个 ACTIVE Vault，然后检查余额
-		vaultID, keyEpoch, err := p.selectVault(chain, asset, 0) // 先不检查余额
-		if err != nil {
-			logs.Warn("[JobWindowPlanner] failed to select vault: %v", err)
-			continue
-		}
-
 		// 贪心装箱：尽可能多地收集 withdraw
 		maxOutputs := 10 // 配置项：最多输出数量
 		for j := i; j < len(withdraws) && len(batchWithdraws) < maxOutputs; j++ {
@@ -125,6 +117,12 @@ func (p *JobWindowPlanner) planBTCJobWindow(chain, asset string, withdraws []*Sc
 		}
 
 		// 规划 BTC job（选择 UTXO，构建模板）
+		vaultID, keyEpoch, err := p.selectVault(chain, asset, totalAmount)
+		if err != nil {
+			logs.Warn("[JobWindowPlanner] failed to select vault for batch amount=%d: %v", totalAmount, err)
+			continue
+		}
+
 		job, err := p.planBTCJob(chain, asset, vaultID, keyEpoch, batchWithdraws, totalAmount)
 		if err != nil {
 			logs.Debug("[JobWindowPlanner] failed to plan BTC job: %v", err)
@@ -283,23 +281,70 @@ func (p *JobWindowPlanner) planBTCJob(chain, asset string, vaultID uint32, keyEp
 		return nil, fmt.Errorf("no available UTXOs for vault %d", vaultID)
 	}
 
-	// 3. 计算手续费和找零
-	fee := p.estimateBTCFee(len(utxos), len(outputs))
-	var totalInput uint64
-	for _, utxo := range utxos {
-		totalInput += utxo.Amount
-	}
+	var fee uint64
+	var changeAmount uint64
+	changeAddress := ""
+	const btcDustLimit uint64 = 546
 
-	changeAmount := uint64(0)
-	if totalInput > totalAmount+fee {
-		changeAmount = totalInput - totalAmount - fee
-		// 如果找零小于粉尘限制，不创建找零输出（吃进手续费）
-		if changeAmount < 546 { // DustLimit
+	// Close the fee/input loop until totalIn can satisfy totalOut+fee(+change).
+	for iter := 0; iter < 6; iter++ {
+		totalInput := sumUTXOAmount(utxos)
+
+		feeNoChange := p.estimateBTCFee(len(utxos), len(outputs))
+		needNoChange := totalAmount + feeNoChange
+		if totalInput < needNoChange {
+			utxos, err = p.selectBTCUTXOs(chain, vaultID, needNoChange)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		fee = feeNoChange
+		changeAmount = totalInput - totalAmount - feeNoChange
+
+		if changeAmount >= btcDustLimit {
+			feeWithChange := p.estimateBTCFee(len(utxos), len(outputs)+1)
+			needWithChange := totalAmount + feeWithChange
+			if totalInput < needWithChange {
+				utxos, err = p.selectBTCUTXOs(chain, vaultID, needWithChange)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			}
+
+			fee = feeWithChange
+			changeAmount = totalInput - totalAmount - feeWithChange
+
+			if changeAmount >= btcDustLimit {
+				changeAddress, err = p.getYoungestVaultTreasuryAddress(chain)
+				if err != nil || strings.TrimSpace(changeAddress) == "" {
+					logs.Warn("[JobWindowPlanner] fallback to no-change because youngest treasury address unavailable: %v", err)
+					fee = totalInput - totalAmount
+					changeAmount = 0
+					changeAddress = ""
+				}
+			} else {
+				// After accounting for an extra change output, change becomes dust.
+				fee = totalInput - totalAmount
+				changeAmount = 0
+			}
+		} else {
+			// Dust-level remainder is absorbed into fee.
+			fee = totalInput - totalAmount
 			changeAmount = 0
 		}
+
+		break
 	}
 
-	// 4. 获取链适配器并构建模板
+	totalInputFinal := sumUTXOAmount(utxos)
+	if totalInputFinal < totalAmount+fee {
+		return nil, fmt.Errorf("insufficient UTXOs after fee planning: need %d, got %d", totalAmount+fee, totalInputFinal)
+	}
+
+	// 4. Get chain adapter and build template.
 	adapter, err := p.adapterFactory.Adapter(chain)
 	if err != nil {
 		return nil, err
@@ -315,7 +360,7 @@ func (p *JobWindowPlanner) planBTCJob(chain, asset string, vaultID uint32, keyEp
 		Inputs:        utxos,
 		Fee:           fee,
 		ChangeAmount:  changeAmount,
-		ChangeAddress: "", // TODO: 从 VaultState 获取 treasury 地址
+		ChangeAddress: changeAddress,
 	}
 
 	result, err := adapter.BuildWithdrawTemplate(params)
@@ -448,6 +493,96 @@ func (p *JobWindowPlanner) estimateBTCFee(inputCount, outputCount int) uint64 {
 	return uint64(totalVBytes) * feeRate
 }
 
+func sumUTXOAmount(utxos []chainpkg.UTXO) uint64 {
+	var total uint64
+	for _, utxo := range utxos {
+		total += utxo.Amount
+	}
+	return total
+}
+
+func (p *JobWindowPlanner) getYoungestVaultTreasuryAddress(chain string) (string, error) {
+	youngestVaultID, err := p.selectYoungestActiveVaultID(chain)
+	if err != nil {
+		return "", err
+	}
+
+	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
+	vaultCfgData, exists, err := p.stateReader.Get(vaultCfgKey)
+	if err != nil {
+		return "", err
+	}
+	if !exists || len(vaultCfgData) == 0 {
+		return "", fmt.Errorf("vault config not found for chain=%s", chain)
+	}
+
+	var cfg pb.FrostVaultConfig
+	if err := proto.Unmarshal(vaultCfgData, &cfg); err != nil {
+		return "", err
+	}
+	if int(youngestVaultID) >= len(cfg.VaultRefs) {
+		return "", fmt.Errorf("vault ref not found for youngest vault: chain=%s vault=%d", chain, youngestVaultID)
+	}
+
+	addr := strings.TrimSpace(cfg.VaultRefs[youngestVaultID])
+	if addr == "" {
+		return "", fmt.Errorf("empty vault ref for youngest vault: chain=%s vault=%d", chain, youngestVaultID)
+	}
+	return addr, nil
+}
+
+func (p *JobWindowPlanner) selectYoungestActiveVaultID(chain string) (uint32, error) {
+	vaultCfgKey := keys.KeyFrostVaultConfig(chain, 0)
+	vaultCfgData, exists, err := p.stateReader.Get(vaultCfgKey)
+	if err != nil {
+		return 0, err
+	}
+
+	vaultCount := uint32(1)
+	if exists && len(vaultCfgData) > 0 {
+		var cfg pb.FrostVaultConfig
+		if err := proto.Unmarshal(vaultCfgData, &cfg); err == nil && cfg.VaultCount > 0 {
+			vaultCount = cfg.VaultCount
+		}
+	}
+
+	found := false
+	var youngestID uint32
+	var bestEpoch uint64
+	var bestActiveSince uint64
+
+	for id := uint32(0); id < vaultCount; id++ {
+		vaultStateKey := keys.KeyFrostVaultState(chain, id)
+		vaultStateData, stateExists, e := p.stateReader.Get(vaultStateKey)
+		if e != nil || !stateExists || len(vaultStateData) == 0 {
+			continue
+		}
+
+		var state pb.FrostVaultState
+		if e := proto.Unmarshal(vaultStateData, &state); e != nil {
+			continue
+		}
+		if state.Status != "ACTIVE" {
+			continue
+		}
+
+		if !found ||
+			state.KeyEpoch > bestEpoch ||
+			(state.KeyEpoch == bestEpoch && state.ActiveSinceHeight > bestActiveSince) ||
+			(state.KeyEpoch == bestEpoch && state.ActiveSinceHeight == bestActiveSince && id > youngestID) {
+			found = true
+			youngestID = id
+			bestEpoch = state.KeyEpoch
+			bestActiveSince = state.ActiveSinceHeight
+		}
+	}
+
+	if !found {
+		return 0, fmt.Errorf("no ACTIVE vault found for chain=%s", chain)
+	}
+	return youngestID, nil
+}
+
 // scanQueuedWithdraws 扫描连续的 QUEUED withdraw
 func (p *JobWindowPlanner) scanQueuedWithdraws(chain, asset string, maxCount int) ([]*ScanResult, error) {
 	// 1. 读取当前 head
@@ -549,6 +684,11 @@ func (p *JobWindowPlanner) planJobForWithdraw(scanResult *ScanResult) (*Job, err
 	}
 
 	// 3. 获取链适配器
+	// BTC single-withdraw fallback must still use BTC-specific planning (inputs/fee/change).
+	if scanResult.Chain == "btc" {
+		return p.planBTCJob(scanResult.Chain, scanResult.Asset, vaultID, keyEpoch, []*ScanResult{scanResult}, amount)
+	}
+
 	adapter, err := p.adapterFactory.Adapter(scanResult.Chain)
 	if err != nil {
 		return nil, err

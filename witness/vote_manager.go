@@ -5,6 +5,7 @@ package witness
 
 import (
 	"dex/pb"
+	"sort"
 	"sync"
 )
 
@@ -136,9 +137,14 @@ func (vm *VoteManager) GetVotes(requestID string) []*pb.WitnessVote {
 	defer vm.mu.RUnlock()
 
 	votes := vm.votes[requestID]
-	result := make([]*pb.WitnessVote, 0, len(votes))
-	for _, v := range votes {
-		result = append(result, v)
+	keys := make([]string, 0, len(votes))
+	for addr := range votes {
+		keys = append(keys, addr)
+	}
+	sort.Strings(keys)
+	result := make([]*pb.WitnessVote, 0, len(keys))
+	for _, addr := range keys {
+		result = append(result, votes[addr])
 	}
 	return result
 }
@@ -149,8 +155,14 @@ func (vm *VoteManager) GetPassVotes(requestID string) []*pb.WitnessVote {
 	defer vm.mu.RUnlock()
 
 	votes := vm.votes[requestID]
+	keys := make([]string, 0, len(votes))
+	for addr := range votes {
+		keys = append(keys, addr)
+	}
+	sort.Strings(keys)
 	result := make([]*pb.WitnessVote, 0)
-	for _, v := range votes {
+	for _, addr := range keys {
+		v := votes[addr]
 		if v.VoteType == pb.WitnessVoteType_VOTE_PASS {
 			result = append(result, v)
 		}
@@ -194,6 +206,7 @@ func (vm *VoteManager) GetSelectedWitnesses(requestID string) []string {
 	for addr := range witnesses {
 		result = append(result, addr)
 	}
+	sort.Strings(result)
 	return result
 }
 

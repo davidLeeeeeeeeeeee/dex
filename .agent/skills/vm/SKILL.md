@@ -77,3 +77,9 @@ rg "SpecExecLRU|specCache|SpecResult" vm
 rg "SetBalance|GetBalance|balanceUpdates" vm
 ```
 
+## 一致性检查清单（无 State Hash 强校验）
+
+1. 检查所有 `WriteOp` 生成路径，禁止直接 `range map` 后写入 `ws`。
+2. 若必须用 `map` 去重，落盘/回执/上报前必须按 key 排序。
+3. `StateView.Diff()`、索引重建、批量读取后的处理必须保证顺序可重放。
+4. 内存缓存只能优化性能，不能成为状态真源；重启后结果必须与冷启动一致。

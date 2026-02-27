@@ -21,8 +21,9 @@ const localTx = ref<TxInfo | null>(null)
 const loading = ref(false)
 const error = ref('')
 
-// Mode detection: if 'show' prop is provided (even if false), we are in modal mode
-const isModal = computed(() => typeof props.show !== 'undefined')
+// Inline mode always provides tx data; modal mode fetches by txId/node.
+// Do not infer modal mode from `show` because Boolean props default to `false` when omitted.
+const isModal = computed(() => !props.tx)
 
 // Source of truth for transaction data: prefer local fetch, fallback to passed prop
 const currentTx = computed(() => localTx.value || props.tx || null)

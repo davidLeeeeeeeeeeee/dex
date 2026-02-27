@@ -97,7 +97,8 @@ func (x *Executor) LoadWitnessState() error {
 	winfoMap, err := x.DB.Scan(keys.KeyWitnessInfoPrefix())
 	if err == nil {
 		count := 0
-		for _, data := range winfoMap {
+		for _, key := range sortedBytesMapKeys(winfoMap) {
+			data := winfoMap[key]
 			var info pb.WitnessInfo
 			if err := unmarshalProtoCompat(data, &info); err == nil {
 				x.WitnessService.LoadWitness(&info)
@@ -113,7 +114,8 @@ func (x *Executor) LoadWitnessState() error {
 	requestMap, err := x.DB.Scan(keys.KeyRechargeRequestPrefix())
 	if err == nil {
 		count := 0
-		for _, data := range requestMap {
+		for _, key := range sortedBytesMapKeys(requestMap) {
+			data := requestMap[key]
 			var req pb.RechargeRequest
 			if err := unmarshalProtoCompat(data, &req); err == nil {
 				// 只有非终态（PENDING, VOTING, CONSENSUS_PASS, CHALLENGE_PERIOD, CHALLENGED, ARBITRATION, SHELVED）需要加载
@@ -133,7 +135,8 @@ func (x *Executor) LoadWitnessState() error {
 	challengeMap, err := x.DB.Scan(keys.KeyChallengeRecordPrefix())
 	if err == nil {
 		count := 0
-		for _, data := range challengeMap {
+		for _, key := range sortedBytesMapKeys(challengeMap) {
+			data := challengeMap[key]
 			var record pb.ChallengeRecord
 			if err := unmarshalProtoCompat(data, &record); err == nil {
 				if !record.Finalized {
@@ -148,6 +151,16 @@ func (x *Executor) LoadWitnessState() error {
 	}
 
 	return nil
+}
+
+// sortedBytesMapKeys returns map keys in lexicographic order.
+func sortedBytesMapKeys(m map[string][]byte) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // SetWitnessService 设置见证者服务（用于测试或自定义配置）

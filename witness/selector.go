@@ -126,6 +126,9 @@ func (s *Selector) weightedRandomSelect(
 		// 权重越高，分数越容易排在前面
 		scoreI := float64(weighted[i].score) * weighted[i].weight.InexactFloat64()
 		scoreJ := float64(weighted[j].score) * weighted[j].weight.InexactFloat64()
+		if scoreI == scoreJ {
+			return weighted[i].address < weighted[j].address
+		}
 		return scoreI > scoreJ
 	})
 

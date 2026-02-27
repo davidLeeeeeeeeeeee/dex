@@ -15,7 +15,7 @@ function bg(msg: any): Promise<any> {
 }
 
 // ─── 页面路由 ─────────────────────────────────────────────────────────────────
-type Page = 'lock' | 'setup' | 'main' | 'send' | 'settings' | 'approve'
+type Page = 'lock' | 'setup' | 'main' | 'send' | 'history' | 'settings' | 'approve'
 const page = ref<Page>('lock')
 const setupTab = ref<'create' | 'import'>('create')
 
@@ -48,6 +48,9 @@ const sendStatus = ref('')
 const sendError = ref('')
 const sendTxId = ref('')
 const sendLoading = ref(false)
+const txHistory = ref<any[]>([])
+const txHistoryLoading = ref(false)
+const txHistoryError = ref('')
 
 const explorerUrl = ref('http://127.0.0.1:8080')
 const nodeAddr = ref('')
@@ -136,6 +139,10 @@ async function loadMain() {
     if (!address.value) return
     const bal = await bg({ type: 'GET_BALANCES', address: address.value })
     balances.value = bal.balances ?? {}
+    normalizeSendToken()
+    if (page.value === 'history') {
+      await loadLocalTxHistory()
+    }
   } catch (e: any) {
     if (e.message.includes('locked')) { page.value = 'lock'; return }
   } finally { loadingBalance.value = false }
@@ -149,6 +156,10 @@ async function selectAccount(index: number) {
   try {
     const bal = await bg({ type: 'GET_BALANCES', address: address.value })
     balances.value = bal.balances ?? {}
+    normalizeSendToken()
+    if (page.value === 'history') {
+      await loadLocalTxHistory()
+    }
   } finally { loadingBalance.value = false }
 }
 
@@ -178,18 +189,34 @@ async function lock() {
 
 // ─── 发送 ────────────────────────────────────────────────────────────────────
 async function confirmSend() {
-  sendError.value = ''; sendStatus.value = ''; sendTxId.value = ''
+  sendError.value = ''
+  sendStatus.value = ''
+  sendTxId.value = ''
   if (!sendTo.value.trim()) return (sendError.value = '请输入接收地址')
   const amt = parseFloat(sendAmount.value)
   if (!amt || amt <= 0) return (sendError.value = '请输入有效金额')
+  if (!sendToken.value) return (sendError.value = '请选择代币')
   sendLoading.value = true
   try {
-    const res = await bg({ type: 'SEND_TX', txDesc: { type: 'transaction', to: sendTo.value.trim(), tokenAddress: sendToken.value, amount: sendAmount.value } })
+    const res = await bg({
+      type: 'SEND_TX',
+      txDesc: {
+        type: 'transaction',
+        to: sendTo.value.trim(),
+        tokenAddress: sendToken.value,
+        amount: sendAmount.value,
+      },
+    })
     sendTxId.value = res.txId || ''
     sendStatus.value = '✅ 交易已提交'
-    sendTo.value = ''; sendAmount.value = ''
-  } catch (e: any) { sendError.value = `发送失败：${e.message}` }
-  finally { sendLoading.value = false }
+    sendTo.value = ''
+    sendAmount.value = ''
+    await loadLocalTxHistory()
+  } catch (e: any) {
+    sendError.value = `发送失败：${e.message}`
+  } finally {
+    sendLoading.value = false
+  }
 }
 
 // ─── 审批请求管理 ─────────────────────────────────────────────────────────────
@@ -231,6 +258,64 @@ async function resetWallet() {
 }
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
+function availableTokens() {
+  const keys = Object.keys(balances.value || {})
+  if (!keys.length) return ['FB']
+  return keys.sort((a, b) => {
+    if (a === 'FB') return -1
+    if (b === 'FB') return 1
+    return a.localeCompare(b)
+  })
+}
+
+function normalizeSendToken() {
+  const tokens = availableTokens()
+  if (!tokens.length) {
+    sendToken.value = 'FB'
+    return
+  }
+  if (!tokens.includes(sendToken.value)) {
+    sendToken.value = tokens[0]
+  }
+}
+
+async function loadLocalTxHistory() {
+  if (!address.value) {
+    txHistory.value = []
+    return
+  }
+  txHistoryLoading.value = true
+  txHistoryError.value = ''
+  try {
+    const res = await bg({ type: 'GET_LOCAL_TX_HISTORY', address: address.value, limit: 200 })
+    txHistory.value = res.items || []
+  } catch (e: any) {
+    txHistoryError.value = e.message || '加载历史失败'
+  } finally {
+    txHistoryLoading.value = false
+  }
+}
+
+function openSendPage() {
+  normalizeSendToken()
+  page.value = 'send'
+}
+
+async function openHistoryPage() {
+  page.value = 'history'
+  await loadLocalTxHistory()
+}
+
+function formatHistoryTime(ts: number) {
+  if (!ts) return '-'
+  return new Date(ts).toLocaleString()
+}
+
+function copyText(text: string) {
+  if (!text) return
+  navigator.clipboard.writeText(text)
+}
+
 function shortAddr(addr: string) {
   return addr.length > 14 ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : addr
 }
@@ -364,9 +449,13 @@ function otherBalances() {
       </div>
 
       <div class="action-row">
-        <button class="action-btn" @click="page = 'send'">
+        <button class="action-btn" @click="openSendPage">
           <span class="action-icon">↑</span>
           <span>发送</span>
+        </button>
+        <button class="action-btn" @click="openHistoryPage">
+          <span class="action-icon">🕘</span>
+          <span>发送历史</span>
         </button>
       </div>
     </div>
@@ -381,8 +470,7 @@ function otherBalances() {
       <div class="card">
         <label class="field-label">代币</label>
         <select class="field-input" v-model="sendToken">
-          <option value="FB">FB — FrostBit 原生代币</option>
-          <option value="USDT">USDT — Tether USD</option>
+          <option v-for="token in availableTokens()" :key="token" :value="token">{{ token }}</option>
         </select>
         <label class="field-label">接收地址</label>
         <input class="field-input" type="text" v-model="sendTo" placeholder="bc1q..." />
@@ -401,6 +489,36 @@ function otherBalances() {
     </div>
 
     <!-- ── 设置页 ──────────────────────────────────────────────── -->
+    <div v-else-if="page === 'history'" class="page">
+      <nav class="top-nav">
+        <button class="btn-icon" @click="page = 'main'">⬅</button>
+        <span class="nav-title">本地发送历史</span>
+        <button class="btn-icon" @click="loadLocalTxHistory" :disabled="txHistoryLoading" title="刷新">↻</button>
+      </nav>
+      <div class="card">
+        <p class="hint">仅显示本钱包本地发送记录（当前账户）</p>
+        <p class="hint mono-mini">{{ shortAddr(address) }}</p>
+        <p v-if="txHistoryError" class="msg-error">{{ txHistoryError }}</p>
+        <div v-if="txHistoryLoading" class="hint">加载中...</div>
+        <div v-else-if="txHistory.length === 0" class="hint">暂无发送记录</div>
+        <div v-else class="tx-history-list">
+          <div v-for="item in txHistory" :key="item.localId" class="tx-history-item">
+            <div class="tx-history-row">
+              <span class="balance-token">{{ item.tokenAddress || '-' }}</span>
+              <span>{{ item.amount || '-' }}</span>
+            </div>
+            <div class="tx-history-row mono-mini">
+              <span>To: {{ shortAddr(item.toAddress || '-') }}</span>
+              <span>{{ formatHistoryTime(item.createdAt) }}</span>
+            </div>
+            <div class="tx-history-row mono-mini">
+              <span>TxID: {{ item.txId ? shortAddr(item.txId) : '-' }}</span>
+              <button v-if="item.txId" class="btn-ghost tx-copy-btn" @click="copyText(item.txId)">复制</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     <div v-else-if="page === 'settings'" class="page">
       <nav class="top-nav">
         <button class="btn-icon" @click="page = 'main'">←</button>
@@ -730,6 +848,38 @@ textarea.field-input { resize: none; line-height: 1.5; }
 }
 .action-btn:hover { border-color: #58a6ff; }
 .action-icon { font-size: 20px; }
+
+.tx-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tx-history-item {
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 10px;
+  background: #11161d;
+}
+
+.tx-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mono-mini {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #8b949e;
+}
+
+.tx-copy-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  min-width: auto;
+}
 
 /* ── Messages ─────────────────────────────────────────── */
 .msg-error { color: #f85149; font-size: 12px; }

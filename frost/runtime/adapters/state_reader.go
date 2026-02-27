@@ -4,6 +4,7 @@ package adapters
 
 import (
 	"dex/frost/runtime"
+	"sort"
 	"strings"
 )
 
@@ -50,7 +51,13 @@ func (r *StateDBReader) Scan(prefix string, fn func(k string, v []byte) bool) er
 	if err != nil {
 		return err
 	}
-	for k, v := range results {
+	keys := make([]string, 0, len(results))
+	for k := range results {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := results[k]
 		if !fn(k, v) {
 			break
 		}
@@ -66,7 +73,23 @@ func (r *StateDBReader) GetMany(keys []string) (map[string][]byte, error) {
 	}
 
 	if batchDB, ok := r.db.(dbBatchGetter); ok {
-		return batchDB.GetKVs(keys)
+		kvs, err := batchDB.GetKVs(keys)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			val, ok := kvs[key]
+			if !ok || len(val) == 0 {
+				continue
+			}
+			v := make([]byte, len(val))
+			copy(v, val)
+			out[key] = v
+		}
+		return out, nil
 	}
 
 	for _, key := range keys {
@@ -132,11 +155,16 @@ func (r *FakeStateReader) Get(key string) ([]byte, bool, error) {
 
 // Scan 扫描指定前缀的所有键值对
 func (r *FakeStateReader) Scan(prefix string, fn func(k string, v []byte) bool) error {
-	for k, v := range r.data {
+	keys := make([]string, 0, len(r.data))
+	for k := range r.data {
 		if strings.HasPrefix(k, prefix) {
-			if !fn(k, v) {
-				break
-			}
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !fn(k, r.data[k]) {
+			break
 		}
 	}
 	return nil

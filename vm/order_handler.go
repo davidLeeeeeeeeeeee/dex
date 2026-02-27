@@ -1,4 +1,4 @@
-﻿package vm
+package vm
 
 import (
 	"dex/db"
@@ -8,6 +8,7 @@ import (
 	"dex/utils"
 	"fmt"
 	"math/big"
+	"sort"
 
 	"sync"
 
@@ -27,9 +28,9 @@ var (
 	}
 )
 
-// OrderTxHandler 璁㈠崟浜ゆ槗澶勭悊鍣?
+// OrderTxHandler 订单交易处理器
 type OrderTxHandler struct {
-	// 鍖哄潡绾у埆鐨勮鍗曠翱缂撳瓨锛堢敱 Executor 鍦?PreExecuteBlock 鏃惰缃級
+	// 区块级别的订单簿缓存（由 Executor 在 PreExecuteBlock 时设置）
 	orderBooks map[string]*matching.OrderBook
 }
 
@@ -37,13 +38,13 @@ func (h *OrderTxHandler) Kind() string {
 	return "order"
 }
 
-// SetOrderBooks 璁剧疆鍖哄潡绾у埆鐨勮鍗曠翱缂撳瓨
+// SetOrderBooks 设置区块级别的订单簿缓存
 func (h *OrderTxHandler) SetOrderBooks(books map[string]*matching.OrderBook) {
 	h.orderBooks = books
 }
 
 func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt, error) {
-	// 1. 鎻愬彇OrderTx
+	// 1. 提取 OrderTx
 	orderTx, ok := tx.GetContent().(*pb.AnyTx_OrderTx)
 	if !ok {
 		return nil, &Receipt{
@@ -62,7 +63,7 @@ func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 		}, fmt.Errorf("invalid order transaction")
 	}
 
-	// 2. 鏍规嵁鎿嶄綔绫诲瀷鍒嗗彂澶勭悊
+	// 2. 根据操作类型分发处理
 	switch ord.Op {
 	case pb.OrderOp_ADD:
 		return h.handleAddOrder(ord, sv)
@@ -77,7 +78,7 @@ func (h *OrderTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Receipt
 	}
 }
 
-// handleAddOrder 澶勭悊娣诲姞/鏇存柊璁㈠崟锛屽苟鎵ц鎾悎
+// handleAddOrder 处理添加/更新订单，并执行撮合
 func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	amountBI, err := parsePositiveBalanceStrict("order amount", ord.Amount)
 	if err != nil {
@@ -231,8 +232,8 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 	}, nil
 }
 
-// handleRemoveOrder 澶勭悊绉婚櫎璁㈠崟璇锋眰
-// 閫昏緫锛氫紭鍏堝皾璇曟煡鎵惧苟绉婚櫎 OrderState锛涘鏋滄湭鎵惧埌锛屽垯灏濊瘯鏌ユ壘鏃х増 OrderTx锛堝吋瀹规€у鐞嗭級銆?
+// handleRemoveOrder 处理移除订单请求
+// 逻辑：优先尝试查找并移除 OrderState；如果未找到，则尝试查找旧版 OrderTx（兼容性处理）。
 func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	if ord.OpTargetId == "" {
 		return nil, &Receipt{
@@ -245,7 +246,7 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	targetStateKey := keys.KeyOrderState(ord.OpTargetId)
 	targetStateData, exists, err := sv.Get(targetStateKey)
 	if err != nil || !exists {
-		// 灏濊瘯鍥為€€鏌ユ壘鏃х増 OrderTx
+		// 尝试回退查找旧版 OrderTx
 		targetOrderKey := keys.KeyOrder(ord.OpTargetId)
 		targetOrderData, oldExists, oldErr := sv.Get(targetOrderKey)
 		if oldErr != nil || !oldExists {
@@ -456,8 +457,8 @@ func (h *OrderTxHandler) handleRemoveOrder(ord *pb.OrderTx, sv StateView) ([]Wri
 	}, nil
 }
 
-// handleRemoveOrderLegacy 澶勭悊閬楃暀鐨?OrderTx 鏍煎紡璁㈠崟绉婚櫎
-// 鐢ㄤ簬鍏煎鏃ф暟鎹紝褰?OrderState 涓嶅瓨鍦ㄦ椂璋冪敤銆?
+// handleRemoveOrderLegacy 处理遗留的 OrderTx 格式订单移除
+// 用于兼容旧数据，当 OrderState 不存在时调用。
 func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *pb.OrderTx, sv StateView) ([]WriteOp, *Receipt, error) {
 	accountKey := keys.KeyAccount(ord.Base.FromAddress)
 	accountData, exists, err := sv.Get(accountKey)
@@ -596,12 +597,11 @@ func (h *OrderTxHandler) handleRemoveOrderLegacy(ord *pb.OrderTx, targetOrder *p
 	}, nil
 }
 
-
 func (h *OrderTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
 
-// updateAccountBalancesFromStates 鏍规嵁 OrderState 鏇存柊璐︽埛浣欓
+// updateAccountBalancesFromStates 根据 OrderState 更新账户余额
 func (h *OrderTxHandler) updateAccountBalancesFromStates(
 	tradeEvents []matching.TradeUpdate,
 	stateUpdates map[string]*pb.OrderState,
@@ -740,7 +740,19 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 		}
 	}
 
-	for key, bal := range balanceCache {
+	balanceKeys := make([]balanceCacheKey, 0, len(balanceCache))
+	for key := range balanceCache {
+		balanceKeys = append(balanceKeys, key)
+	}
+	sort.Slice(balanceKeys, func(i, j int) bool {
+		if balanceKeys[i].addr == balanceKeys[j].addr {
+			return balanceKeys[i].token < balanceKeys[j].token
+		}
+		return balanceKeys[i].addr < balanceKeys[j].addr
+	})
+
+	for _, key := range balanceKeys {
+		bal := balanceCache[key]
 		SetBalance(sv, key.addr, key.token, bal)
 		balKey := keys.KeyBalance(key.addr, key.token)
 		balData, _, _ := sv.Get(balKey)
@@ -754,8 +766,8 @@ func (h *OrderTxHandler) updateAccountBalancesFromStates(
 	return ws, nil
 }
 
-// generateWriteOpsFromTrades 鏍规嵁鎾悎缁撴灉鐢熸垚 WriteOps
-// 鏇存柊 OrderState 骞跺鐞?OrderTx 鐩稿叧鐨勭姸鎬佸彉鏇淬€?
+// generateWriteOpsFromTrades 根据撮合结果生成 WriteOps
+// 更新 OrderState 并处理 OrderTx 相关的状态变更。
 func (h *OrderTxHandler) generateWriteOpsFromTrades(
 	newOrd *pb.OrderTx,
 	tradeEvents []matching.TradeUpdate,
@@ -889,7 +901,14 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 	}
 
 	// 鐢熸垚 OrderState 鐨?WriteOps
-	for orderID, orderState := range stateUpdates {
+	orderIDs := make([]string, 0, len(stateUpdates))
+	for orderID := range stateUpdates {
+		orderIDs = append(orderIDs, orderID)
+	}
+	sort.Strings(orderIDs)
+
+	for _, orderID := range orderIDs {
+		orderState := stateUpdates[orderID]
 		orderStateKey := keys.KeyOrderState(orderID)
 		orderStateData, err := proto.Marshal(orderState)
 
@@ -944,7 +963,8 @@ func (h *OrderTxHandler) generateWriteOpsFromTrades(
 	ws = append(ws, accountBalanceOps...)
 
 	// 褰掕繕瀵硅薄姹?
-	for _, orderState := range stateUpdates {
+	for _, orderID := range orderIDs {
+		orderState := stateUpdates[orderID]
 		orderStatePool.Put(orderState)
 	}
 
