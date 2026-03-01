@@ -475,7 +475,7 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 
 	// 创建 WithdrawWorker（使用 SigningService）
 	// TODO: 从配置读取 maxInFlightPerChainAsset
-	maxInFlight := 1 // 默认值，应该从配置读取
+	maxInFlight := 10 // 默认值，应该从配置读取
 	m.withdrawWorker = workers.NewWithdrawWorker(
 		&workersStateReaderAdapter2{reader: deps.StateReader},
 		deps.AdapterFactory,
