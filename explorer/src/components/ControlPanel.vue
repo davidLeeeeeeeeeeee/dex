@@ -215,8 +215,8 @@ function handleAddNode() {
 .select-wrapper { position: relative; }
 .select-wrapper select {
   padding: 8px 32px 8px 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   font-size: 0.85rem; color: #fff;
   appearance: none;

@@ -7,26 +7,26 @@ const emit = defineEmits<{ selectTx: [txId: string] }>()
 
 // 所有支持的 tx 类型
 const TX_TYPES = [
-  'all',
-  'Transaction',
-  'IssueToken',
-  'Freeze',
-  'Order',
-  'Miner',
-  'WitnessStake',
-  'WitnessRequest',
-  'WitnessVote',
-  'WitnessChallenge',
-  'ArbitrationVote',
-  'WitnessClaimReward',
-  'FrostWithdrawRequest',
-  'FrostWithdrawSigned',
-  'FrostVaultDkgCommit',
-  'FrostVaultDkgShare',
-  'FrostVaultDkgComplaint',
-  'FrostVaultDkgReveal',
-  'FrostVaultDkgValidationSigned',
-  'FrostVaultTransitionSigned',
+  'all',                            // 全部类型
+  'Transaction',                    // 普通转账：账户间资产转移
+  'IssueToken',                     // 发行代币：创建新的 ERC-20 类似代币
+  'Freeze',                         // 冻结账户：限制目标地址的交易权限
+  'Order',                          // 挂单：DEX 限价/市价订单（下单/撤单）
+  'Miner',                          // 矿工注册：注册/更新矿工节点信息及质押
+  'WitnessStake',                   // 见证者质押：存入质押金成为见证者候选
+  'WitnessRequest',                 // 见证者上账请求：发起跨链充值上账请求
+  'WitnessVote',                    // 见证者投票：对上账请求进行多签投票确认
+  'WitnessChallenge',               // 见证者挑战：对恶意见证者发起惩罚挑战
+  'ArbitrationVote',                // 仲裁投票：对挑战结果进行仲裁表决
+  'WitnessClaimReward',             // 见证者领奖：领取见证者工作奖励
+  'FrostWithdrawRequest',           // FROST 提现申请：用户发起跨链提现请求
+  'FrostWithdrawSigned',            // FROST 提现签名：节点对提现完成门限签名
+  'FrostVaultDkgCommit',            // DKG Commit：分布式密钥生成第一阶段承诺
+  'FrostVaultDkgShare',             // DKG Share：分布式密钥生成秘密份额分发
+  'FrostVaultDkgComplaint',         // DKG Complaint：对不诚实参与方的 DKG 投诉
+  'FrostVaultDkgReveal',            // DKG Reveal：响应投诉公开秘密份额
+  'FrostVaultDkgValidationSigned',  // DKG 验证签名：DKG 完成后验证门限签名有效性
+  'FrostVaultTransitionSigned',     // Vault 轮换签名：旧 Vault 向新 Vault 迁移资产的门限签名
 ]
 
 const selectedNode = ref('')
@@ -220,8 +220,8 @@ function typeColor(t: string) { return TYPE_COLOR[t] || '#94a3b8' }
 }
 
 .rtp-select {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   color: #e2e8f0;
   font-size: 0.8rem;

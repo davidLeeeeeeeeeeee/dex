@@ -342,7 +342,7 @@ function getPlaceholder(): string {
 .icon-prefix { color: #475569; }
 
 .select-group select {
-  background: transparent;
+  background: #000;
   border: none;
   color: #fff;
   padding: 10px 8px;
@@ -350,6 +350,7 @@ function getPlaceholder(): string {
   font-weight: 600;
   cursor: pointer;
   outline: none;
+  border-radius: 8px;
 }
 
 .search-input-field {

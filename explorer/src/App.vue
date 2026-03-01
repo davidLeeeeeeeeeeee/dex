@@ -448,7 +448,7 @@ onMounted(() => {
 .protocol-wrap { display: flex; flex-direction: column; gap: 24px; }
 .p-selector { display: flex; align-items: center; gap: 16px; background: rgba(15, 23, 42, 0.5); padding: 12px 24px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); }
 .p-selector label { font-size: 0.75rem; font-weight: 800; color: #475569; text-transform: uppercase; }
-.p-select { background: none; border: none; color: #818cf8; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; outline: none; cursor: pointer; }
+.p-select { background: #000; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 4px 8px; color: #fff; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; outline: none; cursor: pointer; }
 
 .p-status-bar { padding: 12px 60px; background: #0f172a; border-top: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: 600; color: #334155; }
 .s-left { display: flex; align-items: center; gap: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
