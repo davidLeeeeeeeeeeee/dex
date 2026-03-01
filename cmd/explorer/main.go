@@ -348,6 +348,7 @@ func main() {
 	mux.HandleFunc("/api/sync/status", srv.handleSyncStatus)
 	mux.HandleFunc("/api/recentblocks", srv.handleRecentBlocks) // 获取最近区块列表
 	mux.HandleFunc("/api/frost/withdraw/queue", srv.handleFrostWithdrawQueue)
+	mux.HandleFunc("/api/frost/withdraw/jobs", srv.handleFrostWithdrawJobs)
 	mux.HandleFunc("/api/witness/requests", srv.handleWitnessRequests)
 	mux.HandleFunc("/api/witness/list", srv.handleWitnessList)
 	mux.HandleFunc("/api/frost/dkg/list", srv.handleFrostDKGSessions)

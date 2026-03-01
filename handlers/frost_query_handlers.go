@@ -11,10 +11,99 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"google.golang.org/protobuf/proto"
 )
+
+func clonePlanningLog(log *pb.FrostPlanningLog) *pb.FrostPlanningLog {
+	if log == nil {
+		return nil
+	}
+	return &pb.FrostPlanningLog{
+		Step:      log.Step,
+		Status:    log.Status,
+		Message:   log.Message,
+		Timestamp: log.Timestamp,
+	}
+}
+
+func mergeAndSortPlanningLogs(base, extra []*pb.FrostPlanningLog) []*pb.FrostPlanningLog {
+	if len(base) == 0 && len(extra) == 0 {
+		return nil
+	}
+	merged := make([]*pb.FrostPlanningLog, 0, len(base)+len(extra))
+	for _, log := range base {
+		if cloned := clonePlanningLog(log); cloned != nil {
+			merged = append(merged, cloned)
+		}
+	}
+	for _, log := range extra {
+		if cloned := clonePlanningLog(log); cloned != nil {
+			merged = append(merged, cloned)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Timestamp == merged[j].Timestamp {
+			if merged[i].Step == merged[j].Step {
+				if merged[i].Status == merged[j].Status {
+					return merged[i].Message < merged[j].Message
+				}
+				return merged[i].Status < merged[j].Status
+			}
+			return merged[i].Step < merged[j].Step
+		}
+		return merged[i].Timestamp < merged[j].Timestamp
+	})
+	return merged
+}
+
+func (hm *HandlerManager) collectLocalPlanningLogs(withdrawID string) []*pb.FrostPlanningLog {
+	if withdrawID == "" {
+		return nil
+	}
+	prefix := fmt.Sprintf("v1_frost_planning_log_%s_", withdrawID)
+	results, err := hm.dbManager.Scan(prefix)
+	if err != nil || len(results) == 0 {
+		return nil
+	}
+
+	keysSorted := make([]string, 0, len(results))
+	for k := range results {
+		keysSorted = append(keysSorted, k)
+	}
+	sort.Strings(keysSorted)
+
+	merged := make([]*pb.FrostPlanningLog, 0)
+	for _, k := range keysSorted {
+		var tx pb.FrostWithdrawPlanningLogTx
+		if err := proto.Unmarshal(results[k], &tx); err != nil {
+			continue
+		}
+		for _, log := range tx.Logs {
+			if cloned := clonePlanningLog(log); cloned != nil {
+				merged = append(merged, cloned)
+			}
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Timestamp == merged[j].Timestamp {
+			if merged[i].Step == merged[j].Step {
+				if merged[i].Status == merged[j].Status {
+					return merged[i].Message < merged[j].Message
+				}
+				return merged[i].Status < merged[j].Status
+			}
+			return merged[i].Step < merged[j].Step
+		}
+		return merged[i].Timestamp < merged[j].Timestamp
+	})
+	return merged
+}
 
 // HandleGetFrostConfig 获取 Frost 配置
 func (hm *HandlerManager) HandleGetFrostConfig(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +198,7 @@ func (hm *HandlerManager) HandleGetWithdrawStatus(w http.ResponseWriter, r *http
 		Receiver:     state.To,
 		Height:       state.RequestHeight,
 		TxHash:       state.JobId, // 使用 job_id 作为标识
-		PlanningLogs: state.PlanningLogs,
+		PlanningLogs: mergeAndSortPlanningLogs(state.PlanningLogs, hm.collectLocalPlanningLogs(state.WithdrawId)),
 	}
 
 	// 序列化为 protobuf
@@ -172,7 +261,7 @@ func (hm *HandlerManager) HandleListWithdraws(w http.ResponseWriter, r *http.Req
 			Amount:       state.Amount,
 			Receiver:     state.To,
 			Height:       state.RequestHeight,
-			PlanningLogs: state.PlanningLogs,
+			PlanningLogs: mergeAndSortPlanningLogs(state.PlanningLogs, hm.collectLocalPlanningLogs(state.WithdrawId)),
 		})
 
 		if len(withdraws) >= limit {
@@ -462,6 +551,7 @@ func (hm *HandlerManager) HandleFrostWithdrawList(w http.ResponseWriter, r *http
 			continue
 		}
 
+		state.PlanningLogs = mergeAndSortPlanningLogs(state.PlanningLogs, hm.collectLocalPlanningLogs(state.WithdrawId))
 		states = append(states, &state)
 	}
 

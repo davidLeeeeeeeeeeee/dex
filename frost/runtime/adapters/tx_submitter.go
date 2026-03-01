@@ -147,8 +147,41 @@ type LocalLogReporter struct {
 	dbManager *db.Manager
 }
 
+const planningLogDuplicateThrottleMs uint64 = 15_000
+
 func NewLocalLogReporter(dbManager *db.Manager) *LocalLogReporter {
 	return &LocalLogReporter{dbManager: dbManager}
+}
+
+func clonePlanningLog(src *pb.FrostPlanningLog) *pb.FrostPlanningLog {
+	if src == nil {
+		return nil
+	}
+	return &pb.FrostPlanningLog{
+		Step:      src.Step,
+		Status:    src.Status,
+		Message:   src.Message,
+		Timestamp: src.Timestamp,
+	}
+}
+
+func shouldAppendPlanningLog(last, next *pb.FrostPlanningLog) bool {
+	if next == nil {
+		return false
+	}
+	if last == nil {
+		return true
+	}
+	if last.Step != next.Step || last.Status != next.Status || last.Message != next.Message {
+		return true
+	}
+	if next.Timestamp == 0 || last.Timestamp == 0 {
+		return false
+	}
+	if next.Timestamp < last.Timestamp {
+		return false
+	}
+	return next.Timestamp-last.Timestamp > planningLogDuplicateThrottleMs
 }
 
 func (r *LocalLogReporter) ReportWithdrawPlanningLog(ctx context.Context, log *pb.FrostWithdrawPlanningLogTx) error {
@@ -156,8 +189,49 @@ func (r *LocalLogReporter) ReportWithdrawPlanningLog(ctx context.Context, log *p
 		return nil
 	}
 	// 将日志存入本地数据库，Key：v1_frost_planning_log_<withdraw_id>_<reporter>
+	// 语义：追加（保留历史），避免后续状态覆盖掉 StartSigning 等关键日志。
 	key := fmt.Sprintf("v1_frost_planning_log_%s_%s", log.WithdrawId, log.Reporter)
-	data, err := proto.Marshal(log)
+
+	merged := &pb.FrostWithdrawPlanningLogTx{
+		Reporter:   log.Reporter,
+		WithdrawId: log.WithdrawId,
+		Logs:       make([]*pb.FrostPlanningLog, 0, len(log.Logs)+8),
+	}
+	appendLog := func(entry *pb.FrostPlanningLog) {
+		cloned := clonePlanningLog(entry)
+		if cloned == nil {
+			return
+		}
+		var last *pb.FrostPlanningLog
+		if n := len(merged.Logs); n > 0 {
+			last = merged.Logs[n-1]
+		}
+		if !shouldAppendPlanningLog(last, cloned) {
+			return
+		}
+		merged.Logs = append(merged.Logs, cloned)
+	}
+
+	if oldData, err := r.dbManager.Get(key); err == nil && len(oldData) > 0 {
+		var old pb.FrostWithdrawPlanningLogTx
+		if unmarshalErr := proto.Unmarshal(oldData, &old); unmarshalErr == nil {
+			for _, oldLog := range old.Logs {
+				appendLog(oldLog)
+			}
+		}
+	}
+
+	for _, newLog := range log.Logs {
+		appendLog(newLog)
+	}
+
+	// 控制单 key 体积，保留最近日志。
+	const maxLogsPerKey = 256
+	if len(merged.Logs) > maxLogsPerKey {
+		merged.Logs = merged.Logs[len(merged.Logs)-maxLogsPerKey:]
+	}
+
+	data, err := proto.Marshal(merged)
 	if err != nil {
 		return err
 	}

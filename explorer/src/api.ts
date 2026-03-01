@@ -12,6 +12,7 @@ import type {
   TxHistoryResponse,
   SyncStatusResponse,
   FrostWithdrawQueueItem,
+  FrostWithdrawJobItem,
   WitnessRequest,
   WitnessInfo,
   DKGSession,
@@ -102,6 +103,12 @@ export async function fetchRecentBlocks(request: RecentBlocksRequest): Promise<R
 // 获取 Frost 提现队列
 export async function fetchFrostWithdrawQueue(node: string, chain: string = '', asset: string = ''): Promise<FrostWithdrawQueueItem[]> {
   const resp = await fetch(`/api/frost/withdraw/queue?node=${encodeURIComponent(node)}&chain=${chain}&asset=${asset}`)
+  return resp.json()
+}
+
+// 获取 Frost Job 列表
+export async function fetchFrostWithdrawJobs(node: string, chain: string = '', asset: string = ''): Promise<FrostWithdrawJobItem[]> {
+  const resp = await fetch(`/api/frost/withdraw/jobs?node=${encodeURIComponent(node)}&chain=${chain}&asset=${asset}`)
   return resp.json()
 }
 

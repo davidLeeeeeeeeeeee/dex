@@ -63,6 +63,7 @@ type Participant struct {
 	vaultProvider VaultCommitteeProvider
 	cryptoFactory CryptoExecutorFactory // 密码学执行器工厂
 	sessionStore  *session.SessionStore
+	shareStore    LocalShareStore
 
 	// 当前区块高度（用于协调者验证）
 	currentHeight uint64
@@ -137,7 +138,7 @@ func (s ParticipantSessionState) String() string {
 }
 
 // NewParticipant 创建参与者
-func NewParticipant(nodeID NodeID, messenger RoastMessenger, vaultProvider VaultCommitteeProvider, cryptoFactory CryptoExecutorFactory, sessionStore *session.SessionStore, logger logs.Logger) *Participant {
+func NewParticipant(nodeID NodeID, messenger RoastMessenger, vaultProvider VaultCommitteeProvider, cryptoFactory CryptoExecutorFactory, sessionStore *session.SessionStore, shareStore LocalShareStore, logger logs.Logger) *Participant {
 	if sessionStore == nil {
 		sessionStore = session.NewSessionStore(nil)
 	}
@@ -149,6 +150,7 @@ func NewParticipant(nodeID NodeID, messenger RoastMessenger, vaultProvider Vault
 		vaultProvider: vaultProvider,
 		cryptoFactory: cryptoFactory,
 		sessionStore:  sessionStore,
+		shareStore:    shareStore,
 		Logger:        logger,
 		currentHeight: 0,
 		shares:        make(map[string][]byte),
@@ -164,22 +166,57 @@ func (p *Participant) UpdateHeight(height uint64) {
 
 // SetShare 设置本地密钥份额
 func (p *Participant) SetShare(chain string, vaultID uint32, epoch uint64, share []byte) {
+	if len(share) == 0 {
+		return
+	}
+	shareCopy := cloneBytes(share)
+
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	key := shareKey(chain, vaultID, epoch)
-	p.shares[key] = share
+	p.shares[key] = shareCopy
+	store := p.shareStore
+	p.mu.Unlock()
+
+	if store == nil {
+		return
+	}
+	if err := store.SaveLocalShare(chain, vaultID, epoch, shareCopy); err != nil {
+		p.Logger.Warn("[Participant] failed to persist local share for %s/%d/%d: %v", chain, vaultID, epoch, err)
+	}
 }
 
 // GetShare 获取本地密钥份额
 func (p *Participant) GetShare(chain string, vaultID uint32, epoch uint64) []byte {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
 	key := shareKey(chain, vaultID, epoch)
-	return p.shares[key]
+	cached := cloneBytes(p.shares[key])
+	store := p.shareStore
+	p.mu.RUnlock()
+
+	if store != nil {
+		if persisted, err := store.LoadLocalShare(chain, vaultID, epoch); err == nil && len(persisted) > 0 {
+			persistedCopy := cloneBytes(persisted)
+			p.mu.Lock()
+			p.shares[key] = persistedCopy
+			p.mu.Unlock()
+			return persistedCopy
+		}
+	}
+
+	return cached
 }
 
 func shareKey(chain string, vaultID uint32, epoch uint64) string {
-	return chain + "_" + string(rune(vaultID)) + "_" + string(rune(epoch))
+	return fmt.Sprintf("%s_%d_%d", chain, vaultID, epoch)
+}
+
+func cloneBytes(src []byte) []byte {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]byte, len(src))
+	copy(dst, src)
+	return dst
 }
 
 // HandleNonceRequest 处理 nonce 请求

@@ -3,16 +3,21 @@
 package workers
 
 import (
+	"crypto/sha256"
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync/atomic"
 	"time"
 
 	"dex/frost/chain"
 	"dex/frost/runtime/planning"
+	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // SigningService 签名服务接口（本地定义，避免import cycle）
@@ -92,6 +97,7 @@ func (a *chainStateReaderAdapter) GetMany(keys []string) (map[string][]byte, err
 
 // WithdrawWorker 提现流程执行器
 type WithdrawWorker struct {
+	stateReader    StateReader
 	scanner        *planning.Scanner
 	planner        *planning.JobPlanner
 	windowPlanner  *planning.JobWindowPlanner // Job 窗口规划器
@@ -123,6 +129,7 @@ func NewWithdrawWorker(
 	// 适配StateReader到planning.ChainStateReader
 	planningReader := &chainStateReaderAdapter{reader: stateReader}
 	return &WithdrawWorker{
+		stateReader:    stateReader,
 		scanner:        planning.NewScanner(planningReader),
 		planner:        planning.NewJobPlanner(planningReader, adapterFactory),
 		windowPlanner:  planning.NewJobWindowPlanner(planningReader, adapterFactory, maxInFlight),
@@ -230,6 +237,24 @@ func (w *WithdrawWorker) reportPlanningLogs(ctx context.Context, job *planning.J
 
 // processJobAsync 异步处理单个 job
 func (w *WithdrawWorker) processJobAsync(ctx context.Context, job *planning.Job) {
+	if skip, reason, err := w.shouldSkipJob(job); err != nil {
+		w.Logger.Warn("[WithdrawWorker] skip-check failed for job %s: %v", job.JobID, err)
+		return
+	} else if skip {
+		w.Logger.Trace("[WithdrawWorker] skip job %s: %s", job.JobID, reason)
+		return
+	}
+
+	isCoordinator, coordinatorAddr, err := w.isJobCoordinator(job)
+	if err != nil {
+		w.Logger.Warn("[WithdrawWorker] failed to resolve coordinator for job %s: %v", job.JobID, err)
+		return
+	}
+	if !isCoordinator {
+		w.Logger.Trace("[WithdrawWorker] skip job %s: local=%s coordinator=%s", job.JobID, w.localAddress, coordinatorAddr)
+		return
+	}
+
 	// 计算门限
 	threshold, err := w.calculateThreshold(job.Chain, job.VaultID)
 	if err != nil {
@@ -287,15 +312,28 @@ func (w *WithdrawWorker) processJobAsync(ctx context.Context, job *planning.Job)
 func (w *WithdrawWorker) waitAndSubmit(ctx context.Context, job *planning.Job, sessionID string) {
 	// 等待会话完成（超时 5 分钟）
 	timeout := 5 * time.Minute
-	signedPkg, err := w.signingService.WaitForCompletion(ctx, sessionID, timeout)
+	waitCtx := context.Background()
+	if ctx != nil {
+		// Ignore parent deadline/cancel while waiting for a long-running signing session.
+		waitCtx = context.WithoutCancel(ctx)
+	}
+	signedPkg, err := w.signingService.WaitForCompletion(waitCtx, sessionID, timeout)
 	if err != nil {
-		w.Logger.Error("[WithdrawWorker] signing session %s failed: %v", sessionID, err)
+		reason := err.Error()
+		if status, statusErr := w.signingService.GetSessionStatus(sessionID); statusErr == nil && status != nil {
+			if status.Error != nil {
+				reason = fmt.Sprintf("%s (state=%s, progress=%.2f, session_error=%v)", reason, status.State, status.Progress, status.Error)
+			} else {
+				reason = fmt.Sprintf("%s (state=%s, progress=%.2f)", reason, status.State, status.Progress)
+			}
+		}
+		w.Logger.Error("[WithdrawWorker] signing session %s failed: %s", sessionID, reason)
 		// 汇报失败
 		w.reportPlanningLogs(ctx, &planning.Job{
 			JobID:       job.JobID,
 			WithdrawIDs: job.WithdrawIDs,
 			Logs: []*pb.FrostPlanningLog{
-				{Step: "Signing", Status: "FAILED", Message: fmt.Sprintf("Signing session failed: %v", err), Timestamp: uint64(time.Now().UnixMilli())},
+				{Step: "Signing", Status: "FAILED", Message: fmt.Sprintf("Signing session failed: %s", reason), Timestamp: uint64(time.Now().UnixMilli())},
 			},
 		})
 		return
@@ -431,7 +469,11 @@ func (w *WithdrawWorker) processCompositeJobAsync(ctx context.Context, composite
 
 			// 等待完成
 			timeout := 5 * time.Minute
-			signedPkg, err := w.signingService.WaitForCompletion(ctx, sessionID, timeout)
+			waitCtx := context.Background()
+			if ctx != nil {
+				waitCtx = context.WithoutCancel(ctx)
+			}
+			signedPkg, err := w.signingService.WaitForCompletion(waitCtx, sessionID, timeout)
 			if err != nil {
 				subJobErrors <- fmt.Errorf("signing session %s failed: %w", sessionID, err)
 				return
@@ -480,4 +522,100 @@ func (w *WithdrawWorker) buildSignedPackageBytes(signedPkg *SignedPackage, job *
 	// 这里简化处理，实际需要序列化为 protobuf
 	// TODO: 实现完整的 SignedPackage 序列化
 	return signedPkg.Signature, nil
+}
+
+func (w *WithdrawWorker) shouldSkipJob(job *planning.Job) (bool, string, error) {
+	if w.stateReader == nil || job == nil {
+		return false, "", nil
+	}
+
+	txID := fmt.Sprintf("tx_withdraw_%s", job.JobID)
+	if _, exists, err := w.stateReader.Get(keys.KeyPendingAnyTx(txID)); err != nil {
+		return false, "", err
+	} else if exists {
+		return true, "withdraw tx already pending", nil
+	}
+	if _, exists, err := w.stateReader.Get(keys.KeyVMAppliedTx(txID)); err != nil {
+		return false, "", err
+	} else if exists {
+		return true, "withdraw tx already applied", nil
+	}
+	if countData, exists, err := w.stateReader.Get(keys.KeyFrostSignedPackageCount(job.JobID)); err != nil {
+		return false, "", err
+	} else if exists && len(countData) > 0 {
+		if count, parseErr := strconv.ParseUint(string(countData), 10, 64); parseErr == nil && count > 0 {
+			return true, "signed package already persisted", nil
+		}
+	}
+
+	for _, withdrawID := range job.WithdrawIDs {
+		withdrawData, exists, err := w.stateReader.Get(keys.KeyFrostWithdraw(withdrawID))
+		if err != nil {
+			return false, "", err
+		}
+		if !exists || len(withdrawData) == 0 {
+			return true, fmt.Sprintf("withdraw %s not found", withdrawID), nil
+		}
+
+		var state pb.FrostWithdrawState
+		if err := proto.Unmarshal(withdrawData, &state); err != nil {
+			return false, "", err
+		}
+		if state.Status != "QUEUED" {
+			return true, fmt.Sprintf("withdraw %s status=%s", withdrawID, state.Status), nil
+		}
+	}
+
+	return false, "", nil
+}
+
+func (w *WithdrawWorker) isJobCoordinator(job *planning.Job) (bool, string, error) {
+	committee, err := w.vaultProvider.VaultCommittee(job.Chain, job.VaultID, job.KeyEpoch)
+	if err != nil {
+		return false, "", err
+	}
+	if len(committee) == 0 {
+		return false, "", fmt.Errorf("empty committee for %s/%d/%d", job.Chain, job.VaultID, job.KeyEpoch)
+	}
+
+	coordIndex := computeJobCoordinatorIndex(job.JobID, job.KeyEpoch, committee)
+	if coordIndex < 0 || coordIndex >= len(committee) {
+		return false, "", fmt.Errorf("invalid coordinator index=%d", coordIndex)
+	}
+
+	coordAddr := string(committee[coordIndex].ID)
+	return w.localAddress == coordAddr, coordAddr, nil
+}
+
+func computeJobCoordinatorIndex(jobID string, keyEpoch uint64, committee []SignerInfo) int {
+	if len(committee) == 0 {
+		return 0
+	}
+	seed := computeJobCoordinatorSeed(jobID, keyEpoch)
+	permuted := permuteSignerCommittee(committee, seed)
+	target := permuted[0].ID
+	for i, member := range committee {
+		if member.ID == target {
+			return i
+		}
+	}
+	return 0
+}
+
+func computeJobCoordinatorSeed(jobID string, keyEpoch uint64) []byte {
+	// Keep this consistent with roast/coordinator.go.
+	data := jobID + "|" + string(rune(keyEpoch)) + "|frost_agg"
+	hash := sha256.Sum256([]byte(data))
+	return hash[:]
+}
+
+func permuteSignerCommittee(committee []SignerInfo, seed []byte) []SignerInfo {
+	result := make([]SignerInfo, len(committee))
+	copy(result, committee)
+	for i := len(result) - 1; i > 0; i-- {
+		indexSeed := sha256.Sum256(append(seed, byte(i)))
+		j := int(indexSeed[0]) % (i + 1)
+		result[i], result[j] = result[j], result[i]
+	}
+	return result
 }

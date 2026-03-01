@@ -9,6 +9,7 @@ import "dex/frost/runtime/types"
 type StateReader = types.StateReader
 type TxSubmitter = types.TxSubmitter
 type LogReporter = types.LogReporter
+type LocalShareStore = types.LocalShareStore
 type VaultCommitteeProvider = types.VaultCommitteeProvider
 type SignerInfo = types.SignerInfo
 type MinerPubKeyProvider = types.MinerPubKeyProvider

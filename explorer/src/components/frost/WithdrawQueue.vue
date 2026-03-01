@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
-import { fetchFrostWithdrawQueue } from '../../api'
-import type { FrostWithdrawQueueItem } from '../../types'
+import { computed, ref, onMounted, watch } from 'vue'
+import { fetchFrostWithdrawQueue, fetchFrostWithdrawJobs } from '../../api'
+import type { FrostWithdrawQueueItem, FrostWithdrawJobItem } from '../../types'
 import WithdrawDetailModal from './WithdrawDetailModal.vue'
 
 const emit = defineEmits(['select-tx'])
@@ -12,6 +12,7 @@ const props = defineProps<{
 
 
 const queue = ref<FrostWithdrawQueueItem[]>([])
+const jobs = ref<FrostWithdrawJobItem[]>([])
 const loading = ref(false)
 const error = ref('')
 
@@ -19,7 +20,12 @@ const loadQueue = async () => {
   loading.value = true
   error.value = ''
   try {
-    queue.value = await fetchFrostWithdrawQueue(props.node)
+    const [queueResp, jobsResp] = await Promise.all([
+      fetchFrostWithdrawQueue(props.node),
+      fetchFrostWithdrawJobs(props.node),
+    ])
+    queue.value = queueResp
+    jobs.value = jobsResp
   } catch (e: any) {
     error.value = e.message || 'Failed to load'
     console.error('Failed to load withdraw queue', e)
@@ -43,6 +49,100 @@ function getChainColor(chain: string): string {
   if (c === 'eth') return '#627eea'
   if (c === 'tron') return '#eb0029'
   return '#9ca3af'
+}
+
+function getJobStatusClass(status: string): string {
+  const s = (status || '').toUpperCase()
+  if (s === 'SIGNED' || s === 'SIGN_DONE' || s === 'WAIT_SUBMIT') return 'signed'
+  if (s === 'SIGNING' || s === 'WAIT_START_SIGNING' || s === 'PLANNED') return 'signing'
+  if (s === 'WAIT_UTXO' || s === 'WAIT_ACTIVE_VAULT' || s === 'WAIT_VAULT_BALANCE' || s === 'WAIT_SELECT_VAULT' || s === 'PLANNING_WAITING') return 'waiting'
+  if (s === 'FAILED' || s === 'SIGN_FAILED' || s === 'PLAN_FAILED' || s === 'PLANNING_FAILED') return 'failed'
+  return 'queued'
+}
+
+function formatPlanningTime(ts?: number): string {
+  if (!ts) return '-'
+  return new Date(ts).toLocaleString()
+}
+
+function compactText(text: string | undefined, maxLen: number = 80): string {
+  const value = (text || '').trim()
+  if (!value) return '-'
+  if (value.length <= maxLen) return value
+  return `${value.slice(0, maxLen - 3)}...`
+}
+
+function deriveStatusFromLogs(item: FrostWithdrawQueueItem): string {
+  if (item.status?.toUpperCase() === 'SIGNED') return 'SIGNED'
+  const logs = item.planning_logs || []
+  if (logs.length === 0) return 'QUEUED'
+  const last = logs[logs.length - 1]
+  const step = (last?.step || '').toLowerCase()
+  const status = (last?.status || '').toLowerCase()
+  const msg = (last?.message || '').toLowerCase()
+
+  if (step === 'signing' && status === 'failed') return 'SIGN_FAILED'
+  if (step === 'signing' && status === 'ok') return 'SIGN_DONE'
+  if ((step === 'signing' && status === 'waiting') || (step === 'startsigning' && status === 'ok')) return 'SIGNING'
+  if (step === 'finishplanning' && status === 'ok') return 'PLANNED'
+  if (step === 'planbtcjob' && status === 'failed') {
+    if (msg.includes('utxo')) return 'WAIT_UTXO'
+    if (msg.includes('active vault')) return 'WAIT_ACTIVE_VAULT'
+    return 'PLAN_FAILED'
+  }
+  if (step === 'selectvault' && status === 'failed') {
+    if (msg.includes('active vault')) return 'WAIT_ACTIVE_VAULT'
+    if (msg.includes('balance') || msg.includes('insufficient')) return 'WAIT_VAULT_BALANCE'
+    return 'WAIT_SELECT_VAULT'
+  }
+  if (step === 'compositeplan' && status === 'waiting') return 'WAIT_VAULT_BALANCE'
+  if (status === 'failed') return 'PLANNING_FAILED'
+  if (status === 'waiting') return 'PLANNING_WAITING'
+  return 'QUEUED'
+}
+
+function getRuntimeStatus(item: FrostWithdrawQueueItem): string {
+  return (item.derived_status && item.derived_status.trim()) || deriveStatusFromLogs(item)
+}
+
+function getRuntimeStatusLabel(status: string): string {
+  const s = (status || '').toUpperCase()
+  if (s === 'QUEUED') return 'Queued'
+  if (s === 'PLANNED') return 'Planned'
+  if (s === 'WAIT_START_SIGNING') return 'Wait Signing'
+  if (s === 'SIGNING') return 'Signing'
+  if (s === 'SIGN_DONE') return 'Sign Done'
+  if (s === 'WAIT_SUBMIT') return 'Wait Submit'
+  if (s === 'SIGNED') return 'Signed'
+  if (s === 'WAIT_UTXO') return 'Wait UTXO'
+  if (s === 'WAIT_ACTIVE_VAULT') return 'Wait Active Vault'
+  if (s === 'WAIT_VAULT_BALANCE') return 'Wait Vault Balance'
+  if (s === 'WAIT_SELECT_VAULT') return 'Wait Vault Select'
+  if (s === 'PLANNING_WAITING') return 'Planning Waiting'
+  if (s === 'PLAN_FAILED') return 'Plan Failed'
+  if (s === 'SIGN_FAILED') return 'Sign Failed'
+  if (s === 'PLANNING_FAILED') return 'Planning Failed'
+  if (s === 'FAILED') return 'Failed'
+  return status || 'Unknown'
+}
+
+function getRuntimeReason(item: FrostWithdrawQueueItem): string {
+  return item.derived_reason || item.failure_reason || item.last_planning_message || item.planning_logs?.[item.planning_logs.length - 1]?.message || ''
+}
+
+const queueBlockers = computed(() => {
+  return queue.value.filter((item) => {
+    const stage = getRuntimeStatus(item)
+    return stage !== 'QUEUED' || !!item.last_planning_step || (item.planning_logs?.length || 0) > 0
+  })
+})
+
+function getJobDisplayStatus(job: FrostWithdrawJobItem): string {
+  return (job.derived_status || job.status || 'QUEUED').toUpperCase()
+}
+
+function getJobReason(job: FrostWithdrawJobItem): string {
+  return job.failure_reason || job.derived_reason || ''
 }
 
 const modalVisible = ref(false)
@@ -88,7 +188,9 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
             <th class="px-6 py-4 text-left">Asset / Protocol</th>
             <th class="px-6 py-4 text-left">Destination Address</th>
             <th class="px-6 py-4 text-right">Volume</th>
-            <th class="px-6 py-4 text-center">Status</th>
+            <th class="px-6 py-4 text-center">Ledger Status</th>
+            <th class="px-6 py-4 text-center">Runtime Stage</th>
+            <th class="px-6 py-4 text-left">Latest Signal</th>
           </tr>
         </thead>
         <tbody>
@@ -131,6 +233,23 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
                 <span>{{ item.status }}</span>
               </div>
             </td>
+            <td class="px-6 py-4 text-center">
+              <div :class="['status-pill', getJobStatusClass(getRuntimeStatus(item))]">
+                <div class="pill-dot"></div>
+                <span>{{ getRuntimeStatusLabel(getRuntimeStatus(item)) }}</span>
+              </div>
+            </td>
+            <td class="px-6 py-4">
+              <div class="amount-stack">
+                <span class="text-gray-300">
+                  {{ compactText(item.last_planning_step || item.planning_logs?.[item.planning_logs.length - 1]?.step || 'No signal', 24) }}
+                  <span v-if="item.last_planning_status || item.planning_logs?.length" class="text-gray-500">
+                    / {{ item.last_planning_status || item.planning_logs?.[item.planning_logs.length - 1]?.status || '-' }}
+                  </span>
+                </span>
+                <span class="text-[10px] text-gray-500">{{ compactText(getRuntimeReason(item), 72) }}</span>
+              </div>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -161,6 +280,90 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
       </div>
       <p class="text-gray-500 font-medium">All clear! No pending withdrawals.</p>
     </div>
+
+    <section class="jobs-section">
+      <div class="jobs-header">
+        <h4 class="jobs-title">Signing Jobs</h4>
+        <span class="jobs-count">{{ jobs.length }}</span>
+      </div>
+      <div v-if="jobs.length > 0" class="data-viewport">
+        <table class="premium-table">
+          <thead>
+            <tr>
+              <th class="px-6 py-4 text-left">Job ID</th>
+              <th class="px-6 py-4 text-left">Type</th>
+              <th class="px-6 py-4 text-left">Chain / Asset</th>
+              <th class="px-6 py-4 text-left">Withdraws</th>
+              <th class="px-6 py-4 text-right">Total Amount</th>
+              <th class="px-6 py-4 text-left">Last Planning Step</th>
+              <th class="px-6 py-4 text-left">Debug Reason</th>
+              <th class="px-6 py-4 text-center">Runtime Stage</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="job in jobs" :key="job.job_id" class="table-row">
+              <td class="px-6 py-4">
+                <div class="id-badge-with-tool">
+                  <code class="mono">{{ job.job_id.substring(0, 10) }}</code>
+                  <div class="hover-full-id">{{ job.job_id }}</div>
+                </div>
+              </td>
+              <td class="px-6 py-4">
+                <span :class="['status-pill', job.synthetic ? 'waiting' : 'queued']">
+                  <span class="pill-dot"></span>
+                  {{ job.synthetic ? 'Planning Blocker' : 'Signing Job' }}
+                </span>
+              </td>
+              <td class="px-6 py-4">
+                <div class="asset-combo">
+                  <div class="asset-logo" :style="{ '--col': getChainColor(job.chain) }">
+                    {{ job.chain.charAt(0) }}
+                  </div>
+                  <div class="asset-meta">
+                    <span class="asset-name text-white font-bold">{{ job.asset }}</span>
+                    <span class="chain-name text-[10px] text-gray-500 uppercase tracking-widest">{{ job.chain }} / vault {{ job.vault_id }}</span>
+                  </div>
+                </div>
+              </td>
+              <td class="px-6 py-4">
+                <span class="mono text-gray-300">{{ job.withdraw_count }} requests</span>
+              </td>
+              <td class="px-6 py-4 text-right">
+                <span class="amount-val text-cyan-300 font-bold font-mono">{{ formatAmount(job.total_amount) }}</span>
+              </td>
+              <td class="px-6 py-4">
+                <div class="amount-stack">
+                  <span class="text-gray-300">{{ job.last_planning_step || '-' }}</span>
+                  <span class="text-[10px] text-gray-500">{{ formatPlanningTime(job.last_planning_at) }}</span>
+                </div>
+              </td>
+              <td class="px-6 py-4">
+                <span class="failure-reason" :title="getJobReason(job)">
+                  {{ compactText(getJobReason(job), 88) }}
+                </span>
+              </td>
+              <td class="px-6 py-4 text-center">
+                <div :class="['status-pill', getJobStatusClass(getJobDisplayStatus(job))]">
+                  <div class="pill-dot"></div>
+                  <span>{{ getRuntimeStatusLabel(getJobDisplayStatus(job)) }}</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-else-if="!loading" class="jobs-empty">
+        <span v-if="queueBlockers.length === 0">No jobs found from persisted withdraw state/planning logs.</span>
+        <div v-else class="blocker-list">
+          <span class="text-gray-300">No concrete signing job yet. Queue is blocked at:</span>
+          <div v-for="item in queueBlockers.slice(0, 6)" :key="item.withdraw_id" class="blocker-item">
+            <code class="mono">{{ item.withdraw_id.substring(0, 8) }}</code>
+            <span>{{ getRuntimeStatusLabel(getRuntimeStatus(item)) }}</span>
+            <span class="text-gray-500">{{ compactText(getRuntimeReason(item), 92) }}</span>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- Withdraw Detail Modal -->
     <WithdrawDetailModal
@@ -250,6 +453,34 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
   border-radius: 18px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.jobs-section {
+  margin-top: 24px;
+}
+
+.jobs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.jobs-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #d1d5db;
+}
+
+.jobs-count {
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
 .premium-table {
@@ -392,6 +623,8 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
 .status-pill.queued { background: rgba(59, 130, 246, 0.1); color: #60a5fa; }
 .status-pill.signing { background: rgba(139, 92, 246, 0.1); color: #a78bfa; }
 .status-pill.signed { background: rgba(16, 185, 129, 0.1); color: #34d399; }
+.status-pill.waiting { background: rgba(245, 158, 11, 0.12); color: #fbbf24; }
+.status-pill.failed { background: rgba(239, 68, 68, 0.12); color: #f87171; }
 
 .pill-dot {
   width: 6px;
@@ -480,6 +713,43 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
 .empty-state {
   text-align: center;
   padding: 60px 0;
+}
+
+.jobs-empty {
+  text-align: left;
+  color: #64748b;
+  font-size: 0.85rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  padding: 20px;
+}
+
+.blocker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.blocker-item {
+  display: grid;
+  grid-template-columns: 84px 160px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #cbd5e1;
+}
+
+.failure-reason {
+  display: inline-block;
+  max-width: 340px;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .empty-orb {

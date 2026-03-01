@@ -407,19 +407,21 @@ type Manager struct {
 
 // ManagerDeps Manager 依赖集合
 type ManagerDeps struct {
-	StateReader    ChainStateReader
-	TxSubmitter    TxSubmitter
-	Notifier       FinalityNotifier
-	P2P            P2P
-	RoastMessenger RoastMessenger
-	FrostRouter    *frostrtnet.Router
-	SignerProvider SignerSetProvider
-	VaultProvider  VaultCommitteeProvider
-	AdapterFactory chain.ChainAdapterFactory
-	PubKeyProvider MinerPubKeyProvider
-	CryptoFactory  CryptoExecutorFactory // 密码学执行器工厂
-	LogReporter    LogReporter           // 规划日志汇报器
-	Logger         logs.Logger
+	StateReader     ChainStateReader
+	TxSubmitter     TxSubmitter
+	Notifier        FinalityNotifier
+	P2P             P2P
+	RoastMessenger  RoastMessenger
+	FrostRouter     *frostrtnet.Router
+	SignerProvider  SignerSetProvider
+	VaultProvider   VaultCommitteeProvider
+	AdapterFactory  chain.ChainAdapterFactory
+	PubKeyProvider  MinerPubKeyProvider
+	CryptoFactory   CryptoExecutorFactory
+	LocalShareStore LocalShareStore
+	LocalPrivateKey string
+	LogReporter     LogReporter
+	Logger          logs.Logger
 }
 
 // NewManager 创建新的 Manager 实例
@@ -463,7 +465,7 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 	// 创建 Coordinator 和 Participant（用于 SigningService）
 	// 由于接口已统一，直接使用runtime包中的类型
 	m.coordinator = roast.NewCoordinator(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, deps.Logger)
-	m.participant = roast.NewParticipant(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, sessionStore, deps.Logger)
+	m.participant = roast.NewParticipant(config.NodeID, roastMessenger, deps.VaultProvider, deps.CryptoFactory, sessionStore, deps.LocalShareStore, deps.Logger)
 
 	// 创建 SigningService
 	roastSigningService := services.NewRoastSigningService(m.coordinator, m.participant, deps.VaultProvider)
@@ -496,6 +498,8 @@ func NewManager(config ManagerConfig, deps ManagerDeps) *Manager {
 		deps.VaultProvider,
 		deps.SignerProvider,
 		adapterFactoryAdapter,
+		deps.LocalShareStore,
+		deps.LocalPrivateKey,
 		string(config.NodeID),
 		deps.Logger,
 	)

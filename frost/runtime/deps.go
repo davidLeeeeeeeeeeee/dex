@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 
+	"dex/frost/runtime/roast"
 	"dex/frost/runtime/types"
 	"dex/pb"
 )
@@ -30,6 +31,9 @@ type TxSubmitter interface {
 
 // LogReporter 异步汇报接口（从 types 包导入）
 type LogReporter = types.LogReporter
+
+// LocalShareStore 本地份额持久化接口（从 types 包导入）
+type LocalShareStore = types.LocalShareStore
 
 // StateReader 状态读取接口（ChainStateReader 的别名）
 type StateReader = ChainStateReader
@@ -97,16 +101,16 @@ func PBEnvelopeFromRoast(msg *RoastEnvelope) (*pb.FrostEnvelope, error) {
 	if msg == nil {
 		return nil, nil
 	}
-	// 直接构建pb.FrostEnvelope
-	// TODO: 使用roast包的PBEnvelopeFromRoast函数进行完整转换
-	kind := pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_RESPONSE
-	if msg.Kind == "NonceRequest" || msg.Kind == "SignRequest" {
-		kind = pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_REQUEST
-	}
-	return &pb.FrostEnvelope{
-		From:    string(msg.From),
-		Kind:    kind,
-		Payload: msg.Payload,
-		JobId:   msg.SessionID,
-	}, nil
+	// Reuse roast wire encoding so receiver can decode EnvelopeFromPB reliably.
+	return roast.PBEnvelopeFromRoast(&roast.Envelope{
+		SessionID: msg.SessionID,
+		Kind:      msg.Kind,
+		From:      roast.NodeID(msg.From),
+		Chain:     msg.Chain,
+		VaultID:   msg.VaultID,
+		SignAlgo:  pb.SignAlgo(msg.SignAlgo),
+		Epoch:     msg.Epoch,
+		Round:     msg.Round,
+		Payload:   msg.Payload,
+	})
 }

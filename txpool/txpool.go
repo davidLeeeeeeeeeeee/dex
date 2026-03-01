@@ -10,8 +10,6 @@ import (
 	"dex/utils"
 	"encoding/hex"
 	"fmt"
-	"log"
-	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -480,10 +478,23 @@ func (p *TxPool) ConcatFirst8Bytes(txs []*pb.AnyTx) []byte {
 	}()
 	var result []byte
 	for _, tx := range txs {
+		if tx == nil {
+			continue
+		}
 		txID := tx.GetTxId()
-		idBytes, err := hex.DecodeString(txID[2:])
-		if err != nil {
-			log.Fatalf("invalid hex string: %v\n%s", err, debug.Stack())
+		if txID == "" {
+			continue
+		}
+		var idBytes []byte
+		// Prefer legacy 0x-hex tx_id format.
+		if len(txID) > 2 && txID[0] == '0' && (txID[1] == 'x' || txID[1] == 'X') {
+			if decoded, err := hex.DecodeString(txID[2:]); err == nil && len(decoded) > 0 {
+				idBytes = decoded
+			}
+		}
+		// Fallback for non-hex tx_id (e.g. tx_withdraw_<job_id>) to keep deterministic short hashes.
+		if len(idBytes) == 0 {
+			idBytes = utils.Sha256Hash([]byte(txID))
 		}
 		// 如果交易标识的长度小于3，则跳过或按需求处理
 		if len(idBytes) < 3 {

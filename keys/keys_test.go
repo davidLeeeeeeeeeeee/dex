@@ -88,4 +88,9 @@ func TestFrostKeys(t *testing.T) {
 		key := KeyFrostSignedPackageCount("job-id-xyz")
 		assert.Equal(t, "v1_frost_signed_pkg_count_job-id-xyz", key)
 	})
+
+	t.Run("KeyFrostLocalShare", func(t *testing.T) {
+		key := KeyFrostLocalShare("btc", 4, 1)
+		assert.Equal(t, "v1_local_frost_share_btc_4_00000000000000000001", key)
+	})
 }

@@ -11,6 +11,7 @@ type SignerInfo = types.SignerInfo
 type VaultCommitteeProvider = types.VaultCommitteeProvider
 type RoastMessenger = types.RoastMessenger
 type CryptoExecutorFactory = types.CryptoExecutorFactory
+type LocalShareStore = types.LocalShareStore
 type ROASTExecutor = types.ROASTExecutor
 type DKGExecutor = types.DKGExecutor
 type PolynomialHandle = types.PolynomialHandle

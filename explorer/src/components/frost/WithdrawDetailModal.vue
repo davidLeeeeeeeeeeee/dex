@@ -32,21 +32,61 @@ const initMermaid = () => {
   }
 }
 
+function deriveRuntimeStatus(item: FrostWithdrawQueueItem): string {
+  if (!item) return 'QUEUED'
+  if (item.derived_status) return item.derived_status.toUpperCase()
+  if (item.status?.toUpperCase() === 'SIGNED') return 'SIGNED'
+  const logs = item.planning_logs || []
+  if (logs.length === 0) return 'QUEUED'
+  const last = logs[logs.length - 1]
+  const step = (last?.step || '').toLowerCase()
+  const status = (last?.status || '').toLowerCase()
+  const msg = (last?.message || '').toLowerCase()
+  if (step === 'signing' && status === 'failed') return 'SIGN_FAILED'
+  if (step === 'signing' && status === 'ok') return 'SIGN_DONE'
+  if ((step === 'signing' && status === 'waiting') || (step === 'startsigning' && status === 'ok')) return 'SIGNING'
+  if (step === 'finishplanning' && status === 'ok') return 'PLANNED'
+  if (step === 'planbtcjob' && status === 'failed' && msg.includes('utxo')) return 'WAIT_UTXO'
+  if (step === 'selectvault' && status === 'failed' && msg.includes('active vault')) return 'WAIT_ACTIVE_VAULT'
+  if (step === 'selectvault' && status === 'failed') return 'WAIT_VAULT_BALANCE'
+  if (status === 'failed') return 'PLANNING_FAILED'
+  if (status === 'waiting') return 'PLANNING_WAITING'
+  return 'QUEUED'
+}
+
 const renderChart = async () => {
   if (!props.item || !props.show) return
 
   initMermaid()
 
-  const status = props.item.status.toUpperCase()
+  const status = deriveRuntimeStatus(props.item)
   let flow = 'graph LR\n'
-  flow += '  A[QUEUED] -->|Coordinator Pick| B[SIGNING]\n'
-  flow += '  B -->|FROST Success| C[SIGNED]\n'
-  flow += '  C -->|Chain Broadcast| D((ON-CHAIN))\n'
-  
-  if (status === 'QUEUED') flow += '  style A fill:#3b82f6,stroke:#fff,stroke-width:2px,color:#fff\n'
-  if (status === 'SIGNING') flow += '  style B fill:#8b5cf6,stroke:#fff,stroke-width:2px,color:#fff\n'
-  if (status === 'SIGNED') flow += '  style C fill:#10b981,stroke:#fff,stroke-width:2px,color:#fff\n'
-  if (status === 'BROADCAST' || status === 'COMPLETED') flow += '  style D fill:#10b981,stroke:#fff,stroke-width:2px,color:#fff\n'
+  flow += '  A[QUEUED] --> B[Select Vault]\n'
+  flow += '  B --> C[Build Template]\n'
+  flow += '  C --> D[Start Signing]\n'
+  flow += '  D --> E[FROST Signing]\n'
+  flow += '  E --> F[SIGNED]\n'
+  flow += '  F --> G((ON-CHAIN))\n'
+  flow += '  C -.-> H[WAIT_UTXO]\n'
+  flow += '  B -.-> I[WAIT_ACTIVE_VAULT]\n'
+  flow += '  B -.-> J[WAIT_VAULT_BALANCE]\n'
+  flow += '  E -.-> K[SIGN_FAILED]\n'
+
+  const activeNodeByStatus: Record<string, string> = {
+    QUEUED: 'A',
+    PLANNED: 'C',
+    SIGNING: 'E',
+    SIGN_DONE: 'F',
+    SIGNED: 'F',
+    WAIT_UTXO: 'H',
+    WAIT_ACTIVE_VAULT: 'I',
+    WAIT_VAULT_BALANCE: 'J',
+    SIGN_FAILED: 'K',
+    PLANNING_FAILED: 'K',
+    PLANNING_WAITING: 'B',
+  }
+  const activeNode = activeNodeByStatus[status] || 'A'
+  flow += `  style ${activeNode} fill:#3b82f6,stroke:#fff,stroke-width:2px,color:#fff\n`
 
   isRendering.value = true
   renderError.value = ''
@@ -91,6 +131,29 @@ function formatTime(ts: number): string {
   if (!ts) return '-'
   const date = new Date(ts)
   return date.toLocaleTimeString() + '.' + String(ts % 1000).padStart(3, '0')
+}
+
+function runtimeStatusLabel(status: string): string {
+  const s = (status || '').toUpperCase()
+  if (s === 'WAIT_ACTIVE_VAULT') return 'Wait Active Vault'
+  if (s === 'WAIT_VAULT_BALANCE') return 'Wait Vault Balance'
+  if (s === 'WAIT_UTXO') return 'Wait UTXO'
+  if (s === 'PLANNING_WAITING') return 'Planning Waiting'
+  if (s === 'PLANNING_FAILED') return 'Planning Failed'
+  if (s === 'SIGN_FAILED') return 'Sign Failed'
+  if (s === 'PLANNED') return 'Planned'
+  if (s === 'SIGN_DONE') return 'Sign Done'
+  if (s === 'WAIT_SUBMIT') return 'Wait Submit'
+  return s || 'QUEUED'
+}
+
+function runtimeStatusClass(status: string): string {
+  const s = (status || '').toUpperCase()
+  if (s === 'SIGNED' || s === 'SIGN_DONE' || s === 'WAIT_SUBMIT') return 'signed'
+  if (s === 'SIGNING' || s === 'PLANNED') return 'signing'
+  if (s === 'WAIT_ACTIVE_VAULT' || s === 'WAIT_VAULT_BALANCE' || s === 'WAIT_UTXO' || s === 'PLANNING_WAITING') return 'queued'
+  if (s === 'SIGN_FAILED' || s === 'PLANNING_FAILED') return 'failed'
+  return 'queued'
 }
 
 function getLogStatusClass(status: string) {
@@ -140,11 +203,15 @@ function getLogStatusClass(status: string) {
             <!-- Middle Section: Key Info -->
             <section class="info-grid">
               <div class="info-card">
-                <span class="info-label">Current Status</span>
-                <div :class="['status-val', item.status.toLowerCase()]">
+                <span class="info-label">Runtime Stage</span>
+                <div :class="['status-val', runtimeStatusClass(deriveRuntimeStatus(item))]">
                   <span class="dot"></span>
-                  {{ item.status }}
+                  {{ runtimeStatusLabel(deriveRuntimeStatus(item)) }}
                 </div>
+              </div>
+              <div class="info-card">
+                <span class="info-label">Ledger Status</span>
+                <span class="info-val font-bold text-white">{{ item.status }}</span>
               </div>
               <div class="info-card">
                 <span class="info-label">Target Chain</span>
@@ -372,6 +439,7 @@ function getLogStatusClass(status: string) {
 .status-val.queued { color: #3b82f6; }
 .status-val.signing { color: #8b5cf6; }
 .status-val.signed { color: #10b981; }
+.status-val.failed { color: #ef4444; }
 
 .status-val .dot {
   width: 8px;

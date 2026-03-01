@@ -137,6 +137,9 @@ func (c *Coordinator) StartSession(ctx context.Context, params *StartSessionPara
 			myIndex = i
 		}
 	}
+	if myIndex < 0 {
+		return ErrParticipantNotFound
+	}
 
 	// 创建会话
 	sess := roastsession.NewSession(roastsession.SessionParams{
@@ -152,15 +155,14 @@ func (c *Coordinator) StartSession(ctx context.Context, params *StartSessionPara
 		StartHeight: c.currentHeight,
 	})
 
-	c.sessions[params.JobID] = sess
-
-	// 如果本节点是协调者，开始收集 nonce
-	if c.isCurrentCoordinator(sess) {
-		if err := sess.Start(); err != nil {
-			return err
-		}
-		go c.runCoordinatorLoop(ctx, sess)
+	if !c.isCurrentCoordinator(sess) {
+		return ErrCoordinatorNotLeader
 	}
+	if err := sess.Start(); err != nil {
+		return err
+	}
+	c.sessions[params.JobID] = sess
+	go c.runCoordinatorLoop(ctx, sess)
 
 	return nil
 }

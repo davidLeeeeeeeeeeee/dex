@@ -26,15 +26,17 @@ import (
 type TransitionWorker struct {
 	mu sync.RWMutex
 
-	stateReader    StateReader
-	txSubmitter    TxSubmitter
-	pubKeyProvider MinerPubKeyProvider
-	cryptoFactory  CryptoExecutorFactory // 密码学执行器工厂
-	vaultProvider  VaultCommitteeProvider
-	signerProvider SignerSetProvider
-	adapterFactory ChainAdapterFactory // 链适配器工厂
-	localAddress   string
-	Logger         logs.Logger
+	stateReader     StateReader
+	txSubmitter     TxSubmitter
+	pubKeyProvider  MinerPubKeyProvider
+	cryptoFactory   CryptoExecutorFactory // 密码学执行器工厂
+	vaultProvider   VaultCommitteeProvider
+	signerProvider  SignerSetProvider
+	adapterFactory  ChainAdapterFactory // 链适配器工厂
+	localShareStore LocalShareStore
+	localPrivateKey string
+	localAddress    string
+	Logger          logs.Logger
 
 	// DKG 会话管理
 	sessions map[string]*DKGSession // sessionID -> session
@@ -150,6 +152,8 @@ func NewTransitionWorker(
 	vaultProvider VaultCommitteeProvider,
 	signerProvider SignerSetProvider,
 	adapterFactory ChainAdapterFactory,
+	localShareStore LocalShareStore,
+	localPrivateKey string,
 	localAddress string,
 	logger logs.Logger,
 ) *TransitionWorker {
@@ -161,6 +165,8 @@ func NewTransitionWorker(
 		vaultProvider:       vaultProvider,
 		signerProvider:      signerProvider,
 		adapterFactory:      adapterFactory,
+		localShareStore:     localShareStore,
+		localPrivateKey:     localPrivateKey,
 		localAddress:        localAddress,
 		Logger:              logger,
 		sessions:            make(map[string]*DKGSession),
@@ -517,6 +523,14 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 
 	session.LocalShare = new(big.Int).SetBytes(aggShare)
 	session.LocalShareBytes = aggShare
+	if w.localShareStore != nil {
+		shareCopy := make([]byte, len(aggShare))
+		copy(shareCopy, aggShare)
+		if err := w.localShareStore.SaveLocalShare(session.Chain, session.VaultID, session.EpochID, shareCopy); err != nil {
+			w.Logger.Warn("[TransitionWorker] failed to persist local share for %s/%d/%d: %v",
+				session.Chain, session.VaultID, session.EpochID, err)
+		}
+	}
 
 	// 3) 聚合 group_pubkey = Σ A_j0（收集所有 dealer 的 a_i0）
 	groupPubkey, err := w.aggregateGroupPubkey(ctx, session)
@@ -544,12 +558,10 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 	sharePrefix := fmt.Sprintf("v1_frost_vault_dkg_share_%s_%d_%s_", session.Chain, session.VaultID, padUint(session.EpochID))
 
 	// 解析本地 secp256k1 私钥（用于 ECIES 解密）
-	privStr := utils.GetKeyManager().GetPrivateKey()
-	privK, err := utils.ParseSecp256k1PrivateKey(privStr)
+	localPriv32, err := w.loadLocalDecryptPrivateKey()
 	if err != nil {
-		return nil, fmt.Errorf("parse local privkey: %w", err)
+		return nil, fmt.Errorf("load local decrypt key: %w", err)
 	}
-	localPriv32 := privK.Serialize()
 
 	err = w.stateReader.Scan(sharePrefix, func(k string, v []byte) bool {
 		// 反序列化存储的 share 记录
@@ -591,6 +603,22 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 	}
 
 	return result, nil
+}
+
+func (w *TransitionWorker) loadLocalDecryptPrivateKey() ([]byte, error) {
+	privStr := strings.TrimSpace(w.localPrivateKey)
+	if privStr == "" {
+		privStr = strings.TrimSpace(utils.GetKeyManager().GetPrivateKey())
+	}
+	if privStr == "" {
+		return nil, fmt.Errorf("empty local private key")
+	}
+
+	privK, err := utils.ParseSecp256k1PrivateKey(privStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse local private key: %w", err)
+	}
+	return privK.Serialize(), nil
 }
 
 func (w *TransitionWorker) loadDKGCommitments(session *DKGSession) (map[string]*pb.FrostVaultDkgCommitment, error) {

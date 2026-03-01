@@ -119,3 +119,4 @@ When core code changes, update these files together:
 1. 用中文。`task.md` 和实现说明类 `md` 都用中文。
 2. 代码在逻辑等价前提下保持精简，能一行写完不展开成三行。
 3. 始终坚持奥卡姆剃刀原则：如无必要，勿增实体。
+4. 所有输出的代码定位都要vscode里能点击直接跳转到对应代码段落的格式。

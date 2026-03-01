@@ -199,6 +199,12 @@ type LogReporter interface {
 	ReportWithdrawPlanningLog(ctx context.Context, log *pb.FrostWithdrawPlanningLogTx) error
 }
 
+// LocalShareStore 持久化本地节点密钥份额（仅本地 DB，不参与共识）
+type LocalShareStore interface {
+	SaveLocalShare(chain string, vaultID uint32, epoch uint64, share []byte) error
+	LoadLocalShare(chain string, vaultID uint32, epoch uint64) ([]byte, error)
+}
+
 // MinerPubKeyProvider 矿工公钥提供者
 type MinerPubKeyProvider interface {
 	// GetMinerSigningPubKey 获取矿工的签名公钥

@@ -303,18 +303,20 @@ ContinueWithConsensus:
 				roastMessenger = adapters.NewSenderRoastMessenger(node.SenderManager)
 			}
 			frostDeps := frostrt.ManagerDeps{
-				StateReader:    stateReader,
-				TxSubmitter:    txSubmitter,
-				Notifier:       notifier,
-				P2P:            p2p,
-				RoastMessenger: roastMessenger,
-				SignerProvider: signerProvider,
-				VaultProvider:  vaultProvider,
-				AdapterFactory: adapterFactory,
-				PubKeyProvider: pubKeyProvider,
-				CryptoFactory:  cryptoFactory,
-				LogReporter:    adapters.NewLocalLogReporter(node.DBManager),
-				Logger:         node.Logger, // 修复：注入节点日志器，防止 Start 时出现空指针 Panic
+				StateReader:     stateReader,
+				TxSubmitter:     txSubmitter,
+				Notifier:        notifier,
+				P2P:             p2p,
+				RoastMessenger:  roastMessenger,
+				SignerProvider:  signerProvider,
+				VaultProvider:   vaultProvider,
+				AdapterFactory:  adapterFactory,
+				PubKeyProvider:  pubKeyProvider,
+				CryptoFactory:   cryptoFactory,
+				LocalShareStore: adapters.NewDBLocalShareStore(node.DBManager),
+				LocalPrivateKey: node.PrivateKey,
+				LogReporter:     adapters.NewLocalLogReporter(node.DBManager),
+				Logger:          node.Logger, // 修复：注入节点日志器，防止 Start 时出现空指针 Panic
 			}
 			frostManager := frostrt.NewManager(frostCfg, frostDeps)
 			node.FrostRuntime = frostManager

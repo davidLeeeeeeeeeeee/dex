@@ -244,7 +244,7 @@ func (s *TxSimulator) runRechargeScenario() {
 			0,                     // 模拟 Vout 0
 			[]byte("lock_script"), // 模拟锁定脚本
 			"BTC",
-			"500",
+			"7000",
 			userNode.Address,
 			"5",
 			nonce,

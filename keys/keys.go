@@ -389,6 +389,11 @@ func KeyFrostSignedPackageCount(jobID string) string {
 	return withVer("frost_signed_pkg_count_" + jobID)
 }
 
+// KeyFrostLocalShare 本地节点密钥份额（仅本地持久化，不参与共识状态）
+func KeyFrostLocalShare(chain string, vaultID uint32, epochID uint64) string {
+	return withVer(fmt.Sprintf("local_frost_share_%s_%d_%s", chain, vaultID, padUint(epochID)))
+}
+
 // KeyFrostConfig Frost 全局配置
 // 例：v1_frost_cfg
 func KeyFrostConfig() string {

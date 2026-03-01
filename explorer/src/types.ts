@@ -271,6 +271,33 @@ export interface FrostWithdrawQueueItem {
   request_height?: number
   job_id?: string
   planning_logs?: FrostPlanningLog[]
+  derived_status?: string
+  derived_reason?: string
+  last_planning_step?: string
+  last_planning_status?: string
+  last_planning_message?: string
+  last_planning_at?: number
+  failure_reason?: string
+  failure_at?: number
+}
+
+export interface FrostWithdrawJobItem {
+  job_id: string
+  chain: string
+  asset: string
+  vault_id: number
+  status: string
+  withdraw_count: number
+  withdraw_ids: string[]
+  total_amount: string
+  last_planning_step?: string
+  last_planning_status?: string
+  last_planning_at?: number
+  failure_reason?: string
+  failure_at?: number
+  derived_status?: string
+  derived_reason?: string
+  synthetic?: boolean
 }
 
 // 见证人上账请求
