@@ -16,6 +16,8 @@ import type {
   WitnessRequest,
   WitnessInfo,
   DKGSession,
+  OrderBookData,
+  TradeRecord,
 } from './types'
 
 // 获取默认节点列表
@@ -123,6 +125,7 @@ export async function fetchWitnessList(node: string): Promise<WitnessInfo[]> {
   const resp = await fetch(`/api/witness/list?node=${encodeURIComponent(node)}`)
   return resp.json()
 }
+
 // 获取 Frost DKG 会话
 export async function fetchFrostDKGSessions(node: string): Promise<DKGSession[]> {
   const resp = await fetch(`/api/frost/dkg/list?node=${encodeURIComponent(node)}`)
@@ -132,9 +135,7 @@ export async function fetchFrostDKGSessions(node: string): Promise<DKGSession[]>
 // 获取地址交易历史
 export async function fetchTxHistory(address: string, limit: number = 0): Promise<TxHistoryResponse> {
   let url = `/api/txhistory?address=${encodeURIComponent(address)}`
-  if (limit > 0) {
-    url += `&limit=${limit}`
-  }
+  if (limit > 0) url += `&limit=${limit}`
   const resp = await fetch(url)
   return resp.json()
 }
@@ -156,34 +157,52 @@ interface APIError {
 async function parseAPIError(resp: Response): Promise<string> {
   try {
     const data: APIError = await resp.json()
-    if (data.details) {
-      return `${data.error}: ${data.details}`
-    }
-    return data.error
+    return data.details ? `${data.error}: ${data.details}` : data.error
   } catch {
     return `Request failed with status ${resp.status}`
   }
 }
 
 // 获取订单簿数据
-import type { OrderBookData, TradeRecord } from './types'
-
 export async function fetchOrderBook(node: string, pair: string): Promise<OrderBookData> {
   const resp = await fetch(`/api/orderbook?node=${encodeURIComponent(node)}&pair=${encodeURIComponent(pair)}`)
-  if (!resp.ok) {
-    const errorMessage = await parseAPIError(resp)
-    throw new Error(errorMessage)
-  }
+  if (!resp.ok) throw new Error(await parseAPIError(resp))
   return resp.json()
 }
 
 // 获取最近成交记录
 export async function fetchRecentTrades(node: string, pair: string, limit: number = 100): Promise<TradeRecord[]> {
   const resp = await fetch(`/api/trades?node=${encodeURIComponent(node)}&pair=${encodeURIComponent(pair)}&limit=${limit}`)
-  if (!resp.ok) {
-    const errorMessage = await parseAPIError(resp)
-    throw new Error(errorMessage)
-  }
+  if (!resp.ok) throw new Error(await parseAPIError(resp))
   const data = await resp.json()
-  return data || [] // 确保返回数组而不是 null
+  return data || []
+}
+
+// 最近交易记录类型
+export interface RecentTxRecord {
+  tx_id: string
+  tx_type: string
+  from_address?: string
+  to_address?: string
+  value?: string
+  status: string
+  fee?: string
+  nonce?: number
+  height: number
+  tx_index: number
+}
+
+export interface RecentTxsResponse {
+  txs: RecentTxRecord[]
+  error?: string
+}
+
+// 获取最近交易列表（支持 tx_type 过滤）
+export async function fetchRecentTxs(node: string, txType: string = 'all', count: number = 50): Promise<RecentTxsResponse> {
+  const resp = await fetch('/api/recenttxs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ node, tx_type: txType, count }),
+  })
+  return resp.json()
 }

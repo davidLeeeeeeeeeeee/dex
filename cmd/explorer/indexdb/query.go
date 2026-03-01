@@ -100,3 +100,35 @@ func (idb *IndexDB) GetBlockTxs(height uint64) ([]*TxRecord, error) {
 	}
 	return results, nil
 }
+
+// GetRecentTxs 按 block_tx_ 索引倒序（高度从大到小）返回最近 limit 条 tx。
+// txType 为 "" 或 "all" 时返回所有类型，否则按类型过滤。
+// 由于 block_tx_ 是正序（高度小在前），需从已同步最高块向前遍历。
+func (idb *IndexDB) GetRecentTxs(txType string, limit int) ([]*TxRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	syncH, err := idb.GetSyncHeight()
+	if err != nil || syncH == 0 {
+		return nil, err
+	}
+
+	filterAll := txType == "" || txType == "all"
+	var results []*TxRecord
+
+	// 从最高块往前扫，直到集满或到 height=1
+	for h := syncH; h >= 1 && len(results) < limit; h-- {
+		txs, err := idb.GetBlockTxs(h)
+		if err != nil {
+			continue
+		}
+		// 逆序，让同一区块内高 index 排后
+		for i := len(txs) - 1; i >= 0 && len(results) < limit; i-- {
+			rec := txs[i]
+			if filterAll || rec.TxType == txType {
+				results = append(results, rec)
+			}
+		}
+	}
+	return results, nil
+}

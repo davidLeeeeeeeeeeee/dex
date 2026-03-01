@@ -18,7 +18,9 @@ import WalletConnector from './components/WalletConnector.vue'
 import WitnessMinerPanel from './components/WitnessMinerPanel.vue'
 import BridgePanel from './components/BridgePanel.vue'
 
-type TabType = 'overview' | 'search' | 'trading' | 'withdrawals' | 'recharges' | 'dkg' | 'witness_miner' | 'bridge'
+import RecentTxsPanel from './components/RecentTxsPanel.vue'
+
+type TabType = 'overview' | 'search' | 'trading' | 'withdrawals' | 'recharges' | 'dkg' | 'witness_miner' | 'bridge' | 'recent_txs'
 
 // Tab 状态
 const activeTab = ref<TabType>('overview')
@@ -31,7 +33,8 @@ const navigationNodes = [
   {id: 'recharges' as TabType, icon: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>', label: 'Witness'},
   {id: 'witness_miner' as TabType, icon: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>', label: 'Miner'},
   {id: 'bridge' as TabType, icon: '<path d="M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"/><line x1="4" y1="21" x2="20" y2="21"/>', label: 'Bridge'},
-  {id: 'dkg' as TabType, icon: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>', label: 'Frost DKG'}
+  {id: 'dkg' as TabType, icon: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>', label: 'Frost DKG'},
+  {id: 'recent_txs' as TabType, icon: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/>', label: 'Recent Txs'}
 ]
 
 // 状态
@@ -352,6 +355,12 @@ onMounted(() => {
             </select>
           </div>
           <BridgePanel v-if="selectedProtocolNode" :node="selectedProtocolNode" />
+        </div>
+      </main>
+
+      <main v-else-if="activeTab === 'recent_txs'" class="p-layout protocol-mode animate-fade-in">
+        <div class="protocol-wrap">
+          <RecentTxsPanel :nodes="nodes" @select-tx="handleSelectTx" />
         </div>
       </main>
     </div>

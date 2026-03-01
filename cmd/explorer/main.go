@@ -347,6 +347,7 @@ func main() {
 	mux.HandleFunc("/api/txhistory", srv.handleTxHistory)
 	mux.HandleFunc("/api/sync/status", srv.handleSyncStatus)
 	mux.HandleFunc("/api/recentblocks", srv.handleRecentBlocks) // 获取最近区块列表
+	mux.HandleFunc("/api/recenttxs", srv.handleRecentTxs)       // 获取最近交易列表（支持类型筛选）
 	mux.HandleFunc("/api/frost/withdraw/queue", srv.handleFrostWithdrawQueue)
 	mux.HandleFunc("/api/frost/withdraw/jobs", srv.handleFrostWithdrawJobs)
 	mux.HandleFunc("/api/witness/requests", srv.handleWitnessRequests)
@@ -681,6 +682,77 @@ func (s *server) handleRecentBlocks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, recentBlocksResponse{Blocks: blocks})
+}
+
+// recentTxsRequest 最近交易请求
+type recentTxsRequest struct {
+	Node   string `json:"node"`
+	TxType string `json:"tx_type,omitempty"` // 空或"all"=全部
+	Count  int    `json:"count,omitempty"`   // 默认50
+}
+
+// recentTxsResponse 最近交易响应
+type recentTxsResponse struct {
+	Txs   []*txRecord `json:"txs"`
+	Error string      `json:"error,omitempty"`
+}
+
+type txRecord struct {
+	TxID        string `json:"tx_id"`
+	TxType      string `json:"tx_type"`
+	FromAddress string `json:"from_address,omitempty"`
+	ToAddress   string `json:"to_address,omitempty"`
+	Value       string `json:"value,omitempty"`
+	Status      string `json:"status"`
+	Fee         string `json:"fee,omitempty"`
+	Nonce       uint64 `json:"nonce,omitempty"`
+	Height      uint64 `json:"height"`
+	TxIndex     int    `json:"tx_index"`
+}
+
+// handleRecentTxs 获取最近交易列表
+func (s *server) handleRecentTxs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req recentTxsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, recentTxsResponse{Error: "invalid request body"})
+		return
+	}
+	count := req.Count
+	if count <= 0 {
+		count = 50
+	}
+	if count > 200 {
+		count = 200
+	}
+	if s.indexDB == nil {
+		writeJSON(w, recentTxsResponse{Error: "index db not available"})
+		return
+	}
+	recs, err := s.indexDB.GetRecentTxs(req.TxType, count)
+	if err != nil {
+		writeJSON(w, recentTxsResponse{Error: err.Error()})
+		return
+	}
+	txs := make([]*txRecord, 0, len(recs))
+	for _, rec := range recs {
+		txs = append(txs, &txRecord{
+			TxID:        rec.TxID,
+			TxType:      rec.TxType,
+			FromAddress: rec.FromAddress,
+			ToAddress:   rec.ToAddress,
+			Value:       rec.Value,
+			Status:      rec.Status,
+			Fee:         rec.Fee,
+			Nonce:       rec.Nonce,
+			Height:      rec.Height,
+			TxIndex:     rec.TxIndex,
+		})
+	}
+	writeJSON(w, recentTxsResponse{Txs: txs})
 }
 
 func (s *server) handleTx(w http.ResponseWriter, r *http.Request) {
