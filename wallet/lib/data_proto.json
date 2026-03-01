@@ -1765,11 +1765,6 @@
               "type": "string",
               "id": 9
             },
-            "utxo_inputs": {
-              "rule": "repeated",
-              "type": "UtxoInput",
-              "id": 10
-            },
             "template_data": {
               "type": "bytes",
               "id": 11
@@ -1783,26 +1778,6 @@
               "rule": "repeated",
               "type": "bytes",
               "id": 13
-            }
-          }
-        },
-        "UtxoInput": {
-          "fields": {
-            "txid": {
-              "type": "string",
-              "id": 1
-            },
-            "vout": {
-              "type": "uint32",
-              "id": 2
-            },
-            "amount": {
-              "type": "uint64",
-              "id": 3
-            },
-            "script_pubkey": {
-              "type": "bytes",
-              "id": 4
             }
           }
         },

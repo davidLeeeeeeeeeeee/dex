@@ -58,8 +58,9 @@ type SessionStatus struct {
 type SignedPackage struct {
 	SessionID    string
 	JobID        string
-	Signature    []byte // 聚合签名
-	RawTx        []byte // 可广播的完整交易（BTC/EVM/SOL/TRX）
+	Signature    []byte   // 聚合后的签名字节（兼容旧链路）
+	Signatures   [][]byte // 每条消息一个签名（BTC 多 input 需要）
+	RawTx        []byte   // 可广播的完整交易（BTC/EVM/SOL/TRX）
 	TemplateHash []byte
 }
 
@@ -190,19 +191,27 @@ func (s *RoastSigningService) monitorSession(ctx context.Context, wrapper *signi
 				// 获取签名结果
 				signatures := sess.GetFinalSignatures()
 				if len(signatures) > 0 {
+					signatureList := make([][]byte, len(signatures))
+					totalSize := 0
+					for i, sig := range signatures {
+						signatureList[i] = append([]byte(nil), sig...)
+						totalSize += len(sig)
+					}
+
 					// 构建 SignedPackage
 					// 注意：RawTx 和 TemplateHash 需要从 Job 中获取，这里先使用签名
 					signedPkg := &SignedPackage{
 						SessionID:    wrapper.sessionID,
 						JobID:        wrapper.jobID,
-						Signature:    signatures[0], // 第一个签名（单任务）或合并所有签名（多任务）
+						Signature:    signatureList[0],
+						Signatures:   signatureList, // 第一个签名（单任务）或合并所有签名（多任务）
 						RawTx:        nil,           // 需要从 Job 或 ChainAdapter 获取
 						TemplateHash: nil,           // 需要从 Job 获取
 					}
 					// 如果有多个签名，合并它们
 					if len(signatures) > 1 {
-						combined := make([]byte, 0)
-						for _, sig := range signatures {
+						combined := make([]byte, 0, totalSize)
+						for _, sig := range signatureList {
 							combined = append(combined, sig...)
 						}
 						signedPkg.Signature = combined

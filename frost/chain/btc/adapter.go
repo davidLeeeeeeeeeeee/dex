@@ -1,5 +1,5 @@
 // frost/chain/btc/adapter.go
-// BTC 链适配器：构建 Taproot 交易模板、计算 sighash、组装签名交易
+// BTC 閾鹃€傞厤鍣細鏋勫缓 Taproot 浜ゆ槗妯℃澘銆佽绠?sighash銆佺粍瑁呯鍚嶄氦鏄?
 
 package btc
 
@@ -17,35 +17,35 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 )
 
-// ========== 常量 ==========
+// ========== 甯搁噺 ==========
 
 const (
-	// TaprootWitnessVersion Taproot witness 版本
+	// TaprootWitnessVersion Taproot witness 鐗堟湰
 	TaprootWitnessVersion = 0x01
-	// SchnorrSigSize Schnorr 签名大小（64 字节）
+	// SchnorrSigSize Schnorr 绛惧悕澶у皬锛?4 瀛楄妭锛?
 	SchnorrSigSize = 64
 )
 
-// ========== 错误定义 ==========
+// ========== 閿欒瀹氫箟 ==========
 
 var (
-	// ErrInvalidTemplateData 无效的模板数据
+	// ErrInvalidTemplateData 鏃犳晥鐨勬ā鏉挎暟鎹?
 	ErrInvalidTemplateData = errors.New("invalid template data")
-	// ErrInvalidSignature 无效的签名
+	// ErrInvalidSignature 鏃犳晥鐨勭鍚?
 	ErrInvalidSignature = errors.New("invalid signature")
-	// ErrSignatureCountMismatch 签名数量不匹配
+	// ErrSignatureCountMismatch 绛惧悕鏁伴噺涓嶅尮閰?
 	ErrSignatureCountMismatch = errors.New("signature count mismatch with inputs")
 )
 
 // ========== BTCAdapter ==========
 
-// BTCAdapter BTC 链适配器
+// BTCAdapter BTC 閾鹃€傞厤鍣?
 type BTCAdapter struct {
-	// 网络参数（mainnet/testnet/regtest）
+	// 缃戠粶鍙傛暟锛坢ainnet/testnet/regtest锛?
 	network string
 }
 
-// NewBTCAdapter 创建 BTC 适配器
+// NewBTCAdapter 鍒涘缓 BTC 閫傞厤鍣?
 func NewBTCAdapter(network string) *BTCAdapter {
 	if network == "" {
 		network = "mainnet"
@@ -55,40 +55,40 @@ func NewBTCAdapter(network string) *BTCAdapter {
 	}
 }
 
-// Chain 返回链标识
+// Chain 杩斿洖閾炬爣璇?
 func (a *BTCAdapter) Chain() string {
 	return chain.ChainBTC
 }
 
-// SignAlgo 返回签名算法
+// SignAlgo 杩斿洖绛惧悕绠楁硶
 func (a *BTCAdapter) SignAlgo() pb.SignAlgo {
 	return chain.SignAlgoBTC
 }
 
-// BuildWithdrawTemplate 构建提现交易模板
+// BuildWithdrawTemplate 鏋勫缓鎻愮幇浜ゆ槗妯℃澘
 func (a *BTCAdapter) BuildWithdrawTemplate(params chain.WithdrawTemplateParams) (*chain.TemplateResult, error) {
-	// 创建 BTC 模板
+	// 鍒涘缓 BTC 妯℃澘
 	template, err := NewBTCTemplate(params)
 	if err != nil {
 		return nil, err
 	}
 
-	// 计算模板哈希
+	// 璁＄畻妯℃澘鍝堝笇
 	templateHash := template.TemplateHash()
 
-	// 序列化模板数据
+	// 搴忓垪鍖栨ā鏉挎暟鎹?
 	templateData, err := template.ToJSON()
 	if err != nil {
 		return nil, err
 	}
 
-	// 构建每个 input 的 scriptPubKey（从 UTXO 获取）
+	// 鏋勫缓姣忎釜 input 鐨?scriptPubKey锛堜粠 UTXO 鑾峰彇锛?
 	scriptPubKeys := make([][]byte, len(params.Inputs))
 	for i, utxo := range params.Inputs {
 		scriptPubKeys[i] = utxo.ScriptPubKey
 	}
 
-	// 计算 Taproot sighash
+	// 璁＄畻 Taproot sighash
 	sighashes, err := template.ComputeTaprootSighash(scriptPubKeys, SighashDefault)
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func (a *BTCAdapter) BuildWithdrawTemplate(params chain.WithdrawTemplateParams) 
 	}, nil
 }
 
-// TemplateHash 计算模板哈希
+// TemplateHash 璁＄畻妯℃澘鍝堝笇
 func (a *BTCAdapter) TemplateHash(templateData []byte) ([]byte, error) {
 	template, err := FromJSON(templateData)
 	if err != nil {
@@ -110,26 +110,26 @@ func (a *BTCAdapter) TemplateHash(templateData []byte) ([]byte, error) {
 	return template.TemplateHash(), nil
 }
 
-// PackageSigned 组装签名后的交易包
+// PackageSigned 缁勮绛惧悕鍚庣殑浜ゆ槗鍖?
 func (a *BTCAdapter) PackageSigned(templateData []byte, signatures [][]byte) (*chain.SignedPackage, error) {
 	template, err := FromJSON(templateData)
 	if err != nil {
 		return nil, ErrInvalidTemplateData
 	}
 
-	// 验证签名数量
+	// 楠岃瘉绛惧悕鏁伴噺
 	if len(signatures) != len(template.Inputs) {
 		return nil, ErrSignatureCountMismatch
 	}
 
-	// 验证签名格式
+	// 楠岃瘉绛惧悕鏍煎紡
 	for _, sig := range signatures {
 		if len(sig) != SchnorrSigSize {
 			return nil, ErrInvalidSignature
 		}
 	}
 
-	// 构建完整交易
+	// 鏋勫缓瀹屾暣浜ゆ槗
 	rawTx, err := a.buildRawTransaction(template, signatures)
 	if err != nil {
 		return nil, err
@@ -143,40 +143,40 @@ func (a *BTCAdapter) PackageSigned(templateData []byte, signatures [][]byte) (*c
 	}, nil
 }
 
-// buildRawTransaction 构建原始交易
+// buildRawTransaction 鏋勫缓鍘熷浜ゆ槗
 func (a *BTCAdapter) buildRawTransaction(template *BTCTemplate, signatures [][]byte) ([]byte, error) {
 	var buf bytes.Buffer
 
-	// 1. 版本号（4 bytes, little-endian）
+	// 1. 鐗堟湰鍙凤紙4 bytes, little-endian锛?
 	binary.Write(&buf, binary.LittleEndian, template.Version)
 
-	// 2. Marker + Flag（SegWit）
+	// 2. Marker + Flag锛圫egWit锛?
 	buf.WriteByte(0x00) // marker
 	buf.WriteByte(0x01) // flag
 
-	// 3. 输入数量（varint）
+	// 3. 杈撳叆鏁伴噺锛坴arint锛?
 	writeVarInt(&buf, uint64(len(template.Inputs)))
 
-	// 4. 输入列表
+	// 4. 杈撳叆鍒楄〃
 	for _, in := range template.Inputs {
-		// txid（32 bytes，反转为内部字节序）
+		// txid锛?2 bytes锛屽弽杞负鍐呴儴瀛楄妭搴忥級
 		txidBytes, _ := hex.DecodeString(in.TxID)
 		reverseBytes(txidBytes)
 		buf.Write(txidBytes)
-		// vout（4 bytes）
+		// vout锛? bytes锛?
 		binary.Write(&buf, binary.LittleEndian, in.Vout)
-		// scriptSig 长度（0 for SegWit）
+		// scriptSig 闀垮害锛? for SegWit锛?
 		buf.WriteByte(0x00)
-		// sequence（4 bytes）
+		// sequence锛? bytes锛?
 		binary.Write(&buf, binary.LittleEndian, in.Sequence)
 	}
 
-	// 5. 输出数量（varint）
+	// 5. 杈撳嚭鏁伴噺锛坴arint锛?
 	writeVarInt(&buf, uint64(len(template.Outputs)))
 
-	// 6. 输出列表
+	// 6. 杈撳嚭鍒楄〃
 	for _, out := range template.Outputs {
-		// amount（8 bytes）
+		// amount锛? bytes锛?
 		binary.Write(&buf, binary.LittleEndian, out.Amount)
 		// scriptPubKey
 		scriptPubKey := a.addressToScriptPubKey(out.Address)
@@ -184,27 +184,27 @@ func (a *BTCAdapter) buildRawTransaction(template *BTCTemplate, signatures [][]b
 		buf.Write(scriptPubKey)
 	}
 
-	// 7. Witness 数据
+	// 7. Witness 鏁版嵁
 	for _, sig := range signatures {
-		// witness 元素数量（1 for key-path spend）
+		// witness 鍏冪礌鏁伴噺锛? for key-path spend锛?
 		writeVarInt(&buf, 1)
-		// 签名长度 + 签名
+		// 绛惧悕闀垮害 + 绛惧悕
 		writeVarInt(&buf, uint64(len(sig)))
 		buf.Write(sig)
 	}
 
-	// 8. 锁定时间（4 bytes）
+	// 8. 閿佸畾鏃堕棿锛? bytes锛?
 	binary.Write(&buf, binary.LittleEndian, template.LockTime)
 
 	return buf.Bytes(), nil
 }
 
-// addressToScriptPubKey 将地址转换为 scriptPubKey
-// 支持 Taproot (bc1p...) 和 Native SegWit (bc1q...) 地址
+// addressToScriptPubKey 灏嗗湴鍧€杞崲涓?scriptPubKey
+// 鏀寔 Taproot (bc1p...) 鍜?Native SegWit (bc1q...) 鍦板潃
 func (a *BTCAdapter) addressToScriptPubKey(address string) []byte {
-	// 尝试解析 Taproot 地址 (bech32m, bc1p...)
+	// 灏濊瘯瑙ｆ瀽 Taproot 鍦板潃 (bech32m, bc1p...)
 	if len(address) > 4 && (address[:4] == "bc1p" || address[:4] == "tb1p") {
-		// Taproot 地址
+		// Taproot 鍦板潃
 		decoded, err := decodeBech32m(address)
 		if err == nil && len(decoded) == 32 {
 			// Taproot scriptPubKey: OP_1 <32-byte-pubkey>
@@ -216,7 +216,7 @@ func (a *BTCAdapter) addressToScriptPubKey(address string) []byte {
 		}
 	}
 
-	// 尝试解析 Native SegWit 地址 (bech32, bc1q...)
+	// 灏濊瘯瑙ｆ瀽 Native SegWit 鍦板潃 (bech32, bc1q...)
 	if len(address) > 4 && (address[:4] == "bc1q" || address[:4] == "tb1q") {
 		decoded, err := decodeBech32(address)
 		if err == nil && len(decoded) == 20 {
@@ -229,7 +229,7 @@ func (a *BTCAdapter) addressToScriptPubKey(address string) []byte {
 		}
 	}
 
-	// 回退：使用地址的 hash 作为 Taproot pubkey
+	// 鍥為€€锛氫娇鐢ㄥ湴鍧€鐨?hash 浣滀负 Taproot pubkey
 	scriptPubKey := make([]byte, 34)
 	scriptPubKey[0] = 0x51 // OP_1
 	scriptPubKey[1] = 0x20 // 32 bytes
@@ -238,20 +238,21 @@ func (a *BTCAdapter) addressToScriptPubKey(address string) []byte {
 	return scriptPubKey
 }
 
-// VerifySignature 验证 BIP-340 Schnorr 签名
+// VerifySignature 楠岃瘉 BIP-340 Schnorr 绛惧悕
 func (a *BTCAdapter) VerifySignature(groupPubkey []byte, msg []byte, signature []byte) (bool, error) {
 	if len(signature) != SchnorrSigSize {
 		return false, ErrInvalidSignature
 	}
-	if len(groupPubkey) != 32 {
-		return false, errors.New("invalid pubkey length")
+	xOnlyPubkey, err := normalizeBIP340XOnlyPubKey(groupPubkey)
+	if err != nil {
+		return false, err
 	}
 	if len(msg) != 32 {
 		return false, errors.New("invalid message length")
 	}
 
 	// 使用 btcec 库验证 BIP-340 Schnorr 签名
-	pubKey, err := schnorr.ParsePubKey(groupPubkey)
+	pubKey, err := schnorr.ParsePubKey(xOnlyPubkey)
 	if err != nil {
 		return false, fmt.Errorf("parse pubkey: %w", err)
 	}
@@ -264,35 +265,53 @@ func (a *BTCAdapter) VerifySignature(groupPubkey []byte, msg []byte, signature [
 	return sig.Verify(msg, pubKey), nil
 }
 
-// ========== 辅助函数 ==========
+func normalizeBIP340XOnlyPubKey(pubKey []byte) ([]byte, error) {
+	switch len(pubKey) {
+	case 32:
+		xOnly := make([]byte, 32)
+		copy(xOnly, pubKey)
+		return xOnly, nil
+	case 33:
+		if pubKey[0] != 0x02 && pubKey[0] != 0x03 {
+			return nil, errors.New("invalid compressed pubkey prefix")
+		}
+		xOnly := make([]byte, 32)
+		copy(xOnly, pubKey[1:])
+		return xOnly, nil
+	default:
+		return nil, errors.New("invalid pubkey length")
+	}
+}
 
-// ComputeTxID 计算交易 ID
+// ========== 杈呭姪鍑芥暟 ==========
+
+// ComputeTxID 璁＄畻浜ゆ槗 ID
 func ComputeTxID(rawTx []byte) []byte {
-	// 对于 SegWit 交易，txid 是不包含 witness 数据的交易的双 SHA256
-	// 这里简化处理
+	// 瀵逛簬 SegWit 浜ゆ槗锛宼xid 鏄笉鍖呭惈 witness 鏁版嵁鐨勪氦鏄撶殑鍙?SHA256
+	// 杩欓噷绠€鍖栧鐞?
 	hash1 := sha256.Sum256(rawTx)
 	hash2 := sha256.Sum256(hash1[:])
 	return hash2[:]
 }
 
-// ========== Bech32/Bech32m 解码 ==========
+// ========== Bech32/Bech32m 瑙ｇ爜 ==========
 
-// bech32 字符集
+// bech32 瀛楃闆?
 const bech32Charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
-// decodeBech32 解码 bech32 地址（用于 bc1q... 地址）
+// decodeBech32 瑙ｇ爜 bech32 鍦板潃锛堢敤浜?bc1q... 鍦板潃锛?
 func decodeBech32(address string) ([]byte, error) {
 	return decodeBech32Internal(address, false)
 }
 
-// decodeBech32m 解码 bech32m 地址（用于 bc1p... Taproot 地址）
+// decodeBech32m 瑙ｇ爜 bech32m 鍦板潃锛堢敤浜?bc1p... Taproot 鍦板潃锛?
 func decodeBech32m(address string) ([]byte, error) {
 	return decodeBech32Internal(address, true)
 }
 
-// decodeBech32Internal 内部 bech32/bech32m 解码
+// decodeBech32Internal 鍐呴儴 bech32/bech32m 瑙ｇ爜
 func decodeBech32Internal(address string, isBech32m bool) ([]byte, error) {
-	// 找到分隔符 '1'
+	// 鎵惧埌鍒嗛殧绗?'1'
 	sepIdx := -1
 	for i := len(address) - 1; i >= 0; i-- {
 		if address[i] == '1' {
@@ -304,7 +323,7 @@ func decodeBech32Internal(address string, isBech32m bool) ([]byte, error) {
 		return nil, errors.New("invalid bech32 address")
 	}
 
-	// 解码数据部分
+	// 瑙ｇ爜鏁版嵁閮ㄥ垎
 	data := address[sepIdx+1:]
 	values := make([]int, len(data))
 	for i, c := range data {
@@ -321,26 +340,26 @@ func decodeBech32Internal(address string, isBech32m bool) ([]byte, error) {
 		values[i] = idx
 	}
 
-	// 验证校验和（简化：跳过校验和验证）
+	// 楠岃瘉鏍￠獙鍜岋紙绠€鍖栵細璺宠繃鏍￠獙鍜岄獙璇侊級
 	if len(values) < 6 {
 		return nil, errors.New("bech32 data too short")
 	}
 
-	// 移除校验和（最后 6 个字符）
+	// 绉婚櫎鏍￠獙鍜岋紙鏈€鍚?6 涓瓧绗︼級
 	values = values[:len(values)-6]
 
-	// 第一个值是 witness 版本
+	// 绗竴涓€兼槸 witness 鐗堟湰
 	if len(values) < 1 {
 		return nil, errors.New("missing witness version")
 	}
 	// witnessVersion := values[0]
 	values = values[1:]
 
-	// 将 5-bit 值转换为 8-bit 字节
+	// 灏?5-bit 鍊艰浆鎹负 8-bit 瀛楄妭
 	return convertBits(values, 5, 8, false)
 }
 
-// convertBits 在不同位宽之间转换
+// convertBits 鍦ㄤ笉鍚屼綅瀹戒箣闂磋浆鎹?
 func convertBits(data []int, fromBits, toBits int, pad bool) ([]byte, error) {
 	acc := 0
 	bits := 0

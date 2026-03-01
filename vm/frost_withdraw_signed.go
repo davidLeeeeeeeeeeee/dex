@@ -8,7 +8,9 @@ import (
 	"dex/frost/core/frost"
 	"dex/keys"
 	"dex/pb"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"math/big"
 	"strconv"
 
@@ -176,6 +178,10 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 
 			pubKey := vaultState.GroupPubkey
 			signAlgo := vaultState.SignAlgo
+			keyEpochHint := ""
+			if signed.KeyEpoch > 0 && vaultState.KeyEpoch > 0 && signed.KeyEpoch != vaultState.KeyEpoch {
+				keyEpochHint = fmt.Sprintf("; key_epoch mismatch tx=%d vault_state=%d", signed.KeyEpoch, vaultState.KeyEpoch)
+			}
 			if signAlgo == pb.SignAlgo_SIGN_ALGO_UNSPECIFIED {
 				// 从 VaultConfig 获取
 				vaultCfgKey := keys.KeyFrostVaultConfig(chainName, 0)
@@ -200,8 +206,12 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 				}
 
 				valid, err := verifySignature(signAlgo, pubKey, sighashes[i], sig)
-				if err != nil || !valid {
-					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "signature verification failed for input: " + err.Error()}, errors.New("signature verification failed")
+				if err != nil {
+					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("signature verification failed for input[%d]: %v%s", i, err, keyEpochHint)}, errors.New("signature verification failed")
+				}
+				if !valid {
+					detail := diagnoseSignatureMismatch(signAlgo, pubKey, sighashes, i, sig)
+					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("signature verification failed for input[%d]: %s%s", i, detail, keyEpochHint)}, errors.New("signature verification failed")
 				}
 			}
 		}
@@ -440,10 +450,11 @@ func verifySignature(signAlgo pb.SignAlgo, pubKey, msg, sig []byte) (bool, error
 	switch signAlgo {
 	case pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340:
 		// BTC: BIP-340 Schnorr
-		if len(pubKey) != 32 {
-			return false, errors.New("invalid pubkey length for BIP340")
+		xOnlyPubKey, err := normalizeBIP340PubKey(pubKey)
+		if err != nil {
+			return false, err
 		}
-		return frost.VerifyBIP340(pubKey, msg, sig)
+		return frost.VerifyBIP340(xOnlyPubKey, msg, sig)
 	case pb.SignAlgo_SIGN_ALGO_SCHNORR_ALT_BN128:
 		// ETH/BNB: alt_bn128 Schnorr
 		if len(pubKey) != 64 {
@@ -463,6 +474,77 @@ func verifySignature(signAlgo pb.SignAlgo, pubKey, msg, sig []byte) (bool, error
 	default:
 		return false, errors.New("unsupported sign_algo: " + signAlgo.String())
 	}
+}
+
+func normalizeBIP340PubKey(pubKey []byte) ([]byte, error) {
+	switch len(pubKey) {
+	case 32:
+		out := make([]byte, 32)
+		copy(out, pubKey)
+		return out, nil
+	case 33:
+		// Accept compressed secp256k1 pubkey and drop prefix for x-only BIP340 verify.
+		if pubKey[0] != 0x02 && pubKey[0] != 0x03 {
+			return nil, errors.New("invalid compressed pubkey prefix for BIP340")
+		}
+		out := make([]byte, 32)
+		copy(out, pubKey[1:])
+		return out, nil
+	default:
+		return nil, errors.New("invalid pubkey length for BIP340")
+	}
+}
+
+func diagnoseSignatureMismatch(signAlgo pb.SignAlgo, pubKey []byte, sighashes [][]byte, failedInput int, sig []byte) string {
+	prefix := "invalid signature"
+	if failedInput >= 0 && failedInput < len(sighashes) {
+		prefix = fmt.Sprintf("invalid signature (sighash=%s, sig=%s, pubkey=%s)",
+			shortHex(sighashes[failedInput], 8),
+			shortHex(sig, 8),
+			shortHex(pubKey, 8),
+		)
+	}
+
+	if allZero(sig) {
+		return prefix + ": signature bytes are all zero (placeholder/not signed)"
+	}
+
+	// If the same signature validates another input's sighash, input order is likely wrong.
+	for idx, msg := range sighashes {
+		if idx == failedInput {
+			continue
+		}
+		ok, err := verifySignature(signAlgo, pubKey, msg, sig)
+		if err == nil && ok {
+			return fmt.Sprintf("%s: signature matches input[%d] instead (likely input order mismatch)", prefix, idx)
+		}
+	}
+
+	// BIP340 specific hint: compressed odd-Y pubkey may indicate signer/verifier parity mismatch.
+	if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 && len(pubKey) == 33 && pubKey[0] == 0x03 {
+		return prefix + ": vault group_pubkey is compressed odd-Y (0x03); check signer-side BIP340 x-only normalization"
+	}
+
+	return prefix
+}
+
+func shortHex(data []byte, n int) string {
+	if len(data) == 0 {
+		return ""
+	}
+	if n <= 0 || len(data) <= n {
+		return hex.EncodeToString(data)
+	}
+	return hex.EncodeToString(data[:n])
+}
+
+func allZero(data []byte) bool {
+	for _, b := range data {
+		if b != 0 {
+			return false
+		}
+	}
+	return len(data) > 0
 }
 
 // validateFIFOOrder 验证 withdraw_ids 是否从队首开始连续

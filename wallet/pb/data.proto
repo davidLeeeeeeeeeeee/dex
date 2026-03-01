@@ -720,20 +720,12 @@ message FrostWithdrawSignedTx {
   bytes template_hash = 7; // 交易模板哈希（用于验签绑定）
   string chain = 8; // 链标识
   string asset = 9; // 资产类型
-  repeated UtxoInput utxo_inputs = 10; // BTC 专用：使用的 UTXO 列表（deprecated，用 template_data 代替）
   // BTC 专用：完整模板数据 + 每个 input 的签名（用于 VM 端复算验签）
   bytes template_data = 11; // BTC 交易模板 JSON（含 inputs/outputs/fee/change）
   repeated bytes input_sigs = 12; // 每个 input 的 Schnorr 签名（64 字节，按 input 顺序）
   repeated bytes script_pubkeys = 13; // 每个 input 的 scriptPubKey（用于 sighash 计算）
 }
 
-// UTXO 输入（用于 FrostWithdrawSignedTx）
-message UtxoInput {
-  string txid = 1; // 前序交易 ID
-  uint32 vout = 2; // 输出索引
-  uint64 amount = 3; // 金额（satoshi）
-  bytes script_pubkey = 4; // scriptPubKey（用于 sighash 计算）
-}
 
 // Frost UTXO 详情（用于 FundsLedger 存储）
 message FrostUtxo {

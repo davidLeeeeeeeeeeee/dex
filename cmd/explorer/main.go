@@ -28,7 +28,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 type server struct {
@@ -849,7 +851,7 @@ func (s *server) enrichTokenInfo(ctx context.Context, node string, info *txInfo,
 	if baseTokenAddr != "" {
 		baseToken, err := s.fetchToken(ctx, node, baseTokenAddr)
 		if err == nil && baseToken != nil {
-			info.Details["base_token"] = map[string]string{
+			info.Details["base_token_meta"] = map[string]string{
 				"address": baseTokenAddr,
 				"symbol":  baseToken.Symbol,
 			}
@@ -860,7 +862,7 @@ func (s *server) enrichTokenInfo(ctx context.Context, node string, info *txInfo,
 	if quoteTokenAddr != "" {
 		quoteToken, err := s.fetchToken(ctx, node, quoteTokenAddr)
 		if err == nil && quoteToken != nil {
-			info.Details["quote_token"] = map[string]string{
+			info.Details["quote_token_meta"] = map[string]string{
 				"address": quoteTokenAddr,
 				"symbol":  quoteToken.Symbol,
 			}
@@ -877,7 +879,7 @@ func (s *server) enrichTokenInfoLocal(info *txInfo, baseTokenAddr, quoteTokenAdd
 	if baseTokenAddr != "" {
 		baseToken, err := localGetToken(s.nodeDB, baseTokenAddr)
 		if err == nil && baseToken != nil {
-			info.Details["base_token"] = map[string]string{
+			info.Details["base_token_meta"] = map[string]string{
 				"address": baseTokenAddr,
 				"symbol":  baseToken.Symbol,
 			}
@@ -887,7 +889,7 @@ func (s *server) enrichTokenInfoLocal(info *txInfo, baseTokenAddr, quoteTokenAdd
 	if quoteTokenAddr != "" {
 		quoteToken, err := localGetToken(s.nodeDB, quoteTokenAddr)
 		if err == nil && quoteToken != nil {
-			info.Details["quote_token"] = map[string]string{
+			info.Details["quote_token_meta"] = map[string]string{
 				"address": quoteTokenAddr,
 				"symbol":  quoteToken.Symbol,
 			}
@@ -1240,148 +1242,127 @@ func fillTxDetails(tx *pb.AnyTx, info *txInfo) {
 	if tx == nil || info == nil {
 		return
 	}
-	switch c := tx.GetContent().(type) {
-	case *pb.AnyTx_Transaction:
-		t := c.Transaction
-		info.ToAddress = t.To
-		info.Details["token_address"] = t.TokenAddress
-		info.Details["amount"] = t.Amount
-	case *pb.AnyTx_WitnessStakeTx:
-		w := c.WitnessStakeTx
-		info.Details["operation"] = w.Op.String()
-		info.Details["amount"] = w.Amount
-	case *pb.AnyTx_IssueTokenTx:
-		i := c.IssueTokenTx
-		info.Details["symbol"] = i.TokenSymbol
-		info.Details["name"] = i.TokenName
-		info.Details["total_supply"] = i.TotalSupply
-		info.Details["can_mint"] = i.CanMint
-	case *pb.AnyTx_MinerTx:
-		m := c.MinerTx
-		info.Details["operation"] = m.Op.String()
-		info.Details["amount"] = m.Amount
-	case *pb.AnyTx_OrderTx:
-		o := c.OrderTx
-		info.Details["operation"] = o.Op.String()
-		info.Details["base_token"] = o.BaseToken
-		info.Details["quote_token"] = o.QuoteToken
-		info.Details["amount"] = o.Amount
-		info.Details["price"] = o.Price
-		info.Details["side"] = o.Side.String()
-		// 注意: filled_base, filled_quote, is_filled 已移至 OrderState
-		// 如需查询订单状态，请使用 /api/order/{orderId} 接口
-		if o.OpTargetId != "" {
-			info.Details["op_target_id"] = o.OpTargetId
-		}
-	case *pb.AnyTx_FrostWithdrawRequestTx:
-		r := c.FrostWithdrawRequestTx
-		info.Details["chain"] = r.Chain
-		info.Details["asset"] = r.Asset
-		info.Details["to"] = r.To
-		info.Details["amount"] = r.Amount
-	case *pb.AnyTx_FrostWithdrawSignedTx:
-		s := c.FrostWithdrawSignedTx
-		info.Details["job_id"] = s.JobId
-		info.Details["chain"] = s.Chain
-		info.Details["vault_id"] = s.VaultId
-		info.Details["key_epoch"] = s.KeyEpoch
-		info.Details["withdraw_ids"] = s.WithdrawIds
-		if len(s.SignedPackageBytes) > 0 {
-			info.Details["raw_tx"] = fmt.Sprintf("%x", s.SignedPackageBytes)
-		}
-	case *pb.AnyTx_FrostVaultDkgCommitTx:
-		t := c.FrostVaultDkgCommitTx
-		info.Details["chain"] = t.Chain
-		info.Details["vault_id"] = t.VaultId
-		info.Details["epoch_id"] = t.EpochId
-		info.Details["sign_algo"] = t.SignAlgo.String()
-		info.Details["a_i0"] = fmt.Sprintf("%x", t.AI0)
-		points := make([]string, len(t.CommitmentPoints))
-		for i, p := range t.CommitmentPoints {
-			points[i] = fmt.Sprintf("%x", p)
-		}
-		info.Details["commitment_points"] = points
-	case *pb.AnyTx_FrostVaultDkgShareTx:
-		t := c.FrostVaultDkgShareTx
-		info.Details["chain"] = t.Chain
-		info.Details["vault_id"] = t.VaultId
-		info.Details["epoch_id"] = t.EpochId
-		info.Details["dealer_id"] = t.DealerId
-		info.Details["receiver_id"] = t.ReceiverId
-		info.Details["ciphertext"] = fmt.Sprintf("%x", t.Ciphertext)
-	case *pb.AnyTx_FrostVaultDkgComplaintTx:
-		t := c.FrostVaultDkgComplaintTx
-		info.Details["chain"] = t.Chain
-		info.Details["vault_id"] = t.VaultId
-		info.Details["epoch_id"] = t.EpochId
-		info.Details["dealer_id"] = t.DealerId
-		info.Details["receiver_id"] = t.ReceiverId
-		info.Details["bond"] = t.Bond
-	case *pb.AnyTx_FrostVaultDkgRevealTx:
-		t := c.FrostVaultDkgRevealTx
-		info.Details["chain"] = t.Chain
-		info.Details["vault_id"] = t.VaultId
-		info.Details["epoch_id"] = t.EpochId
-		info.Details["dealer_id"] = t.DealerId
-		info.Details["receiver_id"] = t.ReceiverId
-		info.Details["share"] = fmt.Sprintf("%x", t.Share)
-		info.Details["enc_rand"] = fmt.Sprintf("%x", t.EncRand)
-	case *pb.AnyTx_FrostVaultDkgValidationSignedTx:
-		t := c.FrostVaultDkgValidationSignedTx
-		info.Details["chain"] = t.Chain
-		info.Details["vault_id"] = t.VaultId
-		info.Details["epoch_id"] = t.EpochId
-		info.Details["new_group_pubkey"] = fmt.Sprintf("%x", t.NewGroupPubkey)
-		info.Details["signature"] = fmt.Sprintf("%x", t.Signature)
-		info.Details["msg_hash"] = fmt.Sprintf("%x", t.MsgHash)
-	case *pb.AnyTx_WitnessVoteTx:
-		v := c.WitnessVoteTx.Vote
-		if v != nil {
-			info.Details["request_id"] = v.RequestId
-			info.Details["witness_address"] = v.WitnessAddress
-			info.Details["vote_type"] = v.VoteType.String()
-			info.Details["reason"] = v.Reason
-			info.Details["timestamp"] = v.Timestamp
-		}
-	case *pb.AnyTx_WitnessChallengeTx:
-		t := c.WitnessChallengeTx
-		info.Details["request_id"] = t.RequestId
-		info.Details["stake_amount"] = t.StakeAmount
-		info.Details["reason"] = t.Reason
-		info.Details["evidence"] = t.Evidence
-	case *pb.AnyTx_ArbitrationVoteTx:
-		t := c.ArbitrationVoteTx
-		info.Details["challenge_id"] = t.ChallengeId
-		if t.Vote != nil {
-			info.Details["vote_type"] = t.Vote.VoteType.String()
-			info.Details["reason"] = t.Vote.Reason
-		}
-	case *pb.AnyTx_FrostVaultTransitionSignedTx:
-		t := c.FrostVaultTransitionSignedTx
-		info.Details["chain"] = t.Chain
-		info.Details["old_vault_id"] = t.OldVaultId
-		info.Details["new_vault_id"] = t.NewVaultId
-		info.Details["epoch_id"] = t.EpochId
-		info.Details["signature"] = fmt.Sprintf("%x", t.Signature)
-		info.Details["msg_hash"] = fmt.Sprintf("%x", t.MsgHash)
-	case *pb.AnyTx_WitnessRequestTx:
-		r := c.WitnessRequestTx
-		info.Details["native_chain"] = r.NativeChain
-		info.Details["native_tx_hash"] = r.NativeTxHash
-		info.Details["native_vout"] = r.NativeVout
-		if len(r.NativeScript) > 0 {
-			info.Details["native_script"] = fmt.Sprintf("%x", r.NativeScript)
-		}
-		info.Details["token_address"] = r.TokenAddress
-		info.Details["amount"] = r.Amount
-		info.Details["receiver_address"] = r.ReceiverAddress
-		info.Details["recharge_fee"] = r.RechargeFee
-		if r.Memo != "" {
-			info.Details["memo"] = r.Memo
-		}
+
+	contentMsg := txContentMessage(tx)
+	if contentMsg == nil {
+		return
+	}
+
+	raw, err := protoMessageToMap(contentMsg)
+	if err != nil {
+		info.Details["details_error"] = err.Error()
+		return
+	}
+	info.Details = raw
+
+	// Compatibility/debug helper: keep hex payload alias for signed BTC package.
+	if signed := tx.GetFrostWithdrawSignedTx(); signed != nil && len(signed.SignedPackageBytes) > 0 {
+		info.Details["raw_tx"] = fmt.Sprintf("%x", signed.SignedPackageBytes)
+		info.Details["raw_tx_hex"] = fmt.Sprintf("%x", signed.SignedPackageBytes)
 	}
 }
 
+func txContentMessage(tx *pb.AnyTx) proto.Message {
+	if tx == nil {
+		return nil
+	}
+
+	m := tx.ProtoReflect()
+	oneofs := m.Descriptor().Oneofs()
+	for i := 0; i < oneofs.Len(); i++ {
+		oneofDesc := oneofs.Get(i)
+		fieldDesc := m.WhichOneof(oneofDesc)
+		if fieldDesc == nil || fieldDesc.Kind() != protoreflect.MessageKind {
+			continue
+		}
+
+		msgVal := m.Get(fieldDesc).Message()
+		if !msgVal.IsValid() {
+			continue
+		}
+
+		if pm, ok := msgVal.Interface().(proto.Message); ok {
+			return pm
+		}
+	}
+
+	return nil
+}
+
+func protoMessageToMap(msg proto.Message) (map[string]interface{}, error) {
+	if msg == nil {
+		return map[string]interface{}{}, nil
+	}
+
+	payload, err := (&protojson.MarshalOptions{
+		UseProtoNames:   true,
+		EmitUnpopulated: true,
+	}).Marshal(msg)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]interface{})
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return nil, err
+	}
+
+	// Add hex mirrors for all bytes/repeated-bytes fields to ease debugging.
+	addHexBytesFields(msg.ProtoReflect(), out)
+	return out, nil
+}
+
+func addHexBytesFields(msg protoreflect.Message, out map[string]interface{}) {
+	if !msg.IsValid() || out == nil {
+		return
+	}
+
+	fields := msg.Descriptor().Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		key := string(fd.Name())
+
+		if fd.IsMap() {
+			continue
+		}
+
+		if fd.IsList() {
+			list := msg.Get(fd).List()
+			switch fd.Kind() {
+			case protoreflect.BytesKind:
+				hexVals := make([]string, list.Len())
+				for j := 0; j < list.Len(); j++ {
+					hexVals[j] = fmt.Sprintf("%x", list.Get(j).Bytes())
+				}
+				out[key+"_hex"] = hexVals
+			case protoreflect.MessageKind:
+				rawList, ok := out[key].([]interface{})
+				if !ok {
+					continue
+				}
+				for j := 0; j < list.Len() && j < len(rawList); j++ {
+					childMap, ok := rawList[j].(map[string]interface{})
+					if !ok {
+						continue
+					}
+					addHexBytesFields(list.Get(j).Message(), childMap)
+				}
+			}
+			continue
+		}
+
+		switch fd.Kind() {
+		case protoreflect.BytesKind:
+			out[key+"_hex"] = fmt.Sprintf("%x", msg.Get(fd).Bytes())
+		case protoreflect.MessageKind:
+			childMap, ok := out[key].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			addHexBytesFields(msg.Get(fd).Message(), childMap)
+		}
+	}
+}
 func (s *server) collectSummary(ctx context.Context, nodes []string, includeBlock, includeFrost bool) ([]nodeSummary, []string) {
 	results := make([]nodeSummary, len(nodes))
 	errs := make([]string, 0)

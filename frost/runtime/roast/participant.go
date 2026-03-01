@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"dex/frost/core/curve"
 	"dex/frost/runtime/session"
 	"dex/logs"
 	"dex/pb"
@@ -219,6 +220,17 @@ func cloneBytes(src []byte) []byte {
 	return dst
 }
 
+func cloneMessages(src [][]byte) [][]byte {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([][]byte, len(src))
+	for i := range src {
+		dst[i] = cloneBytes(src[i])
+	}
+	return dst
+}
+
 // HandleNonceRequest 处理 nonce 请求
 func (p *Participant) HandleNonceRequest(env *FrostEnvelope) error {
 	return p.HandleRoastNonceRequest(FromFrostEnvelope(env))
@@ -262,10 +274,18 @@ func (p *Participant) HandleRoastNonceRequest(env *Envelope) error {
 	}
 
 	// 创建或获取会话
-	sess := p.getOrCreateSession(env.SessionID, env.Chain, env.VaultID, env.Epoch, env.SignAlgo, myIndex, myShare)
+	decodedMsgs, _, ok := decodeRoastRequestPayload(env.Payload)
+	if !ok || len(decodedMsgs) == 0 {
+		return errors.New("nonce request missing signing messages")
+	}
+	messages := decodedMsgs
+	sess := p.getOrCreateSession(env.SessionID, env.Chain, env.VaultID, env.Epoch, env.SignAlgo, myIndex, myShare, messages)
 
 	// 生成 nonce
-	numTasks := 1 // 默认单任务，实际应从请求中获取
+	numTasks := len(sess.Messages)
+	if numTasks <= 0 {
+		numTasks = 1
+	}
 	if err := p.generateNonces(sess, numTasks); err != nil {
 		return err
 	}
@@ -275,11 +295,14 @@ func (p *Participant) HandleRoastNonceRequest(env *Envelope) error {
 }
 
 // getOrCreateSession 获取或创建会话
-func (p *Participant) getOrCreateSession(jobID, chain string, vaultID uint32, epoch uint64, signAlgo pb.SignAlgo, myIndex int, myShare []byte) *ParticipantSession {
+func (p *Participant) getOrCreateSession(jobID, chain string, vaultID uint32, epoch uint64, signAlgo pb.SignAlgo, myIndex int, myShare []byte, messages [][]byte) *ParticipantSession {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if sess, exists := p.sessions[jobID]; exists {
+		if len(sess.Messages) == 0 && len(messages) > 0 {
+			sess.Messages = cloneMessages(messages)
+		}
 		return sess
 	}
 
@@ -291,6 +314,7 @@ func (p *Participant) getOrCreateSession(jobID, chain string, vaultID uint32, ep
 		SignAlgo:  signAlgo,
 		MyIndex:   myIndex,
 		MyShare:   myShare,
+		Messages:  cloneMessages(messages),
 		State:     ParticipantStateInit,
 		CreatedAt: time.Now(),
 	}
@@ -339,8 +363,11 @@ func (p *Participant) generateNonces(sess *ParticipantSession, numTasks int) err
 		sess.HidingPoints[i] = roastExec.SerializePoint(hidingPt)
 		sess.BindingPoints[i] = roastExec.SerializePoint(bindingPt)
 
-		// 绑定 nonce 到会话
+		// 绑定 nonce 到消息（优先使用任务消息，兼容旧流程 fallback 到 jobID）
 		msg := []byte(sess.JobID)
+		if i < len(sess.Messages) && len(sess.Messages[i]) > 0 {
+			msg = sess.Messages[i]
+		}
 		if err := p.sessionStore.BindNonce(hidingBytes, msg, sess.KeyEpoch); err != nil {
 			return err
 		}
@@ -416,8 +443,15 @@ func (p *Participant) HandleRoastSignRequest(env *Envelope) error {
 		return session.ErrInvalidState
 	}
 
-	// 保存聚合的 nonce
-	sess.AggregatedNonces = env.Payload
+	// 保存聚合的 nonce 和消息（优先解析新格式，兼容旧格式）
+	if decodedMsgs, decodedNonces, ok := decodeRoastRequestPayload(env.Payload); ok {
+		if len(decodedMsgs) > 0 {
+			sess.Messages = cloneMessages(decodedMsgs)
+		}
+		sess.AggregatedNonces = decodedNonces
+	} else {
+		sess.AggregatedNonces = env.Payload
+	}
 
 	// 生成签名份额
 	shares, err := p.computeSignatureShares(sess)
@@ -435,6 +469,13 @@ func (p *Participant) HandleRoastSignRequest(env *Envelope) error {
 // computeSignatureShares 计算签名份额
 // z_i = k_i + ρ_i * k'_i + λ_i * e * s_i
 func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte, error) {
+	if len(sess.Messages) == 0 {
+		return nil, errors.New("missing signing messages in participant session")
+	}
+	if len(sess.HidingNonces) != len(sess.Messages) {
+		return nil, fmt.Errorf("nonce/message task count mismatch: nonces=%d messages=%d", len(sess.HidingNonces), len(sess.Messages))
+	}
+
 	numTasks := len(sess.HidingNonces)
 	shares := make([][]byte, numTasks)
 
@@ -446,18 +487,37 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 
 	// 解析本地密钥份额
 	myShare := new(big.Int).SetBytes(sess.MyShare)
+	resolvedGroupPubX := big.NewInt(0)
+	var groupPubBytes []byte
+	if p.vaultProvider == nil {
+		return nil, errors.New("vault provider is required for signing")
+	}
+	pubBytes, err := p.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load group pubkey for signing chain=%s vault=%d epoch=%d: %w", sess.Chain, sess.VaultID, sess.KeyEpoch, err)
+	}
+	if len(pubBytes) < 32 {
+		return nil, fmt.Errorf("invalid group pubkey length for signing: %d", len(pubBytes))
+	}
+	groupPubBytes = pubBytes
+	if len(pubBytes) == 33 {
+		resolvedGroupPubX = new(big.Int).SetBytes(pubBytes[1:33])
+	} else {
+		resolvedGroupPubX = new(big.Int).SetBytes(pubBytes[:32])
+	}
+	if normalizedShare := normalizeSecretShareForBIP340(sess.SignAlgo, groupPubBytes, myShare); normalizedShare != myShare {
+		myShare = normalizedShare
+		logs.Info("[Participant] normalized BIP340 secret share for odd-Y group pubkey chain=%s vault=%d epoch=%d", sess.Chain, sess.VaultID, sess.KeyEpoch)
+	}
 
 	// 解析聚合的 nonces 获取所有参与者的 nonce 承诺
 	allNonces := parseAggregatedNonces(sess.AggregatedNonces, numTasks, sess.SignAlgo)
 
 	for i := 0; i < numTasks; i++ {
-		// 获取待签名消息
-		var msg []byte
-		if i < len(sess.Messages) {
-			msg = sess.Messages[i]
-		}
-		if msg == nil {
-			msg = []byte(sess.JobID) // 默认使用 jobID 作为消息
+		// 获取待签名消息（必须由协调者下发，禁止隐式 fallback）
+		msg := sess.Messages[i]
+		if len(msg) == 0 {
+			return nil, fmt.Errorf("empty signing message for task %d", i)
 		}
 
 		// 验证 nonce 是否绑定到正确的消息（防二次签名攻击）
@@ -509,19 +569,8 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 			return nil, err
 		}
 
-		// 从 vaultProvider 获取群公钥
-		groupPubX := big.NewInt(0)
-		if p.vaultProvider != nil {
-			groupPubBytes, err := p.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch)
-			if err == nil && len(groupPubBytes) >= 32 {
-				// 解析群公钥 X 坐标（假设压缩格式：1 字节前缀 + 32 字节 X）
-				if len(groupPubBytes) == 33 {
-					groupPubX = new(big.Int).SetBytes(groupPubBytes[1:33])
-				} else if len(groupPubBytes) >= 32 {
-					groupPubX = new(big.Int).SetBytes(groupPubBytes[:32])
-				}
-			}
-		}
+		// Use the already validated group pubkey X coordinate for the whole session.
+		groupPubX := new(big.Int).Set(resolvedGroupPubX)
 
 		// 计算挑战值 e
 		e := roastExec.ComputeChallenge(R, groupPubX, msg)
@@ -546,6 +595,23 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 	return shares, nil
 }
 
+func normalizeSecretShareForBIP340(signAlgo pb.SignAlgo, groupPubBytes []byte, share *big.Int) *big.Int {
+	if share == nil {
+		return nil
+	}
+	if signAlgo != pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
+		return share
+	}
+	if len(groupPubBytes) != 33 || groupPubBytes[0] != 0x03 {
+		return share
+	}
+
+	order := curve.NewSecp256k1Group().Order()
+	normalized := new(big.Int).Sub(order, share)
+	normalized.Mod(normalized, order)
+	return normalized
+}
+
 // parseAggregatedNonces 解析聚合的 nonces
 func parseAggregatedNonces(data []byte, numTasks int, signAlgo pb.SignAlgo) [][]NonceInput {
 	result := make([][]NonceInput, numTasks)
@@ -553,36 +619,79 @@ func parseAggregatedNonces(data []byte, numTasks int, signAlgo pb.SignAlgo) [][]
 		result[i] = []NonceInput{}
 	}
 
-	if len(data) == 0 {
+	if len(data) == 0 || numTasks <= 0 {
 		return result
 	}
 
-	// 动态计算 nonce 大小 (hiding point + binding point)
+	signerIDs, noncePayload, hasHeader := decodeAggregatedNoncePayload(data)
+	if !hasHeader {
+		noncePayload = data
+	}
+
+	// each nonce commitment is (hiding point + binding point)
 	pointSize := getPointSize(signAlgo)
 	nonceSize := 2 * pointSize
+	if nonceSize <= 0 || len(noncePayload)%nonceSize != 0 {
+		return result
+	}
 
-	noncesPerTask := len(data) / (nonceSize * numTasks)
-	if noncesPerTask == 0 {
-		noncesPerTask = 1
+	var signerCount int
+	if hasHeader {
+		signerCount = len(signerIDs)
+		if signerCount == 0 {
+			return result
+		}
+		expectedLen := signerCount * nonceSize * numTasks
+		if len(noncePayload) != expectedLen {
+			logs.Warn("[Participant] invalid aggregated nonce payload length: got=%d want=%d signers=%d tasks=%d",
+				len(noncePayload), expectedLen, signerCount, numTasks)
+			return result
+		}
+	} else {
+		totalPerSigner := nonceSize * numTasks
+		if totalPerSigner <= 0 || len(noncePayload)%totalPerSigner != 0 {
+			logs.Warn("[Participant] legacy aggregated nonce payload length mismatch: got=%d per_signer=%d tasks=%d",
+				len(noncePayload), totalPerSigner, numTasks)
+			return result
+		}
+		signerCount = len(noncePayload) / totalPerSigner
+		if signerCount == 0 {
+			return result
+		}
+		signerIDs = make([]int, signerCount)
+		for i := 0; i < signerCount; i++ {
+			signerIDs[i] = i + 1
+		}
 	}
 
 	offset := 0
-	for taskIdx := 0; taskIdx < numTasks && offset < len(data); taskIdx++ {
-		for j := 0; j < noncesPerTask && offset+nonceSize <= len(data); j++ {
-			hiding := data[offset : offset+pointSize]
-			binding := data[offset+pointSize : offset+nonceSize]
+	// signer-major order:
+	// signer1(task0..taskN), signer2(task0..taskN), ...
+	for signerPos := 0; signerPos < signerCount && offset < len(noncePayload); signerPos++ {
+		signerID := signerIDs[signerPos]
+		if signerID <= 0 {
+			continue
+		}
+		for taskIdx := 0; taskIdx < numTasks && offset+nonceSize <= len(noncePayload); taskIdx++ {
+			hiding := noncePayload[offset : offset+pointSize]
+			binding := noncePayload[offset+pointSize : offset+nonceSize]
 			offset += nonceSize
 
+			hidingPoint, err := decodeSerializedPoint(signAlgo, hiding)
+			if err != nil {
+				logs.Warn("[Participant] failed to decode hiding nonce point (signer=%d task=%d): %v", signerID, taskIdx, err)
+				continue
+			}
+			bindingPoint, err := decodeSerializedPoint(signAlgo, binding)
+			if err != nil {
+				logs.Warn("[Participant] failed to decode binding nonce point (signer=%d task=%d): %v", signerID, taskIdx, err)
+				continue
+			}
+
 			result[taskIdx] = append(result[taskIdx], NonceInput{
-				SignerID: j + 1,
-				HidingPoint: CurvePoint{
-					X: new(big.Int).SetBytes(hiding),
-					Y: big.NewInt(0),
-				},
-				BindingPoint: CurvePoint{
-					X: new(big.Int).SetBytes(binding),
-					Y: big.NewInt(0),
-				},
+				SignerID:     signerID,
+				HidingPoint:  hidingPoint,
+				BindingPoint: bindingPoint,
 			})
 		}
 	}

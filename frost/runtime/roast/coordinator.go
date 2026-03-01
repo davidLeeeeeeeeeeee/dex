@@ -398,6 +398,7 @@ func (c *Coordinator) broadcastNonceRequest(sess *roastsession.Session) {
 		SignAlgo:  pb.SignAlgo(sess.SignAlgo),
 		Epoch:     sess.KeyEpoch,
 		Round:     1,
+		Payload:   encodeRoastRequestPayload(sess.Messages, nil),
 	}
 
 	_ = c.messenger.Broadcast(peers, toTypesRoastEnvelope(msg))
@@ -460,18 +461,34 @@ func (c *Coordinator) broadcastSignRequest(sess *roastsession.Session) {
 
 // aggregateNonces 聚合 nonce 承诺
 func (c *Coordinator) aggregateNonces(sess *roastsession.Session) []byte {
-	// Simplified: concatenate all nonce commitments.
 	var buf bytes.Buffer
+	signerIDs := make([]int, 0)
 	selectedSet := sess.SelectedSetSnapshot()
 	for _, idx := range selectedSet {
 		if nonce, ok := sess.GetNonce(idx); ok {
+			signerIDs = append(signerIDs, idx+1)
 			for i := range nonce.HidingNonces {
 				buf.Write(nonce.HidingNonces[i])
 				buf.Write(nonce.BindingNonces[i])
 			}
 		}
 	}
-	return buf.Bytes()
+	if buf.Len() == 0 || len(signerIDs) == 0 {
+		return nil
+	}
+	// Backward compatibility: legacy participants can only parse signer IDs as
+	// 1..N from payload order. Keep raw payload for that case.
+	needsHeader := false
+	for pos, signerID := range signerIDs {
+		if signerID != pos+1 {
+			needsHeader = true
+			break
+		}
+	}
+	if !needsHeader {
+		return buf.Bytes()
+	}
+	return encodeAggregatedNoncePayload(signerIDs, buf.Bytes())
 }
 
 // waitForShares 等待收集签名份额
@@ -563,16 +580,21 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 
 			hidingBytes := nonceData.HidingNonces[taskIdx]
 			bindingBytes := nonceData.BindingNonces[taskIdx]
+			hidingPoint, err := decodeSerializedPoint(pb.SignAlgo(sess.SignAlgo), hidingBytes)
+			if err != nil {
+				logs.Warn("[Coordinator] task %d: invalid hiding nonce point from signer %d: %v", taskIdx, idx+1, err)
+				continue
+			}
+			bindingPoint, err := decodeSerializedPoint(pb.SignAlgo(sess.SignAlgo), bindingBytes)
+			if err != nil {
+				logs.Warn("[Coordinator] task %d: invalid binding nonce point from signer %d: %v", taskIdx, idx+1, err)
+				continue
+			}
+
 			nonces = append(nonces, NonceInput{
-				SignerID: idx + 1,
-				HidingPoint: CurvePoint{
-					X: new(big.Int).SetBytes(hidingBytes),
-					Y: big.NewInt(0),
-				},
-				BindingPoint: CurvePoint{
-					X: new(big.Int).SetBytes(bindingBytes),
-					Y: big.NewInt(0),
-				},
+				SignerID:     idx + 1,
+				HidingPoint:  hidingPoint,
+				BindingPoint: bindingPoint,
 			})
 		}
 

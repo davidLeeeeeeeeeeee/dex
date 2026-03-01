@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"dex/frost/chain"
+	"dex/frost/chain/btc"
 	"dex/frost/runtime/planning"
 	"dex/keys"
 	"dex/logs"
@@ -55,6 +57,7 @@ type SignedPackage struct {
 	SessionID    string
 	JobID        string
 	Signature    []byte
+	Signatures   [][]byte
 	RawTx        []byte
 	TemplateHash []byte
 }
@@ -362,8 +365,33 @@ func (w *WithdrawWorker) waitAndSubmit(ctx context.Context, job *planning.Job, s
 		WithdrawIds:        job.WithdrawIDs,
 		VaultId:            job.VaultID,
 		KeyEpoch:           job.KeyEpoch,
+		TemplateHash:       job.TemplateHash,
 		Chain:              job.Chain,
 		Asset:              job.Asset,
+	}
+
+	if isBTCChain(job.Chain) {
+		template, parseErr := w.parseBTCTemplate(job)
+		if parseErr != nil {
+			w.Logger.Error("[WithdrawWorker] failed to parse BTC template for submit: %v", parseErr)
+			return
+		}
+
+		inputSigs, sigErr := w.resolveBTCInputSignatures(signedPkg, len(template.Inputs))
+		if sigErr != nil {
+			w.Logger.Error("[WithdrawWorker] failed to resolve BTC input signatures: %v", sigErr)
+			return
+		}
+
+		scriptPubkeys, spkErr := w.loadBTCScriptPubkeys(job.Chain, job.VaultID, template)
+		if spkErr != nil {
+			w.Logger.Error("[WithdrawWorker] failed to load BTC input scriptPubkeys: %v", spkErr)
+			return
+		}
+
+		withdrawSignedTx.TemplateData = job.TemplateData
+		withdrawSignedTx.InputSigs = inputSigs
+		withdrawSignedTx.ScriptPubkeys = scriptPubkeys
 	}
 
 	// 生成提现交易 ID（基于内容的哈希）
@@ -403,10 +431,30 @@ func (w *WithdrawWorker) getSignAlgo(chain string, vaultID uint32) (pb.SignAlgo,
 
 // extractMessages 从 Job 中提取待签名消息
 func (w *WithdrawWorker) extractMessages(job *planning.Job) ([][]byte, error) {
-	// 对于合约链/账户链：消息就是 template_hash
-	// 对于 BTC：需要从模板中提取每个 input 的 sighash
-	// 这里简化处理，返回 template_hash 作为单条消息
-	// 实际实现需要根据链类型和模板数据提取
+	if isBTCChain(job.Chain) {
+		template, err := w.parseBTCTemplate(job)
+		if err != nil {
+			return nil, err
+		}
+
+		scriptPubkeys, err := w.loadBTCScriptPubkeys(job.Chain, job.VaultID, template)
+		if err != nil {
+			return nil, err
+		}
+
+		sighashes, err := template.ComputeTaprootSighash(scriptPubkeys, btc.SighashDefault)
+		if err != nil {
+			return nil, fmt.Errorf("compute BTC sighashes: %w", err)
+		}
+		if len(sighashes) == 0 {
+			return nil, fmt.Errorf("empty BTC sighashes for job %s", job.JobID)
+		}
+		return sighashes, nil
+	}
+
+	if len(job.TemplateHash) == 0 {
+		return nil, fmt.Errorf("empty template hash for job %s", job.JobID)
+	}
 	return [][]byte{job.TemplateHash}, nil
 }
 
@@ -513,11 +561,183 @@ func (w *WithdrawWorker) processCompositeJobAsync(ctx context.Context, composite
 
 // buildSignedPackageBytes 构建 SignedPackage bytes
 func (w *WithdrawWorker) buildSignedPackageBytes(signedPkg *SignedPackage, job *planning.Job) ([]byte, error) {
-	// 构建完整的 SignedPackage
-	// 包含：签名、模板数据、raw_tx（如果可用）
-	// 这里简化处理，实际需要序列化为 protobuf
-	// TODO: 实现完整的 SignedPackage 序列化
-	return signedPkg.Signature, nil
+	if signedPkg == nil {
+		return nil, fmt.Errorf("signed package is nil")
+	}
+	if len(signedPkg.Signature) > 0 {
+		return append([]byte(nil), signedPkg.Signature...), nil
+	}
+	if len(signedPkg.Signatures) > 0 {
+		total := 0
+		for _, sig := range signedPkg.Signatures {
+			total += len(sig)
+		}
+		combined := make([]byte, 0, total)
+		for _, sig := range signedPkg.Signatures {
+			combined = append(combined, sig...)
+		}
+		if len(combined) == 0 {
+			return nil, fmt.Errorf("signed package signatures are empty")
+		}
+		return combined, nil
+	}
+	return nil, fmt.Errorf("signed package has no signature bytes")
+}
+
+func isBTCChain(chainName string) bool {
+	c := strings.ToLower(strings.TrimSpace(chainName))
+	return c == "btc" || strings.HasPrefix(c, "btc_") || strings.HasPrefix(c, "btc-")
+}
+
+func (w *WithdrawWorker) parseBTCTemplate(job *planning.Job) (*btc.BTCTemplate, error) {
+	if job == nil {
+		return nil, fmt.Errorf("job is nil")
+	}
+	if len(job.TemplateData) == 0 {
+		return nil, fmt.Errorf("missing template_data for BTC job %s", job.JobID)
+	}
+	template, err := btc.FromJSON(job.TemplateData)
+	if err != nil {
+		return nil, fmt.Errorf("decode BTC template_data: %w", err)
+	}
+	if len(template.Inputs) == 0 {
+		return nil, fmt.Errorf("BTC template has no inputs for job %s", job.JobID)
+	}
+	return template, nil
+}
+
+func (w *WithdrawWorker) loadBTCScriptPubkeys(chainName string, vaultID uint32, template *btc.BTCTemplate) ([][]byte, error) {
+	if template == nil {
+		return nil, fmt.Errorf("template is nil")
+	}
+
+	scriptPubkeys := make([][]byte, 0, len(template.Inputs))
+	var fallback []byte
+
+	for _, in := range template.Inputs {
+		scriptPubkey, err := w.loadUTXOScriptPubkey(vaultID, in.TxID, in.Vout)
+		if err != nil {
+			return nil, err
+		}
+		if len(scriptPubkey) == 0 {
+			if len(fallback) == 0 {
+				fallback, err = w.loadVaultTaprootScriptPubkey(chainName, vaultID)
+				if err != nil {
+					return nil, fmt.Errorf("missing scriptPubKey for input %s:%d and fallback failed: %w", in.TxID, in.Vout, err)
+				}
+			}
+			scriptPubkey = fallback
+		}
+		scriptPubkeys = append(scriptPubkeys, append([]byte(nil), scriptPubkey...))
+	}
+
+	return scriptPubkeys, nil
+}
+
+func (w *WithdrawWorker) loadUTXOScriptPubkey(vaultID uint32, txid string, vout uint32) ([]byte, error) {
+	utxoKey := keys.KeyFrostBtcUtxo(vaultID, txid, vout)
+	utxoData, exists, err := w.stateReader.Get(utxoKey)
+	if err != nil {
+		return nil, fmt.Errorf("read BTC utxo %s failed: %w", utxoKey, err)
+	}
+	if !exists || len(utxoData) == 0 {
+		return nil, nil
+	}
+
+	var utxo pb.FrostUtxo
+	if err := proto.Unmarshal(utxoData, &utxo); err != nil {
+		return nil, fmt.Errorf("decode BTC utxo %s failed: %w", utxoKey, err)
+	}
+	if len(utxo.ScriptPubkey) == 0 {
+		return nil, nil
+	}
+	return append([]byte(nil), utxo.ScriptPubkey...), nil
+}
+
+func (w *WithdrawWorker) loadVaultTaprootScriptPubkey(chainName string, vaultID uint32) ([]byte, error) {
+	vaultKey := keys.KeyFrostVaultState(chainName, vaultID)
+	vaultData, exists, err := w.stateReader.Get(vaultKey)
+	if err != nil {
+		return nil, fmt.Errorf("read vault state %s failed: %w", vaultKey, err)
+	}
+	if !exists || len(vaultData) == 0 {
+		return nil, fmt.Errorf("vault state missing: key=%s", vaultKey)
+	}
+
+	var vault pb.FrostVaultState
+	if err := proto.Unmarshal(vaultData, &vault); err != nil {
+		return nil, fmt.Errorf("decode vault state %s failed: %w", vaultKey, err)
+	}
+
+	xOnly, err := normalizeXOnlyPubKey(vault.GroupPubkey)
+	if err != nil {
+		return nil, err
+	}
+
+	scriptPubkey := make([]byte, 34)
+	scriptPubkey[0] = 0x51
+	scriptPubkey[1] = 0x20
+	copy(scriptPubkey[2:], xOnly)
+	return scriptPubkey, nil
+}
+
+func normalizeXOnlyPubKey(groupPubkey []byte) ([]byte, error) {
+	switch len(groupPubkey) {
+	case 32:
+		return append([]byte(nil), groupPubkey...), nil
+	case 33:
+		if groupPubkey[0] != 0x02 && groupPubkey[0] != 0x03 {
+			return nil, fmt.Errorf("invalid compressed pubkey prefix: 0x%x", groupPubkey[0])
+		}
+		return append([]byte(nil), groupPubkey[1:]...), nil
+	default:
+		return nil, fmt.Errorf("unsupported group pubkey length: %d", len(groupPubkey))
+	}
+}
+
+func (w *WithdrawWorker) resolveBTCInputSignatures(signedPkg *SignedPackage, inputCount int) ([][]byte, error) {
+	if signedPkg == nil {
+		return nil, fmt.Errorf("signed package is nil")
+	}
+	if inputCount <= 0 {
+		return nil, fmt.Errorf("invalid BTC input count: %d", inputCount)
+	}
+
+	if len(signedPkg.Signatures) > 0 {
+		if len(signedPkg.Signatures) != inputCount {
+			return nil, fmt.Errorf("btc signature count mismatch: got=%d want=%d", len(signedPkg.Signatures), inputCount)
+		}
+		result := make([][]byte, inputCount)
+		for i, sig := range signedPkg.Signatures {
+			if len(sig) != 64 {
+				return nil, fmt.Errorf("invalid btc signature length for input %d: %d", i, len(sig))
+			}
+			result[i] = append([]byte(nil), sig...)
+		}
+		return result, nil
+	}
+
+	if len(signedPkg.Signature) == 0 {
+		return nil, fmt.Errorf("missing BTC signatures")
+	}
+
+	if inputCount == 1 {
+		if len(signedPkg.Signature) != 64 {
+			return nil, fmt.Errorf("invalid btc signature length: %d", len(signedPkg.Signature))
+		}
+		return [][]byte{append([]byte(nil), signedPkg.Signature...)}, nil
+	}
+
+	if len(signedPkg.Signature) != inputCount*64 {
+		return nil, fmt.Errorf("invalid combined BTC signature length: got=%d want=%d", len(signedPkg.Signature), inputCount*64)
+	}
+
+	result := make([][]byte, inputCount)
+	for i := 0; i < inputCount; i++ {
+		start := i * 64
+		result[i] = append([]byte(nil), signedPkg.Signature[start:start+64]...)
+	}
+	return result, nil
 }
 
 func (w *WithdrawWorker) shouldSkipJob(job *planning.Job) (bool, string, error) {

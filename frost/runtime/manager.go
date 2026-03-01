@@ -329,6 +329,7 @@ func (a *signingServiceAdapter) WaitForCompletion(ctx context.Context, sessionID
 		SessionID:    pkg.SessionID,
 		JobID:        pkg.JobID,
 		Signature:    pkg.Signature,
+		Signatures:   pkg.Signatures,
 		RawTx:        pkg.RawTx,
 		TemplateHash: pkg.TemplateHash,
 	}, nil
