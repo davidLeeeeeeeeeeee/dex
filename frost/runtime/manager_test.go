@@ -299,7 +299,7 @@ func TestScanner(t *testing.T) {
 	})
 }
 
-// ======================== JobPlanner Tests ========================
+// ======================== Planning Test Helpers ========================
 
 // fakeChainAdapter 用于测试的 fake ChainAdapter
 type fakeChainAdapter struct {
@@ -365,76 +365,6 @@ func (f *fakeAdapterFactory) Adapter(chainName string) (chain.ChainAdapter, erro
 
 func (f *fakeAdapterFactory) RegisterAdapter(adapter chain.ChainAdapter) {
 	// Not used in tests
-}
-
-// TestJobPlanner 测试 JobPlanner
-func TestJobPlanner(t *testing.T) {
-	reader := newFakeStateReader()
-	factory := newFakeAdapterFactory()
-	factory.Register("BTC")
-
-	planner := planning.NewJobPlanner(reader, factory)
-
-	// 设置 withdraw 状态
-	withdrawState := &pb.FrostWithdrawState{
-		WithdrawId: "test_withdraw_1",
-		Chain:      "BTC",
-		Asset:      "native",
-		To:         "bc1qtest...",
-		Amount:     "1000000",
-		Status:     "QUEUED",
-		Seq:        1,
-	}
-	data, _ := proto.Marshal(withdrawState)
-	reader.Set(keys.KeyFrostWithdraw("test_withdraw_1"), data)
-
-	// 创建扫描结果
-	scanResult := &planning.ScanResult{
-		Chain:      "BTC",
-		Asset:      "native",
-		WithdrawID: "test_withdraw_1",
-		Seq:        1,
-	}
-
-	// 规划 job
-	job, err := planner.PlanJob(scanResult)
-	if err != nil {
-		t.Fatalf("PlanJob failed: %v", err)
-	}
-	if job == nil {
-		t.Fatal("Expected non-nil job")
-	}
-
-	// 验证 job 属性
-	if job.Chain != "BTC" {
-		t.Errorf("Expected chain 'BTC', got '%s'", job.Chain)
-	}
-	if job.Asset != "native" {
-		t.Errorf("Expected asset 'native', got '%s'", job.Asset)
-	}
-	if len(job.WithdrawIDs) != 1 || job.WithdrawIDs[0] != "test_withdraw_1" {
-		t.Errorf("Unexpected withdraw_ids: %v", job.WithdrawIDs)
-	}
-	if len(job.TemplateHash) == 0 {
-		t.Error("Expected non-empty template_hash")
-	}
-	if job.JobID == "" {
-		t.Error("Expected non-empty job_id")
-	}
-
-	// 测试确定性：相同输入多次规划结果一致
-	t.Run("Deterministic", func(t *testing.T) {
-		job2, err := planner.PlanJob(scanResult)
-		if err != nil {
-			t.Fatalf("PlanJob failed: %v", err)
-		}
-		if job2.JobID != job.JobID {
-			t.Errorf("Expected same job_id, got '%s' vs '%s'", job.JobID, job2.JobID)
-		}
-		if string(job2.TemplateHash) != string(job.TemplateHash) {
-			t.Errorf("Expected same template_hash")
-		}
-	})
 }
 
 // ======================== WithdrawWorker Tests ========================
@@ -526,7 +456,7 @@ func TestWithdrawWorker(t *testing.T) {
 	var vaultProvider VaultCommitteeProvider = newFakeVaultProvider()
 
 	// 注入 SignerProvider，避免空指针 panic
-	worker := workers.NewWithdrawWorker(reader, factory, submitter, &fakeLogReporter{}, signingService, vaultProvider, 1, "test-node-address", logs.NewNodeLogger("test", 0))
+	worker := workers.NewWithdrawWorker(reader, factory, submitter, &fakeLogReporter{}, signingService, vaultProvider, 1, "member1", logs.NewNodeLogger("test", 0))
 
 	// 1. 设置 VaultConfig
 	vaultCfg := &pb.FrostVaultConfig{
@@ -559,6 +489,7 @@ func TestWithdrawWorker(t *testing.T) {
 	// 4. 设置 FundsLot 指向充值
 	lotKey := fmt.Sprintf("v1_frost_funds_lot_%s_%s_%d_%d", "eth", "native", 0, 1)
 	reader.Set(lotKey, []byte("recharge_tx_1"))
+	reader.Set(keys.KeyFrostVaultAvailableBalance("eth", "native", 0), []byte("2000000"))
 
 	// 设置 withdraw 队列
 	reader.Set(keys.KeyFrostWithdrawFIFOHead("eth", "native"), []byte("1"))

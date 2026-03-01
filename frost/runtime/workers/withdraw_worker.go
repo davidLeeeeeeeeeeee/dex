@@ -3,8 +3,8 @@
 package workers
 
 import (
-	"crypto/sha256"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strconv"
@@ -98,8 +98,6 @@ func (a *chainStateReaderAdapter) GetMany(keys []string) (map[string][]byte, err
 // WithdrawWorker 提现流程执行器
 type WithdrawWorker struct {
 	stateReader    StateReader
-	scanner        *planning.Scanner
-	planner        *planning.JobPlanner
 	windowPlanner  *planning.JobWindowPlanner // Job 窗口规划器
 	txSubmitter    TxSubmitter
 	logReporter    LogReporter
@@ -130,8 +128,6 @@ func NewWithdrawWorker(
 	planningReader := &chainStateReaderAdapter{reader: stateReader}
 	return &WithdrawWorker{
 		stateReader:    stateReader,
-		scanner:        planning.NewScanner(planningReader),
-		planner:        planning.NewJobPlanner(planningReader, adapterFactory),
 		windowPlanner:  planning.NewJobWindowPlanner(planningReader, adapterFactory, maxInFlight),
 		txSubmitter:    txSubmitter,
 		logReporter:    logReporter,
