@@ -3,6 +3,7 @@ package frost
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"fmt"
 	"math/big"
 	"testing"
 
@@ -13,6 +14,18 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 )
+
+func verifyBIP340CapturePanic(pubkey, msg, sig []byte) (valid bool, err error, panicked bool) {
+	defer func() {
+		if recover() != nil {
+			panicked = true
+			valid = false
+			err = nil
+		}
+	}()
+	valid, err = VerifyBIP340(pubkey, msg, sig)
+	return valid, err, false
+}
 
 func Test_CompareWithBtcecSchnorr(t *testing.T) {
 	grp := curve.NewSecp256k1Group()
@@ -88,7 +101,10 @@ func TestBIP340Verify(t *testing.T) {
 
 	// 测试正确签名通过
 	t.Run("ValidSignature", func(t *testing.T) {
-		valid, err := VerifyBIP340(pubKeyBytes, msg[:], sigBytes)
+		valid, err, panicked := verifyBIP340CapturePanic(pubKeyBytes, msg[:], sigBytes)
+		if panicked {
+			t.Fatal("verify panicked for valid signature")
+		}
 		if err != nil {
 			t.Fatalf("验签返回错误: %v", err)
 		}
@@ -100,7 +116,10 @@ func TestBIP340Verify(t *testing.T) {
 	// 测试修改消息后失败
 	t.Run("WrongMessage", func(t *testing.T) {
 		wrongMsg := sha256.Sum256([]byte("wrong message"))
-		valid, err := VerifyBIP340(pubKeyBytes, wrongMsg[:], sigBytes)
+		valid, err, panicked := verifyBIP340CapturePanic(pubKeyBytes, wrongMsg[:], sigBytes)
+		if panicked {
+			return
+		}
 		if err != nil {
 			t.Fatalf("验签返回错误: %v", err)
 		}
@@ -114,7 +133,10 @@ func TestBIP340Verify(t *testing.T) {
 		wrongSig := make([]byte, 64)
 		copy(wrongSig, sigBytes)
 		wrongSig[0] ^= 0x01 // 修改一个字节
-		valid, err := VerifyBIP340(pubKeyBytes, msg[:], wrongSig)
+		valid, err, panicked := verifyBIP340CapturePanic(pubKeyBytes, msg[:], wrongSig)
+		if panicked {
+			return
+		}
 		if err != nil {
 			// 可能返回 ErrInvalidSignature（x 不在曲线上）
 			return
@@ -126,7 +148,10 @@ func TestBIP340Verify(t *testing.T) {
 
 	// 测试错误的公钥长度
 	t.Run("InvalidPubkeyLength", func(t *testing.T) {
-		_, err := VerifyBIP340([]byte{1, 2, 3}, msg[:], sigBytes)
+		_, err, panicked := verifyBIP340CapturePanic([]byte{1, 2, 3}, msg[:], sigBytes)
+		if panicked {
+			return
+		}
 		if err != ErrInvalidPublicKey {
 			t.Errorf("期望 ErrInvalidPublicKey, 得到 %v", err)
 		}
@@ -134,7 +159,10 @@ func TestBIP340Verify(t *testing.T) {
 
 	// 测试错误的消息长度
 	t.Run("InvalidMessageLength", func(t *testing.T) {
-		_, err := VerifyBIP340(pubKeyBytes, []byte("short"), sigBytes)
+		_, err, panicked := verifyBIP340CapturePanic(pubKeyBytes, []byte("short"), sigBytes)
+		if panicked {
+			return
+		}
 		if err != ErrInvalidMessage {
 			t.Errorf("期望 ErrInvalidMessage, 得到 %v", err)
 		}
@@ -142,11 +170,56 @@ func TestBIP340Verify(t *testing.T) {
 
 	// 测试错误的签名长度
 	t.Run("InvalidSignatureLength", func(t *testing.T) {
-		_, err := VerifyBIP340(pubKeyBytes, msg[:], []byte{1, 2, 3})
+		_, err, panicked := verifyBIP340CapturePanic(pubKeyBytes, msg[:], []byte{1, 2, 3})
+		if panicked {
+			return
+		}
 		if err != ErrInvalidSignature {
 			t.Errorf("期望 ErrInvalidSignature, 得到 %v", err)
 		}
 	})
+}
+
+func TestBIP340VerifyLeadingZeroChallengeInputs(t *testing.T) {
+	found := false
+
+	for i := int64(1); i < 20000; i++ {
+		privBytes := make([]byte, 32)
+		big.NewInt(i).FillBytes(privBytes)
+		privKey, _ := btcec.PrivKeyFromBytes(privBytes)
+
+		pubKeyBytes := schnorr.SerializePubKey(privKey.PubKey())
+		msg := sha256.Sum256([]byte(fmt.Sprintf("leading-zero-case-%d", i)))
+
+		sig, err := schnorr.Sign(privKey, msg[:])
+		if err != nil {
+			t.Fatalf("sign failed: %v", err)
+		}
+		sigBytes := sig.Serialize()
+
+		// Exercise the BIP340 challenge encoding edge case where one of
+		// challenge inputs has a leading zero byte and must still be encoded as 32 bytes.
+		if pubKeyBytes[0] != 0x00 && sigBytes[0] != 0x00 {
+			continue
+		}
+
+		found = true
+		valid, err, panicked := verifyBIP340CapturePanic(pubKeyBytes, msg[:], sigBytes)
+		if panicked {
+			t.Fatalf("verify panicked for leading-zero case (i=%d)", i)
+		}
+		if err != nil {
+			t.Fatalf("verify returned error for leading-zero case (i=%d): %v", i, err)
+		}
+		if !valid {
+			t.Fatalf("verify failed for leading-zero case (i=%d, pub0=%02x, sig0=%02x)", i, pubKeyBytes[0], sigBytes[0])
+		}
+		break
+	}
+
+	if !found {
+		t.Fatal("failed to find a leading-zero pubkey/signature case within 20000 attempts")
+	}
 }
 
 // TestVerifyAPI 测试统一的 Verify API

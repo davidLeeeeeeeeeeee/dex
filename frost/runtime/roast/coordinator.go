@@ -8,10 +8,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 	"time"
 
+	"dex/frost/core/frost"
 	roastsession "dex/frost/runtime/session"
 	"dex/logs"
 	"dex/pb"
@@ -636,6 +638,26 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 			logs.Warn("[Coordinator] task %d: failed to aggregate signatures: %v", taskIdx, err)
 			continue
 		}
+		signerIDs := make([]int, 0, len(shares))
+		for _, s := range shares {
+			signerIDs = append(signerIDs, s.SignerID)
+		}
+		valid, verifyErr, panicVal := c.verifyAggregatedSignature(sess, msg, sig)
+		if panicVal != nil {
+			logs.Warn("[Coordinator] task %d: aggregated signature panic during verify (signers=%v sighash=%x sig=%x panic=%v)",
+				taskIdx, signerIDs, shortBytes(msg, 8), shortBytes(sig, 8), panicVal)
+			continue
+		}
+		if verifyErr != nil {
+			logs.Warn("[Coordinator] task %d: aggregated signature verify error (signers=%v sighash=%x sig=%x err=%v)",
+				taskIdx, signerIDs, shortBytes(msg, 8), shortBytes(sig, 8), verifyErr)
+			continue
+		}
+		if !valid {
+			logs.Warn("[Coordinator] task %d: aggregated signature invalid (signers=%v sighash=%x sig=%x)",
+				taskIdx, signerIDs, shortBytes(msg, 8), shortBytes(sig, 8))
+			continue
+		}
 
 		// 该 task 已完成
 		signatures[taskIdx] = sig
@@ -652,6 +674,57 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 	// 协调者可对未完成 task 继续向新子集收集 share
 	logs.Info("[Coordinator] partial completion: %d/%d tasks completed", len(completedTasks), len(sess.Messages))
 	return signatures, nil
+}
+
+func (c *Coordinator) verifyAggregatedSignature(sess *roastsession.Session, msg, sig []byte) (valid bool, err error, panicVal any) {
+	if sess == nil {
+		return false, errors.New("nil session"), nil
+	}
+	if c.vaultProvider == nil {
+		return true, nil, nil
+	}
+
+	signAlgo := pb.SignAlgo(sess.SignAlgo)
+	groupPubkey, err := c.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch)
+	if err != nil {
+		return false, fmt.Errorf("load group pubkey failed: %w", err), nil
+	}
+	verifyPubkey := groupPubkey
+	if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
+		xOnly, normalizeErr := normalizeXOnlyPubKeyForVerify(groupPubkey)
+		if normalizeErr != nil {
+			return false, normalizeErr, nil
+		}
+		verifyPubkey = xOnly
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			panicVal = r
+		}
+	}()
+	valid, err = frost.Verify(signAlgo, verifyPubkey, msg, sig)
+	return valid, err, nil
+}
+
+func normalizeXOnlyPubKeyForVerify(pubkey []byte) ([]byte, error) {
+	if len(pubkey) == 32 {
+		return append([]byte(nil), pubkey...), nil
+	}
+	if len(pubkey) != 33 {
+		return nil, fmt.Errorf("invalid secp256k1 pubkey length: %d", len(pubkey))
+	}
+	if pubkey[0] != 0x02 && pubkey[0] != 0x03 {
+		return nil, fmt.Errorf("invalid compressed secp256k1 prefix: 0x%02x", pubkey[0])
+	}
+	return append([]byte(nil), pubkey[1:]...), nil
+}
+
+func shortBytes(data []byte, n int) []byte {
+	if len(data) <= n || n <= 0 {
+		return data
+	}
+	return data[:n]
 }
 func (c *Coordinator) retryWithNewSet(sess *roastsession.Session) bool {
 	ok := sess.ResetForRetry(c.config.MaxRetries)

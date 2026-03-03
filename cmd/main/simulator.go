@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
@@ -237,12 +238,13 @@ func (s *TxSimulator) runRechargeScenario() {
 		userNode := s.nodes[0]
 		nonce := s.getNextNonce(userNode.Address)
 
+		nativeTxHash := "tx_hash_" + time.Now().Format("150405")
 		reqTx := generateWitnessRequestTx(
 			userNode.Address,
 			"btc",
-			"tx_hash_"+time.Now().Format("150405"),
-			0,                     // 模拟 Vout 0
-			[]byte("lock_script"), // 模拟锁定脚本
+			nativeTxHash,
+			0, // 模拟 Vout 0
+			s.buildRechargeTaprootScriptPubKey("btc", nativeTxHash),
 			"BTC",
 			"7000",
 			userNode.Address,
@@ -255,13 +257,73 @@ func (s *TxSimulator) runRechargeScenario() {
 	}
 }
 
+const simulatorVaultProbeLimit = 100
+
+func buildTaprootScriptPubKeyFromXOnly(xOnly []byte) []byte {
+	scriptPubKey := make([]byte, 34)
+	scriptPubKey[0] = 0x51 // OP_1
+	scriptPubKey[1] = 0x20 // push 32 bytes
+	copy(scriptPubKey[2:], xOnly)
+	return scriptPubKey
+}
+
+func parseVaultGroupPubKeyXOnly(groupPubKey []byte) ([]byte, bool) {
+	switch len(groupPubKey) {
+	case 32:
+		xOnly := make([]byte, 32)
+		copy(xOnly, groupPubKey)
+		return xOnly, true
+	case 33:
+		if groupPubKey[0] != 0x02 && groupPubKey[0] != 0x03 {
+			return nil, false
+		}
+		xOnly := make([]byte, 32)
+		copy(xOnly, groupPubKey[1:])
+		return xOnly, true
+	default:
+		return nil, false
+	}
+}
+
+func mockTaprootScriptPubKey(seed string) []byte {
+	digest := sha256.Sum256([]byte(seed))
+	return buildTaprootScriptPubKeyFromXOnly(digest[:])
+}
+
+func (s *TxSimulator) buildRechargeTaprootScriptPubKey(chain, nativeTxHash string) []byte {
+	if len(s.nodes) == 0 || s.nodes[0] == nil || s.nodes[0].DBManager == nil {
+		return mockTaprootScriptPubKey("sim-p2tr:" + chain + ":" + nativeTxHash)
+	}
+
+	dbMgr := s.nodes[0].DBManager
+	candidates := []string{strings.ToLower(chain), strings.ToUpper(chain)}
+	for _, chainName := range candidates {
+		for vaultID := uint32(0); vaultID < simulatorVaultProbeLimit; vaultID++ {
+			key := keys.KeyFrostVaultState(chainName, vaultID)
+			state, err := dbMgr.GetFrostVaultState(key)
+			if err != nil || state == nil || state.Status != "ACTIVE" {
+				continue
+			}
+			xOnly, ok := parseVaultGroupPubKeyXOnly(state.GroupPubkey)
+			if !ok {
+				continue
+			}
+			return buildTaprootScriptPubKeyFromXOnly(xOnly)
+		}
+	}
+
+	return mockTaprootScriptPubKey("sim-p2tr:" + chain + ":" + nativeTxHash)
+}
+
 // runWitnessVoteWorker 见证者自发投票工人
+// runWitnessVoteWorker handles automatic witness voting in simulator mode.
 func (s *TxSimulator) runWitnessVoteWorker() {
 	// 周期性扫描并为待处理请求投票
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	// 记录已经投过票的请求，避免重复投票
+	// Track votes to avoid duplicate submissions from the same witness.
 	votedRequests := make(map[string]bool)
 
 	for range ticker.C {

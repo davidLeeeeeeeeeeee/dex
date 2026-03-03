@@ -207,10 +207,18 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 
 				valid, err := verifySignature(signAlgo, pubKey, sighashes[i], sig)
 				if err != nil {
+					panic(fmt.Sprintf("frost-sign-debug: vm verify error job=%s tx=%s chain=%s vault=%d key_epoch_tx=%d key_epoch_state=%d input=%d sign_algo=%s sighash=%s sig=%s pubkey=%s script_pubkey=%s err=%v",
+						jobID, txID, chainName, vaultID, signed.KeyEpoch, vaultState.KeyEpoch, i, signAlgo.String(),
+						hex.EncodeToString(sighashes[i]), hex.EncodeToString(sig), hex.EncodeToString(pubKey),
+						hex.EncodeToString(scriptPubkeys[i]), err))
 					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("signature verification failed for input[%d]: %v%s", i, err, keyEpochHint)}, errors.New("signature verification failed")
 				}
 				if !valid {
 					detail := diagnoseSignatureMismatch(signAlgo, pubKey, sighashes, i, sig)
+					panic(fmt.Sprintf("frost-sign-debug: vm verify invalid job=%s tx=%s chain=%s vault=%d key_epoch_tx=%d key_epoch_state=%d input=%d sign_algo=%s sighash=%s sig=%s pubkey=%s script_pubkey=%s detail=%s",
+						jobID, txID, chainName, vaultID, signed.KeyEpoch, vaultState.KeyEpoch, i, signAlgo.String(),
+						hex.EncodeToString(sighashes[i]), hex.EncodeToString(sig), hex.EncodeToString(pubKey),
+						hex.EncodeToString(scriptPubkeys[i]), detail))
 					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("signature verification failed for input[%d]: %s%s", i, detail, keyEpochHint)}, errors.New("signature verification failed")
 				}
 			}
@@ -444,36 +452,19 @@ func (h *FrostWithdrawSignedTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
 }
 
-// verifySignature 验证签名（支持多曲线）
-// 根据 signAlgo 选择对应的验证算法
+// verifySignature delegates algorithm verification to frost.Verify.
+// For BIP340, compressed secp256k1 pubkeys (33 bytes) are normalized to x-only.
 func verifySignature(signAlgo pb.SignAlgo, pubKey, msg, sig []byte) (bool, error) {
-	switch signAlgo {
-	case pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340:
-		// BTC: BIP-340 Schnorr
+	verifyPubKey := pubKey
+	if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
 		xOnlyPubKey, err := normalizeBIP340PubKey(pubKey)
 		if err != nil {
 			return false, err
 		}
-		return frost.VerifyBIP340(xOnlyPubKey, msg, sig)
-	case pb.SignAlgo_SIGN_ALGO_SCHNORR_ALT_BN128:
-		// ETH/BNB: alt_bn128 Schnorr
-		if len(pubKey) != 64 {
-			return false, errors.New("invalid pubkey length for BN128 (expected 64 bytes)")
-		}
-		return frost.VerifyBN128(pubKey, msg, sig)
-	case pb.SignAlgo_SIGN_ALGO_ED25519:
-		// SOL: Ed25519
-		if len(pubKey) != 32 {
-			return false, errors.New("invalid pubkey length for Ed25519 (expected 32 bytes)")
-		}
-		return frost.VerifyEd25519(pubKey, msg, sig)
-	case pb.SignAlgo_SIGN_ALGO_ECDSA_SECP256K1:
-		// TRX: ECDSA (GG20/CGGMP)
-		// TODO: 实现 ECDSA 验证
-		return false, errors.New("ecdsa signature verification not implemented yet")
-	default:
-		return false, errors.New("unsupported sign_algo: " + signAlgo.String())
+		verifyPubKey = xOnlyPubKey
 	}
+
+	return frost.Verify(signAlgo, verifyPubKey, msg, sig)
 }
 
 func normalizeBIP340PubKey(pubKey []byte) ([]byte, error) {

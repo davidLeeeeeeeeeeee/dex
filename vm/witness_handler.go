@@ -3,6 +3,7 @@
 package vm
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"dex/frost/chain"
 	"dex/keys"
@@ -10,6 +11,7 @@ import (
 	"dex/pb"
 	"dex/witness"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -19,33 +21,33 @@ import (
 
 const DefaultVaultCount = 100
 
-// DefaultVaultCount 濠殿喗甯楃粙鎺椻€﹂崼銉晣閻犲洦鐣幒鏇犵杸闁哄啠鍋撻柦鍌氼儔濮婃椽骞嗚閳锋棃鏁?Vault 闂備浇妗ㄥ鎺楀础閹惰棄闂?// allocateVaultID 缂備胶铏庨崣搴ㄥ窗閺嶎厽鍋╁Δ锝呭暙缁犳垹鎲稿澶婂瀭閹兼番鍔嶉悡鈧?vault_id
-// 濠电偠鎻紞鈧繛澶嬫礋瀵?H(request_id) % vault_count 缂備胶铏庨崣搴ㄥ窗閺囩姵宕叉慨妯垮煐閸庡海绱掔€ｎ偄顕滈柨?request_id 闂備浇顕栭崜娑氬垝椤栨锝夊箹娴ｅ摜顦梺绯曞墲缁嬫垹鏁幎鑺ョ厱闁圭儤鎸搁ˉ瀣箾閺夋埈妯€闁?vault
+// allocateVaultID 通过对 request_id 做哈希后取模，确定性地分配一个 vault_id。
+// 算法：H(request_id) % vault_count，保证同一 request_id 始终映射到同一个 vault。
 func allocateVaultID(requestID string, vaultCount uint32) uint32 {
 	hash := sha256.Sum256([]byte(requestID))
-	// 濠电偠鎻紞鈧繛澶嬫礋瀵偊濡舵径濠勵槶?4 闂佽瀛╃粙鎺椼€冩径瀣╃箚妞ゆ挾鍠愭刊瀛樼節婵炴儳浜鹃柨?uint32
+	// 取哈希前 4 字节转为 uint32
 	n := binary.BigEndian.Uint32(hash[:4])
 	return n % vaultCount
 }
 
-// allocateVaultIDWithLifecycleCheck 缂備胶铏庨崣搴ㄥ窗閺嶎厽鍋╁Δ锝呭暙缁犳垹鎲稿澶婂瀭閹兼番鍔嶉悡鈧?vault_id闂備焦瀵х粙鎴︽嚐椤栫偞鍤愰柣鏃囧仱濞戙垹鐒垫い鎺戝閽?Vault lifecycle
-// 濠电姷顣介埀顒€鍟块埀顒€缍婇幃妯诲緞閹邦剛顦梺绯曞墲缁嬫垹鏁幎鑺ョ厽?Vault 濠电姰鍨煎▔娑氣偓姘间簽閼?DRAINING 闂備胶绮…鍫ュ春閺嶎厼鐒垫い鎴ｆ硶缁涘繒绱掓潏銊х畼濞存粎顭堥埞鎴炵節閸曨儷锔界箾閹寸偞灏い鎴濆缁晝鈧稒顭囬埢鏃€銇勮箛鎾愁仼閻犱焦鐓￠弻锝夛綖椤掆偓婵″潡鏁?ACTIVE Vault
+// allocateVaultIDWithLifecycleCheck 在分配 vault_id 时额外检查 Vault lifecycle。
+// 若初始分配到的 Vault 处于 DRAINING 状态，则线性探测，找到第一个 ACTIVE Vault 返回。
 func allocateVaultIDWithLifecycleCheck(sv StateView, chain, requestID string, vaultCount uint32) (uint32, error) {
 	if vaultCount == 0 {
 		vaultCount = DefaultVaultCount
 	}
 
 	initialVaultID := allocateVaultID(requestID, vaultCount)
-	// 婵犵妲呴崑鈧柛瀣崌閺岋紕浠︾拠鎻掑闂佹悶鍔岄悘姘舵晸?Vault 闁?lifecycle
+	// 查询初始分配的 Vault 的 lifecycle 状态
 	vaultStateKey := keys.KeyFrostVaultState(chain, initialVaultID)
 	vaultStateData, exists, _ := sv.Get(vaultStateKey)
 	if exists && len(vaultStateData) > 0 {
 		var vaultState pb.FrostVaultState
 		if err := unmarshalProtoCompat(vaultStateData, &vaultState); err == nil {
-			// 婵犵妲呴崑鈧柛瀣崌閺?lifecycle闂備焦瀵х粙鎴︽偋閸涱垰鍨?VaultTransitionState 闂備礁鍚嬮崕鎶藉床閼艰翰浜归柛銉墯閺咁剟鎮橀悙鏉戝姢闁诲繑顨呴湁?VaultState.Status 闂備浇顫夋禍浠嬪礉瀹ュ钃熼柛銉墯閺?
-			// 濠电姷顣介埀顒€鍟块埀顒€缍婇幃?Vault 濠电姰鍨煎▔娑氣偓姘间簽閼?DRAINING 闂備胶绮…鍫ュ春閺嶎厼鐒垫い鎴ｆ硶缁涘繒绱掓潏銊х畼濞存粎顭堥埞鎴炵節閸曨儷锔界箾閹寸偞灏い鎴濆缁晝鈧稒顭囬埢?ACTIVE Vault
+			// 注意：这里读的是 VaultState.Status，不是 VaultTransitionState
+			// 若该 Vault 处于 DRAINING，则线性探测找到第一个 ACTIVE Vault
 			if vaultState.Status == VaultLifecycleDraining {
-				// 婵犵鈧啿鈧綊鏁?Vault 婵犮垼娉涚€氼亪鏁?DRAINING 闂佺粯顭堥崺鏍焵椤戣法绛忕紒杈ㄧ箘娴滅鈹戞繝鍕︽繛鎴炴尭椤戝嫮绮╃€涙鈻?ACTIVE Vault
+				// 当前 Vault 处于 DRAINING，线性探测寻找 ACTIVE Vault
 				for offset := uint32(1); offset < vaultCount; offset++ {
 					candidateID := (initialVaultID + offset) % vaultCount
 					candidateKey := keys.KeyFrostVaultState(chain, candidateID)
@@ -58,22 +60,22 @@ func allocateVaultIDWithLifecycleCheck(sv StateView, chain, requestID string, va
 							}
 						}
 					} else {
-						// 濠电姷顣介埀顒€鍟块埀顒€缍婇幃?Vault 濠电偞鍨堕幐鍝ョ矓閹绢喗鍋ら柕濞炬櫅閹硅埖銇勯鐔风缂佲偓婢跺娼℃繛鎴炵懐閻掔偓銇勯幘鐟板惞闁瑰嘲顑夋俊鍫曞礋椤旂虎妲归柨?ACTIVE闂備焦瀵х粙鎴︽偋婵犲洤钃熷┑鐘叉搐缁€鍡樼箾閹寸儐鐒界紒鎲嬬畵閺?Vault闁?
+						// 该 Vault 数据不存在，视为未初始化，可分配（等同 ACTIVE）
 						return candidateID, nil
 					}
 				}
-				// 濠电姷顣介埀顒€鍟块埀顒€缍婇幃妯诲緞閹邦剛顓奸梺閫炲苯澧撮柨?Vault 闂傚倷绶￠崰娑欐叏閵堝憘?DRAINING闂備焦瀵х粙鎴︽儗娴ｇ儤宕查柟杈剧畱閻愬﹪鏌ｉ幇顔煎妺闁哄應鏅犻幃?
+				// 探测完所有 Vault 仍未找到 ACTIVE，所有 Vault 均处于 DRAINING
 				return 0, fmt.Errorf("no ACTIVE vault available for chain %s", chain)
 			}
 		}
 	}
 
-	// 闂備礁鎲＄敮妤冩崲閸岀儑缍?Vault 闁?ACTIVE 闂備胶鎳撻悺銊╂偋閺冨倻绠斿璺哄閸嬫挸鈽夊▍顓т簻閿曘垽顢旈崼鐔告珫闂佸壊鍋侀崕宕囨暜濞戙垺鍋?ACTIVE闁?
+	// 初始分配的 Vault 不处于 DRAINING，直接返回（假定为 ACTIVE）
 	return initialVaultID, nil
 }
 
-// WitnessServiceAware 闂佽崵鍠愰悷銈吤归崶顒佸剨濠㈣埖鍔栭崵鈧梺鍛婁緱閸犳绮诲☉銏＄厱闁哄倸鎼晶鏌ユ煕閺傛寧鍤囬柟顖氱焸婵＄兘鏁冮埀顒佸緞瀹ュ鐓?
-// 闂佽楠稿﹢閬嶅磻閻旇偐宓侀柛銉戝本妗ㄩ梺闈涚墕濡寰勫澶嬬厱婵炲棙鐟ч幃濂告晸?handler 闂備礁鎲￠悷顖炲垂椤栨稓顩查柟鐑橆殔缁犳娊鏌曟径娑㈡闁?WitnessService 闂備焦鐪归崝宀€鈧凹鍓涘Σ鎰板煛閸涱喖浠?
+// WitnessServiceAware 是需要依赖 WitnessService 的 handler 接口。
+// 实现该接口的 handler 可通过 SetWitnessService 注入 WitnessService 实例。
 func appendUniqueNonEmpty(values []string, value string) []string {
 	if value == "" {
 		return values
@@ -120,6 +122,112 @@ func isAllocatableVaultStatus(status string) bool {
 	return status == VaultStatusKeyReady || status == VaultStatusActive
 }
 
+func isBTCChainName(chainName string) bool {
+	c := strings.ToLower(strings.TrimSpace(chainName))
+	return c == "btc" || strings.HasPrefix(c, "btc_") || strings.HasPrefix(c, "btc-")
+}
+
+func parseTaprootScriptPubKeyXOnly(scriptPubKey []byte) ([]byte, error) {
+	if len(scriptPubKey) != 34 {
+		return nil, fmt.Errorf("invalid taproot script_pubkey length: %d", len(scriptPubKey))
+	}
+	if scriptPubKey[0] != 0x51 || scriptPubKey[1] != 0x20 {
+		return nil, fmt.Errorf("invalid taproot script_pubkey prefix: %x", scriptPubKey[:2])
+	}
+
+	xOnly := make([]byte, 32)
+	copy(xOnly, scriptPubKey[2:])
+	return xOnly, nil
+}
+
+func normalizeVaultGroupPubKeyXOnly(groupPubKey []byte) ([]byte, error) {
+	switch len(groupPubKey) {
+	case 32:
+		xOnly := make([]byte, 32)
+		copy(xOnly, groupPubKey)
+		return xOnly, nil
+	case 33:
+		if groupPubKey[0] != 0x02 && groupPubKey[0] != 0x03 {
+			return nil, fmt.Errorf("invalid compressed pubkey prefix: 0x%x", groupPubKey[0])
+		}
+		xOnly := make([]byte, 32)
+		copy(xOnly, groupPubKey[1:])
+		return xOnly, nil
+	default:
+		return nil, fmt.Errorf("unsupported group pubkey length: %d", len(groupPubKey))
+	}
+}
+
+func lookupVaultIDByScriptPubKey(sv StateView, chainName string, vaultCount uint32, scriptPubKey []byte) (uint32, error) {
+	if vaultCount == 0 {
+		return 0, fmt.Errorf("invalid vault count=0 for chain %s", chainName)
+	}
+
+	xOnly, err := parseTaprootScriptPubKeyXOnly(scriptPubKey)
+	if err != nil {
+		return 0, fmt.Errorf("parse taproot script_pubkey failed: %w", err)
+	}
+
+	matches := make([]uint32, 0, 1)
+	nonAllocatableMatches := make([]uint32, 0, 1)
+
+	for candidateID := uint32(0); candidateID < vaultCount; candidateID++ {
+		candidateKey := keys.KeyFrostVaultState(chainName, candidateID)
+		candidateData, candidateExists, err := sv.Get(candidateKey)
+		if err != nil {
+			return 0, fmt.Errorf("failed to read vault state for chain %s vault %d: %w", chainName, candidateID, err)
+		}
+		if !candidateExists || len(candidateData) == 0 {
+			continue
+		}
+
+		var candidateState pb.FrostVaultState
+		if err := unmarshalProtoCompat(candidateData, &candidateState); err != nil {
+			return 0, fmt.Errorf("failed to parse vault state for chain %s vault %d: %w", chainName, candidateID, err)
+		}
+
+		candidateXOnly, err := normalizeVaultGroupPubKeyXOnly(candidateState.GroupPubkey)
+		if err != nil {
+			continue
+		}
+		if !bytes.Equal(candidateXOnly, xOnly) {
+			continue
+		}
+
+		if isAllocatableVaultStatus(candidateState.Status) {
+			matches = append(matches, candidateID)
+		} else {
+			nonAllocatableMatches = append(nonAllocatableMatches, candidateID)
+		}
+	}
+
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		if len(nonAllocatableMatches) > 0 {
+			return 0, fmt.Errorf(
+				"script_pubkey=%s maps only to non-allocatable vault(s) %v on chain %s",
+				hex.EncodeToString(scriptPubKey),
+				nonAllocatableMatches,
+				chainName,
+			)
+		}
+		return 0, fmt.Errorf(
+			"no allocatable vault matches script_pubkey=%s on chain %s",
+			hex.EncodeToString(scriptPubKey),
+			chainName,
+		)
+	default:
+		return 0, fmt.Errorf(
+			"ambiguous script_pubkey=%s maps to multiple allocatable vaults %v on chain %s",
+			hex.EncodeToString(scriptPubKey),
+			matches,
+			chainName,
+		)
+	}
+}
+
 func allocateVaultIDWithStateCheck(sv StateView, chainName, requestID string, vaultCount uint32) (uint32, error) {
 	if vaultCount == 0 {
 		return 0, fmt.Errorf("invalid vault count=0 for chain %s", chainName)
@@ -160,7 +268,7 @@ type WitnessStakeTxHandler struct {
 	witnessSvc *witness.Service
 }
 
-// SetWitnessService 闂佽崵濮崇粈浣规櫠娴犲鍋柛鈩冪懄閸犲棗霉閿濆洦娅曟俊鎻掔墦閺屻倝寮堕幐搴℃濠电姭鍋撻柛銉墮缁€?
+// SetWitnessService 注入 WitnessService 实例。
 func (h *WitnessStakeTxHandler) SetWitnessService(svc *witness.Service) {
 	h.witnessSvc = svc
 }
@@ -198,7 +306,7 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "account not found"}, fmt.Errorf("account not found")
 	}
 
-	// 闂佽崵濮村ú鈺咁敋瑜戦妵鎰板炊閳哄倸鏋傛繛杈剧悼閺咁偄危閸儲鐓犻柡澶嬪閸ｇ菐閸パ嶈含闁?
+	// 读取见证人信息（不存在则初始化默认值）
 	witnessKey := keys.KeyWitnessInfo(address)
 	witnessData, witnessExists, _ := sv.Get(witnessKey)
 
@@ -243,7 +351,7 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		if err != nil {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "invalid locked balance state"}, err
 		}
-		// 濠电偠鎻紞鈧繛澶嬫礋瀵偊濡堕崶锝呬壕闁荤喖鍋婂Σ鎼佹煕濞嗗繒绠荤€规洘绻堥幃鈺佺暦閸ャ儮鍋撴繝鍐х箚妞ゆ劗鍠庢禍楣冩⒑閸濆嫯顫﹂柛搴ｆ暬瀵劑鏁愰崶锝呬壕閻熸瑥瀚悡顖滅磽瀹ュ棗鐏﹂柨娑欏姇閳规垿宕惰閸斿鏁?
+		// 质押：从可用余额扣除，转入 witness_locked_balance
 		newLocked, err := SafeAdd(lockedBalance, amount)
 		if err != nil {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "locked balance overflow"}, fmt.Errorf("locked balance overflow: %w", err)
@@ -255,7 +363,7 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 		if err != nil {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "invalid witness stake state"}, err
 		}
-		// 濠电偠鎻紞鈧繛澶嬫礋瀵偊濡堕崶锝呬壕闁荤喖鍋婂Σ鎼佹煕濞嗗繒绠荤€规洘绻堥幃鈺佺暦閸ャ儮鍋撴繝鍐х箚妞ゆ劗鍠庢禍楣冩⒑閸濆嫯顫﹂柛搴㈡綑椤斿繐鈹戠€ｎ亞顔呮繝闈涘€婚…鍫濃枍閵娿儙娑㈡偋閸垻鐣洪柣搴㈢▓閺呯娀鏁?
+		// 累加质押金额到 witnessInfo.StakeAmount，并将状态设为 ACTIVE
 		newStake, err := SafeAdd(currentStake, amount)
 		if err != nil {
 			return nil, &Receipt{TxID: stake.Base.TxId, Status: "FAILED", Error: "stake amount overflow"}, fmt.Errorf("stake amount overflow: %w", err)
@@ -300,7 +408,7 @@ func (h *WitnessStakeTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *
 	historyData, _ := proto.Marshal(stake)
 	ws = append(ws, WriteOp{Key: historyKey, Value: historyData, Del: false, Category: "history"})
 
-	// 闂備礁鎲￠懝楣冨嫉椤掑嫷鏁嗛柣鎰惈缁€?WitnessService 闂備礁鎲￠崝鏇㈠箠鎼淬劍鍋ら柕濞炬櫆閸嬫劙鏌ら崫銉毌闁?
+	// 将最新的 witnessInfo 热更新到 WitnessService 内存中
 	if h.witnessSvc != nil {
 		h.witnessSvc.LoadWitness(&witnessInfo)
 	}
@@ -314,13 +422,13 @@ func (h *WitnessStakeTxHandler) Apply(tx *pb.AnyTx) error {
 
 // ==================== WitnessRequestTxHandler ====================
 
-// WitnessRequestTxHandler 闂備胶顭堢换鍫ュ磿鐎涙ê绶為柛鏇ㄥ幗閸犲棗霉閿濆洦娅曟俊鎻掔墦閹綊宕堕浣规殸闂佹椿浜炴晶妤€顕ラ崟顖氱妞ゆ挾鍠庨埀顒傚仱閺?
+// WitnessRequestTxHandler 处理见证入账请求交易，负责验证并记录充值请求。
 type WitnessRequestTxHandler struct {
 	witnessSvc *witness.Service
 	VaultCount uint32
 }
 
-// SetWitnessService 闂佽崵濮崇粈浣规櫠娴犲鍋柛鈩冪懄閸犲棗霉閿濆洦娅曟俊鎻掔墦閺屻倝寮堕幐搴℃濠电姭鍋撻柛銉墮缁€?
+// SetWitnessService 注入 WitnessService 实例。
 func (h *WitnessRequestTxHandler) SetWitnessService(svc *witness.Service) {
 	h.witnessSvc = svc
 }
@@ -369,7 +477,8 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 
 	var rechargeRequest *pb.RechargeRequest
 
-	// 濠电偠鎻紞鈧繛澶嬫礋瀵?WitnessService 闂備礁鎲＄敮妤冪矙閹寸姷纾介柟鎹愬煐鐎氭岸姊洪崹顕呭剳婵犫偓閹绢喗鐓ユ繛鎴烆焽婢ф洟鎮楅崹顐€跨€规洏鍎甸、鏇㈠Ψ椤旂晫绉抽梺鑽ゅТ濞诧絽霉閸ヮ剙鐒垫い鎺嗗亾闁硅櫕锕㈤崺鈧い鎺嗗亾妞わ附澹嗛埀顒佸搸閸旀垿鏁?
+	// 通过 WitnessService 创建充值请求（含见证轮次等业务逻辑）；
+	// 若未注入则直接构造基础结构体（测试/简易节点模式）
 	if h.witnessSvc != nil {
 		var err error
 		rechargeRequest, err = h.witnessSvc.CreateRechargeRequest(request)
@@ -377,7 +486,7 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 			return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: err.Error()}, err
 		}
 	} else {
-		// 闂傚倸鍊哥€氼剛绮旈懜娈挎闁搞儺鐏涢悢鐓庣伋鐎规洖娲ㄩ、鍛存⒑閹稿海鈯曢柣顓у枤缁厽寰勭€ｎ偄顎撻柣鐘充航閸斿秹鏁?WitnessService
+		// 未注入 WitnessService 时的降级逻辑：直接构造最小充值请求结构体
 		rechargeRequest = &pb.RechargeRequest{
 			RequestId:        requestID,
 			NativeChain:      request.NativeChain,
@@ -394,8 +503,15 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 		}
 	}
 
-	// Deterministically assign an allocatable vault for this request.
-	vaultID, err := allocateVaultIDWithStateCheck(sv, chainName, requestID, vaultCount)
+	// Assign vault:
+	// - BTC: derive vault from native taproot script_pubkey.
+	// - Others: keep deterministic request_id allocation.
+	var vaultID uint32
+	if isBTCChainName(chainName) {
+		vaultID, err = lookupVaultIDByScriptPubKey(sv, chainName, vaultCount, rechargeRequest.NativeScript)
+	} else {
+		vaultID, err = allocateVaultIDWithStateCheck(sv, chainName, requestID, vaultCount)
+	}
 	if err != nil {
 		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: err.Error()}, err
 	}
@@ -432,12 +548,12 @@ func (h *WitnessRequestTxHandler) Apply(tx *pb.AnyTx) error {
 
 // ==================== WitnessVoteTxHandler ====================
 
-// WitnessVoteTxHandler 闂佽崵鍠愰悷銈吤归崶顒佸剨濠㈣埖鍔曠粻顕€鏌￠崶鈺佇為柛瀣Т椤法鎹勯崫鍕典紑闂佽鍠栭敃顏堟晸?
+// WitnessVoteTxHandler 处理见证人投票交易，负责记录投票并更新充值请求状态。
 type WitnessVoteTxHandler struct {
 	witnessSvc *witness.Service
 }
 
-// SetWitnessService 闂佽崵濮崇粈浣规櫠娴犲鍋柛鈩冪懄閸犲棗霉閿濆洦娅曟俊鎻掔墦閺屻倝寮堕幐搴℃濠电姭鍋撻柛銉墮缁€?
+// SetWitnessService 注入 WitnessService 实例。
 func (h *WitnessVoteTxHandler) SetWitnessService(svc *witness.Service) {
 	h.witnessSvc = svc
 }
@@ -464,8 +580,8 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 	requestKey := keys.KeyRechargeRequest(requestID)
 	requestData, requestExists, err := sv.Get(requestKey)
 	if err != nil || !requestExists {
-		// 濠电姷顣介埀顒€鍟块埀顒€缍婇幃妯诲緞鐏炴儳鐝伴梻浣哥仢椤戝洤锕㈤幘顔界厵闂傚牊绋戠紞鏍磼濡も偓椤﹂潧鐣峰杈ㄦ殰妞ゆ柨澧介ˇ顕€鏌℃径鍡樻珕闁哄被鍔岀叅?FAILED 闂備礁鎲￠崺鍫ュ储閽樺鏆ゅ〒姘ｅ亾闁轰礁绉舵禒锕傛嚃閳哄叐鎴炵箾閹寸偞灏紒澶愵棑閹广垽骞嬮敃鈧悙?error
-		// 闂佸搫顦弲婊堟偡閿曞倹鍋嬮梺顒€绉撮惌妤併亜閺嶃劎鎳佺紒銊ゅ嵆濮婃椽顢楅埀顒勬倶濠靛鍌ㄩ柕鍫濐槸閺嬩線鎮楅棃娑欐喐闁瑰啿顦湁婵犙冪仢閳ь剚鐗曞嵄婵°倕鍟犻崑鎾存媴閸愵煈妫堥梺鎼炰紘閸パ咁槺闂佸憡绻傜€氼參宕戦妷銉庢棃鎮╅懠顒傚姰闂佷紮绠戦ˇ鏉款嚗閸曨剚缍囨い鎰╁剾閺囥垺鐓ユ繛鎴灻〃娆戠磼椤旀儳鈻堥柟铏尭閻ｆ繈宕橀崘鈺佹诞鐎规洘锕㈠畷姗€骞撻幒鎴犵▏闂佽崵濮村ú銈呂涘Δ浣侯浄闁绘ê妯婇悡銉╂煟閹邦喖鍔嬮柨娑欑墪铻?
+		// 请求不存在：直接返回 FAILED receipt 而不返回 VM error，
+		// 防止整块交易 abort 影响后续交易。链上采用宽容策略：投票对应的请求若已不存在，视为冗余投票静默丢弃。
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "request not found"}, nil
 	}
 
@@ -480,13 +596,14 @@ func (h *WitnessVoteTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *R
 		return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: "duplicate vote"}, nil
 	}
 
-	// 4. 闂佽崵濮撮鍛村疮娴兼潙鏋?WitnessService 闂備礁鎼ú銈夋偤閵娾晛钃熷┑鐘叉处閸嬫劙鏌ら崫銉毌闁稿鎸荤粭鐔哥節閸曨収妲遍梻浣告啞閸旀洟骞婃惔銊﹀仱闁靛ň鏅滈弲?
+	// 通过 WitnessService 处理投票业务逻辑（含阈值判断、请求状态流转等），
+	// 若未注入则手动累计计数（简易模式）
 	var finalRequest *pb.RechargeRequest
 	if h.witnessSvc != nil {
 		vote.Vote.TxId = vote.Base.TxId
 		updatedRequest, err := h.witnessSvc.ProcessVote(vote.Vote)
 		if err != nil {
-			// 濠电偞鍨堕幐濠氭嚌閻愵剚鍙忛柣鏂垮悑閻掑鏌￠崟顐ょ閻㈩垰妫濆娲箰鎼达絾鍣銈嗘磸閸婃繈寮澶婇唶婵犲﹤鎳嶇槐锝嗙節绾版ǚ鍋撻崘娴嬪亾缂佹ɑ鍙忛柟闂寸缁犳垵霉閿濆妫戦柣鐔哥箞閹鎮介崹顐户缂備浇椴哥喊宥囩矙婢跺鍚嬮柛娑卞灠閻ｃ劑鏌ｉ悩鍙夊偍闁稿氦浜懞杈ㄣ偅閸愩劎顔婃繝銏ｆ硾椤戝棗鈻撶拠娴嬫闁瑰灝鍟╃花濠氭倶韫囷絽鐏﹂柨?
+			// WitnessService 处理投票失败：视为业务拒绝，返回 FAILED receipt（非 VM error）
 			return nil, &Receipt{TxID: vote.Base.TxId, Status: "FAILED", Error: err.Error()}, nil
 		}
 		finalRequest = updatedRequest
@@ -525,12 +642,12 @@ func (h *WitnessVoteTxHandler) Apply(tx *pb.AnyTx) error {
 
 // ==================== WitnessChallengeTxHandler ====================
 
-// WitnessChallengeTxHandler 闂備胶鎳撻幉锟犲垂閸洖鍨傛い鎺嶈兌椤╂煡鏌曢崼婵囶棡妞ゎ偅绮岄…璺ㄦ崉閸濆嫷浼€闂佽鍠栭敃顏堟晸?
+// WitnessChallengeTxHandler 处理见证挑战交易，在挑战期内对充值请求提起挑战。
 type WitnessChallengeTxHandler struct {
 	witnessSvc *witness.Service
 }
 
-// SetWitnessService 闂佽崵濮崇粈浣规櫠娴犲鍋柛鈩冪懄閸犲棗霉閿濆洦娅曟俊鎻掔墦閺屻倝寮堕幐搴℃濠电姭鍋撻柛銉墮缁€?
+// SetWitnessService 注入 WitnessService 实例。
 func (h *WitnessChallengeTxHandler) SetWitnessService(svc *witness.Service) {
 	h.witnessSvc = svc
 }

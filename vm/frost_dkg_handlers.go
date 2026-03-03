@@ -4,6 +4,8 @@
 package vm
 
 import (
+	"bytes"
+	"dex/frost/core/curve"
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
@@ -770,18 +772,34 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 
 	// 闁插秵鏌婄拋锛勭暬閸濆牆绗囬獮鍫曠崣鐠囦緤绱濈涵顔荤箽閼哄倻鍋ｉ幍鑳嚡閻ㄥ嫮绮嶉崗顒勬寽娑撳骸褰傞柅浣烘畱閸濆牆绗囨稉鈧懛?
 	expectedHash := computeDkgValidationMsgHash(chain, vaultID, epochID, transition.SignAlgo, req.NewGroupPubkey)
-	if fmt.Sprintf("0x%x", expectedHash) != fmt.Sprintf("0x%x", req.MsgHash) {
+	if !bytes.Equal(expectedHash, req.MsgHash) {
 		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "msg_hash mismatch"}, nil
 	}
 
-	logs.Info("[DKGValidation] received validation confirmation from %s for group pubkey %x", sender, req.NewGroupPubkey[:8])
+	derivedGroupPubkey, err := deriveDkgGroupPubkeyFromCommitments(sv, chain, vaultID, epochID, transition.NewCommitteeMembers, transition.SignAlgo)
+	if err != nil {
+		logs.Warn("[DKGValidation] derive group pubkey failed: %v", err)
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "derive group pubkey failed"}, nil
+	}
+	if !bytes.Equal(req.NewGroupPubkey, derivedGroupPubkey) {
+		logs.Warn("[DKGValidation] group pubkey mismatch sender=%s req=%s derived=%s",
+			sender, shortHexBytes(req.NewGroupPubkey, 16), shortHexBytes(derivedGroupPubkey, 16))
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "group_pubkey mismatch with commitments"}, nil
+	}
+	if len(transition.NewGroupPubkey) > 0 && !bytes.Equal(transition.NewGroupPubkey, derivedGroupPubkey) {
+		logs.Warn("[DKGValidation] transition group pubkey conflict transition=%s derived=%s",
+			shortHexBytes(transition.NewGroupPubkey, 16), shortHexBytes(derivedGroupPubkey, 16))
+		return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "transition group_pubkey conflict"}, nil
+	}
+
+	logs.Info("[DKGValidation] received validation confirmation from %s for group pubkey %s", sender, shortHexBytes(derivedGroupPubkey, 8))
 	// 4. 更新 transition 状态
 
 	// 4. 閺囧瓨鏌?transition 閻樿埖鈧?
 	transition.DkgStatus = DKGStatusKeyReady
 	transition.ValidationStatus = "PASSED"
 	transition.ValidationMsgHash = req.MsgHash
-	transition.NewGroupPubkey = req.NewGroupPubkey
+	transition.NewGroupPubkey = derivedGroupPubkey
 
 	updatedTransitionData, err := proto.Marshal(transition)
 	if err != nil {
@@ -804,7 +822,7 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 	}
 
 	vault.KeyEpoch = epochID
-	vault.GroupPubkey = req.NewGroupPubkey
+	vault.GroupPubkey = derivedGroupPubkey
 	vault.SignAlgo = transition.SignAlgo
 	vault.Status = VaultStatusKeyReady
 	// 婵″倹鐏夊▽鈩冩箒閺冄冨彆闁姐儻绱欑粭顑跨濞?DKG閿涘绱濋崚娆戞纯閹恒儴绻橀崗?ACTIVE 閻樿埖鈧緤绱濋崥锕€鍨棁鈧憰渚€鈧俺绻冩潻浣盒╂禍銈嗘濠碘偓濞?
@@ -850,6 +868,79 @@ func (h *FrostVaultDkgValidationSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateVi
 
 func (h *FrostVaultDkgValidationSignedTxHandler) Apply(tx *pb.AnyTx) error {
 	return ErrNotImplemented
+}
+
+func deriveDkgGroupPubkeyFromCommitments(sv StateView, chain string, vaultID uint32, epochID uint64, committee []string, signAlgo pb.SignAlgo) ([]byte, error) {
+	if len(committee) == 0 {
+		return nil, fmt.Errorf("empty committee")
+	}
+
+	grp, err := groupForSignAlgo(signAlgo)
+	if err != nil {
+		return nil, err
+	}
+
+	var sum curve.Point
+	hasPoint := false
+
+	for _, member := range committee {
+		commitKey := keys.KeyFrostVaultDkgCommit(chain, vaultID, epochID, member)
+		commitData, exists, err := sv.Get(commitKey)
+		if err != nil {
+			return nil, fmt.Errorf("load commitment %s: %w", commitKey, err)
+		}
+		if !exists || len(commitData) == 0 {
+			return nil, fmt.Errorf("missing commitment for member=%s", member)
+		}
+
+		var commit pb.FrostVaultDkgCommitment
+		if err := proto.Unmarshal(commitData, &commit); err != nil {
+			return nil, fmt.Errorf("decode commitment for member=%s: %w", member, err)
+		}
+		if len(commit.AI0) == 0 {
+			return nil, fmt.Errorf("empty AI0 commitment for member=%s", member)
+		}
+
+		pt := grp.DecompressPoint(commit.AI0)
+		if pt.X == nil || pt.Y == nil {
+			return nil, fmt.Errorf("invalid AI0 commitment for member=%s", member)
+		}
+
+		if !hasPoint {
+			sum = pt
+			hasPoint = true
+			continue
+		}
+		sum = grp.Add(sum, pt)
+	}
+
+	if !hasPoint {
+		return nil, fmt.Errorf("no valid AI0 commitments")
+	}
+	return grp.SerializePoint(sum), nil
+}
+
+func groupForSignAlgo(signAlgo pb.SignAlgo) (curve.Group, error) {
+	switch signAlgo {
+	case pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340:
+		return curve.NewSecp256k1Group(), nil
+	case pb.SignAlgo_SIGN_ALGO_SCHNORR_ALT_BN128:
+		return curve.NewBN256Group(), nil
+	case pb.SignAlgo_SIGN_ALGO_ED25519:
+		return curve.NewEd25519Group(), nil
+	default:
+		return nil, fmt.Errorf("unsupported sign algo: %v", signAlgo)
+	}
+}
+
+func shortHexBytes(data []byte, n int) string {
+	if len(data) == 0 {
+		return ""
+	}
+	if n <= 0 || len(data) <= n {
+		return fmt.Sprintf("%x", data)
+	}
+	return fmt.Sprintf("%x", data[:n])
 }
 
 // ========== FrostVaultTransitionSignedTxHandler ==========

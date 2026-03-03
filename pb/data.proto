@@ -6,12 +6,15 @@ option go_package = "dex/pb;pb";
 
 // --------------------- Token & Registry ---------------------
 message Token {
-  string address = 1; // token地址，所有token都是平级，区别是系统token会有代码对它的地址做特殊处理，比如原生代币FB会把地址硬编码到代码里面
+  string address =
+      1; // token地址，所有token都是平级，区别是系统token会有代码对它的地址做特殊处理，比如原生代币FB会把地址硬编码到代码里面
   string symbol = 2; // 例如 "USDT"、"MYT"等
-  string name = 3; // 例如 "Tether USD"
-  string owner = 4; // 拥有者地址，可做冻结等管理权限，如果等于 0x0 表示没有拥有者
+  string name = 3;   // 例如 "Tether USD"
+  string owner =
+      4; // 拥有者地址，可做冻结等管理权限，如果等于 0x0 表示没有拥有者
   string totalSupply = 5; // 发行总量
-  bool canMint = 6; // 是否可增发，销毁的话直接打入 0x0 地址即可，查询0x0也可查到被销毁的token数量
+  bool canMint = 6;       // 是否可增发，销毁的话直接打入 0x0
+                    // 地址即可，查询0x0也可查到被销毁的token数量
 }
 
 message TokenRegistry {
@@ -21,9 +24,7 @@ message TokenRegistry {
 
 // TokenRecord 独立存储的单个代币信息
 // Key: v1_token_<token_address>
-message TokenRecord {
-  Token token = 1;
-}
+message TokenRecord { Token token = 1; }
 
 // --------------------- 签名算法 & 公钥类型定义 ---------------------
 
@@ -38,20 +39,23 @@ message TokenRecord {
 //   VRF/BLS:  BLS_BN256_G2（本链共识 VRF 证明）
 //
 // 编码约定（实现必须遵守，否则跨节点验证失败）：
-//   ECDSA_P256:                  public_key_bytes = DER(PKIX SubjectPublicKeyInfo)，展示层可转 PEM
-//   ECDSA_SECP256K1:             public_key_bytes = 33 bytes 压缩格式（02/03 前缀 + 32 bytes x）
-//   ED25519:                     public_key_bytes = 32 bytes（原始公钥）
-//   BLS_BN256_G2:                public_key_bytes = kyber.Point.MarshalBinary() 输出
-//   SCHNORR_SECP256K1_BIP340:    public_key_bytes = 32 bytes x-only（BIP-340 规范）
-//   SCHNORR_ALT_BN128:           public_key_bytes = 64 bytes (x || y)，各 32 bytes big-endian
+//   ECDSA_P256:                  public_key_bytes = DER(PKIX
+//   SubjectPublicKeyInfo)，展示层可转 PEM ECDSA_SECP256K1: public_key_bytes =
+//   33 bytes 压缩格式（02/03 前缀 + 32 bytes x） ED25519: public_key_bytes = 32
+//   bytes（原始公钥） BLS_BN256_G2:                public_key_bytes =
+//   kyber.Point.MarshalBinary() 输出 SCHNORR_SECP256K1_BIP340: public_key_bytes
+//   = 32 bytes x-only（BIP-340 规范） SCHNORR_ALT_BN128: public_key_bytes = 64
+//   bytes (x || y)，各 32 bytes big-endian
 enum SignAlgo {
   SIGN_ALGO_UNSPECIFIED = 0;
-  SIGN_ALGO_ECDSA_P256 = 1; // 本链交易签名（当前方案）
+  SIGN_ALGO_ECDSA_P256 = 1;   // 本链交易签名（当前方案）
   SIGN_ALGO_BLS_BN256_G2 = 2; // 本链 VRF/BLS（Block.bls_public_key）
   SIGN_ALGO_SCHNORR_SECP256K1_BIP340 = 3; // BTC：Taproot 地址 + FROST 门限签名
-  SIGN_ALGO_SCHNORR_ALT_BN128 = 4; // ETH/BNB：合约 Schnorr 验签 + FROST 门限签名
+  SIGN_ALGO_SCHNORR_ALT_BN128 =
+      4;                 // ETH/BNB：合约 Schnorr 验签 + FROST 门限签名
   SIGN_ALGO_ED25519 = 5; // SOL：原生签名 + FROST-Ed25519 门限签名
-  SIGN_ALGO_ECDSA_SECP256K1 = 6; // TRX：ecrecover 验签（需 ECDSA 门限如 GG20/CGGMP）
+  SIGN_ALGO_ECDSA_SECP256K1 =
+      6; // TRX：ecrecover 验签（需 ECDSA 门限如 GG20/CGGMP）
 }
 
 // 公钥集合（一个参与者持有所有链的公钥）
@@ -62,11 +66,11 @@ message PublicKeys {
 
 // --------------------- 公共字段定义 ---------------------
 message BaseMessage {
-  string tx_id = 1; // 交易 ID 即 hash
-  string from_address = 2; // 发起者地址
+  string tx_id = 1;           // 交易 ID 即 hash
+  string from_address = 2;    // 发起者地址
   uint64 executed_height = 3; // 实际执行的区块高度
   PublicKeys public_keys = 4; // 公钥集合（所有链的公钥）
-  bytes signature = 5; // 签名
+  bytes signature = 5;        // 签名
   string fee = 6;
   Status status = 7;
   uint64 nonce = 8;
@@ -89,66 +93,64 @@ message GetReceiptResponse {
   string error = 2;
 }
 
-
 // --------------------- 账户 & 区块信息 ---------------------
 message Account {
-  string address = 1; // 账户地址
+  string address = 1;         // 账户地址
   PublicKeys public_keys = 2; // 公钥集合（所有链的公钥）
-  uint64 nonce = 3; // 账户的操作序号
+  uint64 nonce = 3;           // 账户的操作序号
   reserved 4; // 原为 repeated string orders，已分离到独立存储 v1_acc_orders_
-  reserved 5; // 原为 map<string, TokenBalance> balances，已分离到独立存储 v1_balance_
+  reserved 5; // 原为 map<string, TokenBalance> balances，已分离到独立存储
+              // v1_balance_
   string unclaimed_reward = 8; // 累计但尚未领取的奖励
-  string last_acc_reward = 9; // 上次更新时的累积因子
-  bool is_miner = 10; // 是否正在参与共识挖矿
+  string last_acc_reward = 9;  // 上次更新时的累积因子
+  bool is_miner = 10;          // 是否正在参与共识挖矿
   string ip = 11;
   uint64 index = 12; // 每个矿工都有唯一的index，用于bitmap
-  string code = 13; // 为后续合约功能保留字段
+  string code = 13;  // 为后续合约功能保留字段
 }
 
 // AccountOrders 独立存储的账户订单列表
-message AccountOrders {
-  repeated string orders = 1;
-}
+message AccountOrders { repeated string orders = 1; }
 
 // TokenBalanceRecord 独立存储的单个代币余额
 // Key: v1_balance_<address>_<token>
 message TokenBalanceRecord {
-  string address = 1;     // 账户地址
-  string token = 2;       // 代币地址
+  string address = 1;       // 账户地址
+  string token = 2;         // 代币地址
   TokenBalance balance = 3; // 余额信息
 }
 
 message TokenBalance {
-  string balance = 1; // 可用余额
-  string miner_locked_balance = 3; // 共识挖矿锁定余额
-  string liquid_locked_balance = 4; // 流动性挖矿锁定余额
-  string witness_locked_balance = 5; // 见证者挖矿锁定余额
+  string balance = 1;                 // 可用余额
+  string miner_locked_balance = 3;    // 共识挖矿锁定余额
+  string liquid_locked_balance = 4;   // 流动性挖矿锁定余额
+  string witness_locked_balance = 5;  // 见证者挖矿锁定余额
   string leverage_locked_balance = 6; // 杠杆交易锁定余额
-  string order_frozen_balance = 7; // 订单锁定余额
+  string order_frozen_balance = 7;    // 订单锁定余额
 }
 
 // BlockHeader 区块头（用于轻客户端验证）
 message BlockHeader {
-  uint64 height = 1;              // 区块高度
-  string prev_block_hash = 2;     // 父区块哈希
-  int64 timestamp = 3;            // Unix 时间戳
-  bytes state_root = 4;           // JMT 状态树根哈希
-  string txs_hash = 5;            // 交易累积哈希 (PoH style)
-  string miner = 6;               // 提议者地址
-  int32 window = 7;               // 时间窗口
-  bytes vrf_proof = 8;            // VRF 证明
-  bytes vrf_output = 9;           // VRF 输出
-  bytes bls_public_key = 10;      // 提案者的 BLS 公钥
+  uint64 height = 1;          // 区块高度
+  string prev_block_hash = 2; // 父区块哈希
+  int64 timestamp = 3;        // Unix 时间戳
+  bytes state_root = 4;       // JMT 状态树根哈希
+  string txs_hash = 5;        // 交易累积哈希 (PoH style)
+  string miner = 6;           // 提议者地址
+  int32 window = 7;           // 时间窗口
+  bytes vrf_proof = 8;        // VRF 证明
+  bytes vrf_output = 9;       // VRF 输出
+  bytes bls_public_key = 10;  // 提案者的 BLS 公钥
 }
 
 message Block {
-  string block_hash = 1;          // 区块 ID（从 Header 计算）
-  BlockHeader header = 2;         // 区块头（元数据）
-  repeated AnyTx body = 3;        // 交易列表（Body）
-  string accumulated_reward = 4;  // 区块奖励累计因子
-  bytes bit_map = 5;              // 矿工在线位图
-  bytes miner_signature = 6;      // 矿工签名
-  bytes short_txs = 7;            // 短交易哈希列表
+  string block_hash = 1;         // 区块 ID（从 Header 计算）
+  BlockHeader header = 2;        // 区块头（元数据）
+  repeated AnyTx body = 3;       // 交易列表（Body）
+  string accumulated_reward = 4; // 区块奖励累计因子
+  bytes bit_map = 5;             // 矿工在线位图
+  bytes miner_signature = 6;     // 矿工签名
+  bytes short_txs = 7;           // 短交易哈希列表
 }
 // 区块奖励发放记录
 message BlockReward {
@@ -160,25 +162,26 @@ message BlockReward {
   string block_reward = 6; // 系统增发部分
   int64 timestamp = 7;
 }
-message OrderPriceIndex {// 快速检索到价格区间的订单，与orderTx一并存入
-  bool ok = 1; //占位符,不需要，主要是需要这个字段的key(pair:...|price:...|is_filled：...|order_id:...)来快速查询到价格区间内，还未完全成交（is_filled:false）的tx
+message OrderPriceIndex { // 快速检索到价格区间的订单，与orderTx一并存入
+  bool ok =
+      1; // 占位符,不需要，主要是需要这个字段的key(pair:...|price:...|is_filled：...|order_id:...)来快速查询到价格区间内，还未完全成交（is_filled:false）的tx
 }
 
 // 成交记录
 message TradeRecord {
-  string trade_id = 1; // 成交ID
-  string pair = 2; // 交易对
-  string price = 3; // 成交价格
-  string amount = 4; // 成交数量
+  string trade_id = 1;       // 成交ID
+  string pair = 2;           // 交易对
+  string price = 3;          // 成交价格
+  string amount = 4;         // 成交数量
   string maker_order_id = 5; // Maker订单ID
   string taker_order_id = 6; // Taker订单ID
-  OrderSide taker_side = 7; // Taker方向（BUY=买单，SELL=卖单）
-  string timestamp = 8; // 成交时间
-  uint64 height = 9; // 成交区块高度
+  OrderSide taker_side = 7;  // Taker方向（BUY=买单，SELL=卖单）
+  string timestamp = 8;      // 成交时间
+  uint64 height = 9;         // 成交区块高度
 }
 
 // --------------------- 交易相关消息 ---------------------
-message IssueTokenTx {// 发币tx
+message IssueTokenTx { // 发币tx
   BaseMessage base = 1;
   string token_name = 2;
   string token_symbol = 3;
@@ -186,14 +189,14 @@ message IssueTokenTx {// 发币tx
   bool canMint = 5;
 }
 
-message FreezeTx {//冻结、解冻Token tx
+message FreezeTx { // 冻结、解冻Token tx
   BaseMessage base = 1;
   string token_addr = 2;
   string target_addr = 3;
   bool freeze = 4; // true 为冻结，false 为解冻
 }
 
-message Transaction {//转账tx
+message Transaction { // 转账tx
   BaseMessage base = 1;
   string to = 2;
   string token_address = 3;
@@ -202,7 +205,7 @@ message Transaction {//转账tx
 
 // 买卖方向枚举
 enum OrderSide {
-  BUY = 0; // 买单
+  BUY = 0;  // 买单
   SELL = 1; // 卖单
 }
 
@@ -210,13 +213,13 @@ enum OrderSide {
 // 用于 v1_txraw_<txid>，只保存下单请求信息，不包含撮合状态
 message OrderTx {
   BaseMessage base = 1;
-  string base_token = 2; // 例如 "bc1q6156"代表USDT
-  string quote_token = 3; // 例如 "bc1q0000"代表BTC
-  OrderOp op = 4; // ADD是下单，REMOVE是撤单
+  string base_token = 2;   // 例如 "bc1q6156"代表USDT
+  string quote_token = 3;  // 例如 "bc1q0000"代表BTC
+  OrderOp op = 4;          // ADD是下单，REMOVE是撤单
   string op_target_id = 5; // 如果要撤单，指定订单id
-  string amount = 6; // 下单数量（base currency）
-  string price = 7; // 下单价格（quote/base）
-  OrderSide side = 8; // 买卖方向: BUY=买单, SELL=卖单
+  string amount = 6;       // 下单数量（base currency）
+  string price = 7;        // 下单价格（quote/base）
+  OrderSide side = 8;      // 买卖方向: BUY=买单, SELL=卖单
   // 注意: filled_base, filled_quote, is_filled 已移至 OrderState
   // 保留字段编号 9, 10, 11 以避免与旧数据冲突
   reserved 9, 10, 11;
@@ -226,36 +229,35 @@ message OrderTx {
 // 用于 v1_orderstate_<orderid>，由 VM Diff 控制，记录撮合后的状态
 // 与 OrderTx 分离，实现"交易原文"和"订单簿状态"的解耦
 message OrderState {
-  string order_id = 1; // 订单ID（= OrderTx.base.tx_id）
-  string filled_base = 2; // 已成交的 base 数量
-  string filled_quote = 3; // 已成交的 quote 数量
-  bool is_filled = 4; // 是否完全成交
-  OrderStateStatus status = 5; // 订单状态
-  uint64 create_height = 6; // 创建高度
+  string order_id = 1;           // 订单ID（= OrderTx.base.tx_id）
+  string filled_base = 2;        // 已成交的 base 数量
+  string filled_quote = 3;       // 已成交的 quote 数量
+  bool is_filled = 4;            // 是否完全成交
+  OrderStateStatus status = 5;   // 订单状态
+  uint64 create_height = 6;      // 创建高度
   uint64 last_update_height = 7; // 最后更新高度
   // 冗余字段，用于查询时避免再次读取 OrderTx
-  string base_token = 8; // 冗余：base token
+  string base_token = 8;  // 冗余：base token
   string quote_token = 9; // 冗余：quote token
-  string amount = 10; // 冗余：下单数量
-  string price = 11; // 冗余：下单价格
-  OrderSide side = 12; // 冗余：买卖方向
-  string owner = 13; // 冗余：订单持有者地址
+  string amount = 10;     // 冗余：下单数量
+  string price = 11;      // 冗余：下单价格
+  OrderSide side = 12;    // 冗余：买卖方向
+  string owner = 13;      // 冗余：订单持有者地址
 }
 
 // 订单状态枚举
 enum OrderStateStatus {
-  ORDER_OPEN = 0; // 未成交/部分成交
-  ORDER_FILLED = 1; // 完全成交
+  ORDER_OPEN = 0;      // 未成交/部分成交
+  ORDER_FILLED = 1;    // 完全成交
   ORDER_CANCELLED = 2; // 已撤单
 }
 
-
-
-message MinerTx {//告知全网自己是否参与共识挖矿
+message MinerTx { // 告知全网自己是否参与共识挖矿
   BaseMessage base = 1;
-  OrderOp op = 2; //如果是ADD，则会直接把is_miner置为true,miner_locked_balance会被amount累加。
-  string amount = 3; // 如果是REMOVE不需要传这个参数，is_miner置为false,miner_locked_balance的值直接累加到TokenBalance.balance,miner_locked_balance置0
-
+  OrderOp op =
+      2; // 如果是ADD，则会直接把is_miner置为true,miner_locked_balance会被amount累加。
+  string amount =
+      3; // 如果是REMOVE不需要传这个参数，is_miner置为false,miner_locked_balance的值直接累加到TokenBalance.balance,miner_locked_balance置0
 }
 
 // 用 oneof 封装各种 Tx
@@ -267,22 +269,24 @@ message AnyTx {
     OrderTx order_tx = 4;
     MinerTx miner_tx = 6;
     // Witness 相关交易
-    WitnessStakeTx witness_stake_tx = 7; // 见证者质押/解质押
-    WitnessRequestTx witness_request_tx = 8; // 入账见证请求
-    WitnessVoteTx witness_vote_tx = 9; // 见证投票
-    WitnessChallengeTx witness_challenge_tx = 10; // 挑战
-    ArbitrationVoteTx arbitration_vote_tx = 11; // 仲裁投票
+    WitnessStakeTx witness_stake_tx = 7;               // 见证者质押/解质押
+    WitnessRequestTx witness_request_tx = 8;           // 入账见证请求
+    WitnessVoteTx witness_vote_tx = 9;                 // 见证投票
+    WitnessChallengeTx witness_challenge_tx = 10;      // 挑战
+    ArbitrationVoteTx arbitration_vote_tx = 11;        // 仲裁投票
     WitnessClaimRewardTx witness_claim_reward_tx = 12; // 领取奖励
     // Frost 相关交易
     FrostWithdrawRequestTx frost_withdraw_request_tx = 13; // Frost 提现请求
-    FrostWithdrawSignedTx frost_withdraw_signed_tx = 14; // Frost 提现签名完成
+    FrostWithdrawSignedTx frost_withdraw_signed_tx = 14;   // Frost 提现签名完成
     // Frost DKG/轮换相关交易
     FrostVaultDkgCommitTx frost_vault_dkg_commit_tx = 15; // DKG 承诺点上链
-    FrostVaultDkgShareTx frost_vault_dkg_share_tx = 16; // DKG 加密 share 上链
+    FrostVaultDkgShareTx frost_vault_dkg_share_tx = 16;   // DKG 加密 share 上链
     FrostVaultDkgComplaintTx frost_vault_dkg_complaint_tx = 17; // DKG 投诉
-    FrostVaultDkgRevealTx frost_vault_dkg_reveal_tx = 18; // DKG reveal
-    FrostVaultDkgValidationSignedTx frost_vault_dkg_validation_signed_tx = 19; // DKG 验证签名
-    FrostVaultTransitionSignedTx frost_vault_transition_signed_tx = 20; // Vault 迁移签名
+    FrostVaultDkgRevealTx frost_vault_dkg_reveal_tx = 18;       // DKG reveal
+    FrostVaultDkgValidationSignedTx frost_vault_dkg_validation_signed_tx =
+        19; // DKG 验证签名
+    FrostVaultTransitionSignedTx frost_vault_transition_signed_tx =
+        20; // Vault 迁移签名
   }
 }
 // --------------------- 订单 & 状态相关 ---------------------
@@ -304,9 +308,7 @@ message NodeInfo {
   bool is_online = 3;
 }
 
-message NodeList {
-  repeated NodeInfo nodes = 1;
-}
+message NodeList { repeated NodeInfo nodes = 1; }
 
 message ClientInfo {
   string ip = 1;
@@ -316,9 +318,9 @@ message ClientInfo {
 
 // --------------------- Handshake & 状态请求 ---------------------
 message HandshakeRequest {
-  string client_id = 1; // 就是矿工地址
+  string client_id = 1;       // 就是矿工地址
   PublicKeys public_keys = 2; // 公钥集合（所有链的公钥）
-  bytes signature = 3; // 签名
+  bytes signature = 3;        // 签名
 }
 
 message HandshakeResponse {
@@ -331,7 +333,7 @@ message StatusRequest {
 
 message StatusResponse {
   string status = 1; // "ok"
-  string info = 2; // "Server is running"
+  string info = 2;   // "Server is running"
 }
 
 // --------------------- 节点间通讯信息 ---------------------
@@ -346,18 +348,16 @@ message GetBlockRequest {
   uint64 height = 1; // 想要获取哪个高度的区块
 }
 message GetBlockResponse {
-  Block block = 1; // 若成功，则返回完整区块
+  Block block = 1;  // 若成功，则返回完整区块
   string error = 2; // 若出错，把错误信息返回给请求方
 }
 
 message BatchGetShortTxRequest {
   repeated bytes short_hashes = 1; // 每个 8 字节的短 hash
-  string address = 2; // 请求方地址
+  string address = 2;              // 请求方地址
 }
 
-message BatchGetShortTxResponse {
-  repeated AnyTx transactions = 1;
-}
+message BatchGetShortTxResponse { repeated AnyTx transactions = 1; }
 message CheckPointInfo {
   uint64 height = 1;
   string txs_hash = 2;
@@ -374,19 +374,21 @@ message PushQuery {
   // Timeout (ns) for this request
   uint64 deadline = 3;
   bool container_is_block = 4; // 为true表示是完整数据，false表示只有txs
-  bytes container = 5; // 当tx数量小于2500时候，该字段为所有交易的完整二进制数据，>=2500的时候为 所有交易的简短tx_hash
+  bytes container = 5; // 当tx数量小于2500时候，该字段为所有交易的完整二进制数据，>=2500的时候为
+                       // 所有交易的简短tx_hash
   // Requesting peer's last accepted height
   uint64 requested_height = 6;
   string block_id = 7;
-  // 消息签名：使用发送方私钥对 (request_id || address || deadline || block_id || nonce) 签名
-  // 验证时使用发送方公钥验证，防止消息伪造
+  // 消息签名：使用发送方私钥对 (request_id || address || deadline || block_id
+  // || nonce) 签名 验证时使用发送方公钥验证，防止消息伪造
   bytes signature = 8;
   // 防重放 nonce：单调递增序列号，接收方维护每个发送方的最大已见 nonce
   // 拒绝 nonce <= max_seen_nonce 的消息
   uint64 nonce = 9;
   // VRF 确定性采样字段
-  bytes vrf_seed = 10;   // 发起方的 VRF 种子 SHA256(ParentBlockHash, Height, Window, NodeID)
-  uint32 seq_id = 11;    // 本轮采样批次号（alpha 失败时递增）
+  bytes vrf_seed =
+      10; // 发起方的 VRF 种子 SHA256(ParentBlockHash, Height, Window, NodeID)
+  uint32 seq_id = 11; // 本轮采样批次号（alpha 失败时递增）
 }
 
 // PullQuery requests the preferences of a remote peer given a container id.
@@ -402,8 +404,8 @@ message PullQuery {
   // Requesting peer's last accepted height
   uint64 requested_height = 5;
   // VRF 确定性采样字段
-  bytes vrf_seed = 6;    // 发起方的 VRF 种子
-  uint32 seq_id = 7;     // 本轮采样批次号
+  bytes vrf_seed = 6; // 发起方的 VRF 种子
+  uint32 seq_id = 7;  // 本轮采样批次号
 }
 
 // Chits contains the preferences of a peer in response to a PushQuery or
@@ -419,22 +421,25 @@ message Chits {
   uint64 preferred_block_at_height = 5;
   // Last accepted block's height
   uint64 accepted_height = 6;
-  bytes bitmap = 7; //上一个区块与自己联系过的节点
-  // VRF 投票签名: Sign(privateKey, SHA256(preferred_block || height || vrf_seed || seq_id))
+  bytes bitmap = 7; // 上一个区块与自己联系过的节点
+  // VRF 投票签名: Sign(privateKey, SHA256(preferred_block || height || vrf_seed
+  // || seq_id))
   bytes chit_signature = 8;
 }
 
 // --------------- VRF 签名集合（共识证据） ---------------
 
 // 单个 Chit 的签名记录
-// 签名内容: Sign(nodePrivateKey, SHA256(preferred_id || height || vrf_seed || seq_id))
+// 签名内容: Sign(nodePrivateKey, SHA256(preferred_id || height || vrf_seed ||
+// seq_id))
 //   - preferred_id: 本消息的 preferred_id 字段
 //   - height, vrf_seed: 父级 ConsensusSignatureSet 的字段
 //   - seq_id: 父级 RoundSignatures 的 seq_id 字段
 message ChitSignature {
-  string node_id = 1;       // 投票节点 ID
-  string preferred_id = 2;  // 偏好的区块 ID（签名内容之一）
-  bytes signature = 3;      // 签名（验证时结合父级 height/vrf_seed/seq_id 还原签名原文）
+  string node_id = 1;      // 投票节点 ID
+  string preferred_id = 2; // 偏好的区块 ID（签名内容之一）
+  bytes signature =
+      3; // 签名（验证时结合父级 height/vrf_seed/seq_id 还原签名原文）
 }
 
 // 单轮投票签名集合
@@ -445,44 +450,45 @@ message RoundSignatures {
 
 // 共识签名集合（记录达成共识的完整签名证据）
 message ConsensusSignatureSet {
-  string block_id = 1;                  // 最终化的区块 ID
-  uint64 height = 2;                    // 区块高度（签名内容之一）
-  string parent_id = 3;                 // 锚定父块 ID
-  bytes vrf_seed = 4;                   // Hash(ParentHash, Height, Window, NodeID)（签名内容之一）
-  repeated RoundSignatures rounds = 5;  // 所有有效轮次的签名（需 >= Beta 轮）
+  string block_id = 1;  // 最终化的区块 ID
+  uint64 height = 2;    // 区块高度（签名内容之一）
+  string parent_id = 3; // 锚定父块 ID
+  bytes vrf_seed =
+      4; // Hash(ParentHash, Height, Window, NodeID)（签名内容之一）
+  repeated RoundSignatures rounds = 5; // 所有有效轮次的签名（需 >= Beta 轮）
 }
 
-message HeightResponse{ // 需要在proto中定义
+message HeightResponse { // 需要在proto中定义
   uint64 LastAcceptedHeight = 1;
   uint64 CurrentHeight = 2;
-  string address = 3; // 响应方地址
+  string address = 3;              // 响应方地址
   uint32 pending_blocks_count = 4; // 候选区块数量（未确认）
-  uint32 pending_tx_count = 5; // txpool 中 pending 交易数量
+  uint32 pending_tx_count = 5;     // txpool 中 pending 交易数量
   // 同步状态字段
-  bool is_syncing = 6;              // 是否正在同步追赶
-  uint64 sync_target_height = 7;    // 同步目标高度（网络最高已最终化高度）
-  bool is_snapshot_sync = 8;        // 是否快照同步模式
+  bool is_syncing = 6;           // 是否正在同步追赶
+  uint64 sync_target_height = 7; // 同步目标高度（网络最高已最终化高度）
+  bool is_snapshot_sync = 8;     // 是否快照同步模式
 }
 
 message GetBlockByIDRequest { string block_id = 1; }
 
 // 候选区块信息（未确认）
 message PendingBlockInfo {
-  string block_id = 1; // 区块ID
-  uint64 height = 2; // 区块高度
-  string parent_id = 3; // 父区块ID
-  string proposer = 4; // 提案者
-  int32 window = 5; // 时间窗口
-  int32 votes = 6; // 最近一轮投票数
+  string block_id = 1;   // 区块ID
+  uint64 height = 2;     // 区块高度
+  string parent_id = 3;  // 父区块ID
+  string proposer = 4;   // 提案者
+  int32 window = 5;      // 时间窗口
+  int32 votes = 6;       // 最近一轮投票数
   bool is_preferred = 7; // 是否是当前偏好区块
 }
 
 // 高度共识状态
 message HeightConsensusState {
-  uint64 height = 1; // 高度
+  uint64 height = 1;     // 高度
   string preference = 2; // 偏好区块ID
-  int32 confidence = 3; // 累计信心值
-  bool finalized = 4; // 是否已最终化
+  int32 confidence = 3;  // 累计信心值
+  bool finalized = 4;    // 是否已最终化
 }
 
 // 候选区块列表响应
@@ -496,82 +502,82 @@ message PendingBlocksResponse {
 // 见证者状态枚举
 enum WitnessStatus {
   WITNESS_CANDIDATE = 0; // 候选人（未质押）
-  WITNESS_ACTIVE = 1; // 活跃（已质押）
+  WITNESS_ACTIVE = 1;    // 活跃（已质押）
   WITNESS_UNSTAKING = 2; // 解质押中（锁定期）
-  WITNESS_EXITED = 3; // 已退出
-  WITNESS_SLASHED = 4; // 已被罚没
+  WITNESS_EXITED = 3;    // 已退出
+  WITNESS_SLASHED = 4;   // 已被罚没
 }
 
 // 见证投票类型
 enum WitnessVoteType {
-  VOTE_PASS = 0; // 通过（确认交易有效）
-  VOTE_FAIL = 1; // 拒绝（确认交易无效）
+  VOTE_PASS = 0;    // 通过（确认交易有效）
+  VOTE_FAIL = 1;    // 拒绝（确认交易无效）
   VOTE_ABSTAIN = 2; // 弃票（无法判断）
 }
 
 // 入账请求状态
 enum RechargeRequestStatus {
-  RECHARGE_PENDING = 0; // 待验证
-  RECHARGE_VOTING = 1; // 投票中
-  RECHARGE_CONSENSUS_PASS = 2; // 共识通过
-  RECHARGE_CONSENSUS_FAIL = 3; // 共识失败
+  RECHARGE_PENDING = 0;          // 待验证
+  RECHARGE_VOTING = 1;           // 投票中
+  RECHARGE_CONSENSUS_PASS = 2;   // 共识通过
+  RECHARGE_CONSENSUS_FAIL = 3;   // 共识失败
   RECHARGE_CHALLENGE_PERIOD = 4; // 公示期
-  RECHARGE_CHALLENGED = 5; // 被挑战
-  RECHARGE_ARBITRATION = 6; // 仲裁中
-  RECHARGE_FINALIZED = 7; // 已完成（上账）
-  RECHARGE_REJECTED = 8; // 已拒绝
-  RECHARGE_SHELVED = 9; // 已搁置（等待重试）
+  RECHARGE_CHALLENGED = 5;       // 被挑战
+  RECHARGE_ARBITRATION = 6;      // 仲裁中
+  RECHARGE_FINALIZED = 7;        // 已完成（上账）
+  RECHARGE_REJECTED = 8;         // 已拒绝
+  RECHARGE_SHELVED = 9;          // 已搁置（等待重试）
 }
 
 // 见证者信息
 message WitnessInfo {
-  string address = 1; // 见证者地址
-  string stake_amount = 2; // 质押金额
-  string pending_reward = 3; // 待领取奖励
-  WitnessStatus status = 4; // 状态
-  uint64 unstake_height = 5; // 解质押申请高度（用于计算锁定期）
-  uint64 total_witness_count = 6; // 总见证次数
-  uint64 pass_count = 7; // 通过次数
-  uint64 fail_count = 8; // 拒绝次数
-  uint64 abstain_count = 9; // 弃票次数
-  uint64 slashed_count = 10; // 被罚没次数
-  repeated string pending_tasks = 11; // 待处理的见证任务ID列表
+  string address = 1;                        // 见证者地址
+  string stake_amount = 2;                   // 质押金额
+  string pending_reward = 3;                 // 待领取奖励
+  WitnessStatus status = 4;                  // 状态
+  uint64 unstake_height = 5;                 // 解质押申请高度（用于计算锁定期）
+  uint64 total_witness_count = 6;            // 总见证次数
+  uint64 pass_count = 7;                     // 通过次数
+  uint64 fail_count = 8;                     // 拒绝次数
+  uint64 abstain_count = 9;                  // 弃票次数
+  uint64 slashed_count = 10;                 // 被罚没次数
+  repeated string pending_tasks = 11;        // 待处理的见证任务ID列表
   repeated string shelved_arbitrations = 12; // 搁置的仲裁ID列表
-  string total_reward = 13; // 累计已领取奖励
+  string total_reward = 13;                  // 累计已领取奖励
 }
 
 // 见证者质押/解质押交易
 message WitnessStakeTx {
   BaseMessage base = 1;
-  OrderOp op = 2; // ADD=质押, REMOVE=解质押
+  OrderOp op = 2;    // ADD=质押, REMOVE=解质押
   string amount = 3; // 质押/解质押金额
 }
 
 // 入账见证请求（用户发起）
 message WitnessRequestTx {
   BaseMessage base = 1;
-  string native_chain = 2; // 原生链标识（如 "BTC", "ETH"）
-  string native_tx_hash = 3; // 原生链交易哈希
-  string token_address = 4; // 对应本链的Token地址
-  string amount = 5; // 入账金额
+  string native_chain = 2;     // 原生链标识（如 "BTC", "ETH"）
+  string native_tx_hash = 3;   // 原生链交易哈希
+  string token_address = 4;    // 对应本链的Token地址
+  string amount = 5;           // 入账金额
   string receiver_address = 6; // 接收地址（本链）
-  string memo = 7; // 备注（可包含收款地址验证信息）
-  string recharge_fee = 8; //额外付给见证者的费用，不管是否充值成功都会支付。
-  uint32 native_vout = 9; // 新增：原生链输出索引（BTC 必填）
-  bytes native_script = 10; // 新增：原生链锁定脚本（BTC 必填，用于后续提现签名）
+  string memo = 7;             // 备注（可包含收款地址验证信息）
+  string recharge_fee = 8; // 额外付给见证者的费用，不管是否充值成功都会支付。
+  uint32 native_vout = 9; // 原生链输出索引（BTC 必填）
+  bytes native_script =
+      10; // 原生链锁定脚本（BTC 必填，用于后续提现签名）
 }
 
 // 见证者投票
 message WitnessVote {
-  string request_id = 1; // 入账请求ID
-  string witness_address = 2; // 见证者地址
+  string request_id = 1;         // 入账请求ID
+  string witness_address = 2;    // 见证者地址
   WitnessVoteType vote_type = 3; // 投票类型
-  string reason = 4; // 拒绝/弃票原因（可选）
-  uint64 timestamp = 5; // 投票时间戳
-  string tx_id = 6; // 投票交易 ID
+  string reason = 4;             // 拒绝/弃票原因（可选）
+  uint64 timestamp = 5;          // 投票时间戳
+  string tx_id = 6;              // 投票交易 ID
   // 注意：见证者通过提交交易投票，交易本身已有签名验证，无需额外签名字段
 }
-
 
 // 见证投票交易（广播投票）
 message WitnessVoteTx {
@@ -582,121 +588,110 @@ message WitnessVoteTx {
 // 入账请求记录
 // 是“入账流程的状态记录”，不是用户直接提交的交易类型。
 message RechargeRequest {
-  string request_id = 1; // 请求ID（= WitnessRequestTx的TxId）
-  string native_chain = 2; // 原生链标识
-  string native_tx_hash = 3; // 原生链交易哈希
-  string token_address = 4; // Token地址
-  string amount = 5; // 入账金额
-  string receiver_address = 6; // 接收地址
-  string requester_address = 7; // 请求者地址
-  RechargeRequestStatus status = 8; // 当前状态
-  uint64 create_height = 9; // 创建高度
-  uint64 deadline_height = 10; // 截止高度
-  uint64 finalize_height = 11; // 完成高度
-  uint32 round = 12; // 当前轮次（扩大范围时递增）
+  string request_id = 1;                   // 请求ID（= WitnessRequestTx的TxId）
+  string native_chain = 2;                 // 原生链标识
+  string native_tx_hash = 3;               // 原生链交易哈希
+  string token_address = 4;                // Token地址
+  string amount = 5;                       // 入账金额
+  string receiver_address = 6;             // 接收地址
+  string requester_address = 7;            // 请求者地址
+  RechargeRequestStatus status = 8;        // 当前状态
+  uint64 create_height = 9;                // 创建高度
+  uint64 deadline_height = 10;             // 截止高度
+  uint64 finalize_height = 11;             // 完成高度
+  uint32 round = 12;                       // 当前轮次（扩大范围时递增）
   repeated string selected_witnesses = 13; // 当前轮次选中的见证者
-  repeated WitnessVote votes = 14; // 收到的投票
-  uint32 pass_count = 15; // 通过票数
-  uint32 fail_count = 16; // 拒绝票数
-  uint32 abstain_count = 17; // 弃票数
-  string challenge_id = 18; // 挑战ID（如果被挑战）
-  string recharge_fee = 19; // 额外付给见证者的费用
-  uint32 vault_id = 20; // 分配的 Vault ID（入账时确定性分配，用于资金按 Vault 分片）
-  uint32 native_vout = 21; // 新增：原生链输出索引
+  repeated WitnessVote votes = 14;         // 收到的投票
+  uint32 pass_count = 15;                  // 通过票数
+  uint32 fail_count = 16;                  // 拒绝票数
+  uint32 abstain_count = 17;               // 弃票数
+  string challenge_id = 18;                // 挑战ID（如果被挑战）
+  string recharge_fee = 19;                // 额外付给见证者的费用
+  uint32 vault_id =
+      20; // 分配的 Vault ID（入账时确定性分配，用于资金按 Vault 分片）
+  uint32 native_vout = 21;  // 新增：原生链输出索引
   bytes native_script = 22; // 新增：原生链锁定脚本
 }
 
 // 挑战交易
 message WitnessChallengeTx {
   BaseMessage base = 1;
-  string request_id = 2; // 被挑战的入账请求ID
+  string request_id = 2;   // 被挑战的入账请求ID
   string stake_amount = 3; // 挑战质押金额（约100U）
-  string reason = 4; // 挑战理由
-  string evidence = 5; // 证据（如原生链交易数据）
+  string reason = 4;       // 挑战理由
+  string evidence = 5;     // 证据（如原生链交易数据）
 }
 
 // 挑战/仲裁状态
 enum ChallengeStatus {
-  CHALLENGE_ACTIVE = 0; // 仲裁进行中
-  CHALLENGE_SHELVED = 1; // 已搁置（等待重试）
+  CHALLENGE_ACTIVE = 0;    // 仲裁进行中
+  CHALLENGE_SHELVED = 1;   // 已搁置（等待重试）
   CHALLENGE_FINALIZED = 2; // 已完成
 }
 
 // 挑战记录
 // 注意：字段编号不可更改，否则会导致数据不兼容
 message ChallengeRecord {
-  string challenge_id = 1; // 挑战ID
-  string request_id = 2; // 被挑战的请求ID
-  string challenger_address = 3; // 挑战者地址
-  string stake_amount = 4; // 挑战质押金额
-  string reason = 5; // 挑战理由
-  uint64 create_height = 6; // 创建高度
-  uint64 deadline_height = 7; // 仲裁截止高度
-  uint32 arbitration_round = 8; // 仲裁轮次
-  repeated string arbitrators = 9; // 仲裁者列表
+  string challenge_id = 1;                     // 挑战ID
+  string request_id = 2;                       // 被挑战的请求ID
+  string challenger_address = 3;               // 挑战者地址
+  string stake_amount = 4;                     // 挑战质押金额
+  string reason = 5;                           // 挑战理由
+  uint64 create_height = 6;                    // 创建高度
+  uint64 deadline_height = 7;                  // 仲裁截止高度
+  uint32 arbitration_round = 8;                // 仲裁轮次
+  repeated string arbitrators = 9;             // 仲裁者列表
   repeated WitnessVote arbitration_votes = 10; // 仲裁投票
-  uint32 pass_count = 11; // 支持原判定的票数
-  uint32 fail_count = 12; // 反对原判定的票数
-  bool challenge_success = 13; // 挑战是否成功
-  bool finalized = 14; // 是否已完成
-  uint32 consensus_threshold = 15; // 当前共识阈值（80->70->60->50）
-  ChallengeStatus status = 16; // 挑战状态
+  uint32 pass_count = 11;                      // 支持原判定的票数
+  uint32 fail_count = 12;                      // 反对原判定的票数
+  bool challenge_success = 13;                 // 挑战是否成功
+  bool finalized = 14;                         // 是否已完成
+  uint32 consensus_threshold = 15;             // 当前共识阈值（80->70->60->50）
+  ChallengeStatus status = 16;                 // 挑战状态
   // 新增字段使用 17+
   string evidence = 17; // 证据（新增）
 }
 
 // 入账请求列表（用于 API）
-message RechargeRequestListRequest {
-  int32 limit = 1;
-}
+message RechargeRequestListRequest { int32 limit = 1; }
 
-message RechargeRequestList {
-  repeated RechargeRequest requests = 1;
-}
+message RechargeRequestList { repeated RechargeRequest requests = 1; }
 
 message FrostWithdrawListRequest {
   string chain = 1;
   string asset = 2;
 }
 
-message FrostWithdrawStateList {
-  repeated FrostWithdrawState states = 1;
-}
+message FrostWithdrawStateList { repeated FrostWithdrawState states = 1; }
 
-message VaultTransitionStateList {
-  repeated VaultTransitionState states = 1;
-}
+message VaultTransitionStateList { repeated VaultTransitionState states = 1; }
 
 // 见证者列表（用于 API）
-message WitnessInfoList {
-  repeated WitnessInfo witnesses = 1;
-}
+message WitnessInfoList { repeated WitnessInfo witnesses = 1; }
 
 // 仲裁投票交易
 message ArbitrationVoteTx {
   BaseMessage base = 1;
   string challenge_id = 2; // 挑战ID
-  WitnessVote vote = 3; // 投票内容
+  WitnessVote vote = 3;    // 投票内容
 }
 
 // 领取见证奖励交易
-message WitnessClaimRewardTx {
-  BaseMessage base = 1;
-}
+message WitnessClaimRewardTx { BaseMessage base = 1; }
 
 // 见证者配置（链上参数）
 message WitnessConfig {
-  uint32 consensus_threshold = 1; // 共识阈值（80%）
-  uint32 abstain_threshold = 2; // 弃票阈值（20%）
-  uint64 voting_period_blocks = 3; // 投票期（区块数）
-  uint64 challenge_period_blocks = 4; // 公示期（区块数）
+  uint32 consensus_threshold = 1;       // 共识阈值（80%）
+  uint32 abstain_threshold = 2;         // 弃票阈值（20%）
+  uint64 voting_period_blocks = 3;      // 投票期（区块数）
+  uint64 challenge_period_blocks = 4;   // 公示期（区块数）
   uint64 arbitration_period_blocks = 5; // 仲裁期（区块数）
-  uint64 unstake_lock_blocks = 6; // 解质押锁定期（区块数）
-  string min_stake_amount = 7; // 最小质押金额
-  string challenge_stake_amount = 8; // 挑战质押金额
-  uint32 initial_witness_count = 9; // 初始见证者数量
-  uint32 expand_multiplier = 10; // 扩大范围倍数
-  uint32 max_rounds = 11; // 最大轮次
+  uint64 unstake_lock_blocks = 6;       // 解质押锁定期（区块数）
+  string min_stake_amount = 7;          // 最小质押金额
+  string challenge_stake_amount = 8;    // 挑战质押金额
+  uint32 initial_witness_count = 9;     // 初始见证者数量
+  uint32 expand_multiplier = 10;        // 扩大范围倍数
+  uint32 max_rounds = 11;               // 最大轮次
 }
 
 // --------------------- Frost 相关消息 ---------------------
@@ -704,62 +699,63 @@ message WitnessConfig {
 // Frost 提现请求交易（用户发起）
 message FrostWithdrawRequestTx {
   BaseMessage base = 1;
-  string chain = 2; // 目标链标识（如 "BTC", "ETH", "SOL"）
-  string asset = 3; // 资产类型（native 或 token address）
-  string to = 4; // 提现目标地址（目标链上的地址）
+  string chain = 2;  // 目标链标识（如 "BTC", "ETH", "SOL"）
+  string asset = 3;  // 资产类型（native 或 token address）
+  string to = 4;     // 提现目标地址（目标链上的地址）
   string amount = 5; // 提现金额
 }
 
 // Frost 提现签名完成交易（Runtime 回写）
 message FrostWithdrawSignedTx {
   BaseMessage base = 1;
-  string job_id = 2; // 签名任务 ID
-  bytes signed_package_bytes = 3; // 签名包（可广播的交易数据）
+  string job_id = 2;                // 签名任务 ID
+  bytes signed_package_bytes = 3;   // 签名包（可广播的交易数据）
   repeated string withdraw_ids = 4; // 被该 job 覆盖的 withdraw_id 列表
-  uint32 vault_id = 5; // Vault ID
-  uint64 key_epoch = 6; // 密钥版本
-  bytes template_hash = 7; // 交易模板哈希（用于验签绑定）
-  string chain = 8; // 链标识
-  string asset = 9; // 资产类型
-  // BTC 专用：完整模板数据 + 每个 input 的签名（用于 VM 端复算验签）
+  uint32 vault_id = 5;              // Vault ID
+  uint64 key_epoch = 6;             // 密钥版本
+  bytes template_hash = 7;          // 交易模板哈希（用于验签绑定）
+  string chain = 8;                 // 链标识
+  string asset = 9;                 // 资产类型
   bytes template_data = 10; // BTC 交易模板 JSON（含 inputs/outputs/fee/change）
-  repeated bytes input_sigs = 11; // 每个 input 的 Schnorr 签名（64 字节，按 input 顺序）
-  repeated bytes script_pubkeys = 12; // 每个 input 的 scriptPubKey（用于 sighash 计算）
+  repeated bytes input_sigs =
+      11; // 每个 input 的 Schnorr 签名（64 字节，按 input 顺序）
+  repeated bytes script_pubkeys =
+      12; // 每个 input 的 scriptPubKey（用于 sighash 计算）
 }
-
 
 // Frost UTXO 详情（用于 FundsLedger 存储）
 message FrostUtxo {
-  string txid = 1; // 交易 ID
-  uint32 vout = 2; // 输出索引
-  string amount = 3; // 金额（satoshi 字符串）
-  uint32 vault_id = 4; // 所属 Vault ID
+  string txid = 1;            // 交易 ID
+  uint32 vout = 2;            // 输出索引
+  string amount = 3;          // 金额（satoshi 字符串）
+  uint32 vault_id = 4;        // 所属 Vault ID
   uint64 finalize_height = 5; // 入账区块高度
-  string request_id = 6; // 对应的充值请求 ID
-  bytes script_pubkey = 7; // 新增：锁定脚本（用于构造提现交易签名）
+  string request_id = 6;      // 对应的充值请求 ID
+  bytes script_pubkey = 7;    // 新增：锁定脚本（用于构造提现交易签名）
 }
 
 // Frost 规划日志（用于排查提现流程卡顿）
 message FrostPlanningLog {
-  string step = 1; // 步骤：SelectVault, BuildTemplate, StartSigning, etc.
-  string status = 2; // 状态：OK, FAILED, WAITING
-  string message = 3; // 详细说明或错误信息
+  string step = 1;      // 步骤：SelectVault, BuildTemplate, StartSigning, etc.
+  string status = 2;    // 状态：OK, FAILED, WAITING
+  string message = 3;   // 详细说明或错误信息
   uint64 timestamp = 4; // 时间戳（毫秒）
 }
 
 // Frost 提现请求状态（链上存储）
 message FrostWithdrawState {
-  string withdraw_id = 1; // 全网唯一（H(chain || asset || seq || request_height)）
-  string tx_id = 2; // 原始交易 ID
-  uint64 seq = 3; // 队列内 FIFO 序号
-  string chain = 4; // 目标链标识
-  string asset = 5; // 资产类型
-  string to = 6; // 提现目标地址
+  string withdraw_id =
+      1;             // 全网唯一（H(chain || asset || seq || request_height)）
+  string tx_id = 2;  // 原始交易 ID
+  uint64 seq = 3;    // 队列内 FIFO 序号
+  string chain = 4;  // 目标链标识
+  string asset = 5;  // 资产类型
+  string to = 6;     // 提现目标地址
   string amount = 7; // 提现金额
   uint64 request_height = 8; // 请求最终化高度
-  string status = 9; // QUEUED | SIGNED
-  string job_id = 10; // 归属的 SigningJob（当 status=SIGNED 时存在）
-  uint32 vault_id = 11; // 由哪个 Vault 支付
+  string status = 9;         // QUEUED | SIGNED
+  string job_id = 10;        // 归属的 SigningJob（当 status=SIGNED 时存在）
+  uint32 vault_id = 11;      // 由哪个 Vault 支付
   repeated FrostPlanningLog planning_logs = 12; // 规划日志
 }
 
@@ -772,45 +768,46 @@ message FrostWithdrawPlanningLogTx {
 
 // Frost 签名产物（链上存储，receipt/history）
 message FrostSignedPackage {
-  string job_id = 1; // 签名任务 ID
-  uint64 idx = 2; // 产物序号（同一 job 可能有多份）
+  string job_id = 1;              // 签名任务 ID
+  uint64 idx = 2;                 // 产物序号（同一 job 可能有多份）
   bytes signed_package_bytes = 3; // 签名包
-  uint64 submit_height = 4; // 提交高度
-  string submitter = 5; // 提交者地址
+  uint64 submit_height = 4;       // 提交高度
+  string submitter = 5;           // 提交者地址
 }
 
 // Vault 状态（用于存储密钥和状态信息）
 message FrostVaultState {
-  uint32 vault_id = 1; // Vault ID
-  string chain = 2; // 链标识
-  uint64 key_epoch = 3; // 当前密钥版本
-  bytes group_pubkey = 4; // 群公钥（32 字节 x-only，用于 BTC BIP-340）
-  SignAlgo sign_algo = 5; // 签名算法
-  string status = 6; // PENDING | KEY_READY | ACTIVE | DEPRECATED
+  uint32 vault_id = 1;            // Vault ID
+  string chain = 2;               // 链标识
+  uint64 key_epoch = 3;           // 当前密钥版本
+  bytes group_pubkey = 4;         // 群公钥（32 字节 x-only，用于 BTC BIP-340）
+  SignAlgo sign_algo = 5;         // 签名算法
+  string status = 6;              // PENDING | KEY_READY | ACTIVE | DEPRECATED
   uint64 active_since_height = 7; // 激活高度
   repeated string committee_members = 8; // 委员会成员
 }
 
 // Vault 轮换状态（DKG 进度）
 message VaultTransitionState {
-  string chain = 1; // 链标识
-  uint32 vault_id = 2; // Vault ID
-  uint64 epoch_id = 3; // epoch 版本
-  SignAlgo sign_algo = 4; // 签名算法
-  uint64 trigger_height = 5; // 触发轮换的高度
+  string chain = 1;                          // 链标识
+  uint32 vault_id = 2;                       // Vault ID
+  uint64 epoch_id = 3;                       // epoch 版本
+  SignAlgo sign_algo = 4;                    // 签名算法
+  uint64 trigger_height = 5;                 // 触发轮换的高度
   repeated string old_committee_members = 6; // 旧委员会成员
   repeated string new_committee_members = 7; // 新委员会成员
-  string dkg_status = 8; // NOT_STARTED | COMMITTING | SHARING | RESOLVING | KEY_READY | FAILED
-  string dkg_session_id = 9; // DKG 会话 ID
-  uint32 dkg_threshold_t = 10; // 门限 t
-  uint32 dkg_n = 11; // 参与者数量 n
-  uint64 dkg_commit_deadline = 12; // commit 截止高度
+  string dkg_status =
+      8; // NOT_STARTED | COMMITTING | SHARING | RESOLVING | KEY_READY | FAILED
+  string dkg_session_id = 9;        // DKG 会话 ID
+  uint32 dkg_threshold_t = 10;      // 门限 t
+  uint32 dkg_n = 11;                // 参与者数量 n
+  uint64 dkg_commit_deadline = 12;  // commit 截止高度
   uint64 dkg_dispute_deadline = 13; // 裁决截止高度
-  bytes old_group_pubkey = 14; // 旧群公钥
-  bytes new_group_pubkey = 15; // 新群公钥（KeyReady 后填入）
-  string validation_status = 16; // NOT_STARTED | SIGNING | PASSED | FAILED
-  bytes validation_msg_hash = 17; // 验证消息哈希
-  string lifecycle = 18; // ACTIVE | DRAINING | RETIRED
+  bytes old_group_pubkey = 14;      // 旧群公钥
+  bytes new_group_pubkey = 15;      // 新群公钥（KeyReady 后填入）
+  string validation_status = 16;    // NOT_STARTED | SIGNING | PASSED | FAILED
+  bytes validation_msg_hash = 17;   // 验证消息哈希
+  string lifecycle = 18;            // ACTIVE | DRAINING | RETIRED
   uint64 dkg_sharing_deadline = 19; // share 截止高度
 }
 
@@ -818,23 +815,23 @@ message VaultTransitionState {
 
 // FrostEnvelope Frost P2P 消息信封
 message FrostEnvelope {
-  string from = 1; // 发送方地址
-  string to = 2; // 接收方地址（单播）或 "" （广播）
+  string from = 1;            // 发送方地址
+  string to = 2;              // 接收方地址（单播）或 "" （广播）
   FrostEnvelopeKind kind = 3; // 消息类型
-  bytes payload = 4; // 载荷（根据 kind 不同而不同）
-  bytes sig = 5; // 对 (from || to || kind || payload) 的签名
-  string job_id = 6; // 关联的 job_id（可选）
-  uint64 seq = 7; // 消息序号（用于去重和排序）
+  bytes payload = 4;          // 载荷（根据 kind 不同而不同）
+  bytes sig = 5;              // 对 (from || to || kind || payload) 的签名
+  string job_id = 6;          // 关联的 job_id（可选）
+  uint64 seq = 7;             // 消息序号（用于去重和排序）
 }
 
 // FrostEnvelopeKind 消息类型
 enum FrostEnvelopeKind {
   FROST_ENVELOPE_KIND_UNSPECIFIED = 0;
-  FROST_ENVELOPE_KIND_DKG_ROUND1 = 1; // DKG 第 1 轮
-  FROST_ENVELOPE_KIND_DKG_ROUND2 = 2; // DKG 第 2 轮
-  FROST_ENVELOPE_KIND_SIGN_NONCE = 3; // 签名 nonce 承诺
-  FROST_ENVELOPE_KIND_SIGN_SHARE = 4; // 签名份额
-  FROST_ENVELOPE_KIND_ROAST_REQUEST = 5; // ROAST 签名请求（聚合者发起）
+  FROST_ENVELOPE_KIND_DKG_ROUND1 = 1;     // DKG 第 1 轮
+  FROST_ENVELOPE_KIND_DKG_ROUND2 = 2;     // DKG 第 2 轮
+  FROST_ENVELOPE_KIND_SIGN_NONCE = 3;     // 签名 nonce 承诺
+  FROST_ENVELOPE_KIND_SIGN_SHARE = 4;     // 签名份额
+  FROST_ENVELOPE_KIND_ROAST_REQUEST = 5;  // ROAST 签名请求（聚合者发起）
   FROST_ENVELOPE_KIND_ROAST_RESPONSE = 6; // ROAST 响应（参与者回复）
 }
 
@@ -842,24 +839,24 @@ enum FrostEnvelopeKind {
 
 // FrostVaultDkgCommitTx DKG 承诺点上链
 message FrostVaultDkgCommitTx {
-  BaseMessage base = 1; // 基础消息（含 tx_id, from_address, executed_height）
-  string chain = 2; // 链标识
-  uint32 vault_id = 3; // Vault ID
-  uint64 epoch_id = 4; // epoch 版本
+  BaseMessage base = 1;   // 基础消息（含 tx_id, from_address, executed_height）
+  string chain = 2;       // 链标识
+  uint32 vault_id = 3;    // Vault ID
+  uint64 epoch_id = 4;    // epoch 版本
   SignAlgo sign_algo = 5; // 签名算法（决定曲线）
   repeated bytes commitment_points = 6; // 承诺点集合（Feldman VSS A_ik）
-  bytes a_i0 = 7; // 常数项承诺点（用于计算 group_pubkey）
+  bytes a_i0 = 7;                       // 常数项承诺点（用于计算 group_pubkey）
 }
 
 // FrostVaultDkgShareTx 加密 share 上链
 message FrostVaultDkgShareTx {
-  BaseMessage base = 1; // 基础消息
-  string chain = 2; // 链标识
-  uint32 vault_id = 3; // Vault ID
-  uint64 epoch_id = 4; // epoch 版本
-  string dealer_id = 5; // share 提供者地址
+  BaseMessage base = 1;   // 基础消息
+  string chain = 2;       // 链标识
+  uint32 vault_id = 3;    // Vault ID
+  uint64 epoch_id = 4;    // epoch 版本
+  string dealer_id = 5;   // share 提供者地址
   string receiver_id = 6; // share 接收者地址
-  bytes ciphertext = 7; // 加密的 share
+  bytes ciphertext = 7;   // 加密的 share
 }
 
 // FrostVaultDkgCommitment DKG 承诺存储
@@ -887,25 +884,25 @@ message FrostVaultDkgShare {
 
 // FrostVaultDkgComplaintTx 链上裁决/举证
 message FrostVaultDkgComplaintTx {
-  BaseMessage base = 1; // 基础消息
-  string chain = 2; // 链标识
-  uint32 vault_id = 3; // Vault ID
-  uint64 epoch_id = 4; // epoch 版本
-  string dealer_id = 5; // 被投诉的 dealer
+  BaseMessage base = 1;   // 基础消息
+  string chain = 2;       // 链标识
+  uint32 vault_id = 3;    // Vault ID
+  uint64 epoch_id = 4;    // epoch 版本
+  string dealer_id = 5;   // 被投诉的 dealer
   string receiver_id = 6; // 接收该碎片的参与者
-  string bond = 7; // 保证金（防止滥用）
+  string bond = 7;        // 保证金（防止滥用）
 }
 
 // FrostVaultDkgRevealTx dealer 公开 share + 随机数
 message FrostVaultDkgRevealTx {
-  BaseMessage base = 1; // 基础消息
-  string chain = 2; // 链标识
-  uint32 vault_id = 3; // Vault ID
-  uint64 epoch_id = 4; // epoch 版本
-  string dealer_id = 5; // dealer 地址
+  BaseMessage base = 1;   // 基础消息
+  string chain = 2;       // 链标识
+  uint32 vault_id = 3;    // Vault ID
+  uint64 epoch_id = 4;    // epoch 版本
+  string dealer_id = 5;   // dealer 地址
   string receiver_id = 6; // 接收者地址
-  bytes share = 7; // f_dealer(x_receiver)（标量）
-  bytes enc_rand = 8; // 加密随机数
+  bytes share = 7;        // f_dealer(x_receiver)（标量）
+  bytes enc_rand = 8;     // 加密随机数
 }
 
 // FrostVaultDkgComplaint 投诉存储
@@ -917,50 +914,50 @@ message FrostVaultDkgComplaint {
   string receiver_id = 5;
   string bond = 6;
   uint64 complaint_height = 7; // 投诉高度
-  uint64 reveal_deadline = 8; // reveal 截止高度
-  string status = 9; // PENDING / RESOLVED / DISQUALIFIED
+  uint64 reveal_deadline = 8;  // reveal 截止高度
+  string status = 9;           // PENDING / RESOLVED / DISQUALIFIED
 }
 
 // FrostVaultDkgValidationSignedTx 验证签名推进到 KeyReady
 message FrostVaultDkgValidationSignedTx {
-  BaseMessage base = 1; // 基础消息
-  string chain = 2; // 链标识
-  uint32 vault_id = 3; // Vault ID
-  uint64 epoch_id = 4; // epoch 版本
-  bytes msg_hash = 5; // 验证消息哈希
+  BaseMessage base = 1;       // 基础消息
+  string chain = 2;           // 链标识
+  uint32 vault_id = 3;        // Vault ID
+  uint64 epoch_id = 4;        // epoch 版本
+  bytes msg_hash = 5;         // 验证消息哈希
   bytes new_group_pubkey = 6; // 新群公钥
-  bytes signature = 7; // 群签名
+  bytes signature = 7;        // 群签名
 }
 
 // FrostVaultTransitionSignedTx 迁移签名产物上链
 message FrostVaultTransitionSignedTx {
-  BaseMessage base = 1; // 基础消息
-  string chain = 2; // 链标识
+  BaseMessage base = 1;    // 基础消息
+  string chain = 2;        // 链标识
   uint32 old_vault_id = 3; // 旧 Vault ID
   uint32 new_vault_id = 4; // 新 Vault ID
-  uint64 epoch_id = 5; // epoch 版本
-  bytes msg_hash = 6; // 迁移消息哈希
-  bytes signature = 7; // 旧 Vault 群签名
+  uint64 epoch_id = 5;     // epoch 版本
+  bytes msg_hash = 6;      // 迁移消息哈希
+  bytes signature = 7;     // 旧 Vault 群签名
 }
 
 // FrostTop10000 Top10000 矿工列表（用于 Vault 委员会分配）
 message FrostTop10000 {
-  uint64 height = 1; // 快照高度
-  repeated uint64 indices = 2; // 矿工索引列表（按 bit index 排序）
-  repeated string addresses = 3; // 矿工地址列表（与 indices 对应）
+  uint64 height = 1;              // 快照高度
+  repeated uint64 indices = 2;    // 矿工索引列表（按 bit index 排序）
+  repeated string addresses = 3;  // 矿工地址列表（与 indices 对应）
   repeated bytes public_keys = 4; // 矿工公钥列表（与 indices 对应）
-  uint64 update_height = 5; // 最近更新高度
+  uint64 update_height = 5;       // 最近更新高度
 }
 
 // FrostVaultConfig Vault 链级配置
 message FrostVaultConfig {
-  string chain = 1; // 链标识（btc/eth/bnb/trx/sol）
-  SignAlgo sign_algo = 2; // 签名算法
-  uint32 vault_count = 3; // Vault 数量 (M)
-  uint32 committee_size = 4; // 每个 Vault 委员会规模 (K)
-  float threshold_ratio = 5; // 门限比例（如 0.67）
-  string selection_seed_rule = 6; // 委员会选取种子规则
-  repeated string vault_refs = 7; // 各 Vault 的地址/合约
+  string chain = 1;                   // 链标识（btc/eth/bnb/trx/sol）
+  SignAlgo sign_algo = 2;             // 签名算法
+  uint32 vault_count = 3;             // Vault 数量 (M)
+  uint32 committee_size = 4;          // 每个 Vault 委员会规模 (K)
+  float threshold_ratio = 5;          // 门限比例（如 0.67）
+  string selection_seed_rule = 6;     // 委员会选取种子规则
+  repeated string vault_refs = 7;     // 各 Vault 的地址/合约
   string deposit_allocation_rule = 8; // 入账分配策略
 }
 
@@ -968,103 +965,103 @@ message FrostVaultConfig {
 
 // ChainCfg 链级别配置（用于 API 响应）
 message ChainCfg {
-  string sign_algo = 1; // 签名算法
-  string frost_variant = 2; // Frost 变体（可选）
+  string sign_algo = 1;       // 签名算法
+  string frost_variant = 2;   // Frost 变体（可选）
   int32 vaults_per_chain = 3; // 每链 Vault 数量
 }
 
 // GetFrostConfigResponse Frost 配置响应
 message GetFrostConfigResponse {
-  bool enabled = 1; // 是否启用
+  bool enabled = 1;                     // 是否启用
   repeated string supported_chains = 2; // 支持的链列表
-  double default_threshold = 3; // 默认门限比例
-  int32 vault_count = 4; // 总 Vault 数量
-  int32 committee_size = 5; // 委员会规模
-  string min_withdraw = 6; // 最小提现金额
-  map<string, ChainCfg> chains = 7; // 各链配置
+  double default_threshold = 3;         // 默认门限比例
+  int32 vault_count = 4;                // 总 Vault 数量
+  int32 committee_size = 5;             // 委员会规模
+  string min_withdraw = 6;              // 最小提现金额
+  map<string, ChainCfg> chains = 7;     // 各链配置
 }
 
 // GetWithdrawStatusResponse 提现状态响应
 message GetWithdrawStatusResponse {
-  string lot_id = 1; // 提现 ID
-  string chain = 2; // 链标识
-  string status = 3; // 状态：QUEUED | SIGNING | SIGNED | BROADCAST
-  string amount = 4; // 金额
+  string lot_id = 1;   // 提现 ID
+  string chain = 2;    // 链标识
+  string status = 3;   // 状态：QUEUED | SIGNING | SIGNED | BROADCAST
+  string amount = 4;   // 金额
   string receiver = 5; // 接收地址
-  uint64 height = 6; // 高度
-  string tx_hash = 7; // 交易哈希（可选）
+  uint64 height = 6;   // 高度
+  string tx_hash = 7;  // 交易哈希（可选）
   repeated FrostPlanningLog planning_logs = 8; // 规划日志
 }
 
 // ListWithdrawsResponse 提现列表响应
 message ListWithdrawsResponse {
   repeated GetWithdrawStatusResponse withdraws = 1; // 提现列表
-  int32 total = 2; // 总数
+  int32 total = 2;                                  // 总数
 }
 
 // GetVaultGroupPubKeyResponse Vault 群公钥响应
 message GetVaultGroupPubKeyResponse {
-  string chain = 1; // 链标识
-  uint32 vault_id = 2; // Vault ID
-  uint64 key_epoch = 3; // 密钥版本
+  string chain = 1;        // 链标识
+  uint32 vault_id = 2;     // Vault ID
+  uint64 key_epoch = 3;    // 密钥版本
   string group_pubkey = 4; // 群公钥（hex 编码）
-  string sign_algo = 5; // 签名算法
-  string status = 6; // 状态
+  string sign_algo = 5;    // 签名算法
+  string status = 6;       // 状态
 }
 
 // GetVaultTransitionStatusResponse Vault 轮换状态响应
 message GetVaultTransitionStatusResponse {
-  string chain = 1; // 链标识
-  uint32 vault_id = 2; // Vault ID
-  uint64 epoch_id = 3; // epoch 版本
-  string sign_algo = 4; // 签名算法
-  uint64 trigger_height = 5; // 触发高度
+  string chain = 1;                          // 链标识
+  uint32 vault_id = 2;                       // Vault ID
+  uint64 epoch_id = 3;                       // epoch 版本
+  string sign_algo = 4;                      // 签名算法
+  uint64 trigger_height = 5;                 // 触发高度
   repeated string old_committee_members = 6; // 旧委员会成员
   repeated string new_committee_members = 7; // 新委员会成员
-  string dkg_status = 8; // DKG 状态
-  string dkg_session_id = 9; // DKG 会话 ID
-  uint32 dkg_threshold_t = 10; // DKG 门限 t
-  uint32 dkg_n = 11; // DKG 参与者数量 n
-  uint64 dkg_commit_deadline = 12; // commit 截止高度
-  uint64 dkg_dispute_deadline = 13; // 裁决截止高度
-  string old_group_pubkey = 14; // 旧群公钥（hex 编码）
-  string new_group_pubkey = 15; // 新群公钥（hex 编码）
-  string validation_status = 16; // 验证状态
-  string lifecycle = 17; // 生命周期
+  string dkg_status = 8;                     // DKG 状态
+  string dkg_session_id = 9;                 // DKG 会话 ID
+  uint32 dkg_threshold_t = 10;               // DKG 门限 t
+  uint32 dkg_n = 11;                         // DKG 参与者数量 n
+  uint64 dkg_commit_deadline = 12;           // commit 截止高度
+  uint64 dkg_dispute_deadline = 13;          // 裁决截止高度
+  string old_group_pubkey = 14;              // 旧群公钥（hex 编码）
+  string new_group_pubkey = 15;              // 新群公钥（hex 编码）
+  string validation_status = 16;             // 验证状态
+  string lifecycle = 17;                     // 生命周期
 }
 
 // DkgCommitmentInfo DKG 承诺信息
 message DkgCommitmentInfo {
-  string participant = 1; // 参与者地址
+  string participant = 1;                // 参与者地址
   repeated string commitment_points = 2; // 承诺点列表（hex 编码）
-  uint64 commit_height = 3; // 提交高度
+  uint64 commit_height = 3;              // 提交高度
 }
 
 // GetVaultDkgCommitmentsResponse DKG 承诺列表响应
 message GetVaultDkgCommitmentsResponse {
-  string chain = 1; // 链标识
-  uint32 vault_id = 2; // Vault ID
-  uint64 epoch_id = 3; // epoch 版本
+  string chain = 1;                           // 链标识
+  uint32 vault_id = 2;                        // Vault ID
+  uint64 epoch_id = 3;                        // epoch 版本
   repeated DkgCommitmentInfo commitments = 4; // 承诺列表
-  int32 total = 5; // 总数
+  int32 total = 5;                            // 总数
 }
 
 // DownloadSignedPackageResponse 下载签名包响应
 message DownloadSignedPackageResponse {
-  string job_id = 1; // 任务 ID
-  uint64 idx = 2; // 序号
+  string job_id = 1;               // 任务 ID
+  uint64 idx = 2;                  // 序号
   string signed_package_bytes = 3; // 签名包字节（hex 编码）
-  uint64 submit_height = 4; // 提交高度
-  string submitter = 5; // 提交者地址
+  uint64 submit_height = 4;        // 提交高度
+  string submitter = 5;            // 提交者地址
 }
 
 // HealthResponse 健康检查响应
 message HealthResponse {
-  string status = 1; // 状态
-  string uptime = 2; // 运行时间
-  string version = 3; // 版本
+  string status = 1;     // 状态
+  string uptime = 2;     // 运行时间
+  string version = 3;    // 版本
   string go_version = 4; // Go 版本
-  int32 num_cpu = 5; // CPU 数量
+  int32 num_cpu = 5;     // CPU 数量
 }
 
 // ChannelStat 单个 channel 的状态
@@ -1078,24 +1075,24 @@ message ChannelStat {
 
 // MetricsResponse 指标响应
 message MetricsResponse {
-  uint64 heap_alloc = 1; // 堆分配
-  uint64 heap_sys = 2; // 堆系统
-  int32 num_goroutine = 3; // Goroutine 数量
-  int32 frost_jobs = 4; // Frost 任务数
-  int32 frost_withdraws = 5; // Frost 提现数
+  uint64 heap_alloc = 1;                  // 堆分配
+  uint64 heap_sys = 2;                    // 堆系统
+  int32 num_goroutine = 3;                // Goroutine 数量
+  int32 frost_jobs = 4;                   // Frost 任务数
+  int32 frost_withdraws = 5;              // Frost 提现数
   map<string, uint64> api_call_stats = 6; // API 调用统计
   repeated ChannelStat channel_stats = 7; // Channel 状态列表
 }
 
 // ForceRescanRequest 强制重扫请求
 message ForceRescanRequest {
-  string chain = 1; // 链标识（可选，空表示所有链）
+  string chain = 1;       // 链标识（可选，空表示所有链）
   uint64 from_height = 2; // 起始高度（可选，0 表示从最新）
 }
 
 // ForceRescanResponse 强制重扫响应
 message ForceRescanResponse {
-  bool success = 1; // 是否成功
+  bool success = 1;   // 是否成功
   string message = 2; // 消息
 }
 
@@ -1107,14 +1104,12 @@ message LogsRequest {
 // LogLine 单条日志行
 message LogLine {
   string timestamp = 1; // 格式化时间
-  string level = 2; // 级别
-  string message = 3; // 内容
+  string level = 2;     // 级别
+  string message = 3;   // 内容
 }
 
 // LogsResponse 日志响应
-message LogsResponse {
-  repeated LogLine logs = 1;
-}
+message LogsResponse { repeated LogLine logs = 1; }
 
 // BlockSummary 区块摘要信息 (for explorer list)
 message BlockSummary {
@@ -1132,9 +1127,7 @@ message GetRecentBlocksRequest {
   int32 count = 1; // 请求数量
 }
 
-message GetRecentBlocksResponse {
-  repeated BlockSummary blocks = 1;
-}
+message GetRecentBlocksResponse { repeated BlockSummary blocks = 1; }
 
 // GetAccountRequest 获取账户信息请求
 message GetAccountRequest {
@@ -1144,8 +1137,9 @@ message GetAccountRequest {
 // GetAccountResponse 获取账户信息响应
 message GetAccountResponse {
   Account account = 1; // 账户信息
-  string error = 2; // 错误信息
-  map<string, TokenBalance> balances = 3; // 账户所有代币余额（token地址 -> 余额信息）
+  string error = 2;    // 错误信息
+  map<string, TokenBalance> balances =
+      3; // 账户所有代币余额（token地址 -> 余额信息）
 }
 
 // GetAccountBalancesRequest 获取账户余额请求
@@ -1156,7 +1150,7 @@ message GetAccountBalancesRequest {
 // GetAccountBalancesResponse 获取账户余额响应
 message GetAccountBalancesResponse {
   map<string, TokenBalance> balances = 1; // 代币余额（token地址 -> 余额信息）
-  string error = 2; // 错误信息
+  string error = 2;                       // 错误信息
 }
 
 // GetTokenRequest 获取 Token 信息请求

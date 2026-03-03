@@ -106,6 +106,47 @@ function handleClose() {
   emit('close')
   emit('back')
 }
+
+// ---- FrostWithdrawSigned: template_data 解析 ----
+const templateExpanded = ref(false)
+
+const isFrostWithdrawSigned = computed(() =>
+  (currentTx.value?.tx_type || '').includes('FrostWithdrawSigned')
+)
+
+interface BtcInput  { txid: string; vout: number; amount: string; script_pubkey?: string }
+interface BtcOutput { address: string; amount: string }
+interface BtcTemplate {
+  inputs:  BtcInput[]
+  outputs: BtcOutput[]
+  fee:     string
+  change?: string
+  change_address?: string
+  [k: string]: unknown
+}
+
+const parsedTemplate = computed((): BtcTemplate | null => {
+  if (!isFrostWithdrawSigned.value) return null
+  const raw = (currentTx.value?.details as any)?.template_data
+  if (!raw) return null
+  try {
+    return JSON.parse(atob(raw)) as BtcTemplate
+  } catch {
+    try { return JSON.parse(raw) as BtcTemplate } catch { return null }
+  }
+})
+
+const templateParseError = computed(() => {
+  if (!isFrostWithdrawSigned.value) return ''
+  const raw = (currentTx.value?.details as any)?.template_data
+  if (!raw) return 'template_data 字段不存在'
+  if (!parsedTemplate.value) return '解析失败：不是合法的 JSON'
+  return ''
+})
+
+function satToBtc(sat: string | number): string {
+  try { return (Number(sat) / 1e8).toFixed(8).replace(/\.?0+$/, '') + ' BTC' } catch { return String(sat) }
+}
 </script>
 
 <template>
@@ -235,6 +276,80 @@ function handleClose() {
               <div class="payload-wrapper">
                 <TxTypeRenderer :type="currentTx.tx_type || ''" :details="currentTx.details" />
               </div>
+            </div>
+
+            <!-- FrostWithdrawSigned: template_data 解析面板 -->
+            <div v-if="isFrostWithdrawSigned" class="info-card template-card">
+              <div class="card-title-row">
+                <div class="card-title" style="margin-bottom:0">⛓ BTC Template Data</div>
+                <button class="expand-btn" @click="templateExpanded = !templateExpanded">
+                  {{ templateExpanded ? '收起' : '展开解析' }}
+                </button>
+              </div>
+
+              <!-- 错误提示 -->
+              <div v-if="templateParseError" class="tpl-error">{{ templateParseError }}</div>
+
+              <!-- 折叠时：简要摘要 -->
+              <div v-else-if="!templateExpanded && parsedTemplate" class="tpl-summary">
+                <span class="tpl-badge">{{ parsedTemplate.inputs?.length ?? 0 }} Inputs</span>
+                <span class="tpl-badge">{{ parsedTemplate.outputs?.length ?? 0 }} Outputs</span>
+                <span class="tpl-badge fee">Fee {{ satToBtc(parsedTemplate.fee) }}</span>
+                <span v-if="parsedTemplate.change" class="tpl-badge change">Change {{ satToBtc(parsedTemplate.change) }}</span>
+              </div>
+
+              <!-- 展开时：完整解析 -->
+              <template v-if="templateExpanded && parsedTemplate">
+                <!-- Inputs -->
+                <div class="tpl-section">
+                  <div class="tpl-section-title">Inputs ({{ parsedTemplate.inputs?.length }})</div>
+                  <div v-for="(inp, i) in parsedTemplate.inputs" :key="i" class="tpl-row">
+                    <div class="tpl-idx">#{{ i }}</div>
+                    <div class="tpl-fields">
+                      <div class="tpl-field"><span class="tf-k">txid</span><code class="tf-v mono">{{ inp.txid }}</code></div>
+                      <div class="tpl-field"><span class="tf-k">vout</span><span class="tf-v">{{ inp.vout }}</span></div>
+                      <div class="tpl-field"><span class="tf-k">amount</span><span class="tf-v hi">{{ satToBtc(inp.amount) }}</span></div>
+                      <div v-if="inp.script_pubkey" class="tpl-field">
+                        <span class="tf-k">script_pubkey</span><code class="tf-v mono small">{{ inp.script_pubkey }}</code>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Outputs -->
+                <div class="tpl-section">
+                  <div class="tpl-section-title">Outputs ({{ parsedTemplate.outputs?.length }})</div>
+                  <div v-for="(out, i) in parsedTemplate.outputs" :key="i" class="tpl-row">
+                    <div class="tpl-idx">#{{ i }}</div>
+                    <div class="tpl-fields">
+                      <div class="tpl-field"><span class="tf-k">address</span><code class="tf-v mono">{{ out.address }}</code></div>
+                      <div class="tpl-field"><span class="tf-k">amount</span><span class="tf-v hi">{{ satToBtc(out.amount) }}</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Fee / Change -->
+                <div class="tpl-section tpl-meta-row">
+                  <div class="tpl-meta-item">
+                    <span class="tf-k">Fee</span>
+                    <span class="tf-v fee-val">{{ satToBtc(parsedTemplate.fee) }}</span>
+                  </div>
+                  <div v-if="parsedTemplate.change" class="tpl-meta-item">
+                    <span class="tf-k">Change</span>
+                    <span class="tf-v">{{ satToBtc(parsedTemplate.change) }}</span>
+                  </div>
+                  <div v-if="parsedTemplate.change_address" class="tpl-meta-item">
+                    <span class="tf-k">Change Address</span>
+                    <code class="tf-v mono">{{ parsedTemplate.change_address }}</code>
+                  </div>
+                </div>
+
+                <!-- 其他未知字段 raw -->
+                <details class="tpl-raw-wrap">
+                  <summary class="tpl-raw-toggle">Raw JSON</summary>
+                  <pre class="tpl-raw mono">{{ JSON.stringify(parsedTemplate, null, 2) }}</pre>
+                </details>
+              </template>
             </div>
 
             <!-- Raw Input Data -->
@@ -432,6 +547,45 @@ function handleClose() {
 
 /* Details & Signature */
 .payload-wrapper { background: rgba(0, 0, 0, 0.2); border-radius: 12px; }
+
+/* ---- FrostWithdrawSigned template_data 解析面板 ---- */
+.template-card { display: flex; flex-direction: column; gap: 16px; }
+.card-title-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.03); margin-bottom: 4px;
+}
+.expand-btn {
+  background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.3);
+  color: #818cf8; font-size: 0.7rem; font-weight: 700; padding: 4px 14px;
+  border-radius: 8px; cursor: pointer; transition: all 0.2s;
+}
+.expand-btn:hover { background: rgba(99,102,241,0.25); }
+.tpl-error { font-size: 0.8rem; color: #f87171; background: rgba(239,68,68,0.08); padding: 8px 12px; border-radius: 8px; }
+.tpl-summary { display: flex; gap: 10px; flex-wrap: wrap; }
+.tpl-badge { font-size: 0.7rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; background: rgba(255,255,255,0.06); color: #94a3b8; }
+.tpl-badge.fee { background: rgba(245,158,11,0.12); color: #f59e0b; }
+.tpl-badge.change { background: rgba(16,185,129,0.12); color: #10b981; }
+.tpl-section { display: flex; flex-direction: column; gap: 8px; }
+.tpl-section-title { font-size: 0.65rem; font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.08em; margin-bottom: 4px; }
+.tpl-row { display: flex; gap: 12px; background: rgba(0,0,0,0.2); border-radius: 10px; padding: 12px; }
+.tpl-idx { font-size: 0.7rem; font-weight: 800; color: #475569; min-width: 24px; padding-top: 2px; }
+.tpl-fields { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.tpl-field { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.tf-k { font-size: 0.65rem; font-weight: 700; color: #64748b; min-width: 80px; text-align: right; flex-shrink: 0; }
+.tf-v { font-size: 0.8rem; color: #e2e8f0; word-break: break-all; }
+.tf-v.hi { color: #fbbf24; font-weight: 700; }
+.tf-v.small { font-size: 0.7rem; color: #64748b; }
+.tpl-meta-row { flex-direction: row; gap: 32px; flex-wrap: wrap; background: rgba(0,0,0,0.2); border-radius: 10px; padding: 14px; }
+.tpl-meta-item { display: flex; flex-direction: column; gap: 4px; }
+.fee-val { color: #f59e0b; font-weight: 800; font-size: 0.9rem; }
+.tpl-raw-wrap { margin-top: 4px; }
+.tpl-raw-toggle { font-size: 0.68rem; color: #475569; cursor: pointer; user-select: none; }
+.tpl-raw-toggle:hover { color: #94a3b8; }
+.tpl-raw {
+  font-size: 0.7rem; color: #64748b; background: rgba(0,0,0,0.3); border-radius: 8px;
+  padding: 12px; margin-top: 8px; max-height: 300px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all;
+}
 
 .raw-data-wrapper {
   background: rgba(0, 0, 0, 0.3); border-radius: 12px; padding: 16px;

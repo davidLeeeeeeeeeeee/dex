@@ -14,6 +14,8 @@ import (
 	"dex/logs"
 	"dex/pb"
 
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -87,6 +89,26 @@ func (r *testLogReporter) ReportWithdrawPlanningLog(ctx context.Context, log *pb
 	return nil
 }
 
+type testVaultProvider struct {
+	groupPubkey []byte
+}
+
+func (p *testVaultProvider) VaultCommittee(chain string, vaultID uint32, epoch uint64) ([]SignerInfo, error) {
+	return nil, nil
+}
+
+func (p *testVaultProvider) VaultCurrentEpoch(chain string, vaultID uint32) uint64 {
+	return 0
+}
+
+func (p *testVaultProvider) VaultGroupPubkey(chain string, vaultID uint32, epoch uint64) ([]byte, error) {
+	return append([]byte(nil), p.groupPubkey...), nil
+}
+
+func (p *testVaultProvider) CalculateThreshold(chain string, vaultID uint32) (int, error) {
+	return 0, nil
+}
+
 func testTaprootScript(seed byte) []byte {
 	out := make([]byte, 34)
 	out[0] = 0x51
@@ -94,6 +116,14 @@ func testTaprootScript(seed byte) []byte {
 	for i := 2; i < len(out); i++ {
 		out[i] = seed
 	}
+	return out
+}
+
+func testTaprootScriptFromXOnly(xOnly []byte) []byte {
+	out := make([]byte, 34)
+	out[0] = 0x51
+	out[1] = 0x20
+	copy(out[2:], xOnly)
 	return out
 }
 
@@ -207,16 +237,42 @@ func TestWithdrawWorkerWaitAndSubmitBTCIncludesTemplateFields(t *testing.T) {
 	vaultID := uint32(9)
 	keyEpoch := uint64(2)
 	template, templateData, _ := buildTestBTCTemplate(t, vaultID, keyEpoch)
+	privKey, err := btcec.NewPrivateKey()
+	if err != nil {
+		t.Fatalf("new private key failed: %v", err)
+	}
+	xOnlyPub := schnorr.SerializePubKey(privKey.PubKey())
+	p2trScript := testTaprootScriptFromXOnly(xOnlyPub)
 
 	spkByInput := make(map[string][]byte)
-	for i, in := range template.Inputs {
-		spk := testTaprootScript(byte(0x30 + i))
+	for _, in := range template.Inputs {
+		spk := append([]byte(nil), p2trScript...)
 		mustStoreUtxo(t, reader, vaultID, in.TxID, in.Vout, fmt.Sprintf("%d", in.Amount), spk)
 		spkByInput[fmt.Sprintf("%s:%d", in.TxID, in.Vout)] = spk
 	}
 
-	sig1 := bytes.Repeat([]byte{0x11}, 64)
-	sig2 := bytes.Repeat([]byte{0x22}, 64)
+	scriptPubkeys := make([][]byte, 0, len(template.Inputs))
+	for _, in := range template.Inputs {
+		scriptPubkeys = append(scriptPubkeys, spkByInput[fmt.Sprintf("%s:%d", in.TxID, in.Vout)])
+	}
+	sighashes, err := template.ComputeTaprootSighash(scriptPubkeys, btc.SighashDefault)
+	if err != nil {
+		t.Fatalf("compute sighashes failed: %v", err)
+	}
+	if len(sighashes) != 2 {
+		t.Fatalf("sighash count mismatch: got=%d want=2", len(sighashes))
+	}
+
+	sig1Obj, err := schnorr.Sign(privKey, sighashes[0])
+	if err != nil {
+		t.Fatalf("sign input 0 failed: %v", err)
+	}
+	sig2Obj, err := schnorr.Sign(privKey, sighashes[1])
+	if err != nil {
+		t.Fatalf("sign input 1 failed: %v", err)
+	}
+	sig1 := sig1Obj.Serialize()
+	sig2 := sig2Obj.Serialize()
 	signingSvc := &testSigningService{
 		result: &SignedPackage{
 			SessionID:  "sess-1",
@@ -230,6 +286,7 @@ func TestWithdrawWorkerWaitAndSubmitBTCIncludesTemplateFields(t *testing.T) {
 		txSubmitter:    submitter,
 		logReporter:    &testLogReporter{},
 		signingService: signingSvc,
+		vaultProvider:  &testVaultProvider{groupPubkey: privKey.PubKey().SerializeCompressed()},
 		localAddress:   "node-test",
 		Logger:         logs.NewNodeLogger("worker-btc-test", 0),
 	}

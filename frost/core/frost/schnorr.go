@@ -59,12 +59,8 @@ func SchnorrSign(grp curve.Group, x *big.Int, m []byte) (Rx, Ry, z, k *big.Int) 
 		Rx, Ry = grp.ScalarBaseMultBytes(kBytes).XY()
 	}
 
-	// ---------- 4. challenge e = tagged_hash("BIP0340/challenge", Rx || Px || m) ----------
-	eBytes := taggedHash("BIP0340/challenge",
-		Rx.Bytes(),
-		Px.Bytes(),
-		m,
-	)
+	// ---------- 4. challenge e = tagged_hash("BIP0340/challenge", rx32 || px32 || m) ----------
+	eBytes := taggedHashBIP340Challenge(Rx, Px, m)
 	e := new(big.Int).SetBytes(eBytes)
 	e.Mod(e, n)
 
@@ -88,6 +84,14 @@ func taggedHash(tag string, data ...[]byte) []byte {
 	return h.Sum(nil)
 }
 
+func taggedHashBIP340Challenge(rx, px *big.Int, msg []byte) []byte {
+	rx32 := make([]byte, 32)
+	px32 := make([]byte, 32)
+	rx.FillBytes(rx32)
+	px.FillBytes(px32)
+	return taggedHash("BIP0340/challenge", rx32, px32, msg)
+}
+
 // SchnorrVerify  – BIP-340 版本（保持原型不变）
 func SchnorrVerify(grp curve.Group, Xx, Xy, Rx, Ry, z *big.Int, m []byte) bool {
 	n := grp.Order()
@@ -100,11 +104,7 @@ func SchnorrVerify(grp curve.Group, Xx, Xy, Rx, Ry, z *big.Int, m []byte) bool {
 	if Xy.Bit(0) == 1 {
 		Xy = new(big.Int).Sub(grp.Modulus(), Xy)
 	}
-	eBytes := taggedHash("BIP0340/challenge",
-		Rx.Bytes(),
-		Xx.Bytes(),
-		m,
-	)
+	eBytes := taggedHashBIP340Challenge(Rx, Xx, m)
 	e := new(big.Int).SetBytes(eBytes)
 	e.Mod(e, n)
 

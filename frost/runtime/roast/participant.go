@@ -552,13 +552,22 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		for j, n := range taskNonces {
 			signerIDs[j] = n.SignerID
 		}
+		selfSignerID, found := findSignerIDByNoncePoints(taskNonces, hidingPt, bindingPt)
+		if !found {
+			return nil, fmt.Errorf("self nonce missing from aggregated nonces for task %d (job=%s my_index=%d)",
+				i, sess.JobID, sess.MyIndex+1)
+		}
+		if selfSignerID != sess.MyIndex+1 {
+			logs.Warn("[Participant] signer id remapped by nonce match job=%s task=%d my_index=%d resolved_signer_id=%d",
+				sess.JobID, i, sess.MyIndex+1, selfSignerID)
+		}
 
 		// 计算绑定系数 ρ_i
-		rho := roastExec.ComputeBindingCoefficient(sess.MyIndex+1, msg, taskNonces)
+		rho := roastExec.ComputeBindingCoefficient(selfSignerID, msg, taskNonces)
 
 		// 计算拉格朗日系数 λ_i
 		lambdas := roastExec.ComputeLagrangeCoefficients(signerIDs)
-		lambda := lambdas[sess.MyIndex+1]
+		lambda := lambdas[selfSignerID]
 		if lambda == nil {
 			lambda = big.NewInt(1)
 		}
@@ -576,10 +585,11 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		e := roastExec.ComputeChallenge(R, groupPubX, msg)
 
 		// 计算部分签名 z_i = k_i + ρ_i * k'_i + λ_i * e * s_i
+		adjHidingNonce, adjBindingNonce := adjustNoncePairForBIP340(sess.SignAlgo, R, hidingNonce, bindingNonce)
 		z := roastExec.ComputePartialSignature(PartialSignParams{
-			SignerID:     sess.MyIndex + 1,
-			HidingNonce:  hidingNonce,
-			BindingNonce: bindingNonce,
+			SignerID:     selfSignerID,
+			HidingNonce:  adjHidingNonce,
+			BindingNonce: adjBindingNonce,
 			SecretShare:  myShare,
 			Rho:          rho,
 			Lambda:       lambda,
@@ -610,6 +620,41 @@ func normalizeSecretShareForBIP340(signAlgo pb.SignAlgo, groupPubBytes []byte, s
 	normalized := new(big.Int).Sub(order, share)
 	normalized.Mod(normalized, order)
 	return normalized
+}
+
+func adjustNoncePairForBIP340(signAlgo pb.SignAlgo, groupCommit CurvePoint, hidingNonce, bindingNonce *big.Int) (*big.Int, *big.Int) {
+	if hidingNonce == nil || bindingNonce == nil {
+		return hidingNonce, bindingNonce
+	}
+	if signAlgo != pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
+		return hidingNonce, bindingNonce
+	}
+	if groupCommit.Y == nil || groupCommit.Y.Bit(0) == 0 {
+		return hidingNonce, bindingNonce
+	}
+
+	order := curve.NewSecp256k1Group().Order()
+	adjHiding := new(big.Int).Sub(order, hidingNonce)
+	adjHiding.Mod(adjHiding, order)
+	adjBinding := new(big.Int).Sub(order, bindingNonce)
+	adjBinding.Mod(adjBinding, order)
+	return adjHiding, adjBinding
+}
+
+func findSignerIDByNoncePoints(taskNonces []NonceInput, hidingPoint, bindingPoint CurvePoint) (int, bool) {
+	for _, n := range taskNonces {
+		if sameCurvePoint(n.HidingPoint, hidingPoint) && sameCurvePoint(n.BindingPoint, bindingPoint) {
+			return n.SignerID, true
+		}
+	}
+	return 0, false
+}
+
+func sameCurvePoint(a, b CurvePoint) bool {
+	if a.X == nil || a.Y == nil || b.X == nil || b.Y == nil {
+		return false
+	}
+	return a.X.Cmp(b.X) == 0 && a.Y.Cmp(b.Y) == 0
 }
 
 // parseAggregatedNonces 解析聚合的 nonces

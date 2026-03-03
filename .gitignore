@@ -20,3 +20,4 @@ wallet/dist/icons/icon.svg
 wallet/dist/
 miner_keys.txt
 logs/log.txt
+*.txt

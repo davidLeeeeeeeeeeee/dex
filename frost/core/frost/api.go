@@ -4,7 +4,9 @@ package frost
 
 import (
 	"crypto/ed25519"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"math/big"
 
 	"dex/frost/core/curve"
@@ -54,13 +56,13 @@ func Verify(signAlgo pb.SignAlgo, pubkey, msg, sig []byte) (bool, error) {
 func VerifyBIP340(pubkey, msg, sig []byte) (bool, error) {
 	// 验证参数长度
 	if len(pubkey) != 32 {
-		return false, ErrInvalidPublicKey
+		panic(fmt.Sprintf("frost-sign-debug: VerifyBIP340 invalid pubkey length=%d pubkey=%s", len(pubkey), shortHex(pubkey, 32)))
 	}
 	if len(msg) != 32 {
-		return false, ErrInvalidMessage
+		panic(fmt.Sprintf("frost-sign-debug: VerifyBIP340 invalid msg length=%d msg=%s", len(msg), shortHex(msg, 32)))
 	}
 	if len(sig) != 64 {
-		return false, ErrInvalidSignature
+		panic(fmt.Sprintf("frost-sign-debug: VerifyBIP340 invalid sig length=%d sig=%s", len(sig), shortHex(sig, 64)))
 	}
 
 	// 解析公钥（x-only，需要恢复 y 坐标）
@@ -70,7 +72,7 @@ func VerifyBIP340(pubkey, msg, sig []byte) (bool, error) {
 	// 从 x 恢复 y（选择偶数 y）
 	Xy := recoverYFromX(grp, Xx, false) // 选择偶数 y
 	if Xy == nil {
-		return false, ErrInvalidPublicKey
+		panic(fmt.Sprintf("frost-sign-debug: VerifyBIP340 lift pubkey failed pubkey=%s", hex.EncodeToString(pubkey)))
 	}
 
 	// 解析签名
@@ -80,12 +82,56 @@ func VerifyBIP340(pubkey, msg, sig []byte) (bool, error) {
 	// 从 Rx 恢复 Ry（BIP-340 要求 Ry 为偶数）
 	Ry := recoverYFromX(grp, Rx, false)
 	if Ry == nil {
-		return false, ErrInvalidSignature
+		panic(fmt.Sprintf("frost-sign-debug: VerifyBIP340 lift R failed rx=%s sig=%s pubkey=%s msg=%s",
+			pad32Hex(Rx), hex.EncodeToString(sig), hex.EncodeToString(pubkey), hex.EncodeToString(msg)))
 	}
 
 	// 调用底层验签
 	valid := SchnorrVerify(grp, Xx, Xy, Rx, Ry, s, msg)
+	if !valid {
+		pxEven := new(big.Int).Set(Xy)
+		if pxEven.Bit(0) == 1 {
+			pxEven.Sub(grp.Modulus(), pxEven)
+		}
+
+		eBytes := taggedHashBIP340Challenge(Rx, Xx, msg)
+		e := new(big.Int).SetBytes(eBytes)
+		e.Mod(e, grp.Order())
+
+		zGx, zGy := grp.ScalarBaseMultBytes(s.Bytes()).XY()
+		eX := grp.ScalarMultBytes(curve.Point{X: Xx, Y: pxEven}, e.Bytes())
+		rhsX, rhsY := grp.Add(curve.Point{X: Rx, Y: Ry}, eX).XY()
+
+		panic(fmt.Sprintf("frost-sign-debug: VerifyBIP340 invalid signature pubkey=%s msg=%s sig=%s e=%s lhs=(%s,%s) rhs=(%s,%s) px_even_y_parity=%d ry_parity=%d",
+			hex.EncodeToString(pubkey),
+			hex.EncodeToString(msg),
+			hex.EncodeToString(sig),
+			pad32Hex(e),
+			pad32Hex(zGx), pad32Hex(zGy),
+			pad32Hex(rhsX), pad32Hex(rhsY),
+			pxEven.Bit(0), Ry.Bit(0),
+		))
+	}
 	return valid, nil
+}
+
+func shortHex(data []byte, n int) string {
+	if len(data) == 0 {
+		return ""
+	}
+	if n <= 0 || len(data) <= n {
+		return hex.EncodeToString(data)
+	}
+	return hex.EncodeToString(data[:n])
+}
+
+func pad32Hex(v *big.Int) string {
+	if v == nil {
+		return ""
+	}
+	out := make([]byte, 32)
+	v.FillBytes(out)
+	return hex.EncodeToString(out)
 }
 
 // recoverYFromX 从 x 坐标恢复 y 坐标

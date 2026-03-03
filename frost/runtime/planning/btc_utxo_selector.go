@@ -4,6 +4,7 @@
 package planning
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -107,13 +108,14 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 		return nil, newBTCUTXOSelectionError("vault_state_decode_failed", err.Error(), chain, vaultID, needAmount, 0, 0, 0, btcUTXOScanStats{})
 	}
 
-	var scriptPubKey []byte
-	if len(vaultState.GroupPubkey) == 32 {
-		scriptPubKey = make([]byte, 34)
-		scriptPubKey[0] = 0x51
-		scriptPubKey[1] = 0x20
-		copy(scriptPubKey[2:], vaultState.GroupPubkey)
+	xOnlyPubKey, err := normalizeTaprootXOnlyPubKey(vaultState.GroupPubkey)
+	if err != nil {
+		return nil, newBTCUTXOSelectionError("vault_pubkey_invalid", err.Error(), chain, vaultID, needAmount, 0, 0, 0, btcUTXOScanStats{})
 	}
+	expectedScriptPubKey := make([]byte, 34)
+	expectedScriptPubKey[0] = 0x51
+	expectedScriptPubKey[1] = 0x20
+	copy(expectedScriptPubKey[2:], xOnlyPubKey)
 
 	// 2. 按 head/seq 从 FIFO 索引顺序读取
 	headKey := keys.KeyFrostBtcUtxoFIFOHead(vaultID)
@@ -171,6 +173,14 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 			scanStat.DecodeFailed++
 			continue
 		}
+		if protoUtxo.VaultId != vaultID {
+			scanStat.DecodeFailed++
+			continue
+		}
+		if !bytes.Equal(protoUtxo.ScriptPubkey, expectedScriptPubKey) {
+			scanStat.DecodeFailed++
+			continue
+		}
 
 		lockKey := keys.KeyFrostBtcLockedUtxo(vaultID, protoUtxo.Txid, protoUtxo.Vout)
 		if lockVal, locked, e := p.stateReader.Get(lockKey); e != nil {
@@ -190,7 +200,7 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 			TxID:          protoUtxo.Txid,
 			Vout:          protoUtxo.Vout,
 			Amount:        amount,
-			ScriptPubKey:  scriptPubKey,
+			ScriptPubKey:  append([]byte(nil), protoUtxo.ScriptPubkey...),
 			ConfirmHeight: protoUtxo.FinalizeHeight,
 		})
 		scanStat.Selected++

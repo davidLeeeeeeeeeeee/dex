@@ -112,7 +112,25 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		}
 	}
 
-	if chain == "btc" {
+	if isBTCChainName(chain) {
+		chainName, vaultCount, err := resolveVaultChainAndCount(sv, chain)
+		if err != nil {
+			return fmt.Errorf("resolve vault config for btc recharge failed: %w", err)
+		}
+
+		scriptVaultID, err := lookupVaultIDByScriptPubKey(sv, chainName, vaultCount, stored.NativeScript)
+		if err != nil {
+			return fmt.Errorf("invalid btc native_script for request %s: %w", stored.RequestId, err)
+		}
+		if scriptVaultID != vaultID {
+			return fmt.Errorf(
+				"btc recharge vault/script mismatch for request %s: stored_vault=%d script_vault=%d",
+				stored.RequestId,
+				vaultID,
+				scriptVaultID,
+			)
+		}
+
 		txid := stored.NativeTxHash
 		vout := stored.NativeVout
 

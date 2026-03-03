@@ -3,6 +3,7 @@ package vm
 import (
 	"dex/keys"
 	"dex/pb"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -27,15 +28,46 @@ func putTestVaultConfig(t *testing.T, sv StateView, chainName string, vaultCount
 func putTestVaultState(t *testing.T, sv StateView, chainName string, vaultID uint32, status string) {
 	t.Helper()
 	state := &pb.FrostVaultState{
-		Chain:   chainName,
-		VaultId: vaultID,
-		Status:  status,
+		Chain:       chainName,
+		VaultId:     vaultID,
+		Status:      status,
+		GroupPubkey: make([]byte, 33),
+	}
+	state.GroupPubkey[0] = 0x02
+	state.GroupPubkey[32] = byte(vaultID + 1)
+	data, err := proto.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal vault state failed: %v", err)
+	}
+	sv.Set(keys.KeyFrostVaultState(chainName, vaultID), data)
+}
+
+func putTestVaultStateWithPubkeyHex(t *testing.T, sv StateView, chainName string, vaultID uint32, status, pubKeyHex string) {
+	t.Helper()
+	pubKey, err := hex.DecodeString(pubKeyHex)
+	if err != nil {
+		t.Fatalf("decode pubkey hex failed: %v", err)
+	}
+	state := &pb.FrostVaultState{
+		Chain:       chainName,
+		VaultId:     vaultID,
+		Status:      status,
+		GroupPubkey: pubKey,
 	}
 	data, err := proto.Marshal(state)
 	if err != nil {
 		t.Fatalf("marshal vault state failed: %v", err)
 	}
 	sv.Set(keys.KeyFrostVaultState(chainName, vaultID), data)
+}
+
+func mustDecodeHex(t *testing.T, raw string) []byte {
+	t.Helper()
+	out, err := hex.DecodeString(raw)
+	if err != nil {
+		t.Fatalf("decode hex failed: %v", err)
+	}
+	return out
 }
 
 func TestResolveVaultChainAndCountCaseInsensitive(t *testing.T) {
@@ -103,6 +135,45 @@ func TestAllocateVaultIDWithStateCheckNoEligibleVault(t *testing.T) {
 		t.Fatal("expected no allocatable vault error")
 	}
 	if !strings.Contains(err.Error(), "no allocatable vault") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLookupVaultIDByScriptPubKeyBTC(t *testing.T) {
+	sv := NewMockStateView()
+	chainName := "btc"
+	vaultCount := uint32(3)
+
+	xOnly := "d194cd76d1ba9f139cca4af1277993c90e20ac5c817dcfe93a92810c5f9b03cb"
+	scriptPubKey := mustDecodeHex(t, "5120"+xOnly)
+	putTestVaultStateWithPubkeyHex(t, sv, chainName, 0, VaultStatusActive, "03"+xOnly)
+	putTestVaultStateWithPubkeyHex(t, sv, chainName, 1, VaultStatusActive, "02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	putTestVaultStateWithPubkeyHex(t, sv, chainName, 2, VaultStatusDeprecated, "03bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+
+	vaultID, err := lookupVaultIDByScriptPubKey(sv, chainName, vaultCount, scriptPubKey)
+	if err != nil {
+		t.Fatalf("lookupVaultIDByScriptPubKey failed: %v", err)
+	}
+	if vaultID != 0 {
+		t.Fatalf("expected vault_id=0, got %d", vaultID)
+	}
+}
+
+func TestLookupVaultIDByScriptPubKeyAmbiguous(t *testing.T) {
+	sv := NewMockStateView()
+	chainName := "btc"
+	vaultCount := uint32(2)
+
+	xOnly := "05ffbabdb46782b00fa7e44feb117aaed34adddbf37d1f9d8c19dfaba47ae3f8"
+	scriptPubKey := mustDecodeHex(t, "5120"+xOnly)
+	putTestVaultStateWithPubkeyHex(t, sv, chainName, 0, VaultStatusActive, "03"+xOnly)
+	putTestVaultStateWithPubkeyHex(t, sv, chainName, 1, VaultStatusKeyReady, "02"+xOnly)
+
+	_, err := lookupVaultIDByScriptPubKey(sv, chainName, vaultCount, scriptPubKey)
+	if err == nil {
+		t.Fatal("expected ambiguous mapping error")
+	}
+	if !strings.Contains(err.Error(), "ambiguous script_pubkey") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
