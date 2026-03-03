@@ -277,6 +277,7 @@ func (w *WithdrawWorker) processJobAsync(ctx context.Context, job *planning.Job)
 		w.Logger.Error("[WithdrawWorker] failed to extract messages: %v", err)
 		return
 	}
+	w.logSigningContext(job, threshold, signAlgo, messages)
 
 	// 启动签名会话
 	sessionParams := &SigningSessionParams{
@@ -495,6 +496,7 @@ func (w *WithdrawWorker) processCompositeJobAsync(ctx context.Context, composite
 				subJobErrors <- fmt.Errorf("failed to extract messages: %w", err)
 				return
 			}
+			w.logSigningContext(subJob, threshold, signAlgo, messages)
 
 			// 启动签名会话
 			sessionParams := &SigningSessionParams{
@@ -586,6 +588,62 @@ func (w *WithdrawWorker) buildSignedPackageBytes(signedPkg *SignedPackage, job *
 		return combined, nil
 	}
 	return nil, fmt.Errorf("signed package has no signature bytes")
+}
+
+func (w *WithdrawWorker) logSigningContext(job *planning.Job, threshold int, signAlgo pb.SignAlgo, messages [][]byte) {
+	if job == nil {
+		return
+	}
+
+	w.Logger.Info("[WithdrawWorker] signing context job=%s chain=%s asset=%s vault=%d epoch=%d threshold=%d sign_algo=%s withdraws=%v",
+		job.JobID, job.Chain, job.Asset, job.VaultID, job.KeyEpoch, threshold, signAlgo.String(), job.WithdrawIDs)
+
+	if len(messages) == 0 {
+		w.Logger.Warn("[WithdrawWorker] signing context has no message to sign: job=%s", job.JobID)
+	} else {
+		for i, msg := range messages {
+			w.Logger.Info("[WithdrawWorker] signing message job=%s chain=%s vault=%d task=%d payload=%s",
+				job.JobID, job.Chain, job.VaultID, i, hex.EncodeToString(msg))
+		}
+	}
+
+	if w.vaultProvider == nil {
+		w.Logger.Warn("[WithdrawWorker] vault provider is nil, skip vault debug context for job=%s", job.JobID)
+		return
+	}
+
+	committee, err := w.vaultProvider.VaultCommittee(job.Chain, job.VaultID, job.KeyEpoch)
+	if err != nil {
+		w.Logger.Warn("[WithdrawWorker] failed to load vault voter committee for job=%s chain=%s vault=%d epoch=%d: %v",
+			job.JobID, job.Chain, job.VaultID, job.KeyEpoch, err)
+	} else {
+		w.Logger.Info("[WithdrawWorker] vault voter committee job=%s chain=%s vault=%d epoch=%d size=%d members=%s",
+			job.JobID, job.Chain, job.VaultID, job.KeyEpoch, len(committee), formatSignerCommitteeForLog(committee))
+	}
+
+	groupPubkey, err := w.vaultProvider.VaultGroupPubkey(job.Chain, job.VaultID, job.KeyEpoch)
+	if err != nil {
+		w.Logger.Warn("[WithdrawWorker] failed to load aggregated public key for job=%s chain=%s vault=%d epoch=%d: %v",
+			job.JobID, job.Chain, job.VaultID, job.KeyEpoch, err)
+		return
+	}
+	w.Logger.Info("[WithdrawWorker] aggregated public key job=%s chain=%s vault=%d epoch=%d pubkey=%s",
+		job.JobID, job.Chain, job.VaultID, job.KeyEpoch, hex.EncodeToString(groupPubkey))
+}
+
+func formatSignerCommitteeForLog(committee []SignerInfo) string {
+	if len(committee) == 0 {
+		return "[]"
+	}
+	members := make([]string, 0, len(committee))
+	for i, member := range committee {
+		memberID := string(member.ID)
+		if memberID == "" {
+			memberID = "unknown"
+		}
+		members = append(members, fmt.Sprintf("%d:%s", i+1, memberID))
+	}
+	return "[" + strings.Join(members, ",") + "]"
 }
 
 func isBTCChain(chainName string) bool {

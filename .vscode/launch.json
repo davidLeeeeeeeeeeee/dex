@@ -8,7 +8,7 @@
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/main",
             "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
+            "console": "integratedTerminal",
             "showLog": false,
             "output": "${workspaceFolder}/.vscode/__debug_main.exe",
             "preLaunchTask": "Prepare debug binaries",
@@ -24,7 +24,7 @@
             "mode": "auto",
             "program": "${fileDirname}",
             "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
+            "console": "integratedTerminal",
             "showLog": false,
             "output": "${workspaceFolder}/.vscode/__debug_current_file.exe",
             "preLaunchTask": "Prepare debug binaries"
@@ -36,7 +36,7 @@
             "mode": "test",
             "program": "${fileDirname}",
             "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
+            "console": "integratedTerminal",
             "showLog": false,
             "output": "${workspaceFolder}/.vscode/__debug_current_test.exe",
             "preLaunchTask": "Prepare debug binaries"
@@ -56,7 +56,7 @@
             "mode": "auto",
             "program": "${workspaceFolder}/print/print_files.go",
             "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
+            "console": "integratedTerminal",
             "showLog": false,
             "output": "${workspaceFolder}/.vscode/__debug_print_files.exe",
             "preLaunchTask": "Prepare debug binaries"
@@ -68,7 +68,7 @@
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/explorer",
             "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
+            "console": "integratedTerminal",
             "showLog": false,
             "output": "${workspaceFolder}/.vscode/__debug_explorer.exe",
             "preLaunchTask": "Prepare explorer debug run"

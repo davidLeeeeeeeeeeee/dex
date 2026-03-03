@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,6 +127,21 @@ func (c *Coordinator) StartSession(ctx context.Context, params *StartSessionPara
 
 	if len(committeeInfo) < params.Threshold {
 		return ErrInsufficientParticipants
+	}
+	c.logInfo("[Coordinator] start signing session job=%s chain=%s vault=%d epoch=%d threshold=%d sign_algo=%s tasks=%d",
+		params.JobID, params.Chain, params.VaultID, params.KeyEpoch, params.Threshold, params.SignAlgo.String(), len(params.Messages))
+	c.logInfo("[Coordinator] vault voter committee job=%s chain=%s vault=%d epoch=%d size=%d members=%s",
+		params.JobID, params.Chain, params.VaultID, params.KeyEpoch, len(committeeInfo), formatSignerInfoList(committeeInfo))
+	for i, msg := range params.Messages {
+		c.logInfo("[Coordinator] signing message job=%s chain=%s vault=%d task=%d payload=%s",
+			params.JobID, params.Chain, params.VaultID, i, hex.EncodeToString(msg))
+	}
+	if groupPubkey, pubErr := c.vaultProvider.VaultGroupPubkey(params.Chain, params.VaultID, params.KeyEpoch); pubErr != nil {
+		c.logWarn("[Coordinator] failed to load aggregated public key for job=%s chain=%s vault=%d epoch=%d: %v",
+			params.JobID, params.Chain, params.VaultID, params.KeyEpoch, pubErr)
+	} else {
+		c.logInfo("[Coordinator] aggregated public key job=%s chain=%s vault=%d epoch=%d pubkey=%s",
+			params.JobID, params.Chain, params.VaultID, params.KeyEpoch, hex.EncodeToString(groupPubkey))
 	}
 
 	// 查找本节点在委员会中的索引
@@ -642,27 +659,34 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 		for _, s := range shares {
 			signerIDs = append(signerIDs, s.SignerID)
 		}
+		signerAddresses := participantAddressesBySignerIDs(sess, signerIDs)
+		c.logInfo("[Coordinator] aggregate input job=%s chain=%s vault=%d epoch=%d task=%d signers=%s message=%s signature=%s",
+			sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, taskIdx,
+			strings.Join(signerAddresses, ","),
+			hex.EncodeToString(msg),
+			hex.EncodeToString(sig))
 		valid, verifyErr, panicVal := c.verifyAggregatedSignature(sess, msg, sig)
 		if panicVal != nil {
-			logs.Warn("[Coordinator] task %d: aggregated signature panic during verify (signers=%v sighash=%x sig=%x panic=%v)",
-				taskIdx, signerIDs, shortBytes(msg, 8), shortBytes(sig, 8), panicVal)
+			c.logWarn("[Coordinator] task %d: aggregated signature panic during verify (job=%s signers=%s message=%s sig=%s panic=%v)",
+				taskIdx, sess.JobID, strings.Join(signerAddresses, ","), hex.EncodeToString(msg), hex.EncodeToString(sig), panicVal)
 			continue
 		}
 		if verifyErr != nil {
-			logs.Warn("[Coordinator] task %d: aggregated signature verify error (signers=%v sighash=%x sig=%x err=%v)",
-				taskIdx, signerIDs, shortBytes(msg, 8), shortBytes(sig, 8), verifyErr)
+			c.logWarn("[Coordinator] task %d: aggregated signature verify error (job=%s signers=%s message=%s sig=%s err=%v)",
+				taskIdx, sess.JobID, strings.Join(signerAddresses, ","), hex.EncodeToString(msg), hex.EncodeToString(sig), verifyErr)
 			continue
 		}
 		if !valid {
-			logs.Warn("[Coordinator] task %d: aggregated signature invalid (signers=%v sighash=%x sig=%x)",
-				taskIdx, signerIDs, shortBytes(msg, 8), shortBytes(sig, 8))
+			c.logWarn("[Coordinator] task %d: aggregated signature invalid (job=%s signers=%s message=%s sig=%s)",
+				taskIdx, sess.JobID, strings.Join(signerAddresses, ","), hex.EncodeToString(msg), hex.EncodeToString(sig))
 			continue
 		}
 
 		// 该 task 已完成
 		signatures[taskIdx] = sig
 		completedTasks[taskIdx] = true
-		logs.Info("[Coordinator] task %d completed, signature=%x", taskIdx, sig[:8])
+		c.logInfo("[Coordinator] task %d completed job=%s signers=%s signature=%s",
+			taskIdx, sess.JobID, strings.Join(signerAddresses, ","), hex.EncodeToString(sig))
 	}
 
 	// 检查是否有任何 task 完成
@@ -697,6 +721,12 @@ func (c *Coordinator) verifyAggregatedSignature(sess *roastsession.Session, msg,
 		}
 		verifyPubkey = xOnly
 	}
+	c.logInfo("[Coordinator] verify aggregated signature input job=%s chain=%s vault=%d epoch=%d sign_algo=%s group_pubkey=%s verify_pubkey=%s message=%s signature=%s",
+		sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, signAlgo.String(),
+		hex.EncodeToString(groupPubkey),
+		hex.EncodeToString(verifyPubkey),
+		hex.EncodeToString(msg),
+		hex.EncodeToString(sig))
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -704,6 +734,8 @@ func (c *Coordinator) verifyAggregatedSignature(sess *roastsession.Session, msg,
 		}
 	}()
 	valid, err = frost.Verify(signAlgo, verifyPubkey, msg, sig)
+	c.logInfo("[Coordinator] verify aggregated signature result job=%s chain=%s vault=%d epoch=%d valid=%t err=%v",
+		sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, valid, err)
 	return valid, err, nil
 }
 
@@ -818,6 +850,18 @@ func (c *Coordinator) HandleRoastSigShare(env *Envelope) error {
 	if err != nil {
 		return err
 	}
+	shareHexList := make([]string, 0, len(shares))
+	for _, share := range shares {
+		shareHexList = append(shareHexList, hex.EncodeToString(share))
+	}
+	signerAddr := string(env.From)
+	if participantIndex >= 0 && participantIndex < len(sess.Committee) {
+		if sess.Committee[participantIndex].ID != "" {
+			signerAddr = sess.Committee[participantIndex].ID
+		}
+	}
+	c.logInfo("[Coordinator] received signature share job=%s chain=%s vault=%d epoch=%d signer=%s participant_index=%d shares=%s",
+		env.SessionID, env.Chain, env.VaultID, env.Epoch, signerAddr, participantIndex+1, strings.Join(shareHexList, ","))
 
 	return sess.AddShare(participantIndex, shares)
 }
@@ -851,6 +895,55 @@ func (c *Coordinator) CloseSession(jobID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.sessions, jobID)
+}
+
+func (c *Coordinator) logInfo(format string, args ...any) {
+	if c != nil && c.Logger != nil {
+		c.Logger.Info(format, args...)
+		return
+	}
+	logs.Info(format, args...)
+}
+
+func (c *Coordinator) logWarn(format string, args ...any) {
+	if c != nil && c.Logger != nil {
+		c.Logger.Warn(format, args...)
+		return
+	}
+	logs.Warn(format, args...)
+}
+
+func formatSignerInfoList(committee []SignerInfo) string {
+	if len(committee) == 0 {
+		return "[]"
+	}
+	members := make([]string, 0, len(committee))
+	for i, member := range committee {
+		memberID := string(member.ID)
+		if memberID == "" {
+			memberID = "unknown"
+		}
+		members = append(members, fmt.Sprintf("%d:%s", i+1, memberID))
+	}
+	return "[" + strings.Join(members, ",") + "]"
+}
+
+func participantAddressesBySignerIDs(sess *roastsession.Session, signerIDs []int) []string {
+	if len(signerIDs) == 0 {
+		return nil
+	}
+	addresses := make([]string, 0, len(signerIDs))
+	for _, signerID := range signerIDs {
+		addr := fmt.Sprintf("signer#%d", signerID)
+		participantIndex := signerID - 1
+		if sess != nil && participantIndex >= 0 && participantIndex < len(sess.Committee) {
+			if sess.Committee[participantIndex].ID != "" {
+				addr = sess.Committee[participantIndex].ID
+			}
+		}
+		addresses = append(addresses, addr)
+	}
+	return addresses
 }
 
 func participantIndexFor(sess *roastsession.Session, nodeID NodeID) (int, bool) {

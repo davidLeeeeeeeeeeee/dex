@@ -5,6 +5,7 @@ package roast
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -500,6 +501,8 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		return nil, fmt.Errorf("invalid group pubkey length for signing: %d", len(pubBytes))
 	}
 	groupPubBytes = pubBytes
+	logs.Info("[Participant] signing context miner=%s job=%s chain=%s vault=%d epoch=%d sign_algo=%s tasks=%d aggregated_pubkey=%s",
+		p.nodeID, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, sess.SignAlgo.String(), numTasks, hex.EncodeToString(groupPubBytes))
 	if len(pubBytes) == 33 {
 		resolvedGroupPubX = new(big.Int).SetBytes(pubBytes[1:33])
 	} else {
@@ -519,6 +522,8 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		if len(msg) == 0 {
 			return nil, fmt.Errorf("empty signing message for task %d", i)
 		}
+		logs.Info("[Participant] signing input miner=%s job=%s chain=%s vault=%d epoch=%d task=%d message=%s",
+			p.nodeID, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, i, hex.EncodeToString(msg))
 
 		// 验证 nonce 是否绑定到正确的消息（防二次签名攻击）
 		hidingNonceBytes := sess.HidingNonces[i]
@@ -600,6 +605,8 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		shareBytes := make([]byte, 32)
 		z.FillBytes(shareBytes)
 		shares[i] = shareBytes
+		logs.Info("[Participant] signature share generated miner=%s job=%s chain=%s vault=%d epoch=%d task=%d signer_id=%d share=%s",
+			p.nodeID, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, i, selfSignerID, hex.EncodeToString(shareBytes))
 	}
 
 	return shares, nil
