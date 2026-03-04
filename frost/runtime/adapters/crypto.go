@@ -103,7 +103,7 @@ func (e *Secp256k1ROASTExecutor) AggregateSignatures(R runtime.CurvePoint, share
 			Share:    s.Share,
 		}
 	}
-	return roast.AggregateSignatures(curve.Point{X: R.X, Y: R.Y}, roastShares, e.group)
+	return roast.AggregateSignaturesBIP340(curve.Point{X: R.X, Y: R.Y}, roastShares, e.group)
 }
 
 // GenerateNoncePair 生成 nonce 对

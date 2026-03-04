@@ -218,7 +218,11 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 		if memberID == w.localAddress {
 			myIndex = i + 1
 		}
+		w.Logger.Debug("[TransitionWorker] dkg committee member session=%s chain=%s vault=%d epoch=%d member_index=%d member_id=%s pubkey_fp=%s",
+			sessionID, chain, vaultID, epochID, i+1, memberID, shareFingerprintForLog(member.PublicKey))
 	}
+	w.Logger.Debug("[TransitionWorker] dkg start context session=%s chain=%s vault=%d epoch=%d sign_algo=%s threshold=%d committee=%s local=%s my_index=%d",
+		sessionID, chain, vaultID, epochID, signAlgo.String(), threshold, committeeMembersForLog(committeeMembers), w.localAddress, myIndex)
 	if myIndex == 0 {
 		w.Logger.Debug("[TransitionWorker] node %s not in committee for session %s. Committee: %v",
 			w.localAddress, sessionID, committeeMembers)
@@ -449,6 +453,8 @@ func (w *TransitionWorker) submitShares(ctx context.Context, session *DKGSession
 		// 鑾峰彇棰勮绠楃殑 share 鍜屽姞瀵嗛殢鏈烘暟
 		shareBytes := session.LocalShares[receiverIndex]
 		encRand := session.EncRands[receiverIndex]
+		w.Logger.Debug("[TransitionWorker] dkg share mapping session=%s chain=%s vault=%d epoch=%d dealer=%s dealer_index=%d receiver=%s receiver_index=%d share_fp=%s rand_fp=%s",
+			session.SessionID, session.Chain, session.VaultID, session.EpochID, w.localAddress, session.MyIndex, receiverID, receiverIndex, shareFingerprintForLog(shareBytes), shareFingerprintForLog(encRand))
 
 		// ECIES 鍔犲瘑
 		ciphertext, err := security.ECIESEncrypt(receiverPubKey, shareBytes, encRand)
@@ -506,11 +512,21 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 
 	// 1) 璁＄畻鏈湴瀵硅嚜宸辩殑澶氶」寮忎唤棰濓紙dealer 涓鸿嚜宸憋紝receiver 涓鸿嚜宸辩储寮曪級
 	myShareBytes := dkgExec.EvaluateShare(session.Polynomial, session.MyIndex)
+	w.Logger.Debug("[TransitionWorker] dkg local polynomial share session=%s chain=%s vault=%d epoch=%d node=%s my_index=%d share_fp=%s",
+		session.SessionID, session.Chain, session.VaultID, session.EpochID, w.localAddress, session.MyIndex, shareFingerprintForLog(myShareBytes))
 
 	// 2) 鏀堕泦骞惰В瀵嗘墍鏈夊彂缁欐湰鑺傜偣鐨?shares锛岄獙璇佸悗鑱氬悎
 	decryptedShares, err := w.collectAndVerifyShares(ctx, dkgExec, session)
 	if err != nil {
 		return fmt.Errorf("collect shares: %w", err)
+	}
+	for _, dealerID := range session.Committee {
+		if dealerID == w.localAddress {
+			continue
+		}
+		shareBytes := decryptedShares[dealerID]
+		w.Logger.Debug("[TransitionWorker] dkg decrypted share session=%s chain=%s vault=%d epoch=%d dealer=%s receiver=%s receiver_index=%d share_fp=%s",
+			session.SessionID, session.Chain, session.VaultID, session.EpochID, dealerID, w.localAddress, session.MyIndex, shareFingerprintForLog(shareBytes))
 	}
 
 	// 鑱氬悎鎵€鏈?share锛歴_i = 危_j f_j(i)
@@ -520,15 +536,23 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 		allShares = append(allShares, s)
 	}
 	aggShare := dkgExec.AggregateShares(allShares)
+	w.Logger.Debug("[TransitionWorker] dkg aggregate share input summary session=%s chain=%s vault=%d epoch=%d input_count=%d committee=%s",
+		session.SessionID, session.Chain, session.VaultID, session.EpochID, len(allShares), committeeMembersForLog(session.Committee))
 
 	session.LocalShare = new(big.Int).SetBytes(aggShare)
 	session.LocalShareBytes = aggShare
+	w.Logger.Debug("[TransitionWorker] dkg aggregate share result session=%s chain=%s vault=%d epoch=%d node=%s my_index=%d agg_share_fp=%s",
+		session.SessionID, session.Chain, session.VaultID, session.EpochID, w.localAddress, session.MyIndex, shareFingerprintForLog(aggShare))
 	if w.localShareStore != nil {
 		shareCopy := make([]byte, len(aggShare))
 		copy(shareCopy, aggShare)
 		if err := w.localShareStore.SaveLocalShare(session.Chain, session.VaultID, session.EpochID, shareCopy); err != nil {
 			w.Logger.Warn("[TransitionWorker] failed to persist local share for %s/%d/%d: %v",
 				session.Chain, session.VaultID, session.EpochID, err)
+		} else {
+			w.Logger.Debug("[TransitionWorker] persisted aggregated local share session=%s chain=%s vault=%d epoch=%d key=%s share_fp=%s",
+				session.SessionID, session.Chain, session.VaultID, session.EpochID,
+				keys.KeyFrostLocalShare(session.Chain, session.VaultID, session.EpochID), shareFingerprintForLog(shareCopy))
 		}
 	}
 
@@ -538,6 +562,8 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 		return fmt.Errorf("aggregate group pubkey: %w", err)
 	}
 	session.GroupPubkey = groupPubkey
+	w.Logger.Debug("[TransitionWorker] dkg group pubkey ready session=%s chain=%s vault=%d epoch=%d group_pubkey_fp=%s",
+		session.SessionID, session.Chain, session.VaultID, session.EpochID, shareFingerprintForLog(groupPubkey))
 
 	session.Phase = "KEY_READY"
 	w.Logger.Info("[TransitionWorker] generateKey completed: localShare=%x groupPubkey=%x",
@@ -556,6 +582,8 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 
 	// 1. 鎵弿璇?session 鐨勬墍鏈?DKG share锛堟寜鍓嶇紑锛?
 	sharePrefix := fmt.Sprintf("v1_frost_vault_dkg_share_%s_%d_%s_", session.Chain, session.VaultID, padUint(session.EpochID))
+	w.Logger.Debug("[TransitionWorker] collect shares context session=%s chain=%s vault=%d epoch=%d receiver=%s receiver_index=%d committee=%s share_prefix=%s",
+		session.SessionID, session.Chain, session.VaultID, session.EpochID, w.localAddress, session.MyIndex, committeeMembersForLog(session.Committee), sharePrefix)
 
 	// 瑙ｆ瀽鏈湴 secp256k1 绉侀挜锛堢敤浜?ECIES 瑙ｅ瘑锛?
 	localPriv32, err := w.loadLocalDecryptPrivateKey()
@@ -574,6 +602,8 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 		if share.ReceiverId != w.localAddress {
 			return true
 		}
+		w.Logger.Debug("[TransitionWorker] collect share candidate session=%s chain=%s vault=%d epoch=%d dealer=%s receiver=%s key=%s ciphertext_len=%d",
+			session.SessionID, session.Chain, session.VaultID, session.EpochID, share.DealerId, share.ReceiverId, k, len(share.Ciphertext))
 
 		// 瑙ｅ瘑瀵嗘枃
 		plain, err := security.ECIESDecrypt(localPriv32, share.Ciphertext)
@@ -595,7 +625,13 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 		}
 
 		// 璁板綍
+		if prev, exists := result[share.DealerId]; exists {
+			w.Logger.Warn("[TransitionWorker] duplicate share from dealer session=%s chain=%s vault=%d epoch=%d dealer=%s prev_fp=%s new_fp=%s",
+				session.SessionID, session.Chain, session.VaultID, session.EpochID, share.DealerId, shareFingerprintForLog(prev), shareFingerprintForLog(plain))
+		}
 		result[share.DealerId] = plain
+		w.Logger.Debug("[TransitionWorker] verified decrypted share session=%s chain=%s vault=%d epoch=%d dealer=%s receiver=%s receiver_index=%d share_fp=%s",
+			session.SessionID, session.Chain, session.VaultID, session.EpochID, share.DealerId, w.localAddress, session.MyIndex, shareFingerprintForLog(plain))
 		return true
 	})
 	if err != nil {
@@ -614,8 +650,33 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing valid shares from dealers: %v", missing)
 	}
+	w.Logger.Debug("[TransitionWorker] collect shares completed session=%s chain=%s vault=%d epoch=%d received=%d expected=%d",
+		session.SessionID, session.Chain, session.VaultID, session.EpochID, len(result), len(session.Committee)-1)
 
 	return result, nil
+}
+
+func shareFingerprintForLog(data []byte) string {
+	if len(data) == 0 {
+		return "len=0"
+	}
+	sum := sha256.Sum256(data)
+	prefixLen := 8
+	if len(data) < prefixLen {
+		prefixLen = len(data)
+	}
+	return fmt.Sprintf("len=%d,prefix=%x,sha256=%x", len(data), data[:prefixLen], sum[:8])
+}
+
+func committeeMembersForLog(committee []string) string {
+	if len(committee) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(committee))
+	for idx, member := range committee {
+		parts = append(parts, fmt.Sprintf("%d:%s", idx+1, member))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 func (w *TransitionWorker) loadLocalDecryptPrivateKey() ([]byte, error) {
@@ -667,6 +728,8 @@ func (w *TransitionWorker) aggregateGroupPubkey(ctx context.Context, session *DK
 	if err != nil {
 		return nil, err
 	}
+	w.Logger.Debug("[TransitionWorker] aggregate group pubkey context session=%s chain=%s vault=%d epoch=%d committee=%s commitment_count=%d",
+		session.SessionID, session.Chain, session.VaultID, session.EpochID, committeeMembersForLog(session.Committee), len(commitments))
 	ai0Points := make([][]byte, 0, len(session.Committee))
 	missing := make([]string, 0)
 	for _, dealerID := range session.Committee {
@@ -676,6 +739,8 @@ func (w *TransitionWorker) aggregateGroupPubkey(ctx context.Context, session *DK
 			continue
 		}
 		ai0Points = append(ai0Points, commit.AI0)
+		w.Logger.Debug("[TransitionWorker] aggregate group pubkey contributor session=%s dealer=%s ai0_fp=%s",
+			session.SessionID, dealerID, shareFingerprintForLog(commit.AI0))
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing DKG commitments (AI0) from dealers: %v", missing)
@@ -684,6 +749,7 @@ func (w *TransitionWorker) aggregateGroupPubkey(ctx context.Context, session *DK
 		return nil, fmt.Errorf("no AI0 commitments found")
 	}
 	groupPubkey := dkgExec.ComputeGroupPubkey(ai0Points)
+	w.Logger.Debug("[TransitionWorker] aggregate group pubkey result session=%s group_pubkey_fp=%s", session.SessionID, shareFingerprintForLog(groupPubkey))
 	return groupPubkey, nil
 }
 
@@ -1353,4 +1419,3 @@ func (w *TransitionWorker) planContractMigrationJobs(ctx context.Context, chain 
 
 	return nil
 }
-

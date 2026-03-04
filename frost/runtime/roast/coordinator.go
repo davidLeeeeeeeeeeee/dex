@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"dex/frost/core/curve"
 	"dex/frost/core/frost"
 	roastsession "dex/frost/runtime/session"
 	"dex/logs"
@@ -281,7 +283,8 @@ func permuteCommittee(committee []roastsession.Participant, seed []byte) []roast
 
 // runCoordinatorLoop 协调者主循环
 func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession.Session) {
-	logs.Info("[Coordinator] starting session %s", sess.JobID)
+	c.logInfo("[Coordinator] starting coordinator loop job=%s chain=%s vault=%d epoch=%d state=%d messenger=%v",
+		sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, sess.GetState(), c.messenger != nil)
 
 	// 定期检查协调者切换的 ticker
 	rotateTicker := time.NewTicker(1 * time.Second)
@@ -290,12 +293,13 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 	for {
 		select {
 		case <-ctx.Done():
+			c.logInfo("[Coordinator] context cancelled for session %s", sess.JobID)
 			return
 		case <-rotateTicker.C:
 			// 检查是否需要切换协调者（超时切换）
 			if !c.isCurrentCoordinator(sess) {
 				// 本节点不再是协调者，停止循环
-				logs.Info("[Coordinator] no longer coordinator for session %s, stopping", sess.JobID)
+				c.logInfo("[Coordinator] no longer coordinator for session %s, stopping", sess.JobID)
 				return
 			}
 		default:
@@ -310,37 +314,39 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 
 			// 等待收集或超时
 			if c.waitForNonces(ctx, sess) {
+				c.logInfo("[Coordinator] nonces collected, freezing nonce payload and broadcasting sign request job=%s", sess.JobID)
+				// 冻结 nonce payload：首次计算后缓存，后续重复广播使用相同 payload
+				c.freezeAndBroadcastSignRequest(sess)
 				sess.SetState(roastsession.SignSessionStateCollectingShares)
 			} else {
-				// 超时，检查是否需要切换协调者
+				c.logInfo("[Coordinator] nonce collection timeout job=%s retry=%d", sess.JobID, sess.RetryCount)
 				if c.shouldRotateCoordinator(sess) {
-					logs.Info("[Coordinator] rotating coordinator for session %s due to timeout", sess.JobID)
-					// 停止当前循环，让新的协调者接管
+					c.logInfo("[Coordinator] rotating coordinator for session %s due to nonce timeout", sess.JobID)
 					return
 				}
-				// 否则尝试重试
 				if !c.retryWithNewSet(sess) {
+					c.logInfo("[Coordinator] max retries exceeded, session %s FAILED at nonce collection", sess.JobID)
 					sess.SetState(roastsession.SignSessionStateFailed)
 					return
 				}
 			}
 
 		case roastsession.SignSessionStateCollectingShares:
-			// 广播签名请求（包含聚合的 nonce）
+			// 重复广播签名请求（使用冻结的 nonce payload），确保 participant 不会漏掉
 			c.broadcastSignRequest(sess)
 
 			// 等待收集或超时
 			if c.waitForShares(ctx, sess) {
+				c.logInfo("[Coordinator] shares collected, aggregating job=%s", sess.JobID)
 				sess.SetState(roastsession.SignSessionStateAggregating)
 			} else {
-				// 超时，检查是否需要切换协调者
+				c.logInfo("[Coordinator] share collection timeout job=%s retry=%d", sess.JobID, sess.RetryCount)
 				if c.shouldRotateCoordinator(sess) {
-					logs.Info("[Coordinator] rotating coordinator for session %s due to timeout", sess.JobID)
-					// 停止当前循环，让新的协调者接管
+					c.logInfo("[Coordinator] rotating coordinator for session %s due to share timeout", sess.JobID)
 					return
 				}
-				// 否则尝试重试
 				if !c.retryWithNewSet(sess) {
+					c.logInfo("[Coordinator] max retries exceeded, session %s FAILED at share collection", sess.JobID)
 					sess.SetState(roastsession.SignSessionStateFailed)
 					return
 				}
@@ -350,18 +356,16 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 			// 聚合签名（支持部分完成）
 			signatures, err := c.aggregateSignatures(sess)
 			if err != nil {
-				logs.Error("[Coordinator] aggregate failed: %v", err)
-				// 检查是否需要切换协调者
+				c.logWarn("[Coordinator] aggregate failed job=%s: %v", sess.JobID, err)
 				if c.shouldRotateCoordinator(sess) {
-					logs.Info("[Coordinator] rotating coordinator for session %s due to aggregate failure", sess.JobID)
+					c.logInfo("[Coordinator] rotating coordinator for session %s due to aggregate failure", sess.JobID)
 					return
 				}
-				// 否则尝试重试（对未完成的 task 继续收集）
 				if !c.retryWithNewSet(sess) {
+					c.logInfo("[Coordinator] max retries exceeded, session %s FAILED at aggregation", sess.JobID)
 					sess.SetState(roastsession.SignSessionStateFailed)
 					return
 				}
-				// 重试时回到收集 share 状态
 				sess.SetState(roastsession.SignSessionStateCollectingShares)
 			} else {
 				// 检查是否所有 task 都已完成
@@ -443,15 +447,22 @@ func (c *Coordinator) waitForNonces(ctx context.Context, sess *roastsession.Sess
 	}
 }
 
-// broadcastSignRequest 广播签名请求
+// broadcastSignRequest 广播签名请求（使用缓存的 nonce payload）
 func (c *Coordinator) broadcastSignRequest(sess *roastsession.Session) {
 	if c.messenger == nil {
 		return
 	}
-	selectedSet := sess.SelectedSetSnapshot()
 
-	// 聚合 nonce 承诺
-	aggregatedNonces := c.aggregateNonces(sess)
+	// 使用缓存的 nonce payload（由 freezeAndBroadcastSignRequest 设置）
+	c.mu.RLock()
+	payload := sess.CachedNoncePayload
+	c.mu.RUnlock()
+	if len(payload) == 0 {
+		// 回退：如果没缓存，重新计算（不应该发生）
+		payload = c.aggregateNonces(sess)
+	}
+
+	selectedSet := sess.SelectedSetSnapshot()
 	peers := make([]NodeID, 0, len(selectedSet))
 	for _, idx := range selectedSet {
 		if idx >= len(sess.Committee) {
@@ -472,10 +483,19 @@ func (c *Coordinator) broadcastSignRequest(sess *roastsession.Session) {
 		SignAlgo:  pb.SignAlgo(sess.SignAlgo),
 		Epoch:     sess.KeyEpoch,
 		Round:     2,
-		Payload:   aggregatedNonces,
+		Payload:   payload,
 	}
 
 	_ = c.messenger.Broadcast(peers, toTypesRoastEnvelope(msg))
+}
+
+// freezeAndBroadcastSignRequest 首次计算 nonce payload 并缓存，然后广播
+func (c *Coordinator) freezeAndBroadcastSignRequest(sess *roastsession.Session) {
+	payload := c.aggregateNonces(sess)
+	c.mu.Lock()
+	sess.CachedNoncePayload = payload
+	c.mu.Unlock()
+	c.broadcastSignRequest(sess)
 }
 
 // aggregateNonces 聚合 nonce 承诺
@@ -589,11 +609,17 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 
 	// 按 task 级别聚合签名（支持部分完成）
 	for taskIdx, msg := range sess.Messages {
-		// 检查该 task 是否已有足够的数据
+		// 只使用同时提供了 nonce 和 share 的参与者（取交集）
+		// 确保 R 的 nonce 贡献者集合 = z 的 share 贡献者集合
 		nonces := make([]NonceInput, 0, len(selectedSet))
+		shares := make([]ShareInput, 0, len(selectedSet))
 		for _, idx := range selectedSet {
-			nonceData, ok := sess.GetNonce(idx)
-			if !ok || taskIdx >= len(nonceData.HidingNonces) || taskIdx >= len(nonceData.BindingNonces) {
+			nonceData, nonceOK := sess.GetNonce(idx)
+			shareData, shareOK := sess.GetShare(idx)
+			if !nonceOK || !shareOK {
+				continue
+			}
+			if taskIdx >= len(nonceData.HidingNonces) || taskIdx >= len(nonceData.BindingNonces) || taskIdx >= len(shareData.Shares) {
 				continue
 			}
 
@@ -610,36 +636,20 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 				continue
 			}
 
+			shareValue := new(big.Int).SetBytes(shareData.Shares[taskIdx])
 			nonces = append(nonces, NonceInput{
 				SignerID:     idx + 1,
 				HidingPoint:  hidingPoint,
 				BindingPoint: bindingPoint,
 			})
-		}
-
-		if len(nonces) < minSigners {
-			// 该 task 的 nonce 不足，跳过（继续收集）
-			logs.Debug("[Coordinator] task %d: insufficient nonces (%d < %d), continue collecting", taskIdx, len(nonces), minSigners)
-			continue
-		}
-
-		shares := make([]ShareInput, 0, len(selectedSet))
-		for _, idx := range selectedSet {
-			shareData, ok := sess.GetShare(idx)
-			if !ok || taskIdx >= len(shareData.Shares) {
-				continue
-			}
-
-			shareValue := new(big.Int).SetBytes(shareData.Shares[taskIdx])
 			shares = append(shares, ShareInput{
 				SignerID: idx + 1,
 				Share:    shareValue,
 			})
 		}
 
-		if len(shares) < minSigners {
-			// 该 task 的 share 不足，跳过（继续收集）
-			logs.Debug("[Coordinator] task %d: insufficient shares (%d < %d), continue collecting", taskIdx, len(shares), minSigners)
+		if len(nonces) < minSigners {
+			logs.Debug("[Coordinator] task %d: insufficient nonce+share pairs (%d < %d), continue collecting", taskIdx, len(nonces), minSigners)
 			continue
 		}
 
@@ -650,15 +660,104 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 			continue
 		}
 
+		// --- 诊断日志：输出 Coordinator 侧的 R、e、signer IDs、share 值 ---
+		signerIDs := make([]int, 0, len(shares))
+		for _, s := range shares {
+			signerIDs = append(signerIDs, s.SignerID)
+		}
+		rParity := -1
+		if R.Y != nil {
+			rParity = int(R.Y.Bit(0))
+		}
+		coordGroupPubX := big.NewInt(0)
+		if c.vaultProvider != nil {
+			if gpb, gpErr := c.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch); gpErr == nil && len(gpb) >= 32 {
+				if len(gpb) == 33 {
+					coordGroupPubX = new(big.Int).SetBytes(gpb[1:33])
+				} else {
+					coordGroupPubX = new(big.Int).SetBytes(gpb[:32])
+				}
+			}
+		}
+		diagE := roastExec.ComputeChallenge(R, coordGroupPubX, msg)
+		diagLambdas := roastExec.ComputeLagrangeCoefficients(signerIDs)
+		rxBytes := make([]byte, 32)
+		if R.X != nil {
+			R.X.FillBytes(rxBytes)
+		}
+		gpxBytes := make([]byte, 32)
+		coordGroupPubX.FillBytes(gpxBytes)
+		eBytes := make([]byte, 32)
+		diagE.FillBytes(eBytes)
+		c.logInfo("[Coordinator][sign-diag] job=%s task=%d R_x=%s R_y_parity=%d groupPubX=%s challenge=%s signer_ids=%v",
+			sess.JobID, taskIdx,
+			hex.EncodeToString(rxBytes), rParity,
+			hex.EncodeToString(gpxBytes),
+			hex.EncodeToString(eBytes),
+			signerIDs)
+		for _, s := range shares {
+			sBytes := make([]byte, 32)
+			s.Share.FillBytes(sBytes)
+			lambdaHex := "nil"
+			if diagLambdas[s.SignerID] != nil {
+				lb := make([]byte, 32)
+				diagLambdas[s.SignerID].FillBytes(lb)
+				lambdaHex = hex.EncodeToString(lb)
+			}
+			c.logInfo("[Coordinator][sign-diag] job=%s task=%d signer=%d lambda=%s share=%s",
+				sess.JobID, taskIdx, s.SignerID, lambdaHex, hex.EncodeToString(sBytes))
+		}
+
 		sig, err := roastExec.AggregateSignatures(R, shares)
 		if err != nil {
 			logs.Warn("[Coordinator] task %d: failed to aggregate signatures: %v", taskIdx, err)
 			continue
 		}
-		signerIDs := make([]int, 0, len(shares))
-		for _, s := range shares {
-			signerIDs = append(signerIDs, s.SignerID)
+		// ===== 诊断：coordinator 端 z*G vs R_even + e*P =====
+		{
+			grp := curve.NewSecp256k1Group()
+			// 聚合 z
+			zTotal := big.NewInt(0)
+			for _, s := range shares {
+				zTotal.Add(zTotal, s.Share)
+			}
+			zTotal.Mod(zTotal, grp.Order())
+			// z*G
+			zG := grp.ScalarBaseMult(zTotal)
+			// R_even (BIP340: lift_x with even Y)
+			Reven := curve.Point{X: new(big.Int).Set(R.X), Y: new(big.Int).Set(R.Y)}
+			if Reven.Y.Bit(0) == 1 {
+				fieldP, _ := new(big.Int).SetString("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16)
+				Reven.Y = new(big.Int).Sub(fieldP, Reven.Y)
+			}
+			// e*P
+			gpb, _ := c.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch)
+			var P curve.Point
+			if len(gpb) == 33 {
+				P = grp.DecompressPoint(gpb)
+			} else if len(gpb) >= 32 {
+				px := new(big.Int).SetBytes(gpb[:32])
+				P = grp.DecompressPoint(grp.SerializePoint(curve.Point{X: px}))
+			}
+			eP := grp.ScalarMult(P, diagE)
+			// R_even + e*P
+			expected := grp.Add(Reven, eP)
+			match := zG.X.Cmp(expected.X) == 0 && zG.Y.Cmp(expected.Y) == 0
+			c.logInfo("[Coordinator][z-verify] job=%s task=%d z_total=%s zG=(%s,%s) R_even=(%s,%s) eP=(%s,%s) expected=(%s,%s) match=%v",
+				sess.JobID, taskIdx,
+				hex.EncodeToString(bigIntFillBytes32(zTotal)),
+				hex.EncodeToString(bigIntFillBytes32(zG.X)), hex.EncodeToString(bigIntFillBytes32(zG.Y)),
+				hex.EncodeToString(bigIntFillBytes32(Reven.X)), hex.EncodeToString(bigIntFillBytes32(Reven.Y)),
+				hex.EncodeToString(bigIntFillBytes32(eP.X)), hex.EncodeToString(bigIntFillBytes32(eP.Y)),
+				hex.EncodeToString(bigIntFillBytes32(expected.X)), hex.EncodeToString(bigIntFillBytes32(expected.Y)),
+				match)
+			// 分项：Σ nonce contributions (from R)
+			c.logInfo("[Coordinator][z-verify] job=%s task=%d R_orig=(%s,%s) R_y_parity=%d P=(%s,%s)",
+				sess.JobID, taskIdx,
+				hex.EncodeToString(bigIntFillBytes32(R.X)), hex.EncodeToString(bigIntFillBytes32(R.Y)), R.Y.Bit(0),
+				hex.EncodeToString(bigIntFillBytes32(P.X)), hex.EncodeToString(bigIntFillBytes32(P.Y)))
 		}
+
 		signerAddresses := participantAddressesBySignerIDs(sess, signerIDs)
 		c.logInfo("[Coordinator] aggregate input job=%s chain=%s vault=%d epoch=%d task=%d signers=%s message=%s signature=%s",
 			sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, taskIdx,
@@ -669,6 +768,9 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 		if panicVal != nil {
 			c.logWarn("[Coordinator] task %d: aggregated signature panic during verify (job=%s signers=%s message=%s sig=%s panic=%v)",
 				taskIdx, sess.JobID, strings.Join(signerAddresses, ","), hex.EncodeToString(msg), hex.EncodeToString(sig), panicVal)
+			c.logWarn("[Coordinator] task %d: session dump during verify panic job=%s sess=%s",
+				taskIdx, sess.JobID, formatSessionDump(sess))
+			c.logVerifyPanicDiagnostics(sess, taskIdx, msg, sig, signerIDs)
 			continue
 		}
 		if verifyErr != nil {
@@ -956,6 +1058,387 @@ func participantIndexFor(sess *roastsession.Session, nodeID NodeID) (int, bool) 
 		}
 	}
 	return -1, false
+}
+
+func formatSessionDump(sess *roastsession.Session) string {
+	if sess == nil {
+		return "<nil>"
+	}
+
+	signAlgo := pb.SignAlgo(sess.SignAlgo)
+	selectedSet := sess.SelectedSetSnapshot()
+	indexes := collectSessionParticipantIndexes(sess, selectedSet)
+	committeeDump := make([]string, 0, len(sess.Committee))
+	for i, participant := range sess.Committee {
+		committeeDump = append(committeeDump,
+			fmt.Sprintf("{index=%d id=%q address=%q ip=%q}", i, participant.ID, participant.Address, participant.IP))
+	}
+
+	nonceDump := make([]string, 0, len(indexes))
+	shareDump := make([]string, 0, len(indexes))
+	for _, idx := range indexes {
+		label := formatSessionParticipantLabel(sess, idx)
+		if nonce, ok := sess.GetNonce(idx); ok {
+			nonceDump = append(nonceDump,
+				fmt.Sprintf("{participant=%s received_at=%s hiding=%s binding=%s}",
+					label,
+					formatTimeForLog(nonce.ReceivedAt),
+					formatByteMatrixHex(nonce.HidingNonces),
+					formatByteMatrixHex(nonce.BindingNonces)))
+		} else {
+			nonceDump = append(nonceDump, fmt.Sprintf("{participant=%s missing=true}", label))
+		}
+
+		if share, ok := sess.GetShare(idx); ok {
+			shareDump = append(shareDump,
+				fmt.Sprintf("{participant=%s received_at=%s shares=%s}",
+					label,
+					formatTimeForLog(share.ReceivedAt),
+					formatByteMatrixHex(share.Shares)))
+		} else {
+			shareDump = append(shareDump, fmt.Sprintf("{participant=%s missing=true}", label))
+		}
+	}
+
+	return fmt.Sprintf("{job_id=%q vault_id=%d chain=%q key_epoch=%d sign_algo=%s threshold=%d my_index=%d state=%s retry_count=%d start_height=%d started_at=%s completed_at=%s selected_set=%v messages=%s committee=%s nonces=%s shares=%s final_signatures=%s}",
+		sess.JobID,
+		sess.VaultID,
+		sess.Chain,
+		sess.KeyEpoch,
+		signAlgo.String(),
+		sess.Threshold,
+		sess.MyIndex,
+		sess.GetState().String(),
+		sess.RetryCount,
+		sess.StartHeight,
+		formatTimeForLog(sess.StartedAt),
+		formatTimeForLog(sess.CompletedAt),
+		selectedSet,
+		formatByteMatrixHex(sess.Messages),
+		"["+strings.Join(committeeDump, ",")+"]",
+		"["+strings.Join(nonceDump, ",")+"]",
+		"["+strings.Join(shareDump, ",")+"]",
+		formatByteMatrixHex(sess.GetFinalSignatures()),
+	)
+}
+
+func collectSessionParticipantIndexes(sess *roastsession.Session, selectedSet []int) []int {
+	if sess == nil {
+		return nil
+	}
+	indexes := make([]int, 0, len(sess.Committee)+len(selectedSet))
+	seen := make(map[int]struct{}, len(sess.Committee)+len(selectedSet))
+	for i := range sess.Committee {
+		indexes = append(indexes, i)
+		seen[i] = struct{}{}
+	}
+	for _, idx := range selectedSet {
+		if _, ok := seen[idx]; ok {
+			continue
+		}
+		indexes = append(indexes, idx)
+		seen[idx] = struct{}{}
+	}
+	return indexes
+}
+
+func formatSessionParticipantLabel(sess *roastsession.Session, idx int) string {
+	if sess != nil && idx >= 0 && idx < len(sess.Committee) {
+		id := sess.Committee[idx].ID
+		if id != "" {
+			return fmt.Sprintf("%d(%s)", idx, id)
+		}
+	}
+	return fmt.Sprintf("%d", idx)
+}
+
+func formatByteMatrixHex(matrix [][]byte) string {
+	if len(matrix) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(matrix))
+	for _, data := range matrix {
+		parts = append(parts, hex.EncodeToString(data))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func formatTimeForLog(t time.Time) string {
+	if t.IsZero() {
+		return "zero"
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func (c *Coordinator) logVerifyPanicDiagnostics(sess *roastsession.Session, taskIdx int, msg, sig []byte, shareSignerIDs []int) {
+	if c == nil || sess == nil {
+		return
+	}
+
+	signAlgo := pb.SignAlgo(sess.SignAlgo)
+	selectedSet := sess.SelectedSetSnapshot()
+	expectedSignerIDs := make([]int, 0, len(selectedSet))
+	nonceSignerIDs := make([]int, 0, len(selectedSet))
+
+	nonceFPGroups := make(map[string][]int)
+	shareFPGroups := make(map[string][]int)
+	for _, idx := range selectedSet {
+		signerID := idx + 1
+		expectedSignerIDs = append(expectedSignerIDs, signerID)
+
+		if nonce, ok := sess.GetNonce(idx); ok && taskIdx < len(nonce.HidingNonces) && taskIdx < len(nonce.BindingNonces) {
+			nonceSignerIDs = append(nonceSignerIDs, signerID)
+			nonceFP := fmt.Sprintf("h=%s,b=%s",
+				dataFingerprintForLog(nonce.HidingNonces[taskIdx]),
+				dataFingerprintForLog(nonce.BindingNonces[taskIdx]))
+			nonceFPGroups[nonceFP] = append(nonceFPGroups[nonceFP], signerID)
+		}
+		if share, ok := sess.GetShare(idx); ok && taskIdx < len(share.Shares) {
+			shareFP := dataFingerprintForLog(share.Shares[taskIdx])
+			shareFPGroups[shareFP] = append(shareFPGroups[shareFP], signerID)
+		}
+	}
+
+	c.logWarn("[Coordinator][panic-diagnose] task=%d job=%s chain=%s vault=%d epoch=%d sign_algo=%s threshold=%d selected_set=%v expected_signer_ids=%v nonce_signer_ids=%v share_signer_ids=%v msg_fp=%s sig_fp=%s",
+		taskIdx, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, signAlgo.String(), sess.Threshold, selectedSet,
+		expectedSignerIDs, nonceSignerIDs, shareSignerIDs, dataFingerprintForLog(msg), dataFingerprintForLog(sig))
+
+	aggNoncePayload := c.aggregateNonces(sess)
+	payloadSignerIDs, nonceBlob, hasHeader := decodeAggregatedNoncePayload(aggNoncePayload)
+	legacyPosSignerIDs := make([]int, len(selectedSet))
+	for i := range selectedSet {
+		legacyPosSignerIDs[i] = i + 1
+	}
+	c.logWarn("[Coordinator][panic-diagnose] nonce payload header=%t payload_signer_ids=%v legacy_pos_signer_ids=%v payload_fp=%s nonce_blob_fp=%s",
+		hasHeader, payloadSignerIDs, legacyPosSignerIDs, dataFingerprintForLog(aggNoncePayload), dataFingerprintForLog(nonceBlob))
+
+	missingShareSignerIDs, extraShareSignerIDs := diffIntSet(expectedSignerIDs, shareSignerIDs)
+	if len(missingShareSignerIDs) > 0 || len(extraShareSignerIDs) > 0 {
+		c.logWarn("[Coordinator][panic-diagnose] signer mismatch expected_vs_share missing=%v extra=%v",
+			missingShareSignerIDs, extraShareSignerIDs)
+	}
+
+	for shareFP, signerIDs := range shareFPGroups {
+		if len(signerIDs) <= 1 {
+			continue
+		}
+		c.logWarn("[Coordinator][panic-diagnose] duplicate share fingerprint task=%d share_fp=%s signer_ids=%v (possible wrong share source/mapping)",
+			taskIdx, shareFP, signerIDs)
+	}
+	for nonceFP, signerIDs := range nonceFPGroups {
+		if len(signerIDs) <= 1 {
+			continue
+		}
+		c.logWarn("[Coordinator][panic-diagnose] duplicate nonce fingerprint task=%d nonce_fp=%s signer_ids=%v (possible nonce/mapping issue)",
+			taskIdx, nonceFP, signerIDs)
+	}
+
+	selectedPosSignerID := make(map[int]int, len(selectedSet))
+	for pos, idx := range selectedSet {
+		selectedPosSignerID[idx+1] = pos + 1
+	}
+	for _, signerID := range shareSignerIDs {
+		participantIndex := signerID - 1
+		participantID := formatSessionParticipantLabel(sess, participantIndex)
+		posID, inSelected := selectedPosSignerID[signerID]
+
+		nonceSummary := "missing"
+		if nonce, ok := sess.GetNonce(participantIndex); ok {
+			nonceSummary = fmt.Sprintf("tasks_h=%d tasks_b=%d", len(nonce.HidingNonces), len(nonce.BindingNonces))
+			if taskIdx < len(nonce.HidingNonces) && taskIdx < len(nonce.BindingNonces) {
+				nonceSummary = fmt.Sprintf("%s task_h_fp=%s task_b_fp=%s",
+					nonceSummary, dataFingerprintForLog(nonce.HidingNonces[taskIdx]), dataFingerprintForLog(nonce.BindingNonces[taskIdx]))
+			} else {
+				nonceSummary = nonceSummary + " task_missing=true"
+			}
+		}
+
+		shareSummary := "missing"
+		if share, ok := sess.GetShare(participantIndex); ok {
+			shareSummary = fmt.Sprintf("tasks=%d", len(share.Shares))
+			if taskIdx < len(share.Shares) {
+				shareSummary = fmt.Sprintf("%s task_share_fp=%s", shareSummary, dataFingerprintForLog(share.Shares[taskIdx]))
+			} else {
+				shareSummary = shareSummary + " task_missing=true"
+			}
+		}
+
+		c.logWarn("[Coordinator][panic-diagnose] signer detail signer_id=%d selected_pos_id=%d in_selected=%t participant=%s nonce={%s} share={%s}",
+			signerID, posID, inSelected, participantID, nonceSummary, shareSummary)
+	}
+
+	if c.vaultProvider == nil {
+		c.logWarn("[Coordinator][panic-diagnose] vault provider is nil, committee/group_pubkey cross-check skipped")
+		return
+	}
+
+	chainCommittee, err := c.vaultProvider.VaultCommittee(sess.Chain, sess.VaultID, sess.KeyEpoch)
+	if err != nil {
+		c.logWarn("[Coordinator][panic-diagnose] load committee failed chain=%s vault=%d epoch=%d err=%v",
+			sess.Chain, sess.VaultID, sess.KeyEpoch, err)
+	} else {
+		sessionCommitteeIDs := committeeIDsFromSession(sess.Committee)
+		chainCommitteeIDs := committeeIDsFromSignerInfo(chainCommittee)
+		onlySession, onlyChain := diffStringSet(sessionCommitteeIDs, chainCommitteeIDs)
+		c.logWarn("[Coordinator][panic-diagnose] committee compare epoch=%d same_order=%t same_set=%t session_committee=%s chain_committee=%s only_session=%s only_chain=%s",
+			sess.KeyEpoch,
+			sameStringSlice(sessionCommitteeIDs, chainCommitteeIDs),
+			len(onlySession) == 0 && len(onlyChain) == 0,
+			formatStringSliceForLog(sessionCommitteeIDs),
+			formatStringSliceForLog(chainCommitteeIDs),
+			formatStringSliceForLog(onlySession),
+			formatStringSliceForLog(onlyChain))
+	}
+
+	for _, epoch := range diagnosticEpochCandidates(sess.KeyEpoch) {
+		groupPubkey, pubErr := c.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, epoch)
+		if pubErr != nil {
+			c.logWarn("[Coordinator][panic-diagnose] epoch verify skipped epoch=%d load group pubkey failed: %v", epoch, pubErr)
+			continue
+		}
+		valid, verifyErr, panicVal, verifyPubkey := verifyWithGroupPubkey(signAlgo, groupPubkey, msg, sig)
+		c.logWarn("[Coordinator][panic-diagnose] epoch verify epoch=%d group_pubkey_fp=%s verify_pubkey_fp=%s valid=%t err=%v panic=%v",
+			epoch,
+			dataFingerprintForLog(groupPubkey),
+			dataFingerprintForLog(verifyPubkey),
+			valid, verifyErr, panicVal)
+	}
+}
+
+func verifyWithGroupPubkey(signAlgo pb.SignAlgo, groupPubkey, msg, sig []byte) (valid bool, err error, panicVal any, verifyPubkey []byte) {
+	verifyPubkey = append([]byte(nil), groupPubkey...)
+	if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
+		xOnly, normalizeErr := normalizeXOnlyPubKeyForVerify(groupPubkey)
+		if normalizeErr != nil {
+			return false, normalizeErr, nil, nil
+		}
+		verifyPubkey = xOnly
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			panicVal = r
+		}
+	}()
+
+	valid, err = frost.Verify(signAlgo, verifyPubkey, msg, sig)
+	return valid, err, nil, verifyPubkey
+}
+
+func diagnosticEpochCandidates(epoch uint64) []uint64 {
+	candidates := make([]uint64, 0, 3)
+	if epoch > 0 {
+		candidates = append(candidates, epoch-1)
+	}
+	candidates = append(candidates, epoch)
+	if epoch < ^uint64(0) {
+		candidates = append(candidates, epoch+1)
+	}
+	return candidates
+}
+
+func committeeIDsFromSession(committee []roastsession.Participant) []string {
+	ids := make([]string, 0, len(committee))
+	for i, member := range committee {
+		if member.ID == "" {
+			ids = append(ids, fmt.Sprintf("<empty@%d>", i))
+			continue
+		}
+		ids = append(ids, member.ID)
+	}
+	return ids
+}
+
+func committeeIDsFromSignerInfo(committee []SignerInfo) []string {
+	ids := make([]string, 0, len(committee))
+	for i, member := range committee {
+		memberID := strings.TrimSpace(string(member.ID))
+		if memberID == "" {
+			ids = append(ids, fmt.Sprintf("<empty@%d>", i))
+			continue
+		}
+		ids = append(ids, memberID)
+	}
+	return ids
+}
+
+func sameStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func diffStringSet(expected, actual []string) (missing []string, extra []string) {
+	expectedSet := make(map[string]struct{}, len(expected))
+	actualSet := make(map[string]struct{}, len(actual))
+	for _, item := range expected {
+		expectedSet[item] = struct{}{}
+	}
+	for _, item := range actual {
+		actualSet[item] = struct{}{}
+	}
+	for item := range expectedSet {
+		if _, ok := actualSet[item]; !ok {
+			missing = append(missing, item)
+		}
+	}
+	for item := range actualSet {
+		if _, ok := expectedSet[item]; !ok {
+			extra = append(extra, item)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	return missing, extra
+}
+
+func diffIntSet(expected, actual []int) (missing []int, extra []int) {
+	expectedSet := make(map[int]struct{}, len(expected))
+	actualSet := make(map[int]struct{}, len(actual))
+	for _, item := range expected {
+		expectedSet[item] = struct{}{}
+	}
+	for _, item := range actual {
+		actualSet[item] = struct{}{}
+	}
+	for item := range expectedSet {
+		if _, ok := actualSet[item]; !ok {
+			missing = append(missing, item)
+		}
+	}
+	for item := range actualSet {
+		if _, ok := expectedSet[item]; !ok {
+			extra = append(extra, item)
+		}
+	}
+	sort.Ints(missing)
+	sort.Ints(extra)
+	return missing, extra
+}
+
+func formatStringSliceForLog(items []string) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	return "[" + strings.Join(items, ",") + "]"
+}
+
+func dataFingerprintForLog(data []byte) string {
+	if len(data) == 0 {
+		return "len=0"
+	}
+	sum := sha256.Sum256(data)
+	prefixLen := 8
+	if len(data) < prefixLen {
+		prefixLen = len(data)
+	}
+	return fmt.Sprintf("len=%d,prefix=%s,sha256=%s", len(data), hex.EncodeToString(data[:prefixLen]), hex.EncodeToString(sum[:8]))
 }
 
 func splitNonceCommitPayload(payload []byte, signAlgo pb.SignAlgo) ([][]byte, [][]byte, error) {

@@ -52,12 +52,6 @@
       "gasPriceGwei": 3,
       "gasLimit": 180000
     },
-    "trx": {
-      "signAlgo": "ECDSA_SECP256K1",
-      "thresholdScheme": "gg20",
-      "vaultsPerChain": 5,
-      "feeLimitSun": 30000000
-    },
     "sol": {
       "signAlgo": "ED25519",
       "frostVariant": "frost-ed25519",

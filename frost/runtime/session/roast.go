@@ -48,32 +48,33 @@ type ShareData struct {
 
 // Session tracks ROAST coordinator state and collected data.
 type Session struct {
-	mu sync.RWMutex
+	mu sync.RWMutex // 读写锁，保护并发访问
 
-	JobID    string
-	VaultID  uint32
-	Chain    string
-	KeyEpoch uint64
-	SignAlgo int32
+	JobID    string // 签名任务唯一标识
+	VaultID  uint32 // 保管库 ID，标识使用哪个多签钱包
+	Chain    string // 目标链标识（如 "btc"）
+	KeyEpoch uint64 // 密钥世代，标识当前使用的 DKG 密钥集合
+	SignAlgo int32  // 签名算法类型（如 Schnorr / ECDSA）
 
-	Messages  [][]byte
-	Committee []Participant
-	Threshold int
-	MyIndex   int
+	Messages  [][]byte      // 待签名的消息列表（每条消息对应一个签名）
+	Committee []Participant // 参与本次签名的委员会成员列表
+	Threshold int           // 门限值 t，至少需要 t+1 个签名份额
+	MyIndex   int           // 本节点在委员会中的索引
 
-	SelectedSet []int
-	Nonces      map[int]*NonceData
-	Shares      map[int]*ShareData
+	SelectedSet []int              // 当前轮次选中的签名者索引集合
+	Nonces      map[int]*NonceData // 已收集的 nonce 承诺，key 为参与者索引
+	Shares      map[int]*ShareData // 已收集的签名份额，key 为参与者索引
 
-	State       SignSessionState
-	RetryCount  int
-	StartHeight uint64
-	StartedAt   time.Time
-	CompletedAt time.Time
+	State       SignSessionState // 当前会话状态（初始化 / 收集nonce / 收集份额 / 完成）
+	RetryCount  int              // 已重试次数（轮换签名者集合）
+	StartHeight uint64           // 会话发起时的区块高度
+	StartedAt   time.Time        // 会话创建时间
+	CompletedAt time.Time        // 会话完成时间
 
-	FinalSignatures [][]byte
+	FinalSignatures    [][]byte // 聚合后的最终签名列表
+	CachedNoncePayload []byte   // 冻结的 nonce 聚合 payload（确保重复广播一致性）
 
-	closed bool
+	closed bool // 会话是否已关闭，关闭后拒绝任何变更
 }
 
 // NewSession creates a new ROAST session with initialized maps.

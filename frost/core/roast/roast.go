@@ -163,22 +163,53 @@ func ComputePartialSignature(
 	e *big.Int, // 挑战值
 	group curve.Group,
 ) *big.Int {
+	return computePartialSig(hidingNonce, bindingNonce, share, rho, lambda, e, group, false, false)
+}
+
+// ComputePartialSignatureBIP340 计算 BIP-340 兼容的部分签名
+// 与 SchnorrSign 对齐：R.y 奇数时取反 nonce（对应 k=n-k），P.y 奇数时取反 share（对应 d=n-d）
+func ComputePartialSignatureBIP340(
+	signerID int,
+	hidingNonce, bindingNonce *big.Int,
+	share *big.Int,
+	rho, lambda, e *big.Int,
+	group curve.Group,
+	negateNonce bool, // R.y 是否为奇数
+	negateShare bool, // P.y 是否为奇数
+) *big.Int {
+	return computePartialSig(hidingNonce, bindingNonce, share, rho, lambda, e, group, negateNonce, negateShare)
+}
+
+func computePartialSig(
+	hidingNonce, bindingNonce, share, rho, lambda, e *big.Int,
+	group curve.Group, negateNonce, negateShare bool,
+) *big.Int {
 	n := group.Order()
 
+	hk := new(big.Int).Set(hidingNonce)
+	bk := new(big.Int).Set(bindingNonce)
+	if negateNonce {
+		hk.Sub(n, hk)
+		bk.Sub(n, bk)
+	}
+
+	sk := new(big.Int).Set(share)
+	if negateShare {
+		sk.Sub(n, sk)
+	}
+
 	// k_i + ρ_i * k'_i
-	z := new(big.Int).Mul(rho, bindingNonce)
-	z.Add(z, hidingNonce)
+	z := new(big.Int).Mul(rho, bk)
+	z.Add(z, hk)
 	z.Mod(z, n)
 
 	// λ_i * e * s_i
 	term := new(big.Int).Mul(lambda, e)
-	term.Mul(term, share)
+	term.Mul(term, sk)
 	term.Mod(term, n)
 
-	// z_i = (k_i + ρ_i * k'_i) + (λ_i * e * s_i)
 	z.Add(z, term)
 	z.Mod(z, n)
-
 	return z
 }
 
@@ -207,6 +238,32 @@ func AggregateSignatures(
 	}
 
 	// 序列化签名: R.x (32 bytes) || z (32 bytes)
+	sig := make([]byte, 64)
+	R.X.FillBytes(sig[:32])
+	z.FillBytes(sig[32:])
+
+	return sig, nil
+}
+
+// AggregateSignaturesBIP340 聚合签名份额（BIP-340 版本）
+// 与 ComputePartialSignatureBIP340 配合使用。
+// 签名者已在 ComputePartialSignatureBIP340 中处理了 R.y/P.y parity，
+// 此处直接求和并序列化，不做额外翻转。
+func AggregateSignaturesBIP340(
+	R curve.Point,
+	shares []SignerShare,
+	group curve.Group,
+) ([]byte, error) {
+	if len(shares) == 0 {
+		return nil, ErrInsufficientSigners
+	}
+
+	z := big.NewInt(0)
+	for _, s := range shares {
+		z.Add(z, s.Share)
+	}
+	z.Mod(z, group.Order())
+
 	sig := make([]byte, 64)
 	R.X.FillBytes(sig[:32])
 	z.FillBytes(sig[32:])

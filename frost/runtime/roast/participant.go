@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -178,13 +179,20 @@ func (p *Participant) SetShare(chain string, vaultID uint32, epoch uint64, share
 	p.shares[key] = shareCopy
 	store := p.shareStore
 	p.mu.Unlock()
+	logs.Debug("[Participant] set local share node=%s chain=%s vault=%d epoch=%d key=%s share_fp=%s",
+		p.nodeID, chain, vaultID, epoch, key, shareFingerprintForLog(shareCopy))
 
 	if store == nil {
+		logs.Warn("[Participant] local share store is nil node=%s chain=%s vault=%d epoch=%d key=%s",
+			p.nodeID, chain, vaultID, epoch, key)
 		return
 	}
 	if err := store.SaveLocalShare(chain, vaultID, epoch, shareCopy); err != nil {
 		p.Logger.Warn("[Participant] failed to persist local share for %s/%d/%d: %v", chain, vaultID, epoch, err)
+		return
 	}
+	logs.Debug("[Participant] persisted local share node=%s chain=%s vault=%d epoch=%d key=%s share_fp=%s",
+		p.nodeID, chain, vaultID, epoch, key, shareFingerprintForLog(shareCopy))
 }
 
 // GetShare 获取本地密钥份额
@@ -201,8 +209,24 @@ func (p *Participant) GetShare(chain string, vaultID uint32, epoch uint64) []byt
 			p.mu.Lock()
 			p.shares[key] = persistedCopy
 			p.mu.Unlock()
+			logs.Debug("[Participant] loaded local share from store node=%s chain=%s vault=%d epoch=%d key=%s persisted_fp=%s cache_fp=%s",
+				p.nodeID, chain, vaultID, epoch, key, shareFingerprintForLog(persistedCopy), shareFingerprintForLog(cached))
 			return persistedCopy
+		} else if err != nil {
+			logs.Warn("[Participant] load local share failed node=%s chain=%s vault=%d epoch=%d key=%s err=%v cache_fp=%s",
+				p.nodeID, chain, vaultID, epoch, key, err, shareFingerprintForLog(cached))
+		} else {
+			logs.Debug("[Participant] local share not found in store node=%s chain=%s vault=%d epoch=%d key=%s cache_fp=%s",
+				p.nodeID, chain, vaultID, epoch, key, shareFingerprintForLog(cached))
 		}
+	}
+
+	if len(cached) > 0 {
+		logs.Debug("[Participant] using cached local share node=%s chain=%s vault=%d epoch=%d key=%s share_fp=%s",
+			p.nodeID, chain, vaultID, epoch, key, shareFingerprintForLog(cached))
+	} else {
+		logs.Warn("[Participant] local share missing node=%s chain=%s vault=%d epoch=%d key=%s",
+			p.nodeID, chain, vaultID, epoch, key)
 	}
 
 	return cached
@@ -230,6 +254,62 @@ func cloneMessages(src [][]byte) [][]byte {
 		dst[i] = cloneBytes(src[i])
 	}
 	return dst
+}
+
+func shareFingerprintForLog(share []byte) string {
+	if len(share) == 0 {
+		return "len=0"
+	}
+	sum := sha256.Sum256(share)
+	prefixLen := 8
+	if len(share) < prefixLen {
+		prefixLen = len(share)
+	}
+	return fmt.Sprintf("len=%d,prefix=%s,sha256=%s", len(share), hex.EncodeToString(share[:prefixLen]), hex.EncodeToString(sum[:8]))
+}
+
+func committeeSummaryForLog(committee []SignerInfo) string {
+	if len(committee) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(committee))
+	for idx, member := range committee {
+		parts = append(parts, fmt.Sprintf("%d:%s", idx, member.ID))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func firstMessageForLog(messages [][]byte) string {
+	if len(messages) == 0 || len(messages[0]) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(messages[0])
+}
+
+func bigIntHexForLog(v *big.Int) string {
+	if v == nil {
+		return "nil"
+	}
+	return v.Text(16)
+}
+
+func bigIntFillBytes32(v *big.Int) []byte {
+	b := make([]byte, 32)
+	if v != nil {
+		v.FillBytes(b)
+	}
+	return b
+}
+
+func lagrangeMapForLog(signerIDs []int, lambdas map[int]*big.Int) string {
+	if len(signerIDs) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(signerIDs))
+	for _, signerID := range signerIDs {
+		parts = append(parts, fmt.Sprintf("%d:%s", signerID, bigIntHexForLog(lambdas[signerID])))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 // HandleNonceRequest 处理 nonce 请求
@@ -260,6 +340,8 @@ func (p *Participant) HandleRoastNonceRequest(env *Envelope) error {
 	if myIndex < 0 {
 		return ErrParticipantNotInCommittee
 	}
+	logs.Debug("[Participant] nonce request context node=%s job=%s chain=%s vault=%d epoch=%d sign_algo=%s coordinator=%s committee=%s my_index=%d",
+		p.nodeID, env.SessionID, env.Chain, env.VaultID, env.Epoch, env.SignAlgo.String(), env.From, committeeSummaryForLog(committee), myIndex)
 
 	// 验证请求是否来自当前协调者（防止旧协调者的请求）
 	// 参与者仅接受当前 agg_index 对应协调者的请求
@@ -273,6 +355,8 @@ func (p *Participant) HandleRoastNonceRequest(env *Envelope) error {
 	if myShare == nil {
 		return errors.New("local share not found")
 	}
+	logs.Debug("[Participant] selected local share for nonce request node=%s job=%s chain=%s vault=%d epoch=%d share_fp=%s",
+		p.nodeID, env.SessionID, env.Chain, env.VaultID, env.Epoch, shareFingerprintForLog(myShare))
 
 	// 创建或获取会话
 	decodedMsgs, _, ok := decodeRoastRequestPayload(env.Payload)
@@ -280,6 +364,8 @@ func (p *Participant) HandleRoastNonceRequest(env *Envelope) error {
 		return errors.New("nonce request missing signing messages")
 	}
 	messages := decodedMsgs
+	logs.Debug("[Participant] nonce request payload decoded node=%s job=%s task_count=%d first_msg=%s",
+		p.nodeID, env.SessionID, len(messages), firstMessageForLog(messages))
 	sess := p.getOrCreateSession(env.SessionID, env.Chain, env.VaultID, env.Epoch, env.SignAlgo, myIndex, myShare, messages)
 
 	// 生成 nonce
@@ -304,6 +390,12 @@ func (p *Participant) getOrCreateSession(jobID, chain string, vaultID uint32, ep
 		if len(sess.Messages) == 0 && len(messages) > 0 {
 			sess.Messages = cloneMessages(messages)
 		}
+		// coordinator retry 时重置状态，允许重新生成 nonce
+		if sess.State != ParticipantStateInit && sess.State != ParticipantStateNonceGenerated {
+			sess.State = ParticipantStateInit
+		}
+		logs.Debug("[Participant] reuse signing session node=%s job=%s chain=%s vault=%d epoch=%d my_index=%d state=%s message_count=%d share_fp=%s",
+			p.nodeID, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, sess.MyIndex, sess.State.String(), len(sess.Messages), shareFingerprintForLog(sess.MyShare))
 		return sess
 	}
 
@@ -321,6 +413,8 @@ func (p *Participant) getOrCreateSession(jobID, chain string, vaultID uint32, ep
 	}
 
 	p.sessions[jobID] = sess
+	logs.Debug("[Participant] create signing session node=%s job=%s chain=%s vault=%d epoch=%d my_index=%d sign_algo=%s message_count=%d share_fp=%s",
+		p.nodeID, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, sess.MyIndex, sess.SignAlgo.String(), len(sess.Messages), shareFingerprintForLog(sess.MyShare))
 	return sess
 }
 
@@ -479,6 +573,18 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 
 	numTasks := len(sess.HidingNonces)
 	shares := make([][]byte, numTasks)
+	logs.Debug("[Participant] compute signature shares start node=%s job=%s chain=%s vault=%d epoch=%d my_index=%d task_count=%d local_share_fp=%s",
+		p.nodeID, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, sess.MyIndex, numTasks, shareFingerprintForLog(sess.MyShare))
+	if p.vaultProvider == nil {
+		return nil, errors.New("vault provider is required for signing")
+	}
+	if signingCommittee, err := p.vaultProvider.VaultCommittee(sess.Chain, sess.VaultID, sess.KeyEpoch); err != nil {
+		logs.Warn("[Participant] failed to load signing committee snapshot node=%s job=%s chain=%s vault=%d epoch=%d err=%v",
+			p.nodeID, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, err)
+	} else {
+		logs.Debug("[Participant] signing committee snapshot node=%s job=%s chain=%s vault=%d epoch=%d committee=%s my_index=%d",
+			p.nodeID, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, committeeSummaryForLog(signingCommittee), sess.MyIndex)
+	}
 
 	// 获取密码学执行器
 	roastExec, err := p.cryptoFactory.NewROASTExecutor(int32(sess.SignAlgo))
@@ -490,9 +596,6 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 	myShare := new(big.Int).SetBytes(sess.MyShare)
 	resolvedGroupPubX := big.NewInt(0)
 	var groupPubBytes []byte
-	if p.vaultProvider == nil {
-		return nil, errors.New("vault provider is required for signing")
-	}
 	pubBytes, err := p.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load group pubkey for signing chain=%s vault=%d epoch=%d: %w", sess.Chain, sess.VaultID, sess.KeyEpoch, err)
@@ -576,6 +679,8 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		if lambda == nil {
 			lambda = big.NewInt(1)
 		}
+		logs.Info("[Participant] signer-share mapping node=%s job=%s task=%d my_index=%d self_signer_id=%d signer_ids=%v lambda_self=%s lambdas=%s",
+			p.nodeID, sess.JobID, i, sess.MyIndex+1, selfSignerID, signerIDs, bigIntHexForLog(lambda), lagrangeMapForLog(signerIDs, lambdas))
 
 		// 计算群承诺 R
 		R, err := roastExec.ComputeGroupCommitment(taskNonces, msg)
@@ -588,9 +693,24 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 
 		// 计算挑战值 e
 		e := roastExec.ComputeChallenge(R, groupPubX, msg)
+		rParity := -1
+		if R.Y != nil {
+			rParity = int(R.Y.Bit(0))
+		}
+		logs.Info("[Participant][sign-diag] node=%s job=%s task=%d signer_id=%d R_x=%s R_y_parity=%d groupPubX=%s challenge=%s rho=%s",
+			p.nodeID, sess.JobID, i, selfSignerID,
+			hex.EncodeToString(bigIntFillBytes32(R.X)), rParity,
+			hex.EncodeToString(bigIntFillBytes32(groupPubX)),
+			hex.EncodeToString(bigIntFillBytes32(e)),
+			hex.EncodeToString(bigIntFillBytes32(rho)))
 
 		// 计算部分签名 z_i = k_i + ρ_i * k'_i + λ_i * e * s_i
 		adjHidingNonce, adjBindingNonce := adjustNoncePairForBIP340(sess.SignAlgo, R, hidingNonce, bindingNonce)
+		nonceNegated := adjHidingNonce.Cmp(hidingNonce) != 0
+		shareNegated := myShare.Cmp(new(big.Int).SetBytes(sess.MyShare)) != 0
+		logs.Info("[Participant][sign-diag] node=%s job=%s task=%d signer_id=%d nonce_negated=%v share_negated=%v share_fp=%s nonce_count=%d",
+			p.nodeID, sess.JobID, i, selfSignerID, nonceNegated, shareNegated,
+			shareFingerprintForLog(bigIntFillBytes32(myShare)), len(taskNonces))
 		z := roastExec.ComputePartialSignature(PartialSignParams{
 			SignerID:     selfSignerID,
 			HidingNonce:  adjHidingNonce,
@@ -600,6 +720,44 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 			Lambda:       lambda,
 			Challenge:    e,
 		})
+
+		// --- 诊断：独立验证 z_i·G = nonce_part·G + key_part·G ---
+		{
+			grp := roastExec
+			// nonce_part = adjH + ρ * adjB
+			noncePart := new(big.Int).Mul(rho, adjBindingNonce)
+			noncePart.Add(noncePart, adjHidingNonce)
+			noncePart.Mod(noncePart, curve.NewSecp256k1Group().Order())
+			// key_part = λ * e * s
+			keyPart := new(big.Int).Mul(lambda, e)
+			keyPart.Mul(keyPart, myShare)
+			keyPart.Mod(keyPart, curve.NewSecp256k1Group().Order())
+			// z_check = nonce_part + key_part (should == z)
+			zCheck := new(big.Int).Add(noncePart, keyPart)
+			zCheck.Mod(zCheck, curve.NewSecp256k1Group().Order())
+			zOK := zCheck.Cmp(z) == 0
+			// nonce_pt = adjH*G + ρ*(adjB*G) — 用来验证与 R 的关系
+			adjHP := grp.ScalarBaseMult(adjHidingNonce)
+			adjBP := grp.ScalarBaseMult(adjBindingNonce)
+			// expected nonce contribution point for this signer: H_i + ρ_i * B_i
+			// (with adjusted nonces)
+			rhoB := curve.NewSecp256k1Group().ScalarMultBytes(curve.Point(adjBP), rho.Bytes())
+			nonceContribPt := curve.NewSecp256k1Group().Add(curve.Point(adjHP), rhoB)
+			// key contribution point: λ*e*s * G
+			keyContribPt := grp.ScalarBaseMult(keyPart)
+			// z_i * G
+			zG := grp.ScalarBaseMult(z)
+			// expected: nonce_contrib + key_contrib
+			expectedPt := curve.NewSecp256k1Group().Add(nonceContribPt, curve.Point(keyContribPt))
+			ptMatch := zG.X.Cmp(expectedPt.X) == 0 && zG.Y.Cmp(expectedPt.Y) == 0
+			// also check key contribution against public key share
+			pubSharePt := grp.ScalarBaseMult(myShare)
+			logs.Info("[Participant][z-verify] node=%s job=%s task=%d signer_id=%d z_check_match=%v pt_match=%v nonce_contrib=(%s) key_contrib=(%s) pubshare_x=%s",
+				p.nodeID, sess.JobID, i, selfSignerID, zOK, ptMatch,
+				hex.EncodeToString(bigIntFillBytes32(nonceContribPt.X)),
+				hex.EncodeToString(bigIntFillBytes32(curve.Point(keyContribPt).X)),
+				hex.EncodeToString(bigIntFillBytes32(curve.Point(pubSharePt).X)))
+		}
 
 		// 序列化份额（32 字节）
 		shareBytes := make([]byte, 32)
