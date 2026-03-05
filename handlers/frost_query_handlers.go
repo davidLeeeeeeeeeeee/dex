@@ -244,6 +244,11 @@ func (hm *HandlerManager) HandleListWithdraws(w http.ResponseWriter, r *http.Req
 			continue
 		}
 
+		// 过滤辅助 key：v1_frost_withdraw_ 可能会扫到 v1_frost_withdraw_q_ 等 KV 索引
+		if state.WithdrawId == "" || len(state.WithdrawId) < 10 {
+			continue
+		}
+
 		// 过滤 chain
 		if chain != "" && state.Chain != chain {
 			continue
@@ -538,6 +543,11 @@ func (hm *HandlerManager) HandleFrostWithdrawList(w http.ResponseWriter, r *http
 	for _, data := range results {
 		var state pb.FrostWithdrawState
 		if err := proto.Unmarshal(data, &state); err != nil {
+			continue
+		}
+
+		// 过滤辅助 key：v1_frost_withdraw_ 可能会扫到 v1_frost_withdraw_q_ 等 KV 索引
+		if state.WithdrawId == "" || len(state.WithdrawId) < 10 {
 			continue
 		}
 
