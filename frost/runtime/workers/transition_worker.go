@@ -264,13 +264,13 @@ func (w *TransitionWorker) StartSession(ctx context.Context, chain string, vault
 			session.CommitDeadline = transition.DkgCommitDeadline
 			session.SharingDeadline = transition.DkgSharingDeadline
 			session.DisputeDeadline = transition.DkgDisputeDeadline
-			w.Logger.Info("[TransitionWorker] session %s deadlines: commit=%d, sharing=%d, dispute=%d",
+			w.Logger.Debug("[TransitionWorker] session %s deadlines: commit=%d, sharing=%d, dispute=%d",
 				sessionID, session.CommitDeadline, session.SharingDeadline, session.DisputeDeadline)
 		}
 	}
 
 	w.sessions[sessionID] = session
-	w.Logger.Info("[TransitionWorker] started DKG session %s", sessionID)
+	w.Logger.Debug("[TransitionWorker] started DKG session %s", sessionID)
 
 	// 寮傛鎵ц DKG 娴佺▼
 	go w.runSession(ctx, session)
@@ -291,7 +291,7 @@ func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) 
 
 	// 鈴?蹇呴』绛?CommitDeadline 鍚屾鎴愬姛涓?> 0 鎵嶈兘缁х画锛屽惁鍒欎細璺宠繃楂樺害妫€鏌?
 	if session.CommitDeadline == 0 {
-		w.Logger.Info("[TransitionWorker] session %s CommitDeadline is 0, waiting for sync...", session.SessionID)
+		w.Logger.Debug("[TransitionWorker] session %s CommitDeadline is 0, waiting for sync...", session.SessionID)
 		for {
 			transitionKey := keys.KeyFrostVaultTransition(session.Chain, session.VaultID, session.EpochID)
 			if data, exists, err := w.stateReader.Get(transitionKey); err == nil && exists {
@@ -300,7 +300,7 @@ func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) 
 					session.CommitDeadline = transition.DkgCommitDeadline
 					session.SharingDeadline = transition.DkgSharingDeadline
 					session.DisputeDeadline = transition.DkgDisputeDeadline
-					w.Logger.Info("[TransitionWorker] session %s deadlines synced: commit=%d", session.SessionID, session.CommitDeadline)
+					w.Logger.Debug("[TransitionWorker] session %s deadlines synced: commit=%d", session.SessionID, session.CommitDeadline)
 					break
 				}
 			}
@@ -313,7 +313,7 @@ func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) 
 	}
 
 	// 绛夊緟鐩村埌杩涘叆 Sharing 闃舵 (height > CommitDeadline)
-	w.Logger.Info("[TransitionWorker] session %s waiting for sharing stage: height > %d", session.SessionID, session.CommitDeadline)
+	w.Logger.Debug("[TransitionWorker] session %s waiting for sharing stage: height > %d", session.SessionID, session.CommitDeadline)
 	w.waitForHeight(ctx, session.CommitDeadline+1)
 
 	// Phase 2: 绛夊緟鎵€鏈?commitment 骞舵彁浜?share
@@ -325,7 +325,7 @@ func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) 
 
 	// 鈴?绛夊緟 Sharing/Dispute 闃舵缁撴潫 (蹇呴』绛夐珮搴﹁秴杩?Deadline)
 	if session.DisputeDeadline > 0 {
-		w.Logger.Info("[TransitionWorker] session %s waiting for dispute window to close (waiting for height %d)...", session.SessionID, session.DisputeDeadline+1)
+		w.Logger.Debug("[TransitionWorker] session %s waiting for dispute window to close (waiting for height %d)...", session.SessionID, session.DisputeDeadline+1)
 		w.waitForHeight(ctx, session.DisputeDeadline+1)
 	} else {
 		time.Sleep(20 * time.Second)
@@ -344,7 +344,7 @@ func (w *TransitionWorker) runSession(ctx context.Context, session *DKGSession) 
 		return
 	}
 
-	w.Logger.Info("[TransitionWorker] DKG session %s completed", session.SessionID)
+	w.Logger.Debug("[TransitionWorker] DKG session %s completed", session.SessionID)
 }
 
 // GetCurrentHeight 鑾峰彇褰撳墠鍖哄潡楂樺害
@@ -380,7 +380,7 @@ func (w *TransitionWorker) waitForHeight(ctx context.Context, targetHeight uint6
 
 // submitCommitment 鎻愪氦 DKG 鎵胯
 func (w *TransitionWorker) submitCommitment(ctx context.Context, session *DKGSession) error {
-	w.Logger.Info("[TransitionWorker] submitCommitment session=%s", session.SessionID)
+	w.Logger.Debug("[TransitionWorker] submitCommitment session=%s", session.SessionID)
 
 	// 鑾峰彇 DKG 鎵ц鍣?
 	dkgExec, err := w.cryptoFactory.NewDKGExecutor(int32(session.SignAlgo))
@@ -512,7 +512,7 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 
 	// 1) 璁＄畻鏈湴瀵硅嚜宸辩殑澶氶」寮忎唤棰濓紙dealer 涓鸿嚜宸憋紝receiver 涓鸿嚜宸辩储寮曪級
 	myShareBytes := dkgExec.EvaluateShare(session.Polynomial, session.MyIndex)
-	w.Logger.Debug("[TransitionWorker] dkg local polynomial share session=%s chain=%s vault=%d epoch=%d node=%s my_index=%d share_fp=%s",
+	w.Logger.Info("[TransitionWorker] dkg local polynomial share session=%s chain=%s vault=%d epoch=%d node=%s my_index=%d share_fp=%s",
 		session.SessionID, session.Chain, session.VaultID, session.EpochID, w.localAddress, session.MyIndex, shareFingerprintForLog(myShareBytes))
 
 	// 2) 鏀堕泦骞惰В瀵嗘墍鏈夊彂缁欐湰鑺傜偣鐨?shares锛岄獙璇佸悗鑱氬悎
@@ -534,6 +534,10 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 	allShares = append(allShares, myShareBytes)
 	for _, s := range decryptedShares {
 		allShares = append(allShares, s)
+	}
+	for idx, s := range allShares {
+		w.Logger.Info("[TransitionWorker] dkg aggregate INPUT session=%s chain=%s vault=%d epoch=%d node=%s input_index=%d share_fp=%s",
+			session.SessionID, session.Chain, session.VaultID, session.EpochID, w.localAddress, idx, shareFingerprintForLog(s))
 	}
 	aggShare := dkgExec.AggregateShares(allShares)
 	w.Logger.Debug("[TransitionWorker] dkg aggregate share input summary session=%s chain=%s vault=%d epoch=%d input_count=%d committee=%s",
@@ -566,7 +570,7 @@ func (w *TransitionWorker) generateKey(ctx context.Context, session *DKGSession)
 		session.SessionID, session.Chain, session.VaultID, session.EpochID, shareFingerprintForLog(groupPubkey))
 
 	session.Phase = "KEY_READY"
-	w.Logger.Info("[TransitionWorker] generateKey completed: localShare=%x groupPubkey=%x",
+	w.Logger.Debug("[TransitionWorker] generateKey completed: localShare=%x groupPubkey=%x",
 		session.LocalShareBytes[:8], session.GroupPubkey[:8])
 	return nil
 }
@@ -602,6 +606,10 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 		if share.ReceiverId != w.localAddress {
 			return true
 		}
+		// 跳过自己作为 dealer 发给自己的 share（已在 generateKey 中通过 EvaluateShare 直接计算）
+		if share.DealerId == w.localAddress {
+			return true
+		}
 		w.Logger.Debug("[TransitionWorker] collect share candidate session=%s chain=%s vault=%d epoch=%d dealer=%s receiver=%s key=%s ciphertext_len=%d",
 			session.SessionID, session.Chain, session.VaultID, session.EpochID, share.DealerId, share.ReceiverId, k, len(share.Ciphertext))
 
@@ -630,7 +638,7 @@ func (w *TransitionWorker) collectAndVerifyShares(ctx context.Context, dkgExec D
 				session.SessionID, session.Chain, session.VaultID, session.EpochID, share.DealerId, shareFingerprintForLog(prev), shareFingerprintForLog(plain))
 		}
 		result[share.DealerId] = plain
-		w.Logger.Debug("[TransitionWorker] verified decrypted share session=%s chain=%s vault=%d epoch=%d dealer=%s receiver=%s receiver_index=%d share_fp=%s",
+		w.Logger.Info("[TransitionWorker] verified decrypted share session=%s chain=%s vault=%d epoch=%d dealer=%s receiver=%s receiver_index=%d share_fp=%s",
 			session.SessionID, session.Chain, session.VaultID, session.EpochID, share.DealerId, w.localAddress, session.MyIndex, shareFingerprintForLog(plain))
 		return true
 	})
@@ -823,7 +831,7 @@ func (w *TransitionWorker) newBaseMessage() *pb.BaseMessage {
 	}
 	w.lastIssuedNonce = nonce
 
-	w.Logger.Info("[TransitionWorker] newBaseMessage: sender=%s, base_nonce=%d, final_nonce=%d",
+	w.Logger.Debug("[TransitionWorker] newBaseMessage: sender=%s, base_nonce=%d, final_nonce=%d",
 		w.localAddress, currentNonce, nonce)
 
 	return &pb.BaseMessage{
@@ -991,7 +999,7 @@ func (w *TransitionWorker) checkVaultTrigger(ctx context.Context, chain string, 
 
 	// 6. 妫€鏌ユ槸鍚﹁揪鍒伴槇鍊?
 	if changeRatio >= w.transitionThreshold {
-		w.Logger.Info("[TransitionWorker] trigger condition met: chain=%s vault=%d epoch=%d height=%d change_ratio=%.4f (ewma)",
+		w.Logger.Debug("[TransitionWorker] trigger condition met: chain=%s vault=%d epoch=%d height=%d change_ratio=%.4f (ewma)",
 			chain, vaultID, currentEpoch+1, height, changeRatio)
 
 		// 鍒涘缓鏂扮殑 VaultTransitionState
@@ -1027,7 +1035,7 @@ func (w *TransitionWorker) checkAndRestartDKG(ctx context.Context, chain string,
 		return nil // 涓嶆槸澶辫触鐘舵€侊紝鏃犻渶閲嶅惎
 	}
 
-	w.Logger.Info("[TransitionWorker] DKG failed detected: chain=%s vault=%d epoch=%d, triggering restart", chain, vaultID, currentEpoch)
+	w.Logger.Debug("[TransitionWorker] DKG failed detected: chain=%s vault=%d epoch=%d, triggering restart", chain, vaultID, currentEpoch)
 
 	// 鑾峰彇瀹屾暣濮斿憳浼氾紙浠?Top10000 閲嶆柊鍒嗛厤锛?
 	signers, err := w.signerProvider.Top10000(height)
@@ -1077,7 +1085,7 @@ func (w *TransitionWorker) checkAndRestartDKG(ctx context.Context, chain string,
 	// 娉ㄦ剰锛氳繖閲岄渶瑕侀€氳繃 txSubmitter 鎻愪氦 transition state
 	// 涓轰簡绠€鍖栵紝鎴戜滑鐩存帴鍚姩鏂扮殑 DKG 浼氳瘽锛宼ransition state 浼氬湪 DKG 娴佺▼涓垱寤?
 	// TODO: 瀹炵幇 SubmitTransitionStateTx 鏂规硶浠ユ樉寮忓垱寤?transition state
-	w.Logger.Info("[TransitionWorker] DKG restart: chain=%s vault=%d new_epoch=%d n=%d t=%d",
+	w.Logger.Debug("[TransitionWorker] DKG restart: chain=%s vault=%d new_epoch=%d n=%d t=%d",
 		chain, vaultID, newEpoch, len(newCommitteeMembers), threshold)
 
 	// 鍚姩鏂扮殑 DKG 浼氳瘽
@@ -1182,7 +1190,7 @@ func (w *TransitionWorker) createTransitionState(ctx context.Context, chain stri
 
 	// TODO: 杩欓噷搴旇閫氳繃 VM 浜ゆ槗鍒涘缓 transition state
 	// 鐩墠 transition state 鐨勫垱寤哄簲璇ョ敱 VM 澶勭悊锛岃繖閲屽彧鏄Е鍙?DKG 浼氳瘽
-	logs.Info("[TransitionWorker] transition state should be created by VM: chain=%s vault=%d epoch=%d (sign_algo=%v)",
+	logs.Debug("[TransitionWorker] transition state should be created by VM: chain=%s vault=%d epoch=%d (sign_algo=%v)",
 		chain, vaultID, epochID, transition.SignAlgo)
 
 	// 鍚姩 DKG 浼氳瘽
@@ -1196,7 +1204,7 @@ func padUint(n uint64) string {
 
 // PlanMigrationJobs 瑙勫垝杩佺Щ Job锛堟壂鎻忚 Vault 鐨勮祫閲戯紝鐢熸垚杩佺Щ妯℃澘锛?
 func (w *TransitionWorker) PlanMigrationJobs(ctx context.Context, chain string, vaultID uint32, epochID uint64) error {
-	logs.Info("[TransitionWorker] PlanMigrationJobs: chain=%s vault=%d epoch=%d", chain, vaultID, epochID)
+	logs.Debug("[TransitionWorker] PlanMigrationJobs: chain=%s vault=%d epoch=%d", chain, vaultID, epochID)
 
 	// 1. 鑾峰彇 transition state锛岀‘璁?DKG 宸插畬鎴愶紙KEY_READY锛?
 	transitionKey := fmt.Sprintf("v1_frost_vault_transition_%s_%d_%s", chain, vaultID, padUint(epochID))
@@ -1275,7 +1283,7 @@ func (w *TransitionWorker) planBTCMigrationJobs(ctx context.Context, chain strin
 	}
 
 	if len(utxos) == 0 {
-		logs.Info("[TransitionWorker] no UTXOs to migrate for vault %d", vaultID)
+		logs.Debug("[TransitionWorker] no UTXOs to migrate for vault %d", vaultID)
 		return nil
 	}
 
@@ -1339,7 +1347,7 @@ func (w *TransitionWorker) planBTCMigrationJobs(ctx context.Context, chain strin
 	// 5. 鍒涘缓 MigrationJob 璁板綍锛堥€氳繃 VM 浜ゆ槗鎴栫洿鎺ュ瓨鍌級
 	// TODO: 鍒涘缓 MigrationJob 骞跺惎鍔?ROAST 绛惧悕浼氳瘽
 	// 杩欓噷绠€鍖栧鐞嗭紝璁板綍鏃ュ織
-	logs.Info("[TransitionWorker] planned BTC migration: vault=%d epoch=%d utxos=%d template_hash=%x",
+	logs.Debug("[TransitionWorker] planned BTC migration: vault=%d epoch=%d utxos=%d template_hash=%x",
 		vaultID, epochID, len(utxos), result.TemplateHash)
 
 	return nil
@@ -1414,7 +1422,7 @@ func (w *TransitionWorker) planContractMigrationJobs(ctx context.Context, chain 
 
 	// 6. 鍒涘缓 MigrationJob 璁板綍
 	// TODO: 鍒涘缓 MigrationJob 骞跺惎鍔?ROAST 绛惧悕浼氳瘽
-	logs.Info("[TransitionWorker] planned contract migration: chain=%s vault=%d epoch=%d template_hash=%x",
+	logs.Debug("[TransitionWorker] planned contract migration: chain=%s vault=%d epoch=%d template_hash=%x",
 		chain, vaultID, epochID, result.TemplateHash)
 
 	return nil

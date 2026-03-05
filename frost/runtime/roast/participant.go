@@ -752,11 +752,21 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 			ptMatch := zG.X.Cmp(expectedPt.X) == 0 && zG.Y.Cmp(expectedPt.Y) == 0
 			// also check key contribution against public key share
 			pubSharePt := grp.ScalarBaseMult(myShare)
+			// 输出完整压缩公钥份额，用于 Shamir 重构验证
+			pubShareCompressed := curve.NewSecp256k1Group().SerializePoint(curve.Point(pubSharePt))
+			// 计算 λ_i * PubShare_i（加权公钥份额贡献）
+			weightedPubShare := curve.NewSecp256k1Group().ScalarMultBytes(curve.Point(pubSharePt), lambda.Bytes())
+			weightedCompressed := curve.NewSecp256k1Group().SerializePoint(weightedPubShare)
 			logs.Info("[Participant][z-verify] node=%s job=%s task=%d signer_id=%d z_check_match=%v pt_match=%v nonce_contrib=(%s) key_contrib=(%s) pubshare_x=%s",
 				p.nodeID, sess.JobID, i, selfSignerID, zOK, ptMatch,
 				hex.EncodeToString(bigIntFillBytes32(nonceContribPt.X)),
 				hex.EncodeToString(bigIntFillBytes32(curve.Point(keyContribPt).X)),
 				hex.EncodeToString(bigIntFillBytes32(curve.Point(pubSharePt).X)))
+			logs.Info("[Participant][shamir-check] node=%s job=%s task=%d signer_id=%d lambda=%s pubshare=%s weighted_pubshare=%s",
+				p.nodeID, sess.JobID, i, selfSignerID,
+				hex.EncodeToString(bigIntFillBytes32(lambda)),
+				hex.EncodeToString(pubShareCompressed),
+				hex.EncodeToString(weightedCompressed))
 		}
 
 		// 序列化份额（32 字节）
