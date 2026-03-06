@@ -5,6 +5,7 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -37,6 +38,7 @@ type NonceData struct {
 	HidingNonces     [][]byte
 	BindingNonces    [][]byte
 	ReceivedAt       time.Time
+	Round            int // 收到时的 session 轮次
 }
 
 // ShareData contains signature shares from a participant.
@@ -44,6 +46,7 @@ type ShareData struct {
 	ParticipantIndex int
 	Shares           [][]byte
 	ReceivedAt       time.Time
+	Round            int // 收到时的 session 轮次
 }
 
 // Session tracks ROAST coordinator state and collected data.
@@ -67,6 +70,7 @@ type Session struct {
 
 	State       SignSessionState // 当前会话状态（初始化 / 收集nonce / 收集份额 / 完成）
 	RetryCount  int              // 已重试次数（轮换签名者集合）
+	Round       int              // 当前轮次号，每次 ResetForRetry 递增，用于过滤 stale nonce/share
 	StartHeight uint64           // 会话发起时的区块高度
 	StartedAt   time.Time        // 会话创建时间
 	CompletedAt time.Time        // 会话完成时间
@@ -148,9 +152,11 @@ func (s *Session) ResetForRetry(maxRetries int) bool {
 		return false
 	}
 
+	s.Round++
 	s.selectAlternativeSetLocked()
 	s.Nonces = make(map[int]*NonceData)
 	s.Shares = make(map[int]*ShareData)
+	s.CachedNoncePayload = nil
 	s.State = SignSessionStateCollectingNonces
 	return true
 }
@@ -187,6 +193,7 @@ func (s *Session) AddNonce(participantIndex int, hidingNonces, bindingNonces [][
 		HidingNonces:     hidingNonces,
 		BindingNonces:    bindingNonces,
 		ReceivedAt:       time.Now(),
+		Round:            s.Round,
 	}
 	return nil
 }
@@ -203,10 +210,16 @@ func (s *Session) AddShare(participantIndex int, shares [][]byte) error {
 		return ErrInvalidState
 	}
 
+	// 确保该参与者在当前轮次已提交 nonce，防止旧 round share 混入
+	if n, ok := s.Nonces[participantIndex]; !ok || n.Round != s.Round {
+		return fmt.Errorf("no matching nonce for round %d from participant %d", s.Round, participantIndex)
+	}
+
 	s.Shares[participantIndex] = &ShareData{
 		ParticipantIndex: participantIndex,
 		Shares:           shares,
 		ReceivedAt:       time.Now(),
+		Round:            s.Round,
 	}
 	return nil
 }
@@ -219,7 +232,7 @@ func (s *Session) HasEnoughNonces() bool {
 	minSigners := s.minSigners()
 	count := 0
 	for _, idx := range s.SelectedSet {
-		if _, ok := s.Nonces[idx]; ok {
+		if n, ok := s.Nonces[idx]; ok && n.Round == s.Round {
 			count++
 		}
 	}
@@ -234,7 +247,7 @@ func (s *Session) HasEnoughShares() bool {
 	minSigners := s.minSigners()
 	count := 0
 	for _, idx := range s.SelectedSet {
-		if _, ok := s.Shares[idx]; ok {
+		if sh, ok := s.Shares[idx]; ok && sh.Round == s.Round {
 			count++
 		}
 	}

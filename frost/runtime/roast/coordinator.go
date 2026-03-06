@@ -290,6 +290,14 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 	rotateTicker := time.NewTicker(1 * time.Second)
 	defer rotateTicker.Stop()
 
+	// 状态驱动 ticker：避免忙轮询，每 200ms 推进一次状态机
+	stateTicker := time.NewTicker(200 * time.Millisecond)
+	defer stateTicker.Stop()
+
+	// 跟踪上次广播时的状态+轮次，避免同状态内重复广播
+	var lastBroadcastState roastsession.SignSessionState = -1
+	lastBroadcastRound := -1
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -298,19 +306,25 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 		case <-rotateTicker.C:
 			// 检查是否需要切换协调者（超时切换）
 			if !c.isCurrentCoordinator(sess) {
-				// 本节点不再是协调者，停止循环
 				c.logInfo("[Coordinator] no longer coordinator for session %s, stopping", sess.JobID)
 				return
 			}
-		default:
+			continue
+		case <-stateTicker.C:
+			// 状态机推进
 		}
 
 		state := sess.GetState()
+		round := sess.Round
 
 		switch state {
 		case roastsession.SignSessionStateCollectingNonces:
-			// 广播 nonce 请求
-			c.broadcastNonceRequest(sess)
+			// 仅在状态或轮次变化时广播一次 nonce 请求
+			if lastBroadcastState != state || lastBroadcastRound != round {
+				c.broadcastNonceRequest(sess)
+				lastBroadcastState = state
+				lastBroadcastRound = round
+			}
 
 			// 等待收集或超时
 			if c.waitForNonces(ctx, sess) {
@@ -332,8 +346,12 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 			}
 
 		case roastsession.SignSessionStateCollectingShares:
-			// 重复广播签名请求（使用冻结的 nonce payload），确保 participant 不会漏掉
-			c.broadcastSignRequest(sess)
+			// 仅在状态或轮次变化时广播一次签名请求
+			if lastBroadcastState != state || lastBroadcastRound != round {
+				c.broadcastSignRequest(sess)
+				lastBroadcastState = state
+				lastBroadcastRound = round
+			}
 
 			// 等待收集或超时
 			if c.waitForShares(ctx, sess) {
@@ -366,7 +384,7 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 					sess.SetState(roastsession.SignSessionStateFailed)
 					return
 				}
-				sess.SetState(roastsession.SignSessionStateCollectingShares)
+				// retryWithNewSet 内部已清 nonces/shares 并设状态为 CollectingNonces
 			} else {
 				// 检查是否所有 task 都已完成
 				allCompleted := true
@@ -382,10 +400,13 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 					logs.Info("[Coordinator] session %s completed (all tasks)", sess.JobID)
 					return
 				} else {
-					// 部分完成：对未完成的 task 继续收集 share
-					logs.Info("[Coordinator] session %s partial completion, continuing for remaining tasks", sess.JobID)
-					// 继续收集未完成 task 的 share
-					sess.SetState(roastsession.SignSessionStateCollectingShares)
+					// 部分完成：需要走 retryWithNewSet 清数据+重新收集，避免用旧 share 死循环
+					logs.Info("[Coordinator] session %s partial completion, retrying remaining tasks", sess.JobID)
+					if !c.retryWithNewSet(sess) {
+						c.logInfo("[Coordinator] max retries exceeded, session %s FAILED at partial completion", sess.JobID)
+						sess.SetState(roastsession.SignSessionStateFailed)
+						return
+					}
 				}
 			}
 
@@ -611,12 +632,19 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 	for taskIdx, msg := range sess.Messages {
 		// 只使用同时提供了 nonce 和 share 的参与者（取交集）
 		// 确保 R 的 nonce 贡献者集合 = z 的 share 贡献者集合
+		currentRound := sess.Round
 		nonces := make([]NonceInput, 0, len(selectedSet))
 		shares := make([]ShareInput, 0, len(selectedSet))
 		for _, idx := range selectedSet {
 			nonceData, nonceOK := sess.GetNonce(idx)
 			shareData, shareOK := sess.GetShare(idx)
 			if !nonceOK || !shareOK {
+				continue
+			}
+			// 过滤 stale round 的数据（retry 后旧 share 延迟到达）
+			if nonceData.Round != currentRound || shareData.Round != currentRound {
+				logs.Warn("[Coordinator] task %d: skipping stale round data from signer idx=%d (nonce_round=%d share_round=%d current_round=%d)",
+					taskIdx, idx, nonceData.Round, shareData.Round, currentRound)
 				continue
 			}
 			if taskIdx >= len(nonceData.HidingNonces) || taskIdx >= len(nonceData.BindingNonces) || taskIdx >= len(shareData.Shares) {

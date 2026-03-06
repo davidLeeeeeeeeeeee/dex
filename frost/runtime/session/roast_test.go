@@ -75,6 +75,10 @@ func TestSession_AddShare(t *testing.T) {
 		MyIndex:   0,
 	})
 	_ = sess.Start()
+
+	// 先添加 nonce（AddShare 要求 participant 已提交当前 round 的 nonce）
+	_ = sess.AddNonce(0, [][]byte{[]byte("h0")}, [][]byte{[]byte("b0")})
+	_ = sess.AddNonce(1, [][]byte{[]byte("h1")}, [][]byte{[]byte("b1")})
 	sess.SetState(SignSessionStateCollectingShares)
 
 	err := sess.AddShare(0, [][]byte{[]byte("share1")})
@@ -91,6 +95,12 @@ func TestSession_AddShare(t *testing.T) {
 	}
 	if !sess.HasEnoughShares() {
 		t.Errorf("Should have enough shares")
+	}
+
+	// 没有 nonce 的 participant 应该被拒绝
+	err = sess.AddShare(2, [][]byte{[]byte("share3")})
+	if err == nil {
+		t.Fatalf("AddShare without nonce should fail")
 	}
 }
 
