@@ -23,6 +23,7 @@ import (
 	"dex/cmd/explorer/syncer"
 	"dex/config"
 	"dex/db"
+	"dex/frost/chain/btc"
 	"dex/logs"
 	"dex/pb"
 
@@ -1257,9 +1258,24 @@ func fillTxDetails(tx *pb.AnyTx, info *txInfo) {
 
 	// Compatibility/debug helper: keep hex payload alias for signed BTC package.
 	if signed := tx.GetFrostWithdrawSignedTx(); signed != nil && len(signed.SignedPackageBytes) > 0 {
+		// 保留原始签名字节作为调试用
 		info.Details["raw_tx"] = fmt.Sprintf("%x", signed.SignedPackageBytes)
-		info.Details["raw_tx_hex"] = fmt.Sprintf("%x", signed.SignedPackageBytes)
+		// 尝试从 template_data + input_sigs 重建完整 BTC 交易
+		if len(signed.TemplateData) > 0 && len(signed.InputSigs) > 0 {
+			if tmpl, err := btc.FromJSON(signed.TemplateData); err == nil {
+				if rawTxBytes, err := tmpl.BuildSignedRawTx(signed.InputSigs); err == nil {
+					info.Details["raw_tx_hex"] = fmt.Sprintf("%x", rawTxBytes)
+				} else {
+					log.Printf("[DEBUG-TX] BuildSignedRawTx failed for %s: %v", tx.GetTxId(), err)
+				}
+			}
+		}
+		// 如果重建失败，回退到签名字节
+		if _, ok := info.Details["raw_tx_hex"]; !ok {
+			info.Details["raw_tx_hex"] = fmt.Sprintf("%x", signed.SignedPackageBytes)
+		}
 	}
+
 }
 
 func txContentMessage(tx *pb.AnyTx) proto.Message {

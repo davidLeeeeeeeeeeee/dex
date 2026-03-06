@@ -5,12 +5,18 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+	"fmt"
 	mrand "math/rand"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 )
 
 // TxSimulator 交易模拟器
@@ -238,7 +244,8 @@ func (s *TxSimulator) runRechargeScenario() {
 		userNode := s.nodes[0]
 		nonce := s.getNextNonce(userNode.Address)
 
-		nativeTxHash := "tx_hash_" + time.Now().Format("150405")
+		nativeTxHashRaw := sha256.Sum256([]byte("tx_hash_" + time.Now().Format("150405")))
+		nativeTxHash := fmt.Sprintf("%x", nativeTxHashRaw)
 		reqTx := generateWitnessRequestTx(
 			userNode.Address,
 			"btc",
@@ -410,6 +417,17 @@ func (s *TxSimulator) checkVaultActive() bool {
 	return false
 }
 
+// buildSimWithdrawAddress 生成模拟提现地址（真实 bech32m Taproot 格式）
+func (s *TxSimulator) buildSimWithdrawAddress(chainName, seed string) string {
+	digest := sha256.Sum256([]byte("sim-withdraw:" + chainName + ":" + seed))
+	privKey, _ := btcec.PrivKeyFromBytes(digest[:])
+	addr, err := btcutil.NewAddressTaproot(schnorr.SerializePubKey(privKey.PubKey()), &chaincfg.TestNet3Params)
+	if err != nil {
+		return "tb1pllllllllllllllllllllllllllllllllllllllllllllllllllllllgvrsse"
+	}
+	return addr.EncodeAddress()
+}
+
 func (s *TxSimulator) runWithdrawScenario() {
 	ticker := time.NewTicker(45 * time.Second)
 	defer ticker.Stop()
@@ -427,11 +445,13 @@ func (s *TxSimulator) runWithdrawScenario() {
 
 		nonce := s.getNextNonce(userNode.Address)
 
+		// 生成确定性的模拟提现地址（真实 Taproot 格式）
+		withdrawAddr := s.buildSimWithdrawAddress("btc", userNode.Address)
 		withdrawTx := generateWithdrawRequestTx(
 			userNode.Address,
 			"btc",
 			"BTC",
-			"bc1qtestaddress",
+			withdrawAddr,
 			"50",
 			nonce,
 		)

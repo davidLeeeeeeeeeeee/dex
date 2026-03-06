@@ -7,9 +7,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 
 	"dex/frost/chain"
+
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 )
 
 // 常量定义
@@ -214,6 +221,71 @@ func FromJSON(data []byte) (*BTCTemplate, error) {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// BuildSignedRawTx 从模板 + 每个 input 的 Schnorr 签名构建完整的可广播 BTC 交易
+// inputSigs: 每个 input 对应的 64 字节 BIP340 签名（顺序与 Inputs 一致）
+// 返回完整的 SegWit 序列化交易字节
+func (t *BTCTemplate) BuildSignedRawTx(inputSigs [][]byte) ([]byte, error) {
+	if len(inputSigs) != len(t.Inputs) {
+		return nil, fmt.Errorf("input_sigs count %d != inputs count %d", len(inputSigs), len(t.Inputs))
+	}
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.Version = t.Version
+	tx.LockTime = t.LockTime
+
+	// 添加输入
+	for _, in := range t.Inputs {
+		txHash, err := chainhash.NewHashFromStr(in.TxID)
+		if err != nil {
+			return nil, fmt.Errorf("invalid txid %s: %w", in.TxID, err)
+		}
+		seq := in.Sequence
+		if seq == 0 {
+			seq = DefaultSequence
+		}
+		tx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: *wire.NewOutPoint(txHash, in.Vout),
+			Sequence:         seq,
+		})
+	}
+
+	// 添加输出：地址→scriptPubKey
+	for _, out := range t.Outputs {
+		pkScript, err := addressToScript(out.Address)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert address %s: %w", out.Address, err)
+		}
+		tx.AddTxOut(wire.NewTxOut(int64(out.Amount), pkScript))
+	}
+
+	// 添加 witness（每个 input 一个 64 字节 Schnorr 签名）
+	for i, sig := range inputSigs {
+		if len(sig) != 64 {
+			return nil, fmt.Errorf("input[%d] signature length %d != 64", i, len(sig))
+		}
+		tx.TxIn[i].Witness = wire.TxWitness{sig}
+	}
+
+	var buf bytes.Buffer
+	if err := tx.Serialize(&buf); err != nil {
+		return nil, fmt.Errorf("serialize failed: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// addressToScript 将 BTC 地址转换为 scriptPubKey
+func addressToScript(address string) ([]byte, error) {
+	// 依次尝试 TestNet3、MainNet
+	for _, params := range []*chaincfg.Params{&chaincfg.TestNet3Params, &chaincfg.MainNetParams} {
+		addr, err := btcutil.DecodeAddress(address, params)
+		if err != nil {
+			continue
+		}
+		return txscript.PayToAddrScript(addr)
+	}
+	return nil, fmt.Errorf("unsupported address: %s", address)
 }
 
 // writeVarInt 写入变长整数（Bitcoin varint 格式）
