@@ -379,6 +379,7 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 		// 更新状态为 SIGNED
 		withdraw.Status = WithdrawStatusSigned
 		withdraw.JobID = jobID
+		withdraw.SignedTxID = txID
 
 		updatedData, err := marshalWithdrawRequest(withdraw)
 		if err != nil {

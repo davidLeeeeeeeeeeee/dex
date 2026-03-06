@@ -20,6 +20,10 @@ type FrostWithdrawQueueItem struct {
 	To                  string                 `json:"to"`
 	Amount              string                 `json:"amount"`
 	Status              string                 `json:"status"`
+	TxID                string                 `json:"tx_id,omitempty"`
+	JobID               string                 `json:"job_id,omitempty"`
+	VaultID             uint32                 `json:"vault_id,omitempty"`
+	RequestHeight       uint64                 `json:"request_height,omitempty"`
 	PlanningLogs        []*pb.FrostPlanningLog `json:"planning_logs"`
 	DerivedStatus       string                 `json:"derived_status,omitempty"`
 	DerivedReason       string                 `json:"derived_reason,omitempty"`
@@ -194,6 +198,10 @@ func (s *server) handleFrostWithdrawQueue(w http.ResponseWriter, r *http.Request
 			To:                  st.To,
 			Amount:              st.Amount,
 			Status:              st.Status,
+			TxID:                st.SignedTxId,
+			JobID:               st.JobId,
+			VaultID:             st.VaultId,
+			RequestHeight:       st.RequestHeight,
 			PlanningLogs:        st.PlanningLogs,
 			DerivedStatus:       derivedStatus,
 			DerivedReason:       derivedReason,

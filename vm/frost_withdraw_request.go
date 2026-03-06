@@ -35,6 +35,7 @@ type FrostWithdrawRequest struct {
 	Status        WithdrawRequestStatus `json:"status"`
 	JobID         string                `json:"job_id,omitempty"` // 当 status=SIGNED 时存在
 	VaultID       uint32                `json:"vault_id,omitempty"`
+	SignedTxID    string                `json:"signed_tx_id,omitempty"` // FrostWithdrawSignedTx 的 tx_id
 }
 
 // FrostWithdrawRequestTxHandler Frost 提现请求交易处理器
@@ -115,31 +116,31 @@ func (h *FrostWithdrawRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wr
 	// 1. 写入 WithdrawRequest 本身
 	withdrawKey := keys.KeyFrostWithdraw(withdrawID)
 	ops = append(ops, WriteOp{
-		Key:         withdrawKey,
-		Value:       withdrawData,
-		Category:    "frost_withdraw",
+		Key:      withdrawKey,
+		Value:    withdrawData,
+		Category: "frost_withdraw",
 	})
 
 	// 2. 写入 FIFO 索引：seq -> withdraw_id
 	fifoKey := keys.KeyFrostWithdrawFIFOIndex(chain, asset, newSeq)
 	ops = append(ops, WriteOp{
-		Key:         fifoKey,
-		Value:       []byte(withdrawID),
-		Category:    "frost_withdraw_fifo",
+		Key:      fifoKey,
+		Value:    []byte(withdrawID),
+		Category: "frost_withdraw_fifo",
 	})
 
 	// 3. 更新 seq 计数器
 	ops = append(ops, WriteOp{
-		Key:         seqKey,
-		Value:       []byte(strconv.FormatUint(newSeq, 10)),
-		Category:    "frost_withdraw_seq",
+		Key:      seqKey,
+		Value:    []byte(strconv.FormatUint(newSeq, 10)),
+		Category: "frost_withdraw_seq",
 	})
 
 	// 4. 写入 tx_id -> withdraw_id 引用（用于幂等检查）
 	ops = append(ops, WriteOp{
-		Key:         txRefKey,
-		Value:       []byte(withdrawID),
-		Category:    "frost_withdraw_ref",
+		Key:      txRefKey,
+		Value:    []byte(withdrawID),
+		Category: "frost_withdraw_ref",
 	})
 
 	// 将 ops 应用到 StateView
@@ -190,6 +191,7 @@ func marshalWithdrawRequest(req *FrostWithdrawRequest) ([]byte, error) {
 		Status:        string(req.Status),
 		JobId:         req.JobID,
 		VaultId:       req.VaultID,
+		SignedTxId:    req.SignedTxID,
 	}
 	return proto.Marshal(state)
 }
@@ -212,5 +214,6 @@ func unmarshalWithdrawRequest(data []byte) (*FrostWithdrawRequest, error) {
 		Status:        WithdrawRequestStatus(state.Status),
 		JobID:         state.JobId,
 		VaultID:       state.VaultId,
+		SignedTxID:    state.SignedTxId,
 	}, nil
 }

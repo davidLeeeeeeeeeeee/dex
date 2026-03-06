@@ -152,6 +152,20 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
   selectedItem.value = item
   modalVisible.value = true
 }
+
+const jobModalVisible = ref(false)
+const selectedJob = ref<FrostWithdrawJobItem | null>(null)
+
+function openJobDetail(job: FrostWithdrawJobItem) {
+  selectedJob.value = job
+  jobModalVisible.value = true
+}
+
+function getJobWithdraws(job: FrostWithdrawJobItem): FrostWithdrawQueueItem[] {
+  if (!job?.withdraw_ids?.length) return []
+  const idSet = new Set(job.withdraw_ids)
+  return queue.value.filter(q => idSet.has(q.withdraw_id))
+}
 </script>
 
 <template>
@@ -283,7 +297,7 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
 
     <section class="jobs-section">
       <div class="jobs-header">
-        <h4 class="jobs-title">Signing Jobs</h4>
+    <h4 class="jobs-title">Jobs</h4>
         <span class="jobs-count">{{ jobs.length }}</span>
       </div>
       <div v-if="jobs.length > 0" class="data-viewport">
@@ -301,7 +315,7 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="job in jobs" :key="job.job_id" class="table-row">
+            <tr v-for="job in jobs" :key="job.job_id" class="table-row" @click="openJobDetail(job)">
               <td class="px-6 py-4">
                 <div class="id-badge-with-tool">
                   <code class="mono">{{ job.job_id.substring(0, 10) }}</code>
@@ -371,6 +385,70 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
       :item="selectedItem"
       @close="modalVisible = false"
     />
+
+    <!-- Job Detail Modal -->
+    <Teleport to="body">
+      <Transition name="fade">
+        <div v-if="jobModalVisible && selectedJob" class="job-modal-root" @click.self="jobModalVisible = false">
+          <div class="job-modal-backdrop"></div>
+          <div class="job-modal-container" @click.stop>
+            <div class="job-modal-header">
+              <div class="job-header-left">
+                <div class="job-header-icon">📦</div>
+                <div>
+                  <h3 class="job-modal-title">Job Detail</h3>
+                  <p class="job-modal-subtitle mono">{{ selectedJob.job_id }}</p>
+                </div>
+              </div>
+              <button @click="jobModalVisible = false" class="job-close-btn">&times;</button>
+            </div>
+            <div class="job-modal-body custom-scrollbar">
+              <section class="job-info-grid">
+                <div class="job-info-card">
+                  <span class="job-info-label">Chain / Asset</span>
+                  <span class="job-info-val text-white font-bold">{{ selectedJob.chain.toUpperCase() }} / {{ selectedJob.asset }}</span>
+                </div>
+                <div class="job-info-card">
+                  <span class="job-info-label">Vault ID</span>
+                  <span class="job-info-val text-amber-500 font-bold">{{ selectedJob.vault_id }}</span>
+                </div>
+                <div class="job-info-card">
+                  <span class="job-info-label">Status</span>
+                  <div :class="['status-pill', getJobStatusClass(getJobDisplayStatus(selectedJob))]">
+                    <div class="pill-dot"></div>
+                    <span>{{ getRuntimeStatusLabel(getJobDisplayStatus(selectedJob)) }}</span>
+                  </div>
+                </div>
+                <div class="job-info-card">
+                  <span class="job-info-label">Total Amount</span>
+                  <span class="job-info-val text-cyan-300 font-bold font-mono">{{ formatAmount(selectedJob.total_amount) }}</span>
+                </div>
+              </section>
+              <section class="job-withdraws-section">
+                <div class="job-section-label">Withdraw Requests ({{ selectedJob.withdraw_count }})</div>
+                <div class="job-withdraw-list">
+                  <div v-for="w in getJobWithdraws(selectedJob)" :key="w.withdraw_id" class="job-withdraw-row" @click="openFlow(w); jobModalVisible = false">
+                    <code class="mono job-wid">{{ w.withdraw_id.substring(0, 10) }}...</code>
+                    <span class="job-w-to mono">{{ w.to.substring(0, 10) }}...{{ w.to.slice(-6) }}</span>
+                    <span class="job-w-amount font-mono text-amber-400">{{ formatAmount(w.amount) }}</span>
+                    <div :class="['status-pill mini', w.status.toLowerCase()]"><div class="pill-dot"></div><span>{{ w.status }}</span></div>
+                  </div>
+                  <div v-for="wid in (selectedJob?.withdraw_ids || []).filter(id => !getJobWithdraws(selectedJob!).some(w => w.withdraw_id === id))" :key="wid" class="job-withdraw-row dim">
+                    <code class="mono job-wid">{{ wid.substring(0, 10) }}...</code>
+                    <span class="text-gray-600">—</span>
+                    <span class="text-gray-600">—</span>
+                    <span class="text-gray-600">—</span>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div class="job-modal-footer">
+              <button @click="jobModalVisible = false" class="job-dismiss-btn">Dismiss</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -763,4 +841,36 @@ const openFlow = (item: FrostWithdrawQueueItem) => {
   color: #1e293b;
   margin: 0 auto 20px;
 }
+
+/* Job Detail Modal */
+.job-modal-root { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.job-modal-backdrop { position: absolute; inset: 0; background: rgba(3, 7, 18, 0.9); backdrop-filter: blur(12px); }
+.job-modal-container { position: relative; width: 100%; max-width: 760px; max-height: 80vh; background: #0f172a; border: 1px solid rgba(255,255,255,0.08); border-radius: 24px; box-shadow: 0 30px 60px -12px rgba(0,0,0,0.6); display: flex; flex-direction: column; overflow: hidden; }
+.job-modal-header { padding: 20px 28px; border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: space-between; align-items: center; }
+.job-header-left { display: flex; align-items: center; gap: 14px; }
+.job-header-icon { font-size: 1.5rem; }
+.job-modal-title { font-size: 1.05rem; font-weight: 700; color: white; margin: 0; }
+.job-modal-subtitle { font-size: 0.7rem; color: #64748b; margin: 2px 0 0; word-break: break-all; }
+.job-close-btn { background: transparent; border: none; color: #475569; font-size: 1.5rem; cursor: pointer; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; transition: all 0.2s; }
+.job-close-btn:hover { background: rgba(255,255,255,0.05); color: white; }
+.job-modal-body { flex: 1; padding: 28px; overflow-y: auto; display: flex; flex-direction: column; gap: 24px; }
+.job-info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.job-info-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); padding: 14px 18px; border-radius: 14px; display: flex; flex-direction: column; gap: 6px; }
+.job-info-label { font-size: 0.6rem; font-weight: 700; color: #64748b; text-transform: uppercase; }
+.job-info-val { font-size: 0.9rem; }
+.job-section-label { font-size: 0.7rem; font-weight: 800; text-transform: uppercase; color: #475569; letter-spacing: 0.1em; margin-bottom: 12px; }
+.job-withdraw-list { display: flex; flex-direction: column; gap: 6px; }
+.job-withdraw-row { display: grid; grid-template-columns: 120px 1fr auto auto; gap: 12px; align-items: center; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.03); cursor: pointer; transition: all 0.2s; }
+.job-withdraw-row:hover { background: rgba(99,102,241,0.06); border-color: rgba(99,102,241,0.15); }
+.job-withdraw-row.dim { opacity: 0.4; cursor: default; }
+.job-withdraw-row.dim:hover { background: rgba(255,255,255,0.02); border-color: rgba(255,255,255,0.03); }
+.job-wid { background: rgba(99,102,241,0.1); color: #818cf8; padding: 3px 6px; border-radius: 5px; font-size: 0.7rem; }
+.job-w-to { color: #94a3b8; font-size: 0.75rem; }
+.job-w-amount { font-size: 0.8rem; font-weight: 700; }
+.status-pill.mini { font-size: 0.6rem; padding: 2px 8px; }
+.job-modal-footer { padding: 20px 28px; border-top: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: flex-end; }
+.job-dismiss-btn { background: #1e293b; color: white; border: 1px solid rgba(255,255,255,0.1); padding: 8px 20px; border-radius: 10px; font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: all 0.2s; }
+.job-dismiss-btn:hover { background: #334155; border-color: rgba(255,255,255,0.2); }
+.fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>

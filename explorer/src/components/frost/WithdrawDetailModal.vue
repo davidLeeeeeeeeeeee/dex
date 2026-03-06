@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import mermaid from 'mermaid'
 import type { FrostWithdrawQueueItem } from '../../types'
 
@@ -65,8 +65,7 @@ const renderChart = async () => {
   flow += '  B --> C[Build Template]\n'
   flow += '  C --> D[Start Signing]\n'
   flow += '  D --> E[FROST Signing]\n'
-  flow += '  E --> F[SIGNED]\n'
-  flow += '  F --> G((ON-CHAIN))\n'
+  flow += '  E --> F((SIGNED))\n'
   flow += '  C -.-> H[WAIT_UTXO]\n'
   flow += '  B -.-> I[WAIT_ACTIVE_VAULT]\n'
   flow += '  B -.-> J[WAIT_VAULT_BALANCE]\n'
@@ -126,6 +125,15 @@ onMounted(initMermaid)
 onUnmounted(() => {
   document.body.style.overflow = ''
 })
+
+const isSigned = computed(() => props.item?.status?.toUpperCase() === 'SIGNED')
+const txId = computed(() => props.item?.tx_id || '')
+const copied = ref(false)
+
+async function copyTxId() {
+  if (!txId.value) return
+  try { await navigator.clipboard.writeText(txId.value); copied.value = true; setTimeout(() => copied.value = false, 1500) } catch {}
+}
 
 function formatTime(ts: number): string {
   if (!ts) return '-'
@@ -224,6 +232,16 @@ function getLogStatusClass(status: string) {
               <div class="info-card">
                 <span class="info-label">Vault ID</span>
                 <span class="info-val text-amber-500 font-bold">{{ item.vault_id ?? 'Auto' }}</span>
+              </div>
+              <div v-if="isSigned && txId" class="info-card full-width">
+                <span class="info-label">Signed TX ID</span>
+                <div class="txid-row">
+                  <span class="info-val mono text-emerald-400">{{ txId }}</span>
+                  <button class="copy-btn" @click="copyTxId" :title="copied ? 'Copied!' : 'Copy TX ID'">
+                    <svg v-if="!copied" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                    <svg v-else xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -405,6 +423,22 @@ function getLogStatusClass(status: string) {
   grid-template-columns: repeat(2, 1fr);
   gap: 16px;
 }
+
+.info-card.full-width { grid-column: 1 / -1; }
+
+.txid-row { display: flex; align-items: center; gap: 10px; }
+.txid-row .info-val { word-break: break-all; font-size: 0.8rem; }
+
+.copy-btn {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  color: #10b981;
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+}
+.copy-btn:hover { background: rgba(16, 185, 129, 0.2); border-color: #10b981; }
 
 .info-card {
   background: rgba(255, 255, 255, 0.02);

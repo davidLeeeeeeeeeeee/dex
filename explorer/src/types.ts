@@ -267,6 +267,7 @@ export interface FrostWithdrawQueueItem {
   to: string
   amount: string
   status: string
+  tx_id?: string
   vault_id?: number
   request_height?: number
   job_id?: string

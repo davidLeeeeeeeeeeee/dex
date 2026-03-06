@@ -14,7 +14,7 @@ message Token {
       4; // 拥有者地址，可做冻结等管理权限，如果等于 0x0 表示没有拥有者
   string totalSupply = 5; // 发行总量
   bool canMint = 6;       // 是否可增发，销毁的话直接打入 0x0
-                    // 地址即可，查询0x0也可查到被销毁的token数量
+                          // 地址即可，查询0x0也可查到被销毁的token数量
 }
 
 message TokenRegistry {
@@ -374,8 +374,9 @@ message PushQuery {
   // Timeout (ns) for this request
   uint64 deadline = 3;
   bool container_is_block = 4; // 为true表示是完整数据，false表示只有txs
-  bytes container = 5; // 当tx数量小于2500时候，该字段为所有交易的完整二进制数据，>=2500的时候为
-                       // 所有交易的简短tx_hash
+  bytes container =
+      5; // 当tx数量小于2500时候，该字段为所有交易的完整二进制数据，>=2500的时候为
+         // 所有交易的简短tx_hash
   // Requesting peer's last accepted height
   uint64 requested_height = 6;
   string block_id = 7;
@@ -562,10 +563,9 @@ message WitnessRequestTx {
   string amount = 5;           // 入账金额
   string receiver_address = 6; // 接收地址（本链）
   string memo = 7;             // 备注（可包含收款地址验证信息）
-  string recharge_fee = 8; // 额外付给见证者的费用，不管是否充值成功都会支付。
-  uint32 native_vout = 9; // 原生链输出索引（BTC 必填）
-  bytes native_script =
-      10; // 原生链锁定脚本（BTC 必填，用于后续提现签名）
+  string recharge_fee = 8;  // 额外付给见证者的费用，不管是否充值成功都会支付。
+  uint32 native_vout = 9;   // 原生链输出索引（BTC 必填）
+  bytes native_script = 10; // 原生链锁定脚本（BTC 必填，用于后续提现签名）
 }
 
 // 见证者投票
@@ -757,6 +757,7 @@ message FrostWithdrawState {
   string job_id = 10;        // 归属的 SigningJob（当 status=SIGNED 时存在）
   uint32 vault_id = 11;      // 由哪个 Vault 支付
   repeated FrostPlanningLog planning_logs = 12; // 规划日志
+  string signed_tx_id = 13; // FrostWithdrawSignedTx 的 tx_id（签名完成后回填）
 }
 
 // Frost 规划日志消息（Runtime 异步汇报，供前端排查，不参与共识）
