@@ -8,6 +8,7 @@ import (
 	"dex/frost/core/frost"
 	"dex/keys"
 	"dex/pb"
+	"dex/utils"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -199,25 +200,39 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 				return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "failed to compute sighash: " + err.Error()}, err
 			}
 
-			// 对每个 input 验签（支持多曲线）
+			// 对每个 input 验签（支持 tweaked pubkey）
 			for i, sig := range inputSigs {
 				if len(sig) != 64 {
 					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: "invalid signature length for input"}, errors.New("invalid signature length")
 				}
 
-				valid, err := verifySignature(signAlgo, pubKey, sighashes[i], sig)
+				// 查找本 input 对应的 UTXO tweak
+				verifyPubKey := pubKey
+				if i < len(template.Inputs) {
+					utxoKey := keys.KeyFrostBtcUtxo(vaultID, template.Inputs[i].TxID, template.Inputs[i].Vout)
+					if utxoData, utxoExists, _ := sv.Get(utxoKey); utxoExists && len(utxoData) > 0 {
+						var utxo pb.FrostUtxo
+						if unmarshalProtoCompat(utxoData, &utxo) == nil && len(utxo.Tweak) == 32 {
+							if tweakedPub, err := utils.ComputeTweakedPubkey(pubKey, utxo.Tweak); err == nil {
+								verifyPubKey = tweakedPub
+							}
+						}
+					}
+				}
+
+				valid, err := verifySignature(signAlgo, verifyPubKey, sighashes[i], sig)
 				if err != nil {
 					panic(fmt.Sprintf("frost-sign-debug: vm verify error job=%s tx=%s chain=%s vault=%d key_epoch_tx=%d key_epoch_state=%d input=%d sign_algo=%s sighash=%s sig=%s pubkey=%s script_pubkey=%s err=%v",
 						jobID, txID, chainName, vaultID, signed.KeyEpoch, vaultState.KeyEpoch, i, signAlgo.String(),
-						hex.EncodeToString(sighashes[i]), hex.EncodeToString(sig), hex.EncodeToString(pubKey),
+						hex.EncodeToString(sighashes[i]), hex.EncodeToString(sig), hex.EncodeToString(verifyPubKey),
 						hex.EncodeToString(scriptPubkeys[i]), err))
 					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("signature verification failed for input[%d]: %v%s", i, err, keyEpochHint)}, errors.New("signature verification failed")
 				}
 				if !valid {
-					detail := diagnoseSignatureMismatch(signAlgo, pubKey, sighashes, i, sig)
+					detail := diagnoseSignatureMismatch(signAlgo, verifyPubKey, sighashes, i, sig)
 					panic(fmt.Sprintf("frost-sign-debug: vm verify invalid job=%s tx=%s chain=%s vault=%d key_epoch_tx=%d key_epoch_state=%d input=%d sign_algo=%s sighash=%s sig=%s pubkey=%s script_pubkey=%s detail=%s",
 						jobID, txID, chainName, vaultID, signed.KeyEpoch, vaultState.KeyEpoch, i, signAlgo.String(),
-						hex.EncodeToString(sighashes[i]), hex.EncodeToString(sig), hex.EncodeToString(pubKey),
+						hex.EncodeToString(sighashes[i]), hex.EncodeToString(sig), hex.EncodeToString(verifyPubKey),
 						hex.EncodeToString(scriptPubkeys[i]), detail))
 					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("signature verification failed for input[%d]: %s%s", i, detail, keyEpochHint)}, errors.New("signature verification failed")
 				}

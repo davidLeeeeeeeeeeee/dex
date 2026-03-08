@@ -5,120 +5,101 @@ package planning
 
 import (
 	"fmt"
-	"strings"
 
 	chainpkg "dex/frost/chain"
 	"dex/keys"
-	"dex/logs"
 	"dex/pb"
 
 	"google.golang.org/protobuf/proto"
 )
 
-// planBTCJob 规划 BTC job（批量：多个 withdraw，选择 UTXO）
-func (p *JobWindowPlanner) planBTCJob(chain, asset string, vaultID uint32, keyEpoch uint64, withdraws []*ScanResult, totalAmount uint64) (*Job, error) {
-	// 1. 读取所有 withdraw 详情
-	outputs := make([]chainpkg.WithdrawOutput, 0, len(withdraws))
-	withdrawIDs := make([]string, 0, len(withdraws))
-	var firstSeq uint64
-
-	for i, wd := range withdraws {
-		withdrawKey := keys.KeyFrostWithdraw(wd.WithdrawID)
-		withdrawData, exists, err := p.stateReader.Get(withdrawKey)
-		if err != nil || !exists {
-			return nil, err
-		}
-
-		state := &pb.FrostWithdrawState{}
-		if err := proto.Unmarshal(withdrawData, state); err != nil {
-			return nil, err
-		}
-
-		if i == 0 {
-			firstSeq = wd.Seq
-		}
-
-		outputs = append(outputs, chainpkg.WithdrawOutput{
-			WithdrawID: wd.WithdrawID,
-			To:         state.To,
-			Amount:     parseAmount(state.Amount),
-		})
-		withdrawIDs = append(withdrawIDs, wd.WithdrawID)
-	}
-
-	// 2. 选择 UTXO（按 confirm_height 升序，FIFO）
-	utxos, err := p.selectBTCUTXOs(chain, vaultID, totalAmount)
+// planBTCJob 规划 BTC job（单 UTXO 保守策略）
+// 找到第一个可用 UTXO，再贪心选取能覆盖的 withdraw outputs。
+func (p *JobWindowPlanner) planBTCJob(chain, asset string, vaultID uint32, keyEpoch uint64, withdraws []*ScanResult) (*Job, error) {
+	// 1. 选择单个 UTXO
+	utxos, err := p.selectBTCUTXOs(chain, vaultID)
 	if err != nil {
 		return nil, err
 	}
 	if len(utxos) == 0 {
 		return nil, fmt.Errorf("no available UTXOs for vault %d", vaultID)
 	}
+	utxo := utxos[0]
+	totalInput := utxo.Amount
 
-	var fee uint64
-	var changeAmount uint64
-	changeAddress := ""
+	// 2. 读取 withdraw 详情，贪心选取能覆盖的 outputs
+	outputs := make([]chainpkg.WithdrawOutput, 0, len(withdraws))
+	withdrawIDs := make([]string, 0, len(withdraws))
+	var firstSeq uint64
+	var totalAmount uint64
+
+	fee := p.estimateBTCFee(1, 1) // 初始：1 input, 1 output (最少输出)
 	const btcDustLimit uint64 = 546
 
-	// Close the fee/input loop until totalIn can satisfy totalOut+fee(+change).
-	for iter := 0; iter < 6; iter++ {
-		totalInput := sumUTXOAmount(utxos)
-
-		feeNoChange := p.estimateBTCFee(len(utxos), len(outputs))
-		needNoChange := totalAmount + feeNoChange
-		if totalInput < needNoChange {
-			utxos, err = p.selectBTCUTXOs(chain, vaultID, needNoChange)
-			if err != nil {
-				return nil, err
-			}
+	for i, wd := range withdraws {
+		wKey := keys.KeyFrostWithdraw(wd.WithdrawID)
+		wData, exists, err := p.stateReader.Get(wKey)
+		if err != nil || !exists {
 			continue
 		}
+		state := &pb.FrostWithdrawState{}
+		if err := proto.Unmarshal(wData, state); err != nil {
+			continue
+		}
+		wAmount := parseAmount(state.Amount)
+		curFee := p.estimateBTCFee(1, len(outputs)+1+1) // +1 for this output, +1 for possible change
+		if totalAmount+wAmount+curFee > totalInput {
+			break // 超出这个 UTXO 的承载能力
+		}
+		if i == 0 {
+			firstSeq = wd.Seq
+		}
+		outputs = append(outputs, chainpkg.WithdrawOutput{
+			WithdrawID: wd.WithdrawID,
+			To:         state.To,
+			Amount:     wAmount,
+		})
+		withdrawIDs = append(withdrawIDs, wd.WithdrawID)
+		totalAmount += wAmount
+	}
+	if len(outputs) == 0 {
+		return nil, fmt.Errorf("UTXO amount %d cannot cover smallest withdraw for vault %d", totalInput, vaultID)
+	}
 
-		fee = feeNoChange
-		changeAmount = totalInput - totalAmount - feeNoChange
+	// 3. 计算实际手续费和找零
+	fee = p.estimateBTCFee(1, len(outputs))
+	changeAmount := uint64(0)
+	changeAddress := ""
 
+	if totalInput > totalAmount+fee {
+		changeAmount = totalInput - totalAmount - fee
 		if changeAmount >= btcDustLimit {
-			feeWithChange := p.estimateBTCFee(len(utxos), len(outputs)+1)
-			needWithChange := totalAmount + feeWithChange
-			if totalInput < needWithChange {
-				utxos, err = p.selectBTCUTXOs(chain, vaultID, needWithChange)
-				if err != nil {
-					return nil, err
-				}
-				continue
-			}
-
-			fee = feeWithChange
-			changeAmount = totalInput - totalAmount - feeWithChange
-
-			if changeAmount >= btcDustLimit {
-				changeAddress, err = p.getYoungestVaultTreasuryAddress(chain)
-				if err != nil || strings.TrimSpace(changeAddress) == "" {
-					logs.Warn("[JobWindowPlanner] fallback to no-change because youngest treasury address unavailable: %v", err)
+			feeWithChange := p.estimateBTCFee(1, len(outputs)+1)
+			if totalInput > totalAmount+feeWithChange {
+				changeAmount = totalInput - totalAmount - feeWithChange
+				fee = feeWithChange
+				if changeAmount >= btcDustLimit {
+					// 找零回 UTXO 原地址（同 tweak）
+					changeAddress = btcAddressFromScriptPubKey(utxo.ScriptPubKey, chain)
+					if changeAddress == "" {
+						fee = totalInput - totalAmount
+						changeAmount = 0
+					}
+				} else {
 					fee = totalInput - totalAmount
 					changeAmount = 0
-					changeAddress = ""
 				}
 			} else {
-				// After accounting for an extra change output, change becomes dust.
 				fee = totalInput - totalAmount
 				changeAmount = 0
 			}
 		} else {
-			// Dust-level remainder is absorbed into fee.
 			fee = totalInput - totalAmount
 			changeAmount = 0
 		}
-
-		break
 	}
 
-	totalInputFinal := sumUTXOAmount(utxos)
-	if totalInputFinal < totalAmount+fee {
-		return nil, fmt.Errorf("insufficient UTXOs after fee planning: need %d, got %d", totalAmount+fee, totalInputFinal)
-	}
-
-	// 4. Get chain adapter and build template.
+	// 4. 构建模板
 	adapter, err := p.adapterFactory.Adapter(chain)
 	if err != nil {
 		return nil, err
@@ -142,9 +123,7 @@ func (p *JobWindowPlanner) planBTCJob(chain, asset string, vaultID uint32, keyEp
 		return nil, err
 	}
 
-	// 5. 生成 job_id
 	jobID := generateJobID(chain, asset, vaultID, firstSeq, result.TemplateHash, keyEpoch)
-
 	return &Job{
 		JobID:        jobID,
 		Chain:        chain,
@@ -156,4 +135,16 @@ func (p *JobWindowPlanner) planBTCJob(chain, asset string, vaultID uint32, keyEp
 		TemplateData: result.TemplateData,
 		FirstSeq:     firstSeq,
 	}, nil
+}
+
+// btcAddressFromScriptPubKey 从 Taproot scriptPubKey 反推 bech32m 地址
+func btcAddressFromScriptPubKey(scriptPubKey []byte, chain string) string {
+	if len(scriptPubKey) != 34 || scriptPubKey[0] != 0x51 || scriptPubKey[1] != 0x20 {
+		return ""
+	}
+	addr, err := btcTaprootAddressFromXOnly(scriptPubKey[2:], btcNetParamsForChain(chain))
+	if err != nil {
+		return ""
+	}
+	return addr
 }

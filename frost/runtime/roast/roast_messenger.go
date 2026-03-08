@@ -19,6 +19,7 @@ type Envelope struct {
 	Epoch     uint64
 	Round     uint32
 	Payload   []byte
+	Tweaks    [][]byte // 每个 input 对应的 taproot tweak 标量
 }
 
 // P2P 网络接口（用于适配）
@@ -40,6 +41,7 @@ type FrostEnvelope struct {
 	Round     uint32
 	Payload   []byte
 	Sig       []byte
+	Tweaks    [][]byte
 }
 
 // P2PMessenger adapts RoastMessenger to the existing P2P transport.
@@ -83,6 +85,7 @@ func FromFrostEnvelope(env *FrostEnvelope) *Envelope {
 		Epoch:     env.Epoch,
 		Round:     env.Round,
 		Payload:   env.Payload,
+		Tweaks:    env.Tweaks,
 	}
 }
 
@@ -100,6 +103,7 @@ func toFrostEnvelope(msg *Envelope) *FrostEnvelope {
 		Epoch:     msg.Epoch,
 		Round:     msg.Round,
 		Payload:   msg.Payload,
+		Tweaks:    msg.Tweaks,
 	}
 }
 
@@ -118,5 +122,6 @@ func toTypesRoastEnvelope(msg *Envelope) *types.RoastEnvelope {
 		Epoch:     msg.Epoch,
 		Round:     msg.Round,
 		Payload:   msg.Payload,
+		Tweaks:    msg.Tweaks,
 	}
 }

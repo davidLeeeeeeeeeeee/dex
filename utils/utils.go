@@ -157,3 +157,56 @@ func NowRFC3339() string {
 func NowUnixNano() int64 {
 	return time.Now().UnixNano()
 }
+
+// ComputeUserTweak 计算用户级 Taproot tweak 标量。
+// tweak = H_TapTweak(P_x || userAddress)，返回 32 字节 big-endian 标量。
+func ComputeUserTweak(groupPubkeyXOnly []byte, userAddress string) []byte {
+	tagHash := sha256.Sum256([]byte("TapTweak"))
+	h := sha256.New()
+	h.Write(tagHash[:])
+	h.Write(tagHash[:])
+	h.Write(groupPubkeyXOnly)
+	h.Write([]byte(userAddress))
+	tweakBytes := h.Sum(nil)
+
+	// mod n
+	n := btcec.S256().Params().N
+	t := new(big.Int).SetBytes(tweakBytes)
+	t.Mod(t, n)
+	out := make([]byte, 32)
+	t.FillBytes(out)
+	return out
+}
+
+// ComputeTweakedPubkey 计算 P' = P + tweak·G，返回 33 字节压缩公钥。
+func ComputeTweakedPubkey(groupPubkey []byte, tweak []byte) ([]byte, error) {
+	// 统一解析为 *btcec.PublicKey
+	var pub *btcec.PublicKey
+	var err error
+	switch len(groupPubkey) {
+	case 33:
+		pub, err = btcec.ParsePubKey(groupPubkey)
+	case 32:
+		// x-only → 加 0x02 前缀当作 even-Y 压缩公钥解析
+		compressed := make([]byte, 33)
+		compressed[0] = 0x02
+		copy(compressed[1:], groupPubkey)
+		pub, err = btcec.ParsePubKey(compressed)
+	default:
+		return nil, errors.New("invalid pubkey length")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// tweak·G
+	var tweakScalar btcec.ModNScalar
+	tweakScalar.SetByteSlice(tweak)
+	var tG, pJ, result btcec.JacobianPoint
+	btcec.ScalarBaseMultNonConst(&tweakScalar, &tG)
+	pub.AsJacobian(&pJ)
+	btcec.AddNonConst(&pJ, &tG, &result)
+	result.ToAffine()
+	tweaked := btcec.NewPublicKey(&result.X, &result.Y)
+	return tweaked.SerializeCompressed(), nil
+}

@@ -732,6 +732,8 @@ message FrostUtxo {
   uint64 finalize_height = 5; // 入账区块高度
   string request_id = 6;      // 对应的充值请求 ID
   bytes script_pubkey = 7;    // 新增：锁定脚本（用于构造提现交易签名）
+  bytes tweak =
+      8; // Taproot tweak 标量（32字节，H_TapTweak(P_x || user_address)）
 }
 
 // Frost 规划日志（用于排查提现流程卡顿）

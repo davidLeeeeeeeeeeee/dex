@@ -9,6 +9,7 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+	"dex/utils"
 	"dex/witness"
 	"encoding/binary"
 	"encoding/hex"
@@ -158,7 +159,7 @@ func normalizeVaultGroupPubKeyXOnly(groupPubKey []byte) ([]byte, error) {
 	}
 }
 
-func lookupVaultIDByScriptPubKey(sv StateView, chainName string, vaultCount uint32, scriptPubKey []byte) (uint32, error) {
+func lookupVaultIDByScriptPubKey(sv StateView, chainName string, vaultCount uint32, scriptPubKey []byte, receiverAddress string) (uint32, error) {
 	if vaultCount == 0 {
 		return 0, fmt.Errorf("invalid vault count=0 for chain %s", chainName)
 	}
@@ -190,7 +191,17 @@ func lookupVaultIDByScriptPubKey(sv StateView, chainName string, vaultCount uint
 		if err != nil {
 			continue
 		}
-		if !bytes.Equal(candidateXOnly, xOnly) {
+
+		// 计算 tweaked pubkey: P' = P + H_TapTweak(P_x || receiverAddress)·G
+		tweak := utils.ComputeUserTweak(candidateXOnly, receiverAddress)
+		tweakedPub, err := utils.ComputeTweakedPubkey(candidateState.GroupPubkey, tweak)
+		if err != nil {
+			continue
+		}
+		// 取 tweaked pubkey 的 x-only（去掉压缩前缀）
+		tweakedXOnly := tweakedPub[1:33]
+
+		if !bytes.Equal(tweakedXOnly, xOnly) {
 			continue
 		}
 
@@ -214,9 +225,10 @@ func lookupVaultIDByScriptPubKey(sv StateView, chainName string, vaultCount uint
 			)
 		}
 		return 0, fmt.Errorf(
-			"no allocatable vault matches script_pubkey=%s on chain %s",
+			"no allocatable vault matches script_pubkey=%s on chain %s (receiver=%s)",
 			hex.EncodeToString(scriptPubKey),
 			chainName,
+			receiverAddress,
 		)
 	default:
 		return 0, fmt.Errorf(
@@ -508,7 +520,7 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 	// - Others: keep deterministic request_id allocation.
 	var vaultID uint32
 	if isBTCChainName(chainName) {
-		vaultID, err = lookupVaultIDByScriptPubKey(sv, chainName, vaultCount, rechargeRequest.NativeScript)
+		vaultID, err = lookupVaultIDByScriptPubKey(sv, chainName, vaultCount, rechargeRequest.NativeScript, rechargeRequest.ReceiverAddress)
 	} else {
 		vaultID, err = allocateVaultIDWithStateCheck(sv, chainName, requestID, vaultCount)
 	}

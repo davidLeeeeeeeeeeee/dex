@@ -3,6 +3,7 @@ package vm
 import (
 	"dex/keys"
 	"dex/pb"
+	"dex/utils"
 	"dex/witness"
 	"fmt"
 	"strconv"
@@ -118,7 +119,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 			return fmt.Errorf("resolve vault config for btc recharge failed: %w", err)
 		}
 
-		scriptVaultID, err := lookupVaultIDByScriptPubKey(sv, chainName, vaultCount, stored.NativeScript)
+		scriptVaultID, err := lookupVaultIDByScriptPubKey(sv, chainName, vaultCount, stored.NativeScript, stored.ReceiverAddress)
 		if err != nil {
 			return fmt.Errorf("invalid btc native_script for request %s: %w", stored.RequestId, err)
 		}
@@ -143,6 +144,18 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 			}
 		}
 
+		// 计算 tweak = H_TapTweak(P_x || receiver_address)
+		var tweakBytes []byte
+		vaultStateKey2 := keys.KeyFrostVaultState(chainName, vaultID)
+		if vsData, vsOk, _ := sv.Get(vaultStateKey2); vsOk && len(vsData) > 0 {
+			var vs pb.FrostVaultState
+			if err := unmarshalProtoCompat(vsData, &vs); err == nil {
+				if xOnly, err := normalizeVaultGroupPubKeyXOnly(vs.GroupPubkey); err == nil {
+					tweakBytes = utils.ComputeUserTweak(xOnly, stored.ReceiverAddress)
+				}
+			}
+		}
+
 		utxoKey := keys.KeyFrostBtcUtxo(vaultID, txid, vout)
 		utxo := &pb.FrostUtxo{
 			Txid:           txid,
@@ -152,6 +165,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 			FinalizeHeight: finalizeHeight,
 			RequestId:      stored.RequestId,
 			ScriptPubkey:   stored.NativeScript,
+			Tweak:          tweakBytes,
 		}
 		utxoData, err := proto.Marshal(utxo)
 		if err != nil {

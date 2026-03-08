@@ -4,7 +4,6 @@
 package planning
 
 import (
-	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -91,77 +90,43 @@ func classifyBTCUTXOInsufficient(got uint64, stat btcUTXOScanStats) (string, str
 	return "selected_but_insufficient_amount", "spendable UTXOs exist but total amount is below required amount"
 }
 
-// selectBTCUTXOs 选择 BTC UTXO（按 FIFO 索引顺序，不扫描 UTXO 全前缀）
-func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmount uint64) ([]chainpkg.UTXO, error) {
-	// 1. 读取 VaultState，构建 Taproot scriptPubKey
-	vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
-	vaultStateData, exists, err := p.stateReader.Get(vaultStateKey)
-	if err != nil {
-		return nil, newBTCUTXOSelectionError("vault_state_read_failed", err.Error(), chain, vaultID, needAmount, 0, 0, 0, btcUTXOScanStats{})
-	}
-	if !exists || len(vaultStateData) == 0 {
-		return nil, newBTCUTXOSelectionError("vault_state_missing", fmt.Sprintf("vault state not found: key=%s", vaultStateKey), chain, vaultID, needAmount, 0, 0, 0, btcUTXOScanStats{})
-	}
-
-	var vaultState pb.FrostVaultState
-	if err := proto.Unmarshal(vaultStateData, &vaultState); err != nil {
-		return nil, newBTCUTXOSelectionError("vault_state_decode_failed", err.Error(), chain, vaultID, needAmount, 0, 0, 0, btcUTXOScanStats{})
-	}
-
-	xOnlyPubKey, err := normalizeTaprootXOnlyPubKey(vaultState.GroupPubkey)
-	if err != nil {
-		return nil, newBTCUTXOSelectionError("vault_pubkey_invalid", err.Error(), chain, vaultID, needAmount, 0, 0, 0, btcUTXOScanStats{})
-	}
-	expectedScriptPubKey := make([]byte, 34)
-	expectedScriptPubKey[0] = 0x51
-	expectedScriptPubKey[1] = 0x20
-	copy(expectedScriptPubKey[2:], xOnlyPubKey)
-
-	// 2. 按 head/seq 从 FIFO 索引顺序读取
+// selectBTCUTXOs 选择单个 BTC UTXO（FIFO 队首第一个可用 UTXO）
+// 保守策略：每笔 TX 单 input，防止假 UTXO 污染真 UTXO。
+func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32) ([]chainpkg.UTXO, error) {
+	// 读取 FIFO head/seq
 	headKey := keys.KeyFrostBtcUtxoFIFOHead(vaultID)
 	seqKey := keys.KeyFrostBtcUtxoFIFOSeq(vaultID)
 
 	head := uint64(1)
 	if headData, headExists, e := p.stateReader.Get(headKey); e != nil {
-		return nil, newBTCUTXOSelectionError("fifo_head_read_failed", e.Error(), chain, vaultID, needAmount, 0, 0, 0, btcUTXOScanStats{})
+		return nil, newBTCUTXOSelectionError("fifo_head_read_failed", e.Error(), chain, vaultID, 0, 0, 0, 0, btcUTXOScanStats{})
 	} else if headExists && len(headData) > 0 {
 		parsed, pe := strconv.ParseUint(string(headData), 10, 64)
-		if pe != nil {
-			return nil, newBTCUTXOSelectionError("fifo_head_invalid", fmt.Sprintf("invalid head value=%q: %v", string(headData), pe), chain, vaultID, needAmount, 0, 0, 0, btcUTXOScanStats{})
-		}
-		if parsed == 0 {
-			return nil, newBTCUTXOSelectionError("fifo_head_invalid", fmt.Sprintf("invalid head value=%q: must be >= 1", string(headData)), chain, vaultID, needAmount, 0, 0, 0, btcUTXOScanStats{})
+		if pe != nil || parsed == 0 {
+			return nil, newBTCUTXOSelectionError("fifo_head_invalid", fmt.Sprintf("invalid head=%q", string(headData)), chain, vaultID, 0, 0, 0, 0, btcUTXOScanStats{})
 		}
 		head = parsed
 	}
 
 	seqData, exists, err := p.stateReader.Get(seqKey)
 	if err != nil {
-		return nil, newBTCUTXOSelectionError("fifo_seq_read_failed", err.Error(), chain, vaultID, needAmount, 0, head, 0, btcUTXOScanStats{})
+		return nil, newBTCUTXOSelectionError("fifo_seq_read_failed", err.Error(), chain, vaultID, 0, 0, head, 0, btcUTXOScanStats{})
 	}
 	if !exists || len(seqData) == 0 {
-		return nil, newBTCUTXOSelectionError("fifo_seq_missing", fmt.Sprintf("FIFO seq key missing: key=%s", seqKey), chain, vaultID, needAmount, 0, head, 0, btcUTXOScanStats{})
+		return nil, newBTCUTXOSelectionError("fifo_seq_missing", "FIFO seq missing", chain, vaultID, 0, 0, head, 0, btcUTXOScanStats{})
 	}
 	maxSeq, err := strconv.ParseUint(string(seqData), 10, 64)
-	if err != nil {
-		return nil, newBTCUTXOSelectionError("fifo_seq_invalid", fmt.Sprintf("invalid seq value=%q: %v", string(seqData), err), chain, vaultID, needAmount, 0, head, 0, btcUTXOScanStats{})
-	}
-	if maxSeq == 0 {
-		return nil, newBTCUTXOSelectionError("fifo_seq_zero", fmt.Sprintf("invalid seq value=%q: must be >= 1", string(seqData)), chain, vaultID, needAmount, 0, head, maxSeq, btcUTXOScanStats{})
-	}
-	if head > maxSeq {
-		return nil, newBTCUTXOSelectionError("fifo_head_ahead", "FIFO head is ahead of max seq", chain, vaultID, needAmount, 0, head, maxSeq, btcUTXOScanStats{})
+	if err != nil || maxSeq == 0 || head > maxSeq {
+		return nil, newBTCUTXOSelectionError("fifo_seq_invalid", fmt.Sprintf("seq=%q head=%d", string(seqData), head), chain, vaultID, 0, 0, head, maxSeq, btcUTXOScanStats{})
 	}
 
-	selected := make([]chainpkg.UTXO, 0)
-	var total uint64
 	scanStat := btcUTXOScanStats{}
-	for seq := head; seq <= maxSeq && total < needAmount; seq++ {
+	for seq := head; seq <= maxSeq; seq++ {
 		scanStat.Scanned++
 		indexKey := keys.KeyFrostBtcUtxoFIFOIndex(vaultID, seq)
 		utxoData, idxExists, e := p.stateReader.Get(indexKey)
 		if e != nil {
-			return nil, newBTCUTXOSelectionError("fifo_index_read_failed", fmt.Sprintf("failed to read FIFO index key=%s: %v", indexKey, e), chain, vaultID, needAmount, total, head, maxSeq, scanStat)
+			return nil, newBTCUTXOSelectionError("fifo_index_read_failed", e.Error(), chain, vaultID, 0, 0, head, maxSeq, scanStat)
 		}
 		if !idxExists || len(utxoData) == 0 {
 			scanStat.IndexMissing++
@@ -177,14 +142,10 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 			scanStat.DecodeFailed++
 			continue
 		}
-		if !bytes.Equal(protoUtxo.ScriptPubkey, expectedScriptPubKey) {
-			scanStat.DecodeFailed++
-			continue
-		}
 
 		lockKey := keys.KeyFrostBtcLockedUtxo(vaultID, protoUtxo.Txid, protoUtxo.Vout)
 		if lockVal, locked, e := p.stateReader.Get(lockKey); e != nil {
-			return nil, newBTCUTXOSelectionError("utxo_lock_read_failed", fmt.Sprintf("failed to read lock key=%s: %v", lockKey, e), chain, vaultID, needAmount, total, head, maxSeq, scanStat)
+			return nil, newBTCUTXOSelectionError("utxo_lock_read_failed", e.Error(), chain, vaultID, 0, 0, head, maxSeq, scanStat)
 		} else if locked && len(lockVal) > 0 {
 			scanStat.Locked++
 			continue
@@ -196,23 +157,18 @@ func (p *JobWindowPlanner) selectBTCUTXOs(chain string, vaultID uint32, needAmou
 			continue
 		}
 
-		selected = append(selected, chainpkg.UTXO{
+		scanStat.Selected++
+		return []chainpkg.UTXO{{
 			TxID:          protoUtxo.Txid,
 			Vout:          protoUtxo.Vout,
 			Amount:        amount,
 			ScriptPubKey:  append([]byte(nil), protoUtxo.ScriptPubkey...),
 			ConfirmHeight: protoUtxo.FinalizeHeight,
-		})
-		scanStat.Selected++
-		total += amount
+		}}, nil
 	}
 
-	if total < needAmount {
-		code, reason := classifyBTCUTXOInsufficient(total, scanStat)
-		return nil, newBTCUTXOSelectionError(code, reason, chain, vaultID, needAmount, total, head, maxSeq, scanStat)
-	}
-
-	return selected, nil
+	code, reason := classifyBTCUTXOInsufficient(0, scanStat)
+	return nil, newBTCUTXOSelectionError(code, reason, chain, vaultID, 0, 0, head, maxSeq, scanStat)
 }
 
 // estimateBTCFee 估算 BTC 手续费（简化：基于 input/output 数量）

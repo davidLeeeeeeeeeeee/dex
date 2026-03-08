@@ -69,95 +69,47 @@ func (p *JobWindowPlanner) PlanJobWindow(chain, asset string) ([]*Job, map[strin
 	return jobs, p.transientLogs, nil
 }
 
-// planBTCJobWindow BTC 批量规划（贪心装箱：1 个 input 支付 N 个 withdraw）
+// planBTCJobWindow BTC 批量规划（每个 job 使用单 UTXO 保守策略）
 func (p *JobWindowPlanner) planBTCJobWindow(chain, asset string, withdraws []*ScanResult) ([]*Job, error) {
 	jobs := make([]*Job, 0)
-	consumedWithdraws := make(map[string]bool) // 已规划的 withdraw
+	remaining := withdraws
 
-	// 贪心装箱：从队首开始，尽可能多地将 withdraw 打包到一个 job
-	for i := 0; i < len(withdraws); i++ {
-		if consumedWithdraws[withdraws[i].WithdrawID] {
-			continue
-		}
-
-		// 收集连续的 withdraw 直到达到上限或余额不足
-		batchWithdraws := make([]*ScanResult, 0)
-		var totalAmount uint64
-
-		// 贪心装箱：尽可能多地收集 withdraw
-		maxOutputs := 10 // 配置项：最多输出数量
-		for j := i; j < len(withdraws) && len(batchWithdraws) < maxOutputs; j++ {
-			if consumedWithdraws[withdraws[j].WithdrawID] {
-				break
-			}
-
-			// 读取 withdraw 金额
-			withdrawKey := keys.KeyFrostWithdraw(withdraws[j].WithdrawID)
-			withdrawData, exists, err := p.stateReader.Get(withdrawKey)
-			if err != nil || !exists {
-				break
-			}
-
-			state := &pb.FrostWithdrawState{}
-			if err := proto.Unmarshal(withdrawData, state); err != nil {
-				break
-			}
-
-			amount := parseAmount(state.Amount)
-			totalAmount += amount
-			batchWithdraws = append(batchWithdraws, withdraws[j])
-		}
-
-		if len(batchWithdraws) == 0 {
-			continue
-		}
-
-		// 规划 BTC job（选择 UTXO，构建模板）
-		vaultID, keyEpoch, err := p.selectVault(chain, asset, totalAmount)
+	for len(remaining) > 0 {
+		// 选择 vault
+		vaultID, keyEpoch, err := p.selectVault(chain, asset, 0)
 		if err != nil {
-			logs.Verbose("[JobWindowPlanner] failed to select vault for batch amount=%d: %v", totalAmount, err)
-			for _, wd := range batchWithdraws {
+			for _, wd := range remaining {
 				p.reportTransientLog(wd.WithdrawID, "SelectVault", "FAILED", fmt.Sprintf("Failed to select vault: %v", err))
 			}
-			continue
+			break
 		}
 
-		job, err := p.planBTCJob(chain, asset, vaultID, keyEpoch, batchWithdraws, totalAmount)
+		// planBTCJob 内部选单 UTXO + 贪心匹配 withdraw
+		job, err := p.planBTCJob(chain, asset, vaultID, keyEpoch, remaining)
 		if err != nil {
-			logs.Debug("[JobWindowPlanner] failed to plan BTC job: %v", err)
-			// 记录失败日志给每一个 withdraw
-			for _, wd := range batchWithdraws {
-				p.reportTransientLog(wd.WithdrawID, "PlanBTCJob", "FAILED", fmt.Sprintf("Failed to plan BTC job: %v", err))
+			for _, wd := range remaining {
+				p.reportTransientLog(wd.WithdrawID, "PlanBTCJob", "FAILED", fmt.Sprintf("Failed: %v", err))
 			}
-			// 如果批量规划失败，尝试单个规划
-			for _, wd := range batchWithdraws {
-				singleJob, err := p.planJobForWithdraw(wd)
-				if err == nil && singleJob != nil {
-					jobs = append(jobs, singleJob)
-					consumedWithdraws[wd.WithdrawID] = true
-
-					// 扣减本地缓存，防止后续的规划仍然觉得余额充足导致双花逻辑上的超采
-					withdrawKey := keys.KeyFrostWithdraw(wd.WithdrawID)
-					if withdrawData, exists, e := p.stateReader.Get(withdrawKey); e == nil && exists {
-						state := &pb.FrostWithdrawState{}
-						if proto.Unmarshal(withdrawData, state) == nil {
-							p.deductVaultBalance(singleJob.VaultID, parseAmount(state.Amount))
-						}
-					}
-				}
-			}
-			continue
+			break
+		}
+		if job == nil || len(job.WithdrawIDs) == 0 {
+			break
 		}
 
-		if job != nil {
-			jobs = append(jobs, job)
-			// 标记已规划的 withdraw
-			for _, wd := range batchWithdraws {
-				consumedWithdraws[wd.WithdrawID] = true
-			}
-			// 批量规划成功后从缓存中扣去透支余额，防止当次Tick重用
-			p.deductVaultBalance(vaultID, totalAmount)
+		jobs = append(jobs, job)
+
+		// 从 remaining 中移除已规划的 withdraw
+		consumed := make(map[string]bool, len(job.WithdrawIDs))
+		for _, wid := range job.WithdrawIDs {
+			consumed[wid] = true
 		}
+		newRemaining := make([]*ScanResult, 0, len(remaining))
+		for _, wd := range remaining {
+			if !consumed[wd.WithdrawID] {
+				newRemaining = append(newRemaining, wd)
+			}
+		}
+		remaining = newRemaining
 	}
 
 	return jobs, nil
@@ -343,7 +295,7 @@ func (p *JobWindowPlanner) planJobForWithdraw(scanResult *ScanResult) (*Job, err
 	// 3. 获取链适配器
 	// BTC single-withdraw fallback must still use BTC-specific planning (inputs/fee/change).
 	if scanResult.Chain == "btc" {
-		return p.planBTCJob(scanResult.Chain, scanResult.Asset, vaultID, keyEpoch, []*ScanResult{scanResult}, amount)
+		return p.planBTCJob(scanResult.Chain, scanResult.Asset, vaultID, keyEpoch, []*ScanResult{scanResult})
 	}
 
 	adapter, err := p.adapterFactory.Adapter(scanResult.Chain)

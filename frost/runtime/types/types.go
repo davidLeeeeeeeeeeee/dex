@@ -166,6 +166,7 @@ type RoastEnvelope struct {
 	Epoch     uint64
 	Round     uint32
 	Payload   []byte
+	Tweaks    [][]byte
 }
 
 // RoastMessenger ROAST 消息传输接口

@@ -106,6 +106,9 @@ type ParticipantSession struct {
 	// 收到的聚合 nonce
 	AggregatedNonces []byte
 
+	// Taproot tweaks（每个 input/task 的 tweak 标量，32字节）
+	Tweaks [][]byte
+
 	// 状态
 	State       ParticipantSessionState
 	CreatedAt   time.Time
@@ -367,6 +370,9 @@ func (p *Participant) HandleRoastNonceRequest(env *Envelope) error {
 	logs.Debug("[Participant] nonce request payload decoded node=%s job=%s task_count=%d first_msg=%s",
 		p.nodeID, env.SessionID, len(messages), firstMessageForLog(messages))
 	sess := p.getOrCreateSession(env.SessionID, env.Chain, env.VaultID, env.Epoch, env.SignAlgo, myIndex, myShare, messages)
+	if len(env.Tweaks) > 0 {
+		sess.Tweaks = env.Tweaks
+	}
 
 	// 生成 nonce
 	numTasks := len(sess.Messages)
@@ -614,6 +620,19 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 	if normalizedShare := normalizeSecretShareForBIP340(sess.SignAlgo, groupPubBytes, myShare); normalizedShare != myShare {
 		myShare = normalizedShare
 		logs.Info("[Participant] normalized BIP340 secret share for odd-Y group pubkey chain=%s vault=%d epoch=%d", sess.Chain, sess.VaultID, sess.KeyEpoch)
+	}
+
+	// Taproot tweak 补偿：share += tweak (mod order)
+	// 注意：如果所有 task 共享同一个 tweak（单 UTXO 策略），取第一个即可
+	var sessionTweak *big.Int
+	if len(sess.Tweaks) > 0 && len(sess.Tweaks[0]) == 32 {
+		order := curve.NewSecp256k1Group().Order()
+		sessionTweak = new(big.Int).SetBytes(sess.Tweaks[0])
+		sessionTweak.Mod(sessionTweak, order)
+		myShare = new(big.Int).Add(myShare, sessionTweak)
+		myShare.Mod(myShare, order)
+		logs.Info("[Participant] applied tweak compensation chain=%s vault=%d epoch=%d tweak=%s",
+			sess.Chain, sess.VaultID, sess.KeyEpoch, hex.EncodeToString(sess.Tweaks[0]))
 	}
 
 	// 解析聚合的 nonces 获取所有参与者的 nonce 承诺
