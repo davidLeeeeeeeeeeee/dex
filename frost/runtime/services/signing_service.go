@@ -39,8 +39,9 @@ type SigningSessionParams struct {
 	VaultID   uint32
 	KeyEpoch  uint64
 	SignAlgo  pb.SignAlgo
-	Messages  [][]byte // 待签名消息列表（BTC 可能是多个 input 的 sighash）
-	Threshold int      // 门限 t
+	Messages  [][]byte
+	Threshold int
+	Tweaks    [][]byte // Taproot tweaks (per input)
 }
 
 // SessionStatus 会话状态
@@ -152,6 +153,7 @@ func (s *RoastSigningService) StartSigningSession(ctx context.Context, params *S
 		SignAlgo:  params.SignAlgo,
 		Messages:  params.Messages,
 		Threshold: params.Threshold,
+		Tweaks:    params.Tweaks,
 	}
 
 	if err := s.coordinator.StartSession(ctx, startParams); err != nil {

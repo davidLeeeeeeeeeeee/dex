@@ -174,6 +174,7 @@ func (c *Coordinator) StartSession(ctx context.Context, params *StartSessionPara
 		Threshold:   params.Threshold,
 		MyIndex:     myIndex,
 		StartHeight: c.currentHeight,
+		Tweaks:      params.Tweaks,
 	})
 
 	if !c.isCurrentCoordinator(sess) {
@@ -200,6 +201,7 @@ type StartSessionParams struct {
 	SignAlgo     pb.SignAlgo
 	Messages     [][]byte // 待签名消息列表
 	Threshold    int
+	Tweaks       [][]byte // Taproot tweaks (per input)
 }
 
 // isCurrentCoordinator 检查本节点是否是当前协调者
@@ -443,6 +445,7 @@ func (c *Coordinator) broadcastNonceRequest(sess *roastsession.Session) {
 		Epoch:     sess.KeyEpoch,
 		Round:     1,
 		Payload:   encodeRoastRequestPayload(sess.Messages, nil),
+		Tweaks:    sess.Tweaks,
 	}
 
 	_ = c.messenger.Broadcast(peers, toTypesRoastEnvelope(msg))
@@ -505,6 +508,7 @@ func (c *Coordinator) broadcastSignRequest(sess *roastsession.Session) {
 		Epoch:     sess.KeyEpoch,
 		Round:     2,
 		Payload:   payload,
+		Tweaks:    sess.Tweaks,
 	}
 
 	_ = c.messenger.Broadcast(peers, toTypesRoastEnvelope(msg))

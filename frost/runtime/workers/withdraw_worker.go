@@ -42,6 +42,7 @@ type SigningSessionParams struct {
 	SignAlgo  pb.SignAlgo
 	Messages  [][]byte
 	Threshold int
+	Tweaks    [][]byte // Taproot tweaks (per input)
 }
 
 // SessionStatus 会话状态
@@ -279,6 +280,12 @@ func (w *WithdrawWorker) processJobAsync(ctx context.Context, job *planning.Job)
 	}
 	w.logSigningContext(job, threshold, signAlgo, messages)
 
+	// 加载 BTC UTXO tweaks
+	var tweaks [][]byte
+	if isBTCChain(job.Chain) {
+		tweaks = w.loadBTCInputTweaks(job)
+	}
+
 	// 启动签名会话
 	sessionParams := &SigningSessionParams{
 		JobID:     job.JobID,
@@ -288,6 +295,7 @@ func (w *WithdrawWorker) processJobAsync(ctx context.Context, job *planning.Job)
 		SignAlgo:  signAlgo,
 		Messages:  messages,
 		Threshold: threshold,
+		Tweaks:    tweaks,
 	}
 
 	sessionID, err := w.signingService.StartSigningSession(ctx, sessionParams)
@@ -714,6 +722,30 @@ func (w *WithdrawWorker) loadUTXOScriptPubkey(vaultID uint32, txid string, vout 
 		return nil, nil
 	}
 	return append([]byte(nil), utxo.ScriptPubkey...), nil
+}
+
+// loadBTCInputTweaks 从 BTC template inputs 加载每个 UTXO 的 tweak
+func (w *WithdrawWorker) loadBTCInputTweaks(job *planning.Job) [][]byte {
+	template, err := w.parseBTCTemplate(job)
+	if err != nil || len(template.Inputs) == 0 {
+		return nil
+	}
+	tweaks := make([][]byte, 0, len(template.Inputs))
+	for _, in := range template.Inputs {
+		utxoKey := keys.KeyFrostBtcUtxo(job.VaultID, in.TxID, in.Vout)
+		utxoData, exists, err := w.stateReader.Get(utxoKey)
+		if err != nil || !exists || len(utxoData) == 0 {
+			tweaks = append(tweaks, nil)
+			continue
+		}
+		var utxo pb.FrostUtxo
+		if proto.Unmarshal(utxoData, &utxo) != nil || len(utxo.Tweak) != 32 {
+			tweaks = append(tweaks, nil)
+			continue
+		}
+		tweaks = append(tweaks, append([]byte(nil), utxo.Tweak...))
+	}
+	return tweaks
 }
 
 func (w *WithdrawWorker) loadVaultTaprootScriptPubkey(chainName string, vaultID uint32) ([]byte, error) {

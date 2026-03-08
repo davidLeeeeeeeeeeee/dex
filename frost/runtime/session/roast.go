@@ -30,6 +30,7 @@ type SessionParams struct {
 	MyIndex     int
 	StartHeight uint64
 	StartedAt   time.Time
+	Tweaks      [][]byte // Taproot tweaks (per input)
 }
 
 // NonceData contains nonce commitments from a participant.
@@ -79,6 +80,8 @@ type Session struct {
 	CachedNoncePayload []byte   // 冻结的 nonce 聚合 payload（确保重复广播一致性）
 
 	closed bool // 会话是否已关闭，关闭后拒绝任何变更
+
+	Tweaks [][]byte // Taproot tweaks (per input, 从 coordinator 传递给 participant)
 }
 
 // NewSession creates a new ROAST session with initialized maps.
@@ -103,6 +106,7 @@ func NewSession(params SessionParams) *Session {
 		State:       SignSessionStateInit,
 		StartHeight: params.StartHeight,
 		StartedAt:   startedAt,
+		Tweaks:      params.Tweaks,
 	}
 }
 
