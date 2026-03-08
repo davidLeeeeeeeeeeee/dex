@@ -150,7 +150,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		if vsData, vsOk, _ := sv.Get(vaultStateKey2); vsOk && len(vsData) > 0 {
 			var vs pb.FrostVaultState
 			if err := unmarshalProtoCompat(vsData, &vs); err == nil {
-				if xOnly, err := normalizeVaultGroupPubKeyXOnly(vs.GroupPubkey); err == nil {
+				if xOnly, err := utils.NormalizeSecp256k1XOnlyPubKey(vs.GroupPubkey); err == nil {
 					tweakBytes = utils.ComputeUserTweak(xOnly, stored.ReceiverAddress)
 				}
 			}

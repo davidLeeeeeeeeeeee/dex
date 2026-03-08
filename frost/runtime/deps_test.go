@@ -8,6 +8,10 @@ import (
 )
 
 func TestPBEnvelopeFromRoast_EncodesRoastEnvelope(t *testing.T) {
+	tweaks := [][]byte{
+		bytes.Repeat([]byte{0x11}, 32),
+		bytes.Repeat([]byte{0x22}, 32),
+	}
 	in := &RoastEnvelope{
 		SessionID: "sess-1",
 		Kind:      "NonceRequest",
@@ -18,6 +22,7 @@ func TestPBEnvelopeFromRoast_EncodesRoastEnvelope(t *testing.T) {
 		Epoch:     9,
 		Round:     2,
 		Payload:   []byte("payload-bytes"),
+		Tweaks:    tweaks,
 	}
 
 	pbEnv, err := PBEnvelopeFromRoast(in)
@@ -47,5 +52,12 @@ func TestPBEnvelopeFromRoast_EncodesRoastEnvelope(t *testing.T) {
 	if !bytes.Equal(out.Payload, in.Payload) {
 		t.Fatalf("payload mismatch: got=%x want=%x", out.Payload, in.Payload)
 	}
+	if len(out.Tweaks) != len(in.Tweaks) {
+		t.Fatalf("tweaks length mismatch: got=%d want=%d", len(out.Tweaks), len(in.Tweaks))
+	}
+	for i := range in.Tweaks {
+		if !bytes.Equal(out.Tweaks[i], in.Tweaks[i]) {
+			t.Fatalf("tweak[%d] mismatch: got=%x want=%x", i, out.Tweaks[i], in.Tweaks[i])
+		}
+	}
 }
-

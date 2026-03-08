@@ -3,10 +3,12 @@ package services
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"dex/frost/runtime/roast"
+	"dex/frost/runtime/session"
 	"dex/frost/runtime/types"
 	"dex/logs"
 	"dex/pb"
@@ -113,5 +115,84 @@ func TestMonitorSessionCopiesAllSignatures(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("monitorSession goroutine did not exit")
+	}
+}
+
+func TestStartSigningSessionRestartsFailedSession(t *testing.T) {
+	coord := roast.NewCoordinator(
+		roast.NodeID("node-a"),
+		nil,
+		&testVaultProvider{},
+		nil,
+		logs.NewNodeLogger("svc-restart-test", 0),
+	)
+
+	svc := NewRoastSigningService(coord, nil, &testVaultProvider{})
+	params := &SigningSessionParams{
+		JobID:     "job-restart-1",
+		Chain:     "btc",
+		VaultID:   1,
+		KeyEpoch:  1,
+		SignAlgo:  pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
+		Messages:  [][]byte{{0x01}},
+		Threshold: 0,
+	}
+
+	sessionID, err := svc.StartSigningSession(context.Background(), params)
+	if err != nil {
+		t.Fatalf("first StartSigningSession failed: %v", err)
+	}
+
+	oldSess := coord.GetSession(params.JobID)
+	if oldSess == nil {
+		t.Fatal("old session not found")
+	}
+	oldSess.SetState(session.SignSessionStateFailed)
+
+	oldWrapper := svc.sessions[sessionID]
+	if oldWrapper == nil {
+		t.Fatal("old wrapper not found")
+	}
+	oldWrapper.setError(errors.New("session failed"))
+
+	restartedID, err := svc.StartSigningSession(context.Background(), params)
+	if err != nil {
+		t.Fatalf("restart StartSigningSession failed: %v", err)
+	}
+	if restartedID != sessionID {
+		t.Fatalf("session id mismatch: got=%s want=%s", restartedID, sessionID)
+	}
+
+	newSess := coord.GetSession(params.JobID)
+	if newSess == nil {
+		t.Fatal("new session not found")
+	}
+	if newSess == oldSess {
+		t.Fatal("expected coordinator session to be replaced after failure")
+	}
+	if state := newSess.GetState(); state != session.SignSessionStateCollectingNonces {
+		t.Fatalf("unexpected new session state: got=%v want=%v", state, session.SignSessionStateCollectingNonces)
+	}
+
+	newWrapper := svc.sessions[sessionID]
+	if newWrapper == nil {
+		t.Fatal("new wrapper not found")
+	}
+	if newWrapper == oldWrapper {
+		t.Fatal("expected failed wrapper to be replaced")
+	}
+
+	newWrapper.mu.RLock()
+	defer newWrapper.mu.RUnlock()
+	if newWrapper.err != nil {
+		t.Fatalf("new wrapper unexpectedly has error: %v", newWrapper.err)
+	}
+	if newWrapper.result != nil {
+		t.Fatal("new wrapper unexpectedly has result")
+	}
+	select {
+	case <-newWrapper.doneCh:
+		t.Fatal("new wrapper should still be pending")
+	default:
 	}
 }

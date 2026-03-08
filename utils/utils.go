@@ -180,21 +180,23 @@ func ComputeUserTweak(groupPubkeyXOnly []byte, userAddress string) []byte {
 
 // ComputeTweakedPubkey 计算 P' = P + tweak·G，返回 33 字节压缩公钥。
 func ComputeTweakedPubkey(groupPubkey []byte, tweak []byte) ([]byte, error) {
-	// 统一解析为 *btcec.PublicKey
-	var pub *btcec.PublicKey
-	var err error
+	// Taproot internal key follows x-only semantics: lift_x(Px) always chooses even-Y.
+	var xOnly []byte
 	switch len(groupPubkey) {
 	case 33:
-		pub, err = btcec.ParsePubKey(groupPubkey)
+		if groupPubkey[0] != 0x02 && groupPubkey[0] != 0x03 {
+			return nil, errors.New("invalid compressed pubkey prefix")
+		}
+		xOnly = groupPubkey[1:33]
 	case 32:
-		// x-only → 加 0x02 前缀当作 even-Y 压缩公钥解析
-		compressed := make([]byte, 33)
-		compressed[0] = 0x02
-		copy(compressed[1:], groupPubkey)
-		pub, err = btcec.ParsePubKey(compressed)
+		xOnly = groupPubkey
 	default:
 		return nil, errors.New("invalid pubkey length")
 	}
+	compressed := make([]byte, 33)
+	compressed[0] = 0x02
+	copy(compressed[1:], xOnly)
+	pub, err := btcec.ParsePubKey(compressed)
 	if err != nil {
 		return nil, err
 	}

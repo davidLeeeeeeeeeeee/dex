@@ -1,19 +1,24 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
 
 	"dex/frost/runtime/services"
+	"dex/frost/runtime/workers"
+	"dex/pb"
 )
 
 type fakeServicesSigningService struct {
-	result *services.SignedPackage
-	err    error
+	result    *services.SignedPackage
+	err       error
+	lastStart *services.SigningSessionParams
 }
 
 func (s *fakeServicesSigningService) StartSigningSession(ctx context.Context, params *services.SigningSessionParams) (sessionID string, err error) {
+	s.lastStart = params
 	return "session-test", nil
 }
 
@@ -54,5 +59,31 @@ func TestSigningServiceAdapterWaitForCompletionPropagatesSignatures(t *testing.T
 	}
 	if got.Signatures[0][0] != sig1[0] || got.Signatures[1][1] != sig2[1] {
 		t.Fatal("signatures content mismatch")
+	}
+}
+
+func TestSigningServiceAdapterStartSigningSessionPropagatesTweaks(t *testing.T) {
+	fakeSvc := &fakeServicesSigningService{}
+	adapter := &signingServiceAdapter{service: fakeSvc}
+	tweaks := [][]byte{{0x01, 0x02, 0x03}}
+
+	_, err := adapter.StartSigningSession(context.Background(), &workers.SigningSessionParams{
+		JobID:     "job-test",
+		Chain:     "btc",
+		VaultID:   7,
+		KeyEpoch:  2,
+		SignAlgo:  pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
+		Messages:  [][]byte{{0xaa}},
+		Threshold: 3,
+		Tweaks:    tweaks,
+	})
+	if err != nil {
+		t.Fatalf("StartSigningSession returned error: %v", err)
+	}
+	if fakeSvc.lastStart == nil {
+		t.Fatal("expected StartSigningSession to be called")
+	}
+	if !bytes.Equal(fakeSvc.lastStart.Tweaks[0], tweaks[0]) {
+		t.Fatalf("tweaks mismatch: got=%x want=%x", fakeSvc.lastStart.Tweaks[0], tweaks[0])
 	}
 }

@@ -222,18 +222,11 @@ func (h *FrostWithdrawSignedTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]Wri
 
 				valid, err := verifySignature(signAlgo, verifyPubKey, sighashes[i], sig)
 				if err != nil {
-					panic(fmt.Sprintf("frost-sign-debug: vm verify error job=%s tx=%s chain=%s vault=%d key_epoch_tx=%d key_epoch_state=%d input=%d sign_algo=%s sighash=%s sig=%s pubkey=%s script_pubkey=%s err=%v",
-						jobID, txID, chainName, vaultID, signed.KeyEpoch, vaultState.KeyEpoch, i, signAlgo.String(),
-						hex.EncodeToString(sighashes[i]), hex.EncodeToString(sig), hex.EncodeToString(verifyPubKey),
-						hex.EncodeToString(scriptPubkeys[i]), err))
-					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("signature verification failed for input[%d]: %v%s", i, err, keyEpochHint)}, errors.New("signature verification failed")
+					detail := diagnoseSignatureMismatch(signAlgo, verifyPubKey, sighashes, i, sig)
+					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("signature verification failed for input[%d]: %s%s", i, detail, keyEpochHint)}, errors.New("signature verification failed")
 				}
 				if !valid {
 					detail := diagnoseSignatureMismatch(signAlgo, verifyPubKey, sighashes, i, sig)
-					panic(fmt.Sprintf("frost-sign-debug: vm verify invalid job=%s tx=%s chain=%s vault=%d key_epoch_tx=%d key_epoch_state=%d input=%d sign_algo=%s sighash=%s sig=%s pubkey=%s script_pubkey=%s detail=%s",
-						jobID, txID, chainName, vaultID, signed.KeyEpoch, vaultState.KeyEpoch, i, signAlgo.String(),
-						hex.EncodeToString(sighashes[i]), hex.EncodeToString(sig), hex.EncodeToString(verifyPubKey),
-						hex.EncodeToString(scriptPubkeys[i]), detail))
 					return nil, &Receipt{TxID: txID, Status: "FAILED", Error: fmt.Sprintf("signature verification failed for input[%d]: %s%s", i, detail, keyEpochHint)}, errors.New("signature verification failed")
 				}
 			}
@@ -470,7 +463,7 @@ func (h *FrostWithdrawSignedTxHandler) Apply(tx *pb.AnyTx) error {
 
 // verifySignature delegates algorithm verification to frost.Verify.
 // For BIP340, compressed secp256k1 pubkeys (33 bytes) are normalized to x-only.
-func verifySignature(signAlgo pb.SignAlgo, pubKey, msg, sig []byte) (bool, error) {
+func verifySignature(signAlgo pb.SignAlgo, pubKey, msg, sig []byte) (valid bool, err error) {
 	verifyPubKey := pubKey
 	if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
 		xOnlyPubKey, err := normalizeBIP340PubKey(pubKey)
@@ -480,26 +473,18 @@ func verifySignature(signAlgo pb.SignAlgo, pubKey, msg, sig []byte) (bool, error
 		verifyPubKey = xOnlyPubKey
 	}
 
+	defer func() {
+		if r := recover(); r != nil {
+			valid = false
+			err = fmt.Errorf("signature verification panic: %v", r)
+		}
+	}()
+
 	return frost.Verify(signAlgo, verifyPubKey, msg, sig)
 }
 
 func normalizeBIP340PubKey(pubKey []byte) ([]byte, error) {
-	switch len(pubKey) {
-	case 32:
-		out := make([]byte, 32)
-		copy(out, pubKey)
-		return out, nil
-	case 33:
-		// Accept compressed secp256k1 pubkey and drop prefix for x-only BIP340 verify.
-		if pubKey[0] != 0x02 && pubKey[0] != 0x03 {
-			return nil, errors.New("invalid compressed pubkey prefix for BIP340")
-		}
-		out := make([]byte, 32)
-		copy(out, pubKey[1:])
-		return out, nil
-	default:
-		return nil, errors.New("invalid pubkey length for BIP340")
-	}
+	return utils.NormalizeSecp256k1XOnlyPubKey(pubKey)
 }
 
 func diagnoseSignatureMismatch(signAlgo pb.SignAlgo, pubKey []byte, sighashes [][]byte, failedInput int, sig []byte) string {

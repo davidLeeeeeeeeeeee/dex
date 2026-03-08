@@ -12,6 +12,7 @@ import (
 	"dex/frost/runtime/roast"
 	"dex/frost/runtime/session"
 	"dex/frost/runtime/types"
+	"dex/logs"
 	"dex/pb"
 )
 
@@ -82,7 +83,8 @@ type RoastSigningService struct {
 
 // signingSessionWrapper 包装 ROAST 会话，提供统一接口
 type signingSessionWrapper struct {
-	mu sync.RWMutex
+	mu       sync.RWMutex
+	doneOnce sync.Once
 
 	sessionID string
 	jobID     string
@@ -123,8 +125,19 @@ func (s *RoastSigningService) StartSigningSession(ctx context.Context, params *S
 	defer s.mu.Unlock()
 
 	// 检查是否已存在
-	if _, exists := s.sessions[sessionID]; exists {
-		return sessionID, nil // 幂等
+	if existing, exists := s.sessions[sessionID]; exists {
+		if reuseExistingSession(existing) {
+			return sessionID, nil // 幂等
+		}
+		logs.Warn("[SigningService] replacing terminal signing session job=%s state=%s err=%v",
+			params.JobID, existing.snapshotState(), existing.snapshotError())
+		delete(s.sessions, sessionID)
+		if s.coordinator != nil {
+			s.coordinator.CloseSession(params.JobID)
+		}
+		if s.participant != nil {
+			s.participant.CloseSession(params.JobID)
+		}
 	}
 
 	// 创建包装器
@@ -157,8 +170,20 @@ func (s *RoastSigningService) StartSigningSession(ctx context.Context, params *S
 	}
 
 	if err := s.coordinator.StartSession(ctx, startParams); err != nil {
-		delete(s.sessions, sessionID)
-		return "", err
+		if errors.Is(err, roast.ErrSessionAlreadyExists) && s.coordinator != nil {
+			if sess := s.coordinator.GetSession(params.JobID); sess != nil && sess.GetState() == session.SignSessionStateFailed {
+				logs.Warn("[SigningService] restarting failed coordinator session job=%s", params.JobID)
+				s.coordinator.CloseSession(params.JobID)
+				if s.participant != nil {
+					s.participant.CloseSession(params.JobID)
+				}
+				err = s.coordinator.StartSession(ctx, startParams)
+			}
+		}
+		if err != nil {
+			delete(s.sessions, sessionID)
+			return "", err
+		}
 	}
 
 	// 异步监听会话完成
@@ -280,7 +305,9 @@ func (w *signingSessionWrapper) setResult(result *SignedPackage) {
 	w.status.Progress = 1.0
 	now := time.Now()
 	w.status.CompletedAt = &now
-	close(w.doneCh)
+	w.doneOnce.Do(func() {
+		close(w.doneCh)
+	})
 
 	if w.callback != nil {
 		w.callback(result, nil)
@@ -295,11 +322,52 @@ func (w *signingSessionWrapper) setError(err error) {
 	w.err = err
 	w.status.State = "FAILED"
 	w.status.Error = err
-	close(w.doneCh)
+	now := time.Now()
+	w.status.CompletedAt = &now
+	w.doneOnce.Do(func() {
+		close(w.doneCh)
+	})
 
 	if w.callback != nil {
 		w.callback(nil, err)
 	}
+}
+
+func reuseExistingSession(wrapper *signingSessionWrapper) bool {
+	if wrapper == nil {
+		return false
+	}
+
+	wrapper.mu.RLock()
+	defer wrapper.mu.RUnlock()
+
+	select {
+	case <-wrapper.doneCh:
+		return wrapper.err == nil && wrapper.result != nil
+	default:
+		return true
+	}
+}
+
+func (w *signingSessionWrapper) snapshotState() string {
+	if w == nil {
+		return ""
+	}
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.status == nil {
+		return ""
+	}
+	return w.status.State
+}
+
+func (w *signingSessionWrapper) snapshotError() error {
+	if w == nil {
+		return nil
+	}
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.err
 }
 
 // GetSessionStatus 查询会话状态

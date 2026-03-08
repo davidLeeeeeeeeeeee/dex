@@ -1,6 +1,7 @@
 package utils_test
 
 import (
+	"bytes"
 	"dex/utils"
 	"encoding/hex"
 	"testing"
@@ -112,5 +113,76 @@ func TestParseWIFAndGenerateBtcBech32Address(t *testing.T) {
 	// 3) 基本检查: 是否以 bc1 开头
 	if len(bc1Addr) < 3 || bc1Addr[:3] != "bc1" {
 		t.Errorf("Expected bc1 address, got=%s", bc1Addr)
+	}
+}
+
+func TestComputeTweakedPubkeyUsesXOnlyInternalKey(t *testing.T) {
+	var privKey *secp256k1.PrivateKey
+	for i := byte(1); i < 255; i++ {
+		raw := make([]byte, 32)
+		raw[31] = i
+		candidate := secp256k1.PrivKeyFromBytes(raw)
+		if candidate.PubKey().SerializeCompressed()[0] == 0x03 {
+			privKey = candidate
+			break
+		}
+	}
+	if privKey == nil {
+		t.Fatal("failed to find odd-Y private key fixture")
+	}
+
+	groupPubCompressed := privKey.PubKey().SerializeCompressed()
+	groupPubXOnly := append([]byte(nil), groupPubCompressed[1:33]...)
+	tweak := utils.ComputeUserTweak(groupPubXOnly, "bc1q8ra2f338djg0pzgms35tpkdxjx9lr39mkyw84y")
+
+	fromCompressed, err := utils.ComputeTweakedPubkey(groupPubCompressed, tweak)
+	if err != nil {
+		t.Fatalf("ComputeTweakedPubkey(compressed) failed: %v", err)
+	}
+	fromXOnly, err := utils.ComputeTweakedPubkey(groupPubXOnly, tweak)
+	if err != nil {
+		t.Fatalf("ComputeTweakedPubkey(xonly) failed: %v", err)
+	}
+
+	if !bytes.Equal(fromCompressed, fromXOnly) {
+		t.Fatalf("tweaked pubkey mismatch: compressed=%x xonly=%x", fromCompressed, fromXOnly)
+	}
+}
+
+func TestNormalizeSecp256k1XOnlyPubKey(t *testing.T) {
+	xOnly := bytes.Repeat([]byte{0x11}, 32)
+
+	got32, err := utils.NormalizeSecp256k1XOnlyPubKey(xOnly)
+	if err != nil {
+		t.Fatalf("NormalizeSecp256k1XOnlyPubKey(32) failed: %v", err)
+	}
+	if !bytes.Equal(got32, xOnly) {
+		t.Fatalf("32-byte normalization mismatch: got=%x want=%x", got32, xOnly)
+	}
+
+	compressed := append([]byte{0x03}, xOnly...)
+	got33, err := utils.NormalizeSecp256k1XOnlyPubKey(compressed)
+	if err != nil {
+		t.Fatalf("NormalizeSecp256k1XOnlyPubKey(33) failed: %v", err)
+	}
+	if !bytes.Equal(got33, xOnly) {
+		t.Fatalf("33-byte normalization mismatch: got=%x want=%x", got33, xOnly)
+	}
+}
+
+func TestTaprootScriptPubKeyRoundTrip(t *testing.T) {
+	xOnly := bytes.Repeat([]byte{0x22}, 32)
+
+	scriptPubKey, err := utils.BuildTaprootScriptPubKeyFromXOnly(xOnly)
+	if err != nil {
+		t.Fatalf("BuildTaprootScriptPubKeyFromXOnly failed: %v", err)
+	}
+
+	got, err := utils.ParseTaprootScriptPubKeyXOnly(scriptPubKey)
+	if err != nil {
+		t.Fatalf("ParseTaprootScriptPubKeyXOnly failed: %v", err)
+	}
+	if !bytes.Equal(got, xOnly) {
+		t.Fatalf("taproot script roundtrip mismatch: got=%x want=%x", got, xOnly)
 	}
 }

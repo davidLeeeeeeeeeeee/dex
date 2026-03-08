@@ -9,6 +9,7 @@ import (
 	chainpkg "dex/frost/chain"
 	"dex/keys"
 	"dex/pb"
+	"dex/utils"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -139,10 +140,11 @@ func (p *JobWindowPlanner) planBTCJob(chain, asset string, vaultID uint32, keyEp
 
 // btcAddressFromScriptPubKey 从 Taproot scriptPubKey 反推 bech32m 地址
 func btcAddressFromScriptPubKey(scriptPubKey []byte, chain string) string {
-	if len(scriptPubKey) != 34 || scriptPubKey[0] != 0x51 || scriptPubKey[1] != 0x20 {
+	xOnly, err := utils.ParseTaprootScriptPubKeyXOnly(scriptPubKey)
+	if err != nil {
 		return ""
 	}
-	addr, err := btcTaprootAddressFromXOnly(scriptPubKey[2:], btcNetParamsForChain(chain))
+	addr, err := utils.TaprootAddressFromXOnly(xOnly, btcNetParamsForChain(chain))
 	if err != nil {
 		return ""
 	}

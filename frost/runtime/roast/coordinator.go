@@ -334,6 +334,10 @@ func (c *Coordinator) runCoordinatorLoop(ctx context.Context, sess *roastsession
 				// 冻结 nonce payload：首次计算后缓存，后续重复广播使用相同 payload
 				c.freezeAndBroadcastSignRequest(sess)
 				sess.SetState(roastsession.SignSessionStateCollectingShares)
+				// freezeAndBroadcastSignRequest 已经发送过首个 SignRequest，避免切到
+				// CollectingShares 后在下一轮 ticker 里重复广播同一请求。
+				lastBroadcastState = roastsession.SignSessionStateCollectingShares
+				lastBroadcastRound = round
 			} else {
 				c.logInfo("[Coordinator] nonce collection timeout job=%s retry=%d", sess.JobID, sess.RetryCount)
 				if c.shouldRotateCoordinator(sess) {
@@ -702,12 +706,14 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 			rParity = int(R.Y.Bit(0))
 		}
 		coordGroupPubX := big.NewInt(0)
+		coordVerifyPubkey := []byte(nil)
+		taskTweak := taskTweakAt(sess.Tweaks, taskIdx)
 		if c.vaultProvider != nil {
-			if gpb, gpErr := c.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch); gpErr == nil && len(gpb) >= 32 {
-				if len(gpb) == 33 {
-					coordGroupPubX = new(big.Int).SetBytes(gpb[1:33])
-				} else {
-					coordGroupPubX = new(big.Int).SetBytes(gpb[:32])
+			if gpb, gpErr := c.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch); gpErr == nil {
+				derivedPubkey, derivedGroupPubX, deriveErr := deriveSigningPubkeyForTask(pb.SignAlgo(sess.SignAlgo), gpb, taskTweak)
+				if deriveErr == nil {
+					coordVerifyPubkey = derivedPubkey
+					coordGroupPubX = derivedGroupPubX
 				}
 			}
 		}
@@ -763,13 +769,18 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 				Reven.Y = new(big.Int).Sub(fieldP, Reven.Y)
 			}
 			// e*P
-			gpb, _ := c.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch)
+			gpb := coordVerifyPubkey
+			if len(gpb) == 0 {
+				gpb, _ = c.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch)
+			}
 			var P curve.Point
 			if len(gpb) == 33 {
 				P = grp.DecompressPoint(gpb)
 			} else if len(gpb) >= 32 {
-				px := new(big.Int).SetBytes(gpb[:32])
-				P = grp.DecompressPoint(grp.SerializePoint(curve.Point{X: px}))
+				compressed := make([]byte, 33)
+				compressed[0] = 0x02
+				copy(compressed[1:], gpb[:32])
+				P = grp.DecompressPoint(compressed)
 			}
 			eP := grp.ScalarMult(P, diagE)
 			// R_even + e*P
@@ -796,7 +807,7 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 			strings.Join(signerAddresses, ","),
 			hex.EncodeToString(msg),
 			hex.EncodeToString(sig))
-		valid, verifyErr, panicVal := c.verifyAggregatedSignature(sess, msg, sig)
+		valid, verifyErr, panicVal := c.verifyAggregatedSignature(sess, taskIdx, msg, sig)
 		if panicVal != nil {
 			c.logWarn("[Coordinator] task %d: aggregated signature panic during verify (job=%s signers=%s message=%s sig=%s panic=%v)",
 				taskIdx, sess.JobID, strings.Join(signerAddresses, ","), hex.EncodeToString(msg), hex.EncodeToString(sig), panicVal)
@@ -834,7 +845,7 @@ func (c *Coordinator) aggregateSessionSignatures(sess *roastsession.Session) ([]
 	return signatures, nil
 }
 
-func (c *Coordinator) verifyAggregatedSignature(sess *roastsession.Session, msg, sig []byte) (valid bool, err error, panicVal any) {
+func (c *Coordinator) verifyAggregatedSignature(sess *roastsession.Session, taskIdx int, msg, sig []byte) (valid bool, err error, panicVal any) {
 	if sess == nil {
 		return false, errors.New("nil session"), nil
 	}
@@ -847,13 +858,9 @@ func (c *Coordinator) verifyAggregatedSignature(sess *roastsession.Session, msg,
 	if err != nil {
 		return false, fmt.Errorf("load group pubkey failed: %w", err), nil
 	}
-	verifyPubkey := groupPubkey
-	if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
-		xOnly, normalizeErr := normalizeXOnlyPubKeyForVerify(groupPubkey)
-		if normalizeErr != nil {
-			return false, normalizeErr, nil
-		}
-		verifyPubkey = xOnly
+	verifyPubkey, _, err := deriveSigningPubkeyForTask(signAlgo, groupPubkey, taskTweakAt(sess.Tweaks, taskIdx))
+	if err != nil {
+		return false, err, nil
 	}
 	c.logInfo("[Coordinator] verify aggregated signature input job=%s chain=%s vault=%d epoch=%d sign_algo=%s group_pubkey=%s verify_pubkey=%s message=%s signature=%s",
 		sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, signAlgo.String(),
@@ -871,19 +878,6 @@ func (c *Coordinator) verifyAggregatedSignature(sess *roastsession.Session, msg,
 	c.logInfo("[Coordinator] verify aggregated signature result job=%s chain=%s vault=%d epoch=%d valid=%t err=%v",
 		sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, valid, err)
 	return valid, err, nil
-}
-
-func normalizeXOnlyPubKeyForVerify(pubkey []byte) ([]byte, error) {
-	if len(pubkey) == 32 {
-		return append([]byte(nil), pubkey...), nil
-	}
-	if len(pubkey) != 33 {
-		return nil, fmt.Errorf("invalid secp256k1 pubkey length: %d", len(pubkey))
-	}
-	if pubkey[0] != 0x02 && pubkey[0] != 0x03 {
-		return nil, fmt.Errorf("invalid compressed secp256k1 prefix: 0x%02x", pubkey[0])
-	}
-	return append([]byte(nil), pubkey[1:]...), nil
 }
 
 func shortBytes(data []byte, n int) []byte {
@@ -953,7 +947,19 @@ func (c *Coordinator) HandleRoastNonceCommit(env *Envelope) error {
 		return err
 	}
 
-	return sess.AddNonce(participantIndex, hiding, binding)
+	if err := sess.AddNonce(participantIndex, hiding, binding); err != nil {
+		if errors.Is(err, roastsession.ErrInvalidState) {
+			switch sess.GetState() {
+			case roastsession.SignSessionStateCollectingShares, roastsession.SignSessionStateAggregating, roastsession.SignSessionStateComplete, roastsession.SignSessionStateFailed:
+				logs.Debug("[Coordinator] ignore stale nonce commit job=%s from=%s state=%s",
+					env.SessionID, env.From, sess.GetState().String())
+				return nil
+			}
+		}
+		return err
+	}
+
+	return nil
 }
 
 // HandleSigShare handles signature shares from participants.
@@ -997,7 +1003,19 @@ func (c *Coordinator) HandleRoastSigShare(env *Envelope) error {
 	c.logInfo("[Coordinator] received signature share job=%s chain=%s vault=%d epoch=%d signer=%s participant_index=%d shares=%s",
 		env.SessionID, env.Chain, env.VaultID, env.Epoch, signerAddr, participantIndex+1, strings.Join(shareHexList, ","))
 
-	return sess.AddShare(participantIndex, shares)
+	if err := sess.AddShare(participantIndex, shares); err != nil {
+		if errors.Is(err, roastsession.ErrInvalidState) {
+			switch sess.GetState() {
+			case roastsession.SignSessionStateAggregating, roastsession.SignSessionStateComplete, roastsession.SignSessionStateFailed:
+				logs.Debug("[Coordinator] ignore late signature share job=%s from=%s state=%s",
+					env.SessionID, env.From, sess.GetState().String())
+				return nil
+			}
+		}
+		return err
+	}
+
+	return nil
 }
 
 // GetSession 获取会话
@@ -1328,7 +1346,7 @@ func (c *Coordinator) logVerifyPanicDiagnostics(sess *roastsession.Session, task
 			c.logWarn("[Coordinator][panic-diagnose] epoch verify skipped epoch=%d load group pubkey failed: %v", epoch, pubErr)
 			continue
 		}
-		valid, verifyErr, panicVal, verifyPubkey := verifyWithGroupPubkey(signAlgo, groupPubkey, msg, sig)
+		valid, verifyErr, panicVal, verifyPubkey := verifyWithGroupPubkey(signAlgo, groupPubkey, taskTweakAt(sess.Tweaks, taskIdx), msg, sig)
 		c.logWarn("[Coordinator][panic-diagnose] epoch verify epoch=%d group_pubkey_fp=%s verify_pubkey_fp=%s valid=%t err=%v panic=%v",
 			epoch,
 			dataFingerprintForLog(groupPubkey),
@@ -1337,14 +1355,10 @@ func (c *Coordinator) logVerifyPanicDiagnostics(sess *roastsession.Session, task
 	}
 }
 
-func verifyWithGroupPubkey(signAlgo pb.SignAlgo, groupPubkey, msg, sig []byte) (valid bool, err error, panicVal any, verifyPubkey []byte) {
-	verifyPubkey = append([]byte(nil), groupPubkey...)
-	if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
-		xOnly, normalizeErr := normalizeXOnlyPubKeyForVerify(groupPubkey)
-		if normalizeErr != nil {
-			return false, normalizeErr, nil, nil
-		}
-		verifyPubkey = xOnly
+func verifyWithGroupPubkey(signAlgo pb.SignAlgo, groupPubkey, tweak, msg, sig []byte) (valid bool, err error, panicVal any, verifyPubkey []byte) {
+	verifyPubkey, _, err = deriveSigningPubkeyForTask(signAlgo, groupPubkey, tweak)
+	if err != nil {
+		return false, err, nil, nil
 	}
 
 	defer func() {

@@ -63,6 +63,7 @@ type FrostEnvelope struct {
 	Round     uint32
 	Payload   []byte // protobuf / json（承诺点/份额格式由 SignAlgo 决定）
 	Sig       []byte // 消息签名（防伪造/重放）
+	Tweaks    [][]byte
 }
 
 // P2P 网络接口（复用现有 Transport）
@@ -112,5 +113,6 @@ func PBEnvelopeFromRoast(msg *RoastEnvelope) (*pb.FrostEnvelope, error) {
 		Epoch:     msg.Epoch,
 		Round:     msg.Round,
 		Payload:   msg.Payload,
+		Tweaks:    msg.Tweaks,
 	})
 }

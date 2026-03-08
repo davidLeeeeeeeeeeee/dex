@@ -13,6 +13,7 @@ import (
 
 	"dex/frost/chain"
 	"dex/pb"
+	"dex/utils"
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 )
@@ -243,7 +244,7 @@ func (a *BTCAdapter) VerifySignature(groupPubkey []byte, msg []byte, signature [
 	if len(signature) != SchnorrSigSize {
 		return false, ErrInvalidSignature
 	}
-	xOnlyPubkey, err := normalizeBIP340XOnlyPubKey(groupPubkey)
+	xOnlyPubkey, err := utils.NormalizeSecp256k1XOnlyPubKey(groupPubkey)
 	if err != nil {
 		return false, err
 	}
@@ -263,24 +264,6 @@ func (a *BTCAdapter) VerifySignature(groupPubkey []byte, msg []byte, signature [
 	}
 
 	return sig.Verify(msg, pubKey), nil
-}
-
-func normalizeBIP340XOnlyPubKey(pubKey []byte) ([]byte, error) {
-	switch len(pubKey) {
-	case 32:
-		xOnly := make([]byte, 32)
-		copy(xOnly, pubKey)
-		return xOnly, nil
-	case 33:
-		if pubKey[0] != 0x02 && pubKey[0] != 0x03 {
-			return nil, errors.New("invalid compressed pubkey prefix")
-		}
-		xOnly := make([]byte, 32)
-		copy(xOnly, pubKey[1:])
-		return xOnly, nil
-	default:
-		return nil, errors.New("invalid pubkey length")
-	}
 }
 
 // ========== 杈呭姪鍑芥暟 ==========

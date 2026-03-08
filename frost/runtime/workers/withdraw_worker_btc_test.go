@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/big"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+	"dex/utils"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -168,7 +170,7 @@ func buildTestBTCTemplate(t *testing.T, vaultID uint32, keyEpoch uint64) (*btc.B
 	return template, templateData, inputs
 }
 
-func mustStoreUtxo(t *testing.T, reader *testStateReader, vaultID uint32, txid string, vout uint32, amount string, spk []byte) {
+func mustStoreUtxo(t *testing.T, reader *testStateReader, vaultID uint32, txid string, vout uint32, amount string, spk, tweak []byte) {
 	t.Helper()
 	key := keys.KeyFrostBtcUtxo(vaultID, txid, vout)
 	data, err := proto.Marshal(&pb.FrostUtxo{
@@ -178,11 +180,52 @@ func mustStoreUtxo(t *testing.T, reader *testStateReader, vaultID uint32, txid s
 		VaultId:        vaultID,
 		FinalizeHeight: 1,
 		ScriptPubkey:   spk,
+		Tweak:          tweak,
 	})
 	if err != nil {
 		t.Fatalf("marshal utxo failed: %v", err)
 	}
 	reader.data[key] = data
+}
+
+func newEvenYPrivateKey(t *testing.T) *btcec.PrivateKey {
+	t.Helper()
+	for i := uint64(1); i < 256; i++ {
+		raw := make([]byte, 32)
+		raw[31] = byte(i)
+		privKey, _ := btcec.PrivKeyFromBytes(raw)
+		if privKey.PubKey().SerializeCompressed()[0] == 0x02 {
+			return privKey
+		}
+	}
+	t.Fatal("failed to find even-Y private key fixture")
+	return nil
+}
+
+func newOddYPrivateKey(t *testing.T) *btcec.PrivateKey {
+	t.Helper()
+	for i := uint64(1); i < 256; i++ {
+		raw := make([]byte, 32)
+		raw[31] = byte(i)
+		privKey, _ := btcec.PrivKeyFromBytes(raw)
+		if privKey.PubKey().SerializeCompressed()[0] == 0x03 {
+			return privKey
+		}
+	}
+	t.Fatal("failed to find odd-Y private key fixture")
+	return nil
+}
+
+func tweakPrivateKeyForTaproot(privKey *btcec.PrivateKey, tweak []byte) *btcec.PrivateKey {
+	order := btcec.S256().Params().N
+	d := new(big.Int).SetBytes(privKey.Serialize())
+	if privKey.PubKey().SerializeCompressed()[0] == 0x03 {
+		d.Sub(order, d)
+	}
+	d.Add(d, new(big.Int).SetBytes(tweak))
+	d.Mod(d, order)
+	tweaked, _ := btcec.PrivKeyFromBytes(d.FillBytes(make([]byte, 32)))
+	return tweaked
 }
 
 func TestWithdrawWorkerExtractMessagesBTC(t *testing.T) {
@@ -194,7 +237,7 @@ func TestWithdrawWorkerExtractMessagesBTC(t *testing.T) {
 	spkByInput := make(map[string][]byte)
 	for i, in := range template.Inputs {
 		spk := testTaprootScript(byte(0x10 + i))
-		mustStoreUtxo(t, reader, vaultID, in.TxID, in.Vout, fmt.Sprintf("%d", in.Amount), spk)
+		mustStoreUtxo(t, reader, vaultID, in.TxID, in.Vout, fmt.Sprintf("%d", in.Amount), spk, nil)
 		spkByInput[fmt.Sprintf("%s:%d", in.TxID, in.Vout)] = spk
 	}
 
@@ -237,17 +280,20 @@ func TestWithdrawWorkerWaitAndSubmitBTCIncludesTemplateFields(t *testing.T) {
 	vaultID := uint32(9)
 	keyEpoch := uint64(2)
 	template, templateData, _ := buildTestBTCTemplate(t, vaultID, keyEpoch)
-	privKey, err := btcec.NewPrivateKey()
+	privKey := newOddYPrivateKey(t)
+	receiverAddr := "bc1q8ra2f338djg0pzgms35tpkdxjx9lr39mkyw84y"
+	tweak := utils.ComputeUserTweak(schnorr.SerializePubKey(privKey.PubKey()), receiverAddr)
+	tweakedPrivKey := tweakPrivateKeyForTaproot(privKey, tweak)
+	tweakedPubKey, err := utils.ComputeTweakedPubkey(privKey.PubKey().SerializeCompressed(), tweak)
 	if err != nil {
-		t.Fatalf("new private key failed: %v", err)
+		t.Fatalf("compute tweaked pubkey failed: %v", err)
 	}
-	xOnlyPub := schnorr.SerializePubKey(privKey.PubKey())
-	p2trScript := testTaprootScriptFromXOnly(xOnlyPub)
+	p2trScript := testTaprootScriptFromXOnly(tweakedPubKey[1:33])
 
 	spkByInput := make(map[string][]byte)
 	for _, in := range template.Inputs {
 		spk := append([]byte(nil), p2trScript...)
-		mustStoreUtxo(t, reader, vaultID, in.TxID, in.Vout, fmt.Sprintf("%d", in.Amount), spk)
+		mustStoreUtxo(t, reader, vaultID, in.TxID, in.Vout, fmt.Sprintf("%d", in.Amount), spk, tweak)
 		spkByInput[fmt.Sprintf("%s:%d", in.TxID, in.Vout)] = spk
 	}
 
@@ -263,11 +309,11 @@ func TestWithdrawWorkerWaitAndSubmitBTCIncludesTemplateFields(t *testing.T) {
 		t.Fatalf("sighash count mismatch: got=%d want=2", len(sighashes))
 	}
 
-	sig1Obj, err := schnorr.Sign(privKey, sighashes[0])
+	sig1Obj, err := schnorr.Sign(tweakedPrivKey, sighashes[0])
 	if err != nil {
 		t.Fatalf("sign input 0 failed: %v", err)
 	}
-	sig2Obj, err := schnorr.Sign(privKey, sighashes[1])
+	sig2Obj, err := schnorr.Sign(tweakedPrivKey, sighashes[1])
 	if err != nil {
 		t.Fatalf("sign input 1 failed: %v", err)
 	}

@@ -294,6 +294,7 @@ func (a *signingServiceAdapter) StartSigningSession(ctx context.Context, params 
 		SignAlgo:  params.SignAlgo,
 		Messages:  params.Messages,
 		Threshold: params.Threshold,
+		Tweaks:    params.Tweaks,
 	}
 	return a.service.StartSigningSession(ctx, serviceParams)
 }
@@ -695,6 +696,7 @@ func (m *Manager) HandleFrostEnvelope(env *FrostEnvelope) error {
 		Round:     env.Round,
 		Payload:   env.Payload,
 		Sig:       env.Sig,
+		Tweaks:    env.Tweaks,
 	}
 	return m.roastDispatcher.HandleFrostEnvelope(roastEnv)
 }
@@ -757,6 +759,7 @@ func (a *roastMessengerAdapter) Send(to types.NodeID, msg *types.RoastEnvelope) 
 			Epoch:     msg.Epoch,
 			Round:     msg.Round,
 			Payload:   msg.Payload,
+			Tweaks:    msg.Tweaks,
 		}
 		return a.p2p.Send(to, frostEnv)
 	}
@@ -782,6 +785,7 @@ func (a *roastMessengerAdapter) Broadcast(peers []types.NodeID, msg *types.Roast
 			Epoch:     msg.Epoch,
 			Round:     msg.Round,
 			Payload:   msg.Payload,
+			Tweaks:    msg.Tweaks,
 		}
 		return a.p2p.Broadcast(peers, frostEnv)
 	}

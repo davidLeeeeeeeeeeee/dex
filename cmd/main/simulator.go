@@ -5,6 +5,7 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+	"dex/utils"
 	"fmt"
 	mrand "math/rand"
 	"strconv"
@@ -251,7 +252,7 @@ func (s *TxSimulator) runRechargeScenario() {
 			"btc",
 			nativeTxHash,
 			0, // 模拟 Vout 0
-			s.buildRechargeTaprootScriptPubKey("btc", nativeTxHash),
+			s.buildRechargeTaprootScriptPubKey("btc", nativeTxHash, userNode.Address),
 			"BTC",
 			"7000",
 			userNode.Address,
@@ -266,40 +267,19 @@ func (s *TxSimulator) runRechargeScenario() {
 
 const simulatorVaultProbeLimit = 100
 
-func buildTaprootScriptPubKeyFromXOnly(xOnly []byte) []byte {
-	scriptPubKey := make([]byte, 34)
-	scriptPubKey[0] = 0x51 // OP_1
-	scriptPubKey[1] = 0x20 // push 32 bytes
-	copy(scriptPubKey[2:], xOnly)
+func mockTaprootScriptPubKey(seed string) []byte {
+	digest := sha256.Sum256([]byte(seed))
+	scriptPubKey, _ := utils.BuildTaprootScriptPubKeyFromXOnly(digest[:])
 	return scriptPubKey
 }
 
-func parseVaultGroupPubKeyXOnly(groupPubKey []byte) ([]byte, bool) {
-	switch len(groupPubKey) {
-	case 32:
-		xOnly := make([]byte, 32)
-		copy(xOnly, groupPubKey)
-		return xOnly, true
-	case 33:
-		if groupPubKey[0] != 0x02 && groupPubKey[0] != 0x03 {
-			return nil, false
-		}
-		xOnly := make([]byte, 32)
-		copy(xOnly, groupPubKey[1:])
-		return xOnly, true
-	default:
-		return nil, false
-	}
+func buildTweakedTaprootScriptPubKey(groupPubKey []byte, receiverAddress string) ([]byte, error) {
+	return utils.BuildTweakedTaprootScriptPubKey(groupPubKey, receiverAddress)
 }
 
-func mockTaprootScriptPubKey(seed string) []byte {
-	digest := sha256.Sum256([]byte(seed))
-	return buildTaprootScriptPubKeyFromXOnly(digest[:])
-}
-
-func (s *TxSimulator) buildRechargeTaprootScriptPubKey(chain, nativeTxHash string) []byte {
+func (s *TxSimulator) buildRechargeTaprootScriptPubKey(chain, nativeTxHash, receiverAddress string) []byte {
 	if len(s.nodes) == 0 || s.nodes[0] == nil || s.nodes[0].DBManager == nil {
-		return mockTaprootScriptPubKey("sim-p2tr:" + chain + ":" + nativeTxHash)
+		return mockTaprootScriptPubKey("sim-p2tr:" + chain + ":" + nativeTxHash + ":" + receiverAddress)
 	}
 
 	dbMgr := s.nodes[0].DBManager
@@ -311,15 +291,18 @@ func (s *TxSimulator) buildRechargeTaprootScriptPubKey(chain, nativeTxHash strin
 			if err != nil || state == nil || state.Status != "ACTIVE" {
 				continue
 			}
-			xOnly, ok := parseVaultGroupPubKeyXOnly(state.GroupPubkey)
-			if !ok {
+			if _, err := utils.NormalizeSecp256k1XOnlyPubKey(state.GroupPubkey); err != nil {
 				continue
 			}
-			return buildTaprootScriptPubKeyFromXOnly(xOnly)
+			scriptPubKey, err := buildTweakedTaprootScriptPubKey(state.GroupPubkey, receiverAddress)
+			if err != nil {
+				continue
+			}
+			return scriptPubKey
 		}
 	}
 
-	return mockTaprootScriptPubKey("sim-p2tr:" + chain + ":" + nativeTxHash)
+	return mockTaprootScriptPubKey("sim-p2tr:" + chain + ":" + nativeTxHash + ":" + receiverAddress)
 }
 
 // runWitnessVoteWorker 见证者自发投票工人

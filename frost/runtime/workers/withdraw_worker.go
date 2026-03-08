@@ -21,6 +21,7 @@ import (
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
+	"dex/utils"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -400,7 +401,11 @@ func (w *WithdrawWorker) waitAndSubmit(ctx context.Context, job *planning.Job, s
 			w.Logger.Error("[WithdrawWorker] failed to load BTC input scriptPubkeys: %v", spkErr)
 			return
 		}
-		w.panicOnInvalidBTCSignature(job, template, scriptPubkeys, inputSigs)
+		inputTweaks := w.loadBTCInputTweaks(job)
+		if err := w.validateBTCSignaturePreSubmit(job, template, scriptPubkeys, inputSigs, inputTweaks); err != nil {
+			w.Logger.Error("[WithdrawWorker] BTC pre-submit signature verification failed: %v", err)
+			return
+		}
 
 		withdrawSignedTx.TemplateData = job.TemplateData
 		withdrawSignedTx.InputSigs = inputSigs
@@ -763,30 +768,12 @@ func (w *WithdrawWorker) loadVaultTaprootScriptPubkey(chainName string, vaultID 
 		return nil, fmt.Errorf("decode vault state %s failed: %w", vaultKey, err)
 	}
 
-	xOnly, err := normalizeXOnlyPubKey(vault.GroupPubkey)
+	xOnly, err := utils.NormalizeSecp256k1XOnlyPubKey(vault.GroupPubkey)
 	if err != nil {
 		return nil, err
 	}
 
-	scriptPubkey := make([]byte, 34)
-	scriptPubkey[0] = 0x51
-	scriptPubkey[1] = 0x20
-	copy(scriptPubkey[2:], xOnly)
-	return scriptPubkey, nil
-}
-
-func normalizeXOnlyPubKey(groupPubkey []byte) ([]byte, error) {
-	switch len(groupPubkey) {
-	case 32:
-		return append([]byte(nil), groupPubkey...), nil
-	case 33:
-		if groupPubkey[0] != 0x02 && groupPubkey[0] != 0x03 {
-			return nil, fmt.Errorf("invalid compressed pubkey prefix: 0x%x", groupPubkey[0])
-		}
-		return append([]byte(nil), groupPubkey[1:]...), nil
-	default:
-		return nil, fmt.Errorf("unsupported group pubkey length: %d", len(groupPubkey))
-	}
+	return utils.BuildTaprootScriptPubKeyFromXOnly(xOnly)
 }
 
 func (w *WithdrawWorker) resolveBTCInputSignatures(signedPkg *SignedPackage, inputCount int) ([][]byte, error) {
@@ -848,122 +835,152 @@ func shortHexPanic(data []byte, n int) string {
 	return hex.EncodeToString(data[:n])
 }
 
-func (w *WithdrawWorker) panicOnInvalidBTCSignature(job *planning.Job, template *btc.BTCTemplate, scriptPubkeys, inputSigs [][]byte) {
+func (w *WithdrawWorker) validateBTCSignaturePreSubmit(job *planning.Job, template *btc.BTCTemplate, scriptPubkeys, inputSigs, inputTweaks [][]byte) error {
 	if job == nil {
-		panic("frost-sign-debug: nil job in BTC signature precheck")
+		return fmt.Errorf("frost-sign-debug: nil job in BTC signature precheck")
 	}
 	if template == nil {
-		panic(fmt.Sprintf("frost-sign-debug: nil template in BTC signature precheck job=%s", job.JobID))
+		return fmt.Errorf("frost-sign-debug: nil template in BTC signature precheck job=%s", job.JobID)
 	}
 	if len(scriptPubkeys) != len(template.Inputs) {
-		panic(fmt.Sprintf("frost-sign-debug: script_pubkeys/input mismatch job=%s got_script_pubkeys=%d inputs=%d", job.JobID, len(scriptPubkeys), len(template.Inputs)))
+		return fmt.Errorf("frost-sign-debug: script_pubkeys/input mismatch job=%s got_script_pubkeys=%d inputs=%d", job.JobID, len(scriptPubkeys), len(template.Inputs))
 	}
 	if len(inputSigs) != len(template.Inputs) {
-		panic(fmt.Sprintf("frost-sign-debug: input_sigs/input mismatch job=%s got_input_sigs=%d inputs=%d", job.JobID, len(inputSigs), len(template.Inputs)))
+		return fmt.Errorf("frost-sign-debug: input_sigs/input mismatch job=%s got_input_sigs=%d inputs=%d", job.JobID, len(inputSigs), len(template.Inputs))
 	}
 
 	signAlgo, err := w.getSignAlgo(job.Chain, job.VaultID)
 	if err != nil {
-		panic(fmt.Sprintf("frost-sign-debug: getSignAlgo failed job=%s chain=%s vault=%d: %v", job.JobID, job.Chain, job.VaultID, err))
+		return fmt.Errorf("frost-sign-debug: getSignAlgo failed job=%s chain=%s vault=%d: %v", job.JobID, job.Chain, job.VaultID, err)
 	}
 
 	groupPubkey, err := w.vaultProvider.VaultGroupPubkey(job.Chain, job.VaultID, job.KeyEpoch)
 	if err != nil {
-		panic(fmt.Sprintf("frost-sign-debug: VaultGroupPubkey failed job=%s chain=%s vault=%d epoch=%d: %v", job.JobID, job.Chain, job.VaultID, job.KeyEpoch, err))
+		return fmt.Errorf("frost-sign-debug: VaultGroupPubkey failed job=%s chain=%s vault=%d epoch=%d: %v", job.JobID, job.Chain, job.VaultID, job.KeyEpoch, err)
 	}
 
 	for i, spk := range scriptPubkeys {
 		if !isTaprootScriptPubKey(spk) {
-			panic(fmt.Sprintf("frost-sign-debug: non-taproot script_pubkey before submit job=%s input=%d script_pubkey=%s len=%d group_pubkey=%s",
-				job.JobID, i, hex.EncodeToString(spk), len(spk), hex.EncodeToString(groupPubkey)))
+			return fmt.Errorf("frost-sign-debug: non-taproot script_pubkey before submit job=%s input=%d script_pubkey=%s len=%d group_pubkey=%s",
+				job.JobID, i, hex.EncodeToString(spk), len(spk), hex.EncodeToString(groupPubkey))
 		}
 	}
 
-	verifyPubkey := groupPubkey
-	if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
-		xOnly, err := normalizeXOnlyPubKey(groupPubkey)
-		if err != nil {
-			panic(fmt.Sprintf("frost-sign-debug: normalize group pubkey failed job=%s group_pubkey=%s: %v",
-				job.JobID, hex.EncodeToString(groupPubkey), err))
-		}
-		verifyPubkey = xOnly
-	}
+	verifyPubkeys := make([][]byte, len(scriptPubkeys))
+	verifyPubkeysXOnly := make([][]byte, len(scriptPubkeys))
+	verifyPubkeysForVerify := make([][]byte, len(scriptPubkeys))
 	scriptXOnly := make([][]byte, len(scriptPubkeys))
 	for i, spk := range scriptPubkeys {
+		verifyPubkey := append([]byte(nil), groupPubkey...)
+		if i < len(inputTweaks) && len(inputTweaks[i]) == 32 {
+			tweakedPubkey, err := utils.ComputeTweakedPubkey(groupPubkey, inputTweaks[i])
+			if err != nil {
+				return fmt.Errorf("frost-sign-debug: compute tweaked pubkey failed job=%s input=%d group_pubkey=%s tweak=%s: %v",
+					job.JobID, i, hex.EncodeToString(groupPubkey), hex.EncodeToString(inputTweaks[i]), err)
+			}
+			verifyPubkey = tweakedPubkey
+		}
+		verifyPubkeyXOnly := verifyPubkey
+		if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
+			xOnly, err := utils.NormalizeSecp256k1XOnlyPubKey(verifyPubkey)
+			if err != nil {
+				return fmt.Errorf("frost-sign-debug: normalize verify pubkey failed job=%s input=%d verify_pubkey=%s: %v",
+					job.JobID, i, hex.EncodeToString(verifyPubkey), err)
+			}
+			verifyPubkeyXOnly = xOnly
+		}
 		spkXOnly := append([]byte(nil), spk[2:]...)
+		verifyPubkeys[i] = verifyPubkey
+		verifyPubkeysXOnly[i] = verifyPubkeyXOnly
+		verifyPubkeysForVerify[i] = verifyPubkey
+		if signAlgo == pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340 {
+			verifyPubkeysForVerify[i] = verifyPubkeyXOnly
+		}
 		scriptXOnly[i] = spkXOnly
-		spkMatch := bytes.Equal(spkXOnly, verifyPubkey)
-		w.Logger.Info("frost-sign-debug: pre-submit script/pubkey check job=%s input=%d spk_xonly=%s verify_pubkey=%s spk_match=%t",
-			job.JobID, i, hex.EncodeToString(spkXOnly), hex.EncodeToString(verifyPubkey), spkMatch)
+		spkMatch := bytes.Equal(spkXOnly, verifyPubkeyXOnly)
+		w.Logger.Info("frost-sign-debug: pre-submit script/pubkey check job=%s input=%d spk_xonly=%s verify_pubkey=%s spk_match=%t tweak=%s",
+			job.JobID, i, hex.EncodeToString(spkXOnly), hex.EncodeToString(verifyPubkeyXOnly), spkMatch, shortHexPanic(inputTweaksForLog(inputTweaks, i), 32))
 		if !spkMatch {
-			msg := fmt.Sprintf("frost-sign-debug: script_pubkey x-only mismatch job=%s input=%d sign_algo=%s spk_xonly=%s verify_pubkey=%s group_pubkey=%s script_pubkey=%s",
+			msg := fmt.Sprintf("frost-sign-debug: script_pubkey x-only mismatch job=%s input=%d sign_algo=%s spk_xonly=%s verify_pubkey=%s group_pubkey=%s script_pubkey=%s tweak=%s",
 				job.JobID, i, signAlgo.String(),
 				hex.EncodeToString(spkXOnly),
-				hex.EncodeToString(verifyPubkey),
+				hex.EncodeToString(verifyPubkeyXOnly),
 				hex.EncodeToString(groupPubkey),
-				hex.EncodeToString(spk))
+				hex.EncodeToString(spk),
+				shortHexPanic(inputTweaksForLog(inputTweaks, i), 32))
 			w.Logger.Error("%s", msg)
-			panic(msg)
+			return fmt.Errorf("%s", msg)
 		}
 	}
 
 	sighashes, err := template.ComputeTaprootSighash(scriptPubkeys, btc.SighashDefault)
 	if err != nil {
-		panic(fmt.Sprintf("frost-sign-debug: ComputeTaprootSighash failed job=%s: %v", job.JobID, err))
+		return fmt.Errorf("frost-sign-debug: ComputeTaprootSighash failed job=%s: %v", job.JobID, err)
 	}
 	for i := range inputSigs {
 		spkXOnlyHex := ""
 		spkMatch := false
 		if i < len(scriptXOnly) && len(scriptXOnly[i]) > 0 {
 			spkXOnlyHex = hex.EncodeToString(scriptXOnly[i])
-			spkMatch = bytes.Equal(scriptXOnly[i], verifyPubkey)
+			spkMatch = bytes.Equal(scriptXOnly[i], verifyPubkeysXOnly[i])
 		}
-		valid, verifyErr, panicVal := verifySignatureWithRecover(signAlgo, verifyPubkey, sighashes[i], inputSigs[i])
+		valid, verifyErr, panicVal := verifySignatureWithRecover(signAlgo, verifyPubkeysForVerify[i], sighashes[i], inputSigs[i])
 		if panicVal != nil {
-			msg := fmt.Sprintf("frost-sign-debug: pre-submit verify panic job=%s input=%d sign_algo=%s sighash=%s sig=%s group_pubkey=%s verify_pubkey=%s spk_xonly=%s spk_match=%t template_hash=%s script_pubkey=%s panic=%v",
+			msg := fmt.Sprintf("frost-sign-debug: pre-submit verify panic job=%s input=%d sign_algo=%s sighash=%s sig=%s group_pubkey=%s verify_pubkey=%s spk_xonly=%s spk_match=%t template_hash=%s script_pubkey=%s tweak=%s panic=%v",
 				job.JobID, i, signAlgo.String(),
 				hex.EncodeToString(sighashes[i]),
 				hex.EncodeToString(inputSigs[i]),
 				hex.EncodeToString(groupPubkey),
-				hex.EncodeToString(verifyPubkey),
+				hex.EncodeToString(verifyPubkeysXOnly[i]),
 				spkXOnlyHex,
 				spkMatch,
 				shortHexPanic(job.TemplateHash, 32),
 				hex.EncodeToString(scriptPubkeys[i]),
+				shortHexPanic(inputTweaksForLog(inputTweaks, i), 32),
 				panicVal)
 			w.Logger.Error("%s", msg)
-			panic(msg)
+			return fmt.Errorf("%s", msg)
 		}
 		if verifyErr != nil {
-			msg := fmt.Sprintf("frost-sign-debug: pre-submit verify error job=%s input=%d sign_algo=%s sighash=%s sig=%s group_pubkey=%s verify_pubkey=%s spk_xonly=%s spk_match=%t template_hash=%s script_pubkey=%s err=%v",
+			msg := fmt.Sprintf("frost-sign-debug: pre-submit verify error job=%s input=%d sign_algo=%s sighash=%s sig=%s group_pubkey=%s verify_pubkey=%s spk_xonly=%s spk_match=%t template_hash=%s script_pubkey=%s tweak=%s err=%v",
 				job.JobID, i, signAlgo.String(),
 				hex.EncodeToString(sighashes[i]),
 				hex.EncodeToString(inputSigs[i]),
 				hex.EncodeToString(groupPubkey),
-				hex.EncodeToString(verifyPubkey),
+				hex.EncodeToString(verifyPubkeysXOnly[i]),
 				spkXOnlyHex,
 				spkMatch,
 				shortHexPanic(job.TemplateHash, 32),
 				hex.EncodeToString(scriptPubkeys[i]),
+				shortHexPanic(inputTweaksForLog(inputTweaks, i), 32),
 				verifyErr)
 			w.Logger.Error("%s", msg)
-			panic(msg)
+			return fmt.Errorf("%s", msg)
 		}
 		if !valid {
-			msg := fmt.Sprintf("frost-sign-debug: pre-submit verify invalid job=%s input=%d sign_algo=%s sighash=%s sig=%s group_pubkey=%s verify_pubkey=%s spk_xonly=%s spk_match=%t template_hash=%s script_pubkey=%s",
+			msg := fmt.Sprintf("frost-sign-debug: pre-submit verify invalid job=%s input=%d sign_algo=%s sighash=%s sig=%s group_pubkey=%s verify_pubkey=%s spk_xonly=%s spk_match=%t template_hash=%s script_pubkey=%s tweak=%s",
 				job.JobID, i, signAlgo.String(),
 				hex.EncodeToString(sighashes[i]),
 				hex.EncodeToString(inputSigs[i]),
 				hex.EncodeToString(groupPubkey),
-				hex.EncodeToString(verifyPubkey),
+				hex.EncodeToString(verifyPubkeysXOnly[i]),
 				spkXOnlyHex,
 				spkMatch,
 				shortHexPanic(job.TemplateHash, 32),
-				hex.EncodeToString(scriptPubkeys[i]))
+				hex.EncodeToString(scriptPubkeys[i]),
+				shortHexPanic(inputTweaksForLog(inputTweaks, i), 32))
 			w.Logger.Error("%s", msg)
-			panic(msg)
+			return fmt.Errorf("%s", msg)
 		}
 	}
+	return nil
+}
+
+func inputTweaksForLog(inputTweaks [][]byte, index int) []byte {
+	if index < 0 || index >= len(inputTweaks) {
+		return nil
+	}
+	return inputTweaks[index]
 }
 
 func verifySignatureWithRecover(signAlgo pb.SignAlgo, pubkey, msg, sig []byte) (valid bool, err error, panicVal any) {

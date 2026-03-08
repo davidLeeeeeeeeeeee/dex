@@ -367,13 +367,13 @@ func TestCoordinator_VerifyAggregatedSignature(t *testing.T) {
 		})
 
 		coordinator := newTestCoordinator(groupPubCompressed)
-		valid, verifyErr, panicVal := coordinator.verifyAggregatedSignature(sess, msg[:], sig.Serialize())
+		valid, verifyErr, panicVal := coordinator.verifyAggregatedSignature(sess, 0, msg[:], sig.Serialize())
 		if !valid || verifyErr != nil || panicVal != nil {
 			t.Fatalf("expected verify success, got valid=%t err=%v panic=%v", valid, verifyErr, panicVal)
 		}
 
 		badSig := make([]byte, 64)
-		valid, verifyErr, panicVal = coordinator.verifyAggregatedSignature(sess, msg[:], badSig)
+		valid, verifyErr, panicVal = coordinator.verifyAggregatedSignature(sess, 0, msg[:], badSig)
 		if valid || verifyErr != nil || panicVal == nil {
 			t.Fatalf("expected panic-only invalid path for bad signature, got valid=%t err=%v panic=%v", valid, verifyErr, panicVal)
 		}
@@ -437,7 +437,7 @@ func TestCoordinator_VerifyAggregatedSignature(t *testing.T) {
 		sessVector.SetState(session.SignSessionStateAggregating)
 
 		vectorCoordinator := newTestCoordinator(groupPubCompressed)
-		valid, verifyErr, panicVal := vectorCoordinator.verifyAggregatedSignature(sessVector, msgVector, sigVector)
+		valid, verifyErr, panicVal := vectorCoordinator.verifyAggregatedSignature(sessVector, 0, msgVector, sigVector)
 		if valid || verifyErr != nil || panicVal == nil {
 			t.Fatalf("expected panic-only failure for runtime vector, got valid=%t err=%v panic=%v", valid, verifyErr, panicVal)
 		}

@@ -11,8 +11,8 @@ import (
 	chainpkg "dex/frost/chain"
 	"dex/keys"
 	"dex/pb"
+	"dex/utils"
 
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"google.golang.org/protobuf/proto"
 )
@@ -211,41 +211,11 @@ func (p *JobWindowPlanner) getYoungestVaultTreasuryAddress(chain string) (string
 	if err := proto.Unmarshal(vaultStateData, &state); err != nil {
 		return "", err
 	}
-	xOnly, err := normalizeTaprootXOnlyPubKey(state.GroupPubkey)
-	if err != nil {
-		return "", fmt.Errorf("invalid group pubkey for youngest vault: chain=%s vault=%d err=%w", chain, youngestVaultID, err)
-	}
-	addr, err := btcTaprootAddressFromXOnly(xOnly, btcNetParamsForChain(chain))
+	addr, err := utils.TaprootAddressFromPubKey(state.GroupPubkey, btcNetParamsForChain(chain))
 	if err != nil {
 		return "", fmt.Errorf("derive taproot address for youngest vault failed: chain=%s vault=%d err=%w", chain, youngestVaultID, err)
 	}
 	return addr, nil
-}
-
-func normalizeTaprootXOnlyPubKey(groupPubkey []byte) ([]byte, error) {
-	switch len(groupPubkey) {
-	case 32:
-		xOnly := make([]byte, 32)
-		copy(xOnly, groupPubkey)
-		return xOnly, nil
-	case 33:
-		if groupPubkey[0] != 0x02 && groupPubkey[0] != 0x03 {
-			return nil, fmt.Errorf("invalid compressed pubkey prefix: 0x%x", groupPubkey[0])
-		}
-		xOnly := make([]byte, 32)
-		copy(xOnly, groupPubkey[1:])
-		return xOnly, nil
-	default:
-		return nil, fmt.Errorf("unsupported group pubkey length: %d", len(groupPubkey))
-	}
-}
-
-func btcTaprootAddressFromXOnly(xOnly []byte, netParams *chaincfg.Params) (string, error) {
-	addr, err := btcutil.NewAddressTaproot(xOnly, netParams)
-	if err != nil {
-		return "", err
-	}
-	return addr.EncodeAddress(), nil
 }
 
 func btcNetParamsForChain(chain string) *chaincfg.Params {

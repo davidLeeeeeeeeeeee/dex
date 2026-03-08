@@ -106,6 +106,9 @@ type ParticipantSession struct {
 	// 收到的聚合 nonce
 	AggregatedNonces []byte
 
+	// 已生成的签名份额，用于重复 SignRequest 时幂等重发
+	GeneratedShares [][]byte
+
 	// Taproot tweaks（每个 input/task 的 tweak 标量，32字节）
 	Tweaks [][]byte
 
@@ -540,6 +543,17 @@ func (p *Participant) HandleRoastSignRequest(env *Envelope) error {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 
+	if sess.State == ParticipantStateShareGenerated || sess.State == ParticipantStateComplete {
+		if len(sess.GeneratedShares) == 0 {
+			logs.Debug("[Participant] duplicate sign request ignored without cached shares node=%s job=%s state=%s",
+				p.nodeID, env.SessionID, sess.State.String())
+			return nil
+		}
+		logs.Debug("[Participant] duplicate sign request, resend cached shares node=%s job=%s state=%s",
+			p.nodeID, env.SessionID, sess.State.String())
+		return p.sendSignatureShares(sess, env.From, cloneMessages(sess.GeneratedShares))
+	}
+
 	if sess.State != ParticipantStateNonceGenerated {
 		return session.ErrInvalidState
 	}
@@ -561,6 +575,7 @@ func (p *Participant) HandleRoastSignRequest(env *Envelope) error {
 		return err
 	}
 
+	sess.GeneratedShares = cloneMessages(shares)
 	sess.State = ParticipantStateShareGenerated
 
 	// 发送签名份额
@@ -599,8 +614,6 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 	}
 
 	// 解析本地密钥份额
-	myShare := new(big.Int).SetBytes(sess.MyShare)
-	resolvedGroupPubX := big.NewInt(0)
 	var groupPubBytes []byte
 	pubBytes, err := p.vaultProvider.VaultGroupPubkey(sess.Chain, sess.VaultID, sess.KeyEpoch)
 	if err != nil {
@@ -612,28 +625,6 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 	groupPubBytes = pubBytes
 	logs.Info("[Participant] signing context miner=%s job=%s chain=%s vault=%d epoch=%d sign_algo=%s tasks=%d aggregated_pubkey=%s",
 		p.nodeID, sess.JobID, sess.Chain, sess.VaultID, sess.KeyEpoch, sess.SignAlgo.String(), numTasks, hex.EncodeToString(groupPubBytes))
-	if len(pubBytes) == 33 {
-		resolvedGroupPubX = new(big.Int).SetBytes(pubBytes[1:33])
-	} else {
-		resolvedGroupPubX = new(big.Int).SetBytes(pubBytes[:32])
-	}
-	if normalizedShare := normalizeSecretShareForBIP340(sess.SignAlgo, groupPubBytes, myShare); normalizedShare != myShare {
-		myShare = normalizedShare
-		logs.Info("[Participant] normalized BIP340 secret share for odd-Y group pubkey chain=%s vault=%d epoch=%d", sess.Chain, sess.VaultID, sess.KeyEpoch)
-	}
-
-	// Taproot tweak 补偿：share += tweak (mod order)
-	// 注意：如果所有 task 共享同一个 tweak（单 UTXO 策略），取第一个即可
-	var sessionTweak *big.Int
-	if len(sess.Tweaks) > 0 && len(sess.Tweaks[0]) == 32 {
-		order := curve.NewSecp256k1Group().Order()
-		sessionTweak = new(big.Int).SetBytes(sess.Tweaks[0])
-		sessionTweak.Mod(sessionTweak, order)
-		myShare = new(big.Int).Add(myShare, sessionTweak)
-		myShare.Mod(myShare, order)
-		logs.Info("[Participant] applied tweak compensation chain=%s vault=%d epoch=%d tweak=%s",
-			sess.Chain, sess.VaultID, sess.KeyEpoch, hex.EncodeToString(sess.Tweaks[0]))
-	}
 
 	// 解析聚合的 nonces 获取所有参与者的 nonce 承诺
 	allNonces := parseAggregatedNonces(sess.AggregatedNonces, numTasks, sess.SignAlgo)
@@ -707,8 +698,23 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 			return nil, err
 		}
 
-		// Use the already validated group pubkey X coordinate for the whole session.
-		groupPubX := new(big.Int).Set(resolvedGroupPubX)
+		taskTweak := taskTweakAt(sess.Tweaks, i)
+		taskShare, shareNegated, tweakApplied, err := deriveTaskSecretShare(sess.SignAlgo, groupPubBytes, sess.MyShare, taskTweak)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive task secret share for task %d: %w", i, err)
+		}
+		if shareNegated {
+			logs.Info("[Participant] normalized BIP340 secret share for odd-Y group pubkey chain=%s vault=%d epoch=%d task=%d",
+				sess.Chain, sess.VaultID, sess.KeyEpoch, i)
+		}
+		if tweakApplied {
+			logs.Info("[Participant] applied tweak compensation chain=%s vault=%d epoch=%d task=%d tweak=%s",
+				sess.Chain, sess.VaultID, sess.KeyEpoch, i, hex.EncodeToString(taskTweak))
+		}
+		_, groupPubX, err := deriveSigningPubkeyForTask(sess.SignAlgo, groupPubBytes, taskTweak)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive task signing pubkey for task %d: %w", i, err)
+		}
 
 		// 计算挑战值 e
 		e := roastExec.ComputeChallenge(R, groupPubX, msg)
@@ -726,15 +732,14 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 		// 计算部分签名 z_i = k_i + ρ_i * k'_i + λ_i * e * s_i
 		adjHidingNonce, adjBindingNonce := adjustNoncePairForBIP340(sess.SignAlgo, R, hidingNonce, bindingNonce)
 		nonceNegated := adjHidingNonce.Cmp(hidingNonce) != 0
-		shareNegated := myShare.Cmp(new(big.Int).SetBytes(sess.MyShare)) != 0
 		logs.Info("[Participant][sign-diag] node=%s job=%s task=%d signer_id=%d nonce_negated=%v share_negated=%v share_fp=%s nonce_count=%d",
 			p.nodeID, sess.JobID, i, selfSignerID, nonceNegated, shareNegated,
-			shareFingerprintForLog(bigIntFillBytes32(myShare)), len(taskNonces))
+			shareFingerprintForLog(bigIntFillBytes32(taskShare)), len(taskNonces))
 		z := roastExec.ComputePartialSignature(PartialSignParams{
 			SignerID:     selfSignerID,
 			HidingNonce:  adjHidingNonce,
 			BindingNonce: adjBindingNonce,
-			SecretShare:  myShare,
+			SecretShare:  taskShare,
 			Rho:          rho,
 			Lambda:       lambda,
 			Challenge:    e,
@@ -749,7 +754,7 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 			noncePart.Mod(noncePart, curve.NewSecp256k1Group().Order())
 			// key_part = λ * e * s
 			keyPart := new(big.Int).Mul(lambda, e)
-			keyPart.Mul(keyPart, myShare)
+			keyPart.Mul(keyPart, taskShare)
 			keyPart.Mod(keyPart, curve.NewSecp256k1Group().Order())
 			// z_check = nonce_part + key_part (should == z)
 			zCheck := new(big.Int).Add(noncePart, keyPart)
@@ -770,7 +775,7 @@ func (p *Participant) computeSignatureShares(sess *ParticipantSession) ([][]byte
 			expectedPt := curve.NewSecp256k1Group().Add(nonceContribPt, curve.Point(keyContribPt))
 			ptMatch := zG.X.Cmp(expectedPt.X) == 0 && zG.Y.Cmp(expectedPt.Y) == 0
 			// also check key contribution against public key share
-			pubSharePt := grp.ScalarBaseMult(myShare)
+			pubSharePt := grp.ScalarBaseMult(taskShare)
 			// 输出完整压缩公钥份额，用于 Shamir 重构验证
 			pubShareCompressed := curve.NewSecp256k1Group().SerializePoint(curve.Point(pubSharePt))
 			// 计算 λ_i * PubShare_i（加权公钥份额贡献）

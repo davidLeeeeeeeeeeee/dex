@@ -85,13 +85,36 @@ func (p *TransportP2P) SamplePeers(n int, role string) []runtime.NodeID {
 
 // toTransportMessage 转换 runtime.FrostEnvelope 到 types.Message
 func (p *TransportP2P) toTransportMessage(env *runtime.FrostEnvelope) (types.Message, error) {
-	// 构建 pb.FrostEnvelope
-	pbEnv := &pb.FrostEnvelope{
-		From:    string(env.From),
-		Kind:    p.toPBEnvelopeKind(env.Kind),
-		Payload: env.Payload,
-		Sig:     env.Sig,
-		JobId:   env.SessionID,
+	var (
+		pbEnv *pb.FrostEnvelope
+		err   error
+	)
+
+	if isRoastEnvelopeKind(env.Kind) {
+		pbEnv, err = runtime.PBEnvelopeFromRoast(&runtime.RoastEnvelope{
+			SessionID: env.SessionID,
+			Kind:      env.Kind,
+			From:      env.From,
+			Chain:     env.Chain,
+			VaultID:   env.VaultID,
+			SignAlgo:  env.SignAlgo,
+			Epoch:     env.Epoch,
+			Round:     env.Round,
+			Payload:   env.Payload,
+			Tweaks:    env.Tweaks,
+		})
+		if err != nil {
+			return types.Message{}, fmt.Errorf("encode roast envelope: %w", err)
+		}
+	} else {
+		// 构建 pb.FrostEnvelope
+		pbEnv = &pb.FrostEnvelope{
+			From:    string(env.From),
+			Kind:    p.toPBEnvelopeKind(env.Kind),
+			Payload: env.Payload,
+			Sig:     env.Sig,
+			JobId:   env.SessionID,
+		}
 	}
 
 	// 序列化
@@ -118,6 +141,15 @@ func (p *TransportP2P) toPBEnvelopeKind(kind string) pb.FrostEnvelopeKind {
 		return pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_ROAST_RESPONSE
 	default:
 		return pb.FrostEnvelopeKind_FROST_ENVELOPE_KIND_UNSPECIFIED
+	}
+}
+
+func isRoastEnvelopeKind(kind string) bool {
+	switch kind {
+	case "NonceRequest", "SignRequest", "NonceCommit", "SigShare":
+		return true
+	default:
+		return false
 	}
 }
 

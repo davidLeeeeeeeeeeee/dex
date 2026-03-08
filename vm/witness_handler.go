@@ -128,43 +128,12 @@ func isBTCChainName(chainName string) bool {
 	return c == "btc" || strings.HasPrefix(c, "btc_") || strings.HasPrefix(c, "btc-")
 }
 
-func parseTaprootScriptPubKeyXOnly(scriptPubKey []byte) ([]byte, error) {
-	if len(scriptPubKey) != 34 {
-		return nil, fmt.Errorf("invalid taproot script_pubkey length: %d", len(scriptPubKey))
-	}
-	if scriptPubKey[0] != 0x51 || scriptPubKey[1] != 0x20 {
-		return nil, fmt.Errorf("invalid taproot script_pubkey prefix: %x", scriptPubKey[:2])
-	}
-
-	xOnly := make([]byte, 32)
-	copy(xOnly, scriptPubKey[2:])
-	return xOnly, nil
-}
-
-func normalizeVaultGroupPubKeyXOnly(groupPubKey []byte) ([]byte, error) {
-	switch len(groupPubKey) {
-	case 32:
-		xOnly := make([]byte, 32)
-		copy(xOnly, groupPubKey)
-		return xOnly, nil
-	case 33:
-		if groupPubKey[0] != 0x02 && groupPubKey[0] != 0x03 {
-			return nil, fmt.Errorf("invalid compressed pubkey prefix: 0x%x", groupPubKey[0])
-		}
-		xOnly := make([]byte, 32)
-		copy(xOnly, groupPubKey[1:])
-		return xOnly, nil
-	default:
-		return nil, fmt.Errorf("unsupported group pubkey length: %d", len(groupPubKey))
-	}
-}
-
 func lookupVaultIDByScriptPubKey(sv StateView, chainName string, vaultCount uint32, scriptPubKey []byte, receiverAddress string) (uint32, error) {
 	if vaultCount == 0 {
 		return 0, fmt.Errorf("invalid vault count=0 for chain %s", chainName)
 	}
 
-	xOnly, err := parseTaprootScriptPubKeyXOnly(scriptPubKey)
+	xOnly, err := utils.ParseTaprootScriptPubKeyXOnly(scriptPubKey)
 	if err != nil {
 		return 0, fmt.Errorf("parse taproot script_pubkey failed: %w", err)
 	}
@@ -187,19 +156,17 @@ func lookupVaultIDByScriptPubKey(sv StateView, chainName string, vaultCount uint
 			return 0, fmt.Errorf("failed to parse vault state for chain %s vault %d: %w", chainName, candidateID, err)
 		}
 
-		candidateXOnly, err := normalizeVaultGroupPubKeyXOnly(candidateState.GroupPubkey)
+		candidateXOnly, err := utils.NormalizeSecp256k1XOnlyPubKey(candidateState.GroupPubkey)
 		if err != nil {
 			continue
 		}
 
 		// 计算 tweaked pubkey: P' = P + H_TapTweak(P_x || receiverAddress)·G
 		tweak := utils.ComputeUserTweak(candidateXOnly, receiverAddress)
-		tweakedPub, err := utils.ComputeTweakedPubkey(candidateState.GroupPubkey, tweak)
+		tweakedXOnly, err := utils.ComputeTweakedXOnlyPubkey(candidateState.GroupPubkey, tweak)
 		if err != nil {
 			continue
 		}
-		// 取 tweaked pubkey 的 x-only（去掉压缩前缀）
-		tweakedXOnly := tweakedPub[1:33]
 
 		if !bytes.Equal(tweakedXOnly, xOnly) {
 			continue
