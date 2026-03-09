@@ -3,12 +3,11 @@
 package main
 
 import (
-	"crypto/rand"
 	"dex/db"
 	"dex/keys"
 	"dex/logs"
 	"dex/pb"
-	"encoding/hex"
+	"dex/utils"
 	"flag"
 	"fmt"
 	"log"
@@ -88,16 +87,6 @@ func cleanExistingData(dbMgr *db.Manager) {
 	}
 }
 
-func randomHex(n int) string {
-	bytes := make([]byte, n)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)
-}
-
-func randomAddress() string {
-	return "0x" + randomHex(20)
-}
-
 func generateWithdraws(dbMgr *db.Manager, count int) error {
 	log.Printf("Generating %d withdraw requests...", count)
 
@@ -106,7 +95,7 @@ func generateWithdraws(dbMgr *db.Manager, count int) error {
 	statuses := []string{"QUEUED", "SIGNED", "QUEUED", "QUEUED"} // 多些 QUEUED
 
 	for i := 0; i < count; i++ {
-		withdrawID := randomHex(16)
+		withdrawID := utils.RandomHex(16)
 		chain := chains[i%len(chains)]
 		asset := assets[i%len(assets)]
 		status := statuses[i%len(statuses)]
@@ -115,11 +104,11 @@ func generateWithdraws(dbMgr *db.Manager, count int) error {
 
 		state := &pb.FrostWithdrawState{
 			WithdrawId:    withdrawID,
-			TxId:          randomHex(32),
+			TxId:          utils.RandomHex(32),
 			Seq:           uint64(i + 1),
 			Chain:         chain,
 			Asset:         asset,
-			To:            randomAddress(),
+			To:            utils.RandomAddress(),
 			Amount:        amount.String(),
 			RequestHeight: uint64(1000 + i*10),
 			Status:        status,
@@ -127,7 +116,7 @@ func generateWithdraws(dbMgr *db.Manager, count int) error {
 		}
 
 		if status == "SIGNED" {
-			state.JobId = "job_" + randomHex(8)
+			state.JobId = "job_" + utils.RandomHex(8)
 		}
 
 		data, err := proto.Marshal(state)
@@ -157,7 +146,7 @@ func generateRechargeRequests(dbMgr *db.Manager, count int) error {
 	}
 
 	for i := 0; i < count; i++ {
-		requestID := randomHex(16)
+		requestID := utils.RandomHex(16)
 		chain := chains[i%len(chains)]
 		status := statuses[i%len(statuses)]
 		amount := big.NewInt(int64((i + 1) * 50000000)) // 0.5, 1.0, 1.5 ...
@@ -165,7 +154,7 @@ func generateRechargeRequests(dbMgr *db.Manager, count int) error {
 		// 生成模拟见证者
 		witnesses := make([]string, 3)
 		for j := 0; j < 3; j++ {
-			witnesses[j] = randomAddress()
+			witnesses[j] = utils.RandomAddress()
 		}
 
 		// 生成模拟投票
@@ -184,11 +173,11 @@ func generateRechargeRequests(dbMgr *db.Manager, count int) error {
 		req := &pb.RechargeRequest{
 			RequestId:         requestID,
 			NativeChain:       chain,
-			NativeTxHash:      "0x" + randomHex(32),
+			NativeTxHash:      "0x" + utils.RandomHex(32),
 			TokenAddress:      "FB",
 			Amount:            amount.String(),
-			ReceiverAddress:   randomAddress(),
-			RequesterAddress:  randomAddress(),
+			ReceiverAddress:   utils.RandomAddress(),
+			RequesterAddress:  utils.RandomAddress(),
 			Status:            status,
 			CreateHeight:      uint64(1000 + i*10),
 			DeadlineHeight:    uint64(1100 + i*10),
@@ -233,8 +222,8 @@ func generateDKGSessions(dbMgr *db.Manager, count int) error {
 		oldMembers := make([]string, 5)
 		newMembers := make([]string, 5)
 		for j := 0; j < 5; j++ {
-			oldMembers[j] = randomAddress()
-			newMembers[j] = randomAddress()
+			oldMembers[j] = utils.RandomAddress()
+			newMembers[j] = utils.RandomAddress()
 		}
 
 		state := &pb.VaultTransitionState{
@@ -256,7 +245,7 @@ func generateDKGSessions(dbMgr *db.Manager, count int) error {
 		}
 
 		if dkgStatus == "KEY_READY" {
-			state.NewGroupPubkey = []byte(randomHex(16))
+			state.NewGroupPubkey = []byte(utils.RandomHex(16))
 			state.ValidationStatus = "PASSED"
 		}
 

@@ -21,6 +21,7 @@ import (
 	"dex/frost/runtime/types"
 	"dex/keys"
 	"dex/pb"
+	"dex/utils"
 	"dex/vm"
 	"fmt"
 	"math/big"
@@ -50,9 +51,10 @@ type Harness struct {
 	txLog  []txLogEntry // 提交日志
 
 	// committee 相关
-	Committee   []string          // 成员地址列表
-	PrivateKeys map[string]string // address → hex private key
-	PublicKeys  map[string][]byte // address → compressed pubkey
+	Committee   []string                     // 成员地址列表
+	PrivateKeys map[string]string            // address → hex private key
+	PublicKeys  map[string][]byte            // address → compressed pubkey
+	KeyManagers map[string]*utils.KeyManager // address → KeyManager（可用于签名）
 }
 
 type txLogEntry struct {
@@ -78,15 +80,22 @@ func New(t *testing.T, committeeSize int) *Harness {
 		Committee:   make([]string, 0, committeeSize),
 		PrivateKeys: make(map[string]string),
 		PublicKeys:  make(map[string][]byte),
+		KeyManagers: make(map[string]*utils.KeyManager),
 	}
 	h.kindFn = vm.DefaultKindFn
 	// 写入初始高度
 	h.rawSet(keys.KeyLatestHeight(), []byte("0"))
-	// 生成 committee 成员
-	for i := 0; i < committeeSize; i++ {
-		addr := fmt.Sprintf("miner_%d", i)
-		h.Committee = append(h.Committee, addr)
-		h.PrivateKeys[addr] = fmt.Sprintf("privkey_placeholder_%d", i) // 测试占位
+	// 生成 committee 成员（真实 secp256k1 密钥 + bech32 地址）
+	ids := utils.GenerateTestIdentities(committeeSize)
+	for _, id := range ids {
+		h.Committee = append(h.Committee, id.Address)
+		h.PrivateKeys[id.Address] = id.PrivateKeyHex
+		h.PublicKeys[id.Address] = id.PublicKey
+		km := utils.NewKeyManager()
+		if err := km.InitKey(id.PrivateKeyHex); err != nil {
+			t.Fatalf("init key for committee member: %v", err)
+		}
+		h.KeyManagers[id.Address] = km
 	}
 	return h
 }

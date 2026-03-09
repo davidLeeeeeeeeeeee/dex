@@ -9,33 +9,34 @@ import (
 // TestTransferFlow 基本转账测试：验证框架的 SeedAccount + SubmitTx + AssertBalance
 func TestTransferFlow(t *testing.T) {
 	h := testharness.New(t, 3)
+	from, to := h.Committee[0], h.Committee[1]
 
-	h.SeedAccount("alice", "FB", "1000")
-	h.SeedAccount("bob", "FB", "0")
+	h.SeedAccount(from, "FB", "1000")
+	h.SeedAccount(to, "FB", "0")
 	h.AdvanceHeight(1)
 
-	tx := testharness.BuildTransferTx("alice", "bob", "FB", "100")
-	h.SubmitTxExpectSuccess(tx)
+	h.SubmitTxExpectSuccess(testharness.BuildTransferTx(from, to, "FB", "100"))
 
-	h.AssertBalance("bob", "FB", "100")
+	h.AssertBalance(to, "FB", "100")
 	h.PrintTxLog()
 }
 
 // TestMultiTxSameBlock 同一高度多笔 tx 协作
 func TestMultiTxSameBlock(t *testing.T) {
 	h := testharness.New(t, 3)
+	a, b, c := h.Committee[0], h.Committee[1], h.Committee[2]
 
-	h.SeedAccount("alice", "FB", "10000")
-	h.SeedAccount("bob", "FB", "10000")
-	h.SeedAccount("charlie", "FB", "0")
+	h.SeedAccount(a, "FB", "10000")
+	h.SeedAccount(b, "FB", "10000")
+	h.SeedAccount(c, "FB", "0")
 	h.AdvanceHeight(1)
 
 	h.SubmitBlock(
-		testharness.BuildTransferTx("alice", "charlie", "FB", "100"),
-		testharness.BuildTransferTx("bob", "charlie", "FB", "200"),
+		testharness.BuildTransferTx(a, c, "FB", "100"),
+		testharness.BuildTransferTx(b, c, "FB", "200"),
 	)
 
-	h.AssertBalance("charlie", "FB", "300")
+	h.AssertBalance(c, "FB", "300")
 	h.PrintTxLog()
 }
 
@@ -54,12 +55,12 @@ func TestDkgCommitViaHarness(t *testing.T) {
 		pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
 	)
 
-	// 提交一个 DKG Commit tx（使用伪造的 commitment 数据）
+	// 提交 DKG Commit tx（使用真实公钥作为 commitment / AI0）
+	pubKey := h.PublicKeys[committee[0]]
 	tx := testharness.BuildDkgCommitTx(
 		committee[0], "btc", 0, 1,
 		pb.SignAlgo_SIGN_ALGO_SCHNORR_SECP256K1_BIP340,
-		[][]byte{{0x02, 0x01, 0x02, 0x03}}, // fake commitment points
-		[]byte{0x02, 0x01, 0x02, 0x03},     // fake AI0
+		[][]byte{pubKey}, pubKey,
 	)
 
 	err := h.SubmitTx(tx)
