@@ -1,6 +1,6 @@
 ---
 name: frost
-description: Threshold signing runtime, DKG transition flow, chain adapters, and VM-facing frost transaction handlers.
+description: Threshold signing runtime, withdraw job window planning, DKG transition flow, chain adapters, and VM-facing frost transaction handlers.
 ---
 
 # FROST and DKG Skill
@@ -13,7 +13,7 @@ description: Threshold signing runtime, DKG transition flow, chain adapters, and
 - `withdraw signing`
 - `vault transition`
 
-Use this skill when working on withdraw jobs, DKG transitions, chain templates, or frost P2P envelopes.
+Use this skill when working on withdraw planning/signing, DKG transitions, chain templates, or frost P2P envelopes.
 
 ## Source Map
 
@@ -23,7 +23,9 @@ Use this skill when working on withdraw jobs, DKG transitions, chain templates, 
   - `frost/runtime/workers/transition_worker.go`
 - Job planning/scanning:
   - `frost/runtime/planning/scanner.go`
-  - `frost/runtime/planning/job_planner.go`
+  - `frost/runtime/planning/job_window_planner.go`
+- Signing orchestration service:
+  - `frost/runtime/services/signing_service.go`
 - Session and nonce store:
   - `frost/runtime/session/store.go`
   - `frost/runtime/session/dkg.go`
@@ -44,18 +46,19 @@ Use this skill when working on withdraw jobs, DKG transitions, chain templates, 
 ## Typical Tasks
 
 1. Withdraw stuck in queued/planning:
-   - inspect scanner/planner/withdraw worker pipeline
+   - inspect scanner -> `PlanJobWindow` -> `ProcessWindow` pipeline
    - inspect withdraw state keys in `keys/keys.go`
 2. DKG not advancing:
    - inspect transition worker stage gates and deadlines
    - inspect VM DKG handlers for state transitions
 3. Signature verification mismatch:
-   - inspect chain adapter template hash and VM-side recomputation
+   - inspect chain adapter template hash, tweaks, and VM-side recomputation
 
 ## Quick Commands
 
 ```bash
 rg "type .*Worker|func \\(.*\\) Start|HandlePBEnvelope" frost/runtime
+rg "PlanJobWindow|ScanOnce|ProcessWindow|StartSigningSession|WaitForCompletion" frost/runtime
 rg "frost_vault|frost_withdraw|DKG|Transition" vm handlers keys
-rg "ChainAdapter|RegisterAdapter|Build.*Template" frost/chain
+rg "ChainAdapter|RegisterAdapter|Build.*Template|Build.*Tx" frost/chain
 ```

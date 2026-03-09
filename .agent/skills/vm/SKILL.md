@@ -1,4 +1,4 @@
----
+﻿---
 name: vm
 description: Transaction execution engine, handler registry, block pre-execution, commit path, and state diff generation.
 ---
@@ -20,10 +20,11 @@ Use this skill for execution correctness, receipt status, write operations, and 
 - Handler kind dispatch: `vm/handlers.go`
 - Default handler registration: `vm/default_handlers.go`
 - Executor lifecycle: `vm/executor.go`
+- Executor probes/diagnostics: `vm/executor_probe.go`
 - Core types (`WriteOp`, `Receipt`): `vm/types.go`
 - Order integration:
   - `vm/order_handler.go`
-  - `vm/executor.go` (orderbook rebuild path)
+  - `vm/orderbook_rebuild.go`
 - Frost integration:
   - `vm/frost_*.go`
   - `vm/frost_dkg_handlers.go`
@@ -44,30 +45,33 @@ Use this skill for execution correctness, receipt status, write operations, and 
 1. Wrong tx type routing:
    - inspect `DefaultKindFn` cases in `vm/handlers.go`
 2. Block valid in one node but invalid in another:
-   - inspect deterministic orderbook rebuild and tx duplicate skip logic in `vm/executor.go`
+   - inspect deterministic rebuild/order handling in `vm/orderbook_rebuild.go` and `vm/executor.go`
 3. Receipt status or error text issues:
    - inspect receipt mutation and final persistence flow in `vm/executor.go`
 
-## 已知陷阱（实战经验）
+## 已知陷阱（实战）
 
-1. **内存泄漏 — SpecExecLRU 缓存过大**（已识别，待优化）：
-   - `vm/spec_cache.go` 中的 `SpecExecLRU` 会缓存每个区块的预执行结果（含完整 `Diff`）
-   - pprof 堆分析显示该缓存可增长到 40GB+
-   - **应对**：缩小缓存大小；区块 finalize 后清除 `SpecResult.Diff`
+1. 内存增长风险: `SpecExecLRU` 缓存过大。
+   - 位置：`vm/spec_cache.go`。
+   - 现象：预执行缓存包含大块 `Diff` 时，堆占用会快速增长。
+   - 应对：控制缓存大小；区块 finalize 后及时释放或裁剪 `SpecResult.Diff`。
+2. 余额不一致: `SetBalance` 双写冲突。
+   - 位置：`vm/order_handler.go` 与 `vm/executor.go` 的 `applyResult` 链路。
+   - 现象：冻结余额和聚合余额更新顺序冲突，可能触发 `insufficient balance`。
+   - 排查流程：参考 `/.agent/workflows/debug_balance.md`。
+3. `updateAccountBalancesFromStates` 空指针风险。
+   - 历史问题：map key/value 为空时触发 panic。
+   - 要求：在 `vm/order_handler.go` 中使用 map 前先做空值校验。
+4. 余额辅助与抽象。
+   - `vm/balance_helper.go` 提供余额读写通用助手。
+   - `vm/stateview.go` 是 `StateView` 抽象层，调试时优先确认它的读写一致性。
 
-2. **余额不一致 — SetBalance 双写冲突**：
-   - `order_handler.go` 中 `handleAddOrder` 调用 `SetBalance` 冻结余额
-   - `updateAccountBalancesFromStates` 也会写入余额
-   - 两者的 WriteOp 在 `executor.go` 中通过 `applyResult` 重复应用，可能导致 "insufficient balance"
-   - **排查流程**：参考 `/.agent/workflows/debug_balance.md`
+## 一致性检查清单（无 State Hash 强校验）
 
-3. **nil pointer panic in updateAccountBalancesFromStates**：
-   - 历史bug：map key 为 nil 指针时触发 `runtime.fatalpanic`
-   - 确保 `order_handler.go` 中使用 map 前做空指针检查
-
-4. **余额工具函数**：
-   - `vm/balance_helper.go` 包含余额读写的通用辅助函数
-   - `vm/stateview.go` 提供 StateView 抽象层
+1. 检查所有 `WriteOp` 产出路径，禁止直接 `range map` 后写入可观察结果。
+2. 若必须用 `map` 去重，落盘、回执、上报前必须按 key 排序。
+3. `StateView.Diff()`、索引重建、批量读取后的处理必须保证顺序可重放。
+4. 内存缓存只能优化性能，不能成为状态真源；重启后结果必须和冷启动一致。
 
 ## Quick Commands
 
@@ -76,12 +80,5 @@ rg "DefaultKindFn|RegisterDefaultHandlers|Kind\\(\\)" vm
 rg "PreExecuteBlock|CommitFinalizedBlock|applyResult|IsBlockCommitted" vm/executor.go
 rg "DryRun\\(" vm
 rg "SpecExecLRU|specCache|SpecResult" vm
-rg "SetBalance|GetBalance|balanceUpdates" vm
+rg "SetBalance|GetBalance|balanceUpdates|orderbook_rebuild" vm
 ```
-
-## 一致性检查清单（无 State Hash 强校验）
-
-1. 检查所有 `WriteOp` 生成路径，禁止直接 `range map` 后写入 `ws`。
-2. 若必须用 `map` 去重，落盘/回执/上报前必须按 key 排序。
-3. `StateView.Diff()`、索引重建、批量读取后的处理必须保证顺序可重放。
-4. 内存缓存只能优化性能，不能成为状态真源；重启后结果必须与冷启动一致。

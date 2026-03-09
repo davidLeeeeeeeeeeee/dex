@@ -1,7 +1,7 @@
-# DEX Agent Guide
+﻿# DEX Agent Guide
 
 This folder stores AI-facing retrieval metadata for the `dex` codebase.
-Last updated: `2026-02-17`.
+Last updated: `2026-03-09`.
 
 ## Quick Routing
 
@@ -15,10 +15,13 @@ Use this table to jump to the right area fast.
 | FROST withdraw / DKG / runtime workers | `frost/`, `vm/frost_*.go`, `handlers/frost_*.go` | `frost` |
 | HTTP API behavior | `handlers/`, `cmd/main/node.go` | `handlers` |
 | DB persistence and key schema | `db/`, `keys/` | `db` |
+| State snapshot sync and shard paging | `stateDB/`, `db/state_snapshot_sync.go`, `sender/state_snapshot_sync.go` | `db` + `sender` |
 | Witness workflow and arbitration | `witness/`, `vm/witness_*.go` | `witness` |
 | Tx queueing and gossip send path | `txpool/`, `sender/` | `txpool` + `sender` |
 | Frontend dashboard and explorer APIs | `explorer/`, `cmd/explorer/` | `explorer` |
+| Wallet extension and dApp signing popup | `wallet/`, `cmd/explorer/wallet_handlers.go` | `wallet` + `explorer` |
 | Config and bootstrap defaults | `config/`, `cmd/main/bootstrap.go` | `config` |
+| In-process integration tests | `testharness/` | `testharness` |
 
 ## Runtime Entrypoints
 
@@ -37,7 +40,7 @@ Use this table to jump to the right area fast.
 
 - Canonical persistence manager is `db.Manager` in `db/db.go`.
 - Backend is **PebbleDB** (`cockroachdb/pebble`).
-- All state via flat KV（无独立状态树）。
+- All state uses flat KV (no independent state tree).
 - Key routing defined in `keys/category.go`, key constructors in `keys/keys.go`.
 
 ## Main API Surfaces
@@ -49,6 +52,7 @@ Use this table to jump to the right area fast.
 - Explorer-side API gateway is in:
   - `cmd/explorer/main.go`
   - `cmd/explorer/frost_handlers.go`
+  - `cmd/explorer/wallet_handlers.go`
   - `explorer/src/api.ts`
 
 ## Skill Directory
@@ -62,11 +66,13 @@ Use this table to jump to the right area fast.
   frost/
   handlers/
   matching/
+  project-overview/
   sender/
+  testharness/
   txpool/
   vm/
+  wallet/
   witness/
-  project-overview/
 ```
 
 ## Fast Search Commands
@@ -80,6 +86,9 @@ rg "return \"[a-z0-9_]+\"" vm/handlers.go
 
 # FROST runtime workers/sessions
 rg "type .*Worker|type .*Session|func \\(.*\\) Start" frost/runtime
+
+# State snapshot sync
+rg "snapshot|StateSnapshot|FetchStateSnapshot" stateDB db sender handlers
 
 # Key schema
 rg "func Key|KeyVersion|CategorizeKey|IsStatefulKey" keys
@@ -98,7 +107,7 @@ rg "func Key|KeyVersion|CategorizeKey|IsStatefulKey" keys
 
 When core code changes, update these files together:
 
-1. `.agent/AGENT_GUIDE.md`
+1. `AGENTS.md`
 2. `.agent/skills/project-overview/SKILL.md`
 3. Affected module skill files in `.agent/skills/*/SKILL.md`
 4. `.agent/docs/retrieval_index.md`
@@ -119,4 +128,4 @@ When core code changes, update these files together:
 1. 用中文。`task.md` 和实现说明类 `md` 都用中文。
 2. 代码在逻辑等价前提下保持精简，能一行写完不展开成三行。
 3. 始终坚持奥卡姆剃刀原则：如无必要，勿增实体。
-4. 所有输出的代码定位都要vscode里能点击直接跳转到对应代码段落的格式。
+4. 所有输出的代码定位都要是 VS Code 可点击、可直接跳转到对应代码段落的格式。

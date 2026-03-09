@@ -1,6 +1,6 @@
----
+﻿---
 name: explorer
-description: Explorer backend APIs plus Vue frontend dashboard for node health, tx/block search, trading, and frost views.
+description: Explorer backend APIs plus Vue frontend dashboard for node health, tx/block search, trading, frost, and wallet proxy views.
 ---
 
 # Explorer Skill
@@ -12,15 +12,18 @@ description: Explorer backend APIs plus Vue frontend dashboard for node health, 
 - `dashboard`
 - `vue`
 - `indexdb`
+- `wallet api`
 
-Use this skill for UI behavior, explorer API responses, or index sync issues.
+Use this skill for UI behavior, explorer API responses, index sync issues, or wallet proxy endpoint behavior.
 
 ## Source Map
 
 - Backend server: `cmd/explorer/main.go`
 - Frost backend endpoints: `cmd/explorer/frost_handlers.go`
+- Wallet proxy endpoints: `cmd/explorer/wallet_handlers.go`
 - Index sync loop: `cmd/explorer/syncer/syncer.go`
 - Indexed storage: `cmd/explorer/indexdb/`
+- Local node DB read path: `cmd/explorer/local_db.go`
 - Frontend shell: `explorer/src/App.vue`
 - Frontend API client: `explorer/src/api.ts`
 - Main components: `explorer/src/components/`
@@ -28,7 +31,8 @@ Use this skill for UI behavior, explorer API responses, or index sync issues.
 ## API Layers
 
 - Frontend calls `/api/*` endpoints on explorer backend.
-- Explorer backend proxies to node endpoints (`/status`, `/getblock`, `/frost/*`, `/witness/*`) and/or local index DB.
+- Explorer backend proxies node endpoints (`/status`, `/getblock`, `/frost/*`, `/witness/*`) and/or local index DB.
+- Wallet-specific proxy endpoints are `/api/wallet/submittx`, `/api/wallet/nonce`, `/api/wallet/receipt`.
 
 ## Typical Tasks
 
@@ -41,28 +45,29 @@ Use this skill for UI behavior, explorer API responses, or index sync issues.
    - inspect index extraction in `cmd/explorer/indexdb/`
 3. Fix frost/witness explorer data:
    - inspect mapping logic in `cmd/explorer/frost_handlers.go`
+4. Fix wallet submit/nonce/receipt mismatch:
+   - inspect request transform and fallback flow in `cmd/explorer/wallet_handlers.go`
 
-## 已知陷阱（实战经验）
+## 已知经验（实战）
 
-1. **txhistory 状态非线性**：
-   - 现象：`height:3` 为 PENDING 而 `height:19` 为 SUCCEED
-   - 原因：`syncer` 同步逻辑可能跳过中间高度，导致旧交易状态未更新
-   - 排查点：`cmd/explorer/syncer/syncer.go` 的同步循环和状态写入逻辑
-
-2. **余额快照全部相同**：
-   - 现象：所有历史 `fb_balance_after` 显示同一个值
-   - 原因：`syncer` 使用最新 nodeDB 状态获取余额，而非历史高度的快照
-   - 应改为从 Receipt 中的余额快照获取，或查询历史版本状态
-
-3. **local_db 模式在 Windows 上的限制**：
-   - BadgerDB 在 Windows 上不支持 Read-only 模式
-   - Explorer 如果指向节点的数据目录，需要用 `--node-data-dir` 参数且节点不能同时运行
-   - 参考 `cmd/explorer/local_db.go`
+1. `txhistory` 状态看起来不连续:
+   - 现象：低高度记录是 `PENDING`，高高度记录已经 `SUCCEED`。
+   - 原因：`syncer` 某些异常路径会跳过中间高度，导致旧交易状态没有被回填。
+   - 排查点：`cmd/explorer/syncer/syncer.go` 的增量同步循环和状态写入顺序。
+2. 历史余额快照全部相同:
+   - 现象：历史记录里的 `fb_balance_after` 近似同值。
+   - 原因：读取了最新状态而非交易发生时的快照。
+   - 处理：优先从 receipt 快照字段取值，或按高度读历史状态版本。
+3. `--node-data-dir` 本地读库限制:
+   - Explorer 用 `db.NewReadOnlyManager` 只读打开节点 Pebble DB。
+   - 在 Windows/同机并发场景下可能受到文件锁限制，节点和 Explorer 同时访问同一目录会失败。
+   - 参考：`cmd/explorer/main.go`、`cmd/explorer/local_db.go`、`db/readonly.go`。
 
 ## Quick Commands
 
 ```bash
 rg "HandleFunc\\(|/api/" cmd/explorer
+rg "wallet|frost|witness|sync" cmd/explorer/main.go cmd/explorer/wallet_handlers.go cmd/explorer/frost_handlers.go
 rg "fetch[A-Z]" explorer/src/api.ts
-rg "activeTab|navigationNodes" explorer/src/App.vue
+rg "activeTab|navigationNodes|wallet" explorer/src/App.vue explorer/src/components
 ```

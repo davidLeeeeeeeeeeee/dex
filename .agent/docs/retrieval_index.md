@@ -26,8 +26,10 @@ Use this index for quick semantic lookup.
 ## FROST and DKG
 
 - runtime manager: `frost/runtime/manager.go`
+- withdraw planning: `frost/runtime/planning/scanner.go`, `frost/runtime/planning/job_window_planner.go`
 - withdraw worker: `frost/runtime/workers/withdraw_worker.go`
 - transition worker: `frost/runtime/workers/transition_worker.go`
+- signing service: `frost/runtime/services/signing_service.go`
 - roast coordinator/session: `frost/runtime/roast/`, `frost/runtime/session/`
 - VM-side frost tx handlers: `vm/frost_*.go`
 - frost API handlers: `handlers/frost_query_handlers.go`, `handlers/frost_admin_handlers.go`
@@ -49,13 +51,16 @@ Use this index for quick semantic lookup.
 
 - sender manager: `sender/manager.go`
 - send queue and retry/backoff: `sender/queue.go`
-- gossip sender: `sender/gossip_sender.go`
+- no-reply send funcs: `sender/do_send_simple.go`
+- callback send funcs: `sender/do_send_callbacks.go`
+- state snapshot sync fetch: `sender/state_snapshot_sync.go`
 - txpool queue and validation: `txpool/txpool_queue.go`
 
 ## Explorer
 
 - explorer backend api: `cmd/explorer/main.go`
 - explorer frost endpoints: `cmd/explorer/frost_handlers.go`
+- explorer wallet endpoints: `cmd/explorer/wallet_handlers.go`
 - explorer syncer: `cmd/explorer/syncer/syncer.go`
 - frontend api client: `explorer/src/api.ts`
 - frontend shell: `explorer/src/App.vue`
