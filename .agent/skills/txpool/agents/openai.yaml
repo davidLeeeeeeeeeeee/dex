@@ -1,0 +1,4 @@
+interface:
+  display_name: "TxPool"
+  short_description: "Debug txpool admission, pending cache, and short-hash sync flow"
+  default_prompt: "Use $txpool to diagnose pending transaction admission, queue pressure, or short-hash lookup issues."

@@ -1,15 +1,17 @@
 ---
-name: Database Layer
+name: db
 description: PebbleDB-backed persistence manager, write queue, and keyspace rules.
-triggers:
-  - db
-  - pebble
-  - key schema
-  - keyspace
-  - persistence
 ---
 
 # Database Layer Skill
+
+## Trigger Cues
+
+- `db`
+- `pebble`
+- `key schema`
+- `keyspace`
+- `persistence`
 
 Use this skill when debugging persistence, key naming, write ordering, or query performance.
 

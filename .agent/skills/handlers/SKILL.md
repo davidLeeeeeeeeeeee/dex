@@ -1,15 +1,17 @@
 ---
-name: HTTP Handlers
+name: handlers
 description: Node HTTP/3 API routing and request handlers for tx, block, orderbook, consensus, frost, and witness endpoints.
-triggers:
-  - handlers
-  - api
-  - route
-  - endpoint
-  - http3
 ---
 
 # HTTP Handlers Skill
+
+## Trigger Cues
+
+- `handlers`
+- `api`
+- `route`
+- `endpoint`
+- `http3`
 
 Use this skill for node API route changes, response format bugs, or endpoint-level behavior.
 
@@ -49,4 +51,3 @@ Use this skill for node API route changes, response format bugs, or endpoint-lev
 rg "HandleFunc\\(" handlers/manager.go
 rg "RecordAPICall|http\\.Error|proto\\.Marshal|json\\.NewEncoder" handlers
 ```
-

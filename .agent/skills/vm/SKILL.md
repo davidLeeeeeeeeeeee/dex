@@ -1,15 +1,17 @@
 ---
-name: VM
+name: vm
 description: Transaction execution engine, handler registry, block pre-execution, commit path, and state diff generation.
-triggers:
-  - vm
-  - execute block
-  - tx handler
-  - receipt
-  - writeop
 ---
 
 # VM Skill
+
+## Trigger Cues
+
+- `vm`
+- `execute block`
+- `tx handler`
+- `receipt`
+- `writeop`
 
 Use this skill for execution correctness, receipt status, write operations, and tx handler behavior.
 

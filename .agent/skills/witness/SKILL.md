@@ -1,15 +1,17 @@
 ---
-name: Witness
+name: witness
 description: Witness staking, recharge voting, challenge/arbitration flow, and VM witness transaction integration.
-triggers:
-  - witness
-  - recharge
-  - arbitration
-  - challenge
-  - witness stake
 ---
 
 # Witness Skill
+
+## Trigger Cues
+
+- `witness`
+- `recharge`
+- `arbitration`
+- `challenge`
+- `witness stake`
 
 Use this skill for witness lifecycle, vote thresholds, challenge escalation, and recharge finalization logic.
 
@@ -49,4 +51,3 @@ rg "ProcessVote|CreateRechargeRequest|checkAndProcessConsensus|expandScope" witn
 rg "Challenge|Arbitration|Finalize|Shelve|Retry" witness
 rg "Witness.*TxHandler|witness_" vm
 ```
-

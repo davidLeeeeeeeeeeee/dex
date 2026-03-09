@@ -1,15 +1,17 @@
 ---
-name: Sender
+name: sender
 description: P2P outbound pipeline with send queue, retry policy, HTTP/3 transport, and consensus/gossip message delivery.
-triggers:
-  - sender
-  - broadcast
-  - gossip
-  - retry queue
-  - p2p send
 ---
 
 # Sender Skill
+
+## Trigger Cues
+
+- `sender`
+- `broadcast`
+- `gossip`
+- `retry queue`
+- `p2p send`
 
 Use this skill when messages are not delivered, retries are wrong, or queue pressure causes drops.
 
@@ -49,4 +51,3 @@ Use this skill when messages are not delivered, retries are wrong, or queue pres
 rg "Priority|Enqueue|workerLoop|handleRetry|TaskExpireTimeout" sender config
 rg "doSend.*|Broadcast|Pull|PushQuery|Frost" sender
 ```
-

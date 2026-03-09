@@ -1,43 +1,62 @@
 ---
-name: TxPool
-description: Pending transaction ingestion, validation queue, dedupe, and proposal selection cache.
-triggers:
-  - txpool
-  - pending tx
-  - mempool
-  - submit tx
-  - transaction queue
+name: txpool
+description: Pending transaction admission and queue processing in txpool, including duplicate handling, validator checks, async pending persistence, short-hash indexing, and proposer fetch paths. Use when tasks mention txpool or mempool behavior, /tx submit failures, queue or pending pressure, missing pending tx after restart, or short-hash tx lookup/sync mismatches.
 ---
 
 # TxPool Skill
 
-Use this skill for pending tx admission, dedupe, eviction, and queue handling.
+## Read First
 
-## Source Map
+- Pool internals: `txpool/txpool.go`
+- Queue loop: `txpool/txpool_queue.go`
+- HTTP submit entry: `handlers/handleTx.go`
+- Batch short-hash fetch: `handlers/handleBatchGetTx.go`
+- Block proposal fetch: `consensus/realProposer.go`
+- Runtime config: `config/config.go` (`TxPoolConfig`)
 
-- Pool facade and caches: `txpool/txpool.go`
-- Queue loop and validator path: `txpool/txpool_queue.go`
+## Runtime Flow
 
-## Core Flow
+1. Submit transactions through `SubmitTx`.
+2. Fast-reject nil/uninitialized input; fast-accept already-known tx (`HasTransaction`).
+3. Enforce `MaxPendingTxs`; return `txpool pending is full` on overflow.
+4. Push message into `Queue.MsgChan`; return `txpool queue is full` when saturated.
+5. Queue worker `runLoop` calls `handleAddTx`:
+   - require non-empty tx id and non-nil base message
+   - validate by `validator.CheckAnyTx`
+   - persist by `storeAnyTx`
+6. `storeAnyTx` keeps memory-first semantics:
+   - if tx already applied (`isTxApplied`), cache only for lookup (`cacheTx`, `shortTxCache`)
+   - else cache in pending maps first, then enqueue async DB save
+7. Pending save workers call `SavePendingAnyTx`; startup `loadFromDB` restores pending cache and removes stale pending keys already applied by VM.
 
-1. Incoming tx is enqueued via `SubmitTx`.
-2. Queue worker validates and decides known-node/unknown-node path.
-3. Accepted tx enters in-memory pending cache and async DB persistence.
-4. Consensus fetches pending txs for proposals.
+## Operational Checks
 
-## Typical Tasks
+1. `/tx` returns 429:
+   - check whether error is `txpool queue is full` or `txpool pending is full`
+   - inspect `QueueDepth()` and `PendingLen()`
+   - tune `TxPool.MaxPendingTxs`; note `MsgChan` capacity in `newTxPoolQueue` is currently hard-coded to `10000`
+2. Duplicate tx still creates pressure:
+   - inspect early duplicate-accept path in `SubmitTx`
+   - verify caller behavior in `handlers/handleTx.go` callback path
+3. Pending tx missing after restart:
+   - inspect `loadFromDB`, `LoadPendingAnyTx`, and stale cleanup by `keys.KeyPendingAnyTx`
+4. Short-hash miss in sync:
+   - inspect `ConcatFirst8Bytes` hex/fallback behavior
+   - inspect `GetTxsByShortHashes` with `isSync=true/false`
 
-1. Duplicate tx still accepted:
-   - inspect `HasTransaction`, short-id mapping, and queue dedupe path
-2. Pending tx disappears:
-   - inspect async DB write path and load-from-db initialization
-3. Queue full under burst:
-   - inspect `MsgChan` capacity and caller backpressure behavior
+## Editing Rules
+
+1. Keep duplicate semantics stable: known tx should be treated as accepted.
+2. Keep memory-first write order in `storeAnyTx`; proposer paths expect immediate visibility.
+3. Preserve async persistence backpressure and worker drain-on-stop behavior.
+4. If tx-id encoding changes, update both short-hash producer (`ConcatFirst8Bytes`) and lookup consumer (`GetTxsByShortHashes`).
+5. `StoreAnyTx` and `RemoveAnyTx` are legacy direct-DB APIs; verify compatibility before removing or changing them.
 
 ## Quick Commands
 
 ```bash
-rg "SubmitTx|storeAnyTx|loadFromDB|HasTransaction|GetPendingTxs" txpool
-rg "handleAddTx|CheckAnyTx|msgAddTx" txpool
+rg "SubmitTx|storeAnyTx|loadFromDB|isTxApplied|enqueuePendingSave" txpool
+rg "handleAddTx|CheckAnyTx|MsgChan|QueueDepth|PendingLen" txpool
+rg "HandleTx|HandleBatchGetTx" handlers
+rg "GetPendingTxs|ConcatFirst8Bytes|GetTxsByShortHashes" consensus txpool
 ```
-

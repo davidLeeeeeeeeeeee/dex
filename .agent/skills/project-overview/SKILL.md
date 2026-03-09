@@ -1,14 +1,16 @@
 ---
-name: Project Overview
+name: project-overview
 description: High-level routing map for dex architecture, module ownership, and entrypoint navigation.
-triggers:
-  - overview
-  - architecture
-  - module map
-  - codebase
 ---
 
 # Project Overview Skill
+
+## Trigger Cues
+
+- `overview`
+- `architecture`
+- `module map`
+- `codebase`
 
 Use this skill when you need to quickly route a task to the right module before deep editing.
 
@@ -60,7 +62,7 @@ Key files:
 | frontend explorer UI/API | `explorer` | `explorer/`, `cmd/explorer/` |
 | wallet extension, DApp sig popup | `wallet` | `wallet/` |
 | config/defaults/bootstrap params | `config` | `config/`, `cmd/main/bootstrap.go` |
-| testnet tx simulator & chaos traffic | `project_overview` | `cmd/main/simulator.go` |
+| testnet tx simulator & chaos traffic | `project-overview` | `cmd/main/simulator.go` |
 
 ## Current Notes
 

@@ -1,15 +1,17 @@
 ---
-name: Explorer
+name: explorer
 description: Explorer backend APIs plus Vue frontend dashboard for node health, tx/block search, trading, and frost views.
-triggers:
-  - explorer
-  - frontend
-  - dashboard
-  - vue
-  - indexdb
 ---
 
 # Explorer Skill
+
+## Trigger Cues
+
+- `explorer`
+- `frontend`
+- `dashboard`
+- `vue`
+- `indexdb`
 
 Use this skill for UI behavior, explorer API responses, or index sync issues.
 
@@ -64,4 +66,3 @@ rg "HandleFunc\\(|/api/" cmd/explorer
 rg "fetch[A-Z]" explorer/src/api.ts
 rg "activeTab|navigationNodes" explorer/src/App.vue
 ```
-

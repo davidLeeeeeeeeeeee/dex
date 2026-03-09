@@ -1,0 +1,3 @@
+interface:
+  display_name: "VM"
+  short_description: "Help with VM tasks and workflows"

@@ -1,15 +1,17 @@
 ---
-name: Consensus
+name: consensus
 description: Snowman/Snowball consensus, query polling, gossip handling, and block sync management.
-triggers:
-  - consensus
-  - snowball
-  - query manager
-  - sync manager
-  - finalization
 ---
 
 # Consensus Skill
+
+## Trigger Cues
+
+- `consensus`
+- `snowball`
+- `query manager`
+- `sync manager`
+- `finalization`
 
 Use this skill for block preference, chit voting, query lifecycle, or sync behavior.
 
@@ -65,4 +67,3 @@ rg "issueQuery|RegisterQuery|SubmitChit|processVotes" consensus
 rg "checkAndSync|pollPeerHeights|processTimeouts|HandleHeightResponse" consensus
 rg "selectBestCandidate|GetCachedBlock|FastFinalize" consensus
 ```
-

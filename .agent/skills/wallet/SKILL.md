@@ -1,17 +1,19 @@
 ---
-name: Wallet
+name: wallet
 description: FrostBit Wallet Chrome Extension architecture, content script injection, secure popup approval, and static protobuf translation.
-triggers:
-  - wallet
-  - extension
-  - popup
-  - approval
-  - content script
-  - manifest
-  - frostbit provider
 ---
 
 # Wallet Skill
+
+## Trigger Cues
+
+- `wallet`
+- `extension`
+- `popup`
+- `approval`
+- `content script`
+- `manifest`
+- `frostbit provider`
 
 This skill documents the architecture and development guidelines for the FrostBit Wallet Chrome Extension (Manifest V3).
 

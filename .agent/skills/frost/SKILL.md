@@ -1,15 +1,17 @@
 ---
-name: FROST and DKG
+name: frost
 description: Threshold signing runtime, DKG transition flow, chain adapters, and VM-facing frost transaction handlers.
-triggers:
-  - frost
-  - dkg
-  - roast
-  - withdraw signing
-  - vault transition
 ---
 
 # FROST and DKG Skill
+
+## Trigger Cues
+
+- `frost`
+- `dkg`
+- `roast`
+- `withdraw signing`
+- `vault transition`
 
 Use this skill when working on withdraw jobs, DKG transitions, chain templates, or frost P2P envelopes.
 
@@ -57,4 +59,3 @@ rg "type .*Worker|func \\(.*\\) Start|HandlePBEnvelope" frost/runtime
 rg "frost_vault|frost_withdraw|DKG|Transition" vm handlers keys
 rg "ChainAdapter|RegisterAdapter|Build.*Template" frost/chain
 ```
-

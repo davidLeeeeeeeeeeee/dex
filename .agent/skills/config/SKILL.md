@@ -1,15 +1,17 @@
 ---
-name: Configuration
+name: config
 description: Node/system configuration map including network, txpool, sender, frost, witness, and genesis bootstrap settings.
-triggers:
-  - config
-  - configuration
-  - genesis
-  - frost config
-  - witness config
 ---
 
 # Configuration Skill
+
+## Trigger Cues
+
+- `config`
+- `configuration`
+- `genesis`
+- `frost config`
+- `witness config`
 
 Use this skill when changing defaults, boot parameters, or JSON config behavior.
 
@@ -51,4 +53,3 @@ Use this skill when changing defaults, boot parameters, or JSON config behavior.
 rg "type .*Config struct|Default.*Config|Load.*Config" config
 rg "LoadFromFile|LoadGenesisConfig|applyGenesisBalances|initGenesisTokens" cmd/main
 ```
-

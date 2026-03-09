@@ -66,7 +66,7 @@ Use this table to jump to the right area fast.
   txpool/
   vm/
   witness/
-  project_overview/
+  project-overview/
 ```
 
 ## Fast Search Commands
@@ -99,7 +99,7 @@ rg "func Key|KeyVersion|CategorizeKey|IsStatefulKey" keys
 When core code changes, update these files together:
 
 1. `.agent/AGENT_GUIDE.md`
-2. `.agent/skills/project_overview/SKILL.md`
+2. `.agent/skills/project-overview/SKILL.md`
 3. Affected module skill files in `.agent/skills/*/SKILL.md`
 4. `.agent/docs/retrieval_index.md`
 5. `.agent/workflows/` if operational procedures change

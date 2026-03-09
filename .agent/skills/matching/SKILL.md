@@ -1,14 +1,16 @@
 ---
-name: Matching Engine
+name: matching
 description: Price-time order matching, orderbook heaps, and trade generation logic.
-triggers:
-  - matching
-  - orderbook
-  - trade match
-  - price heap
 ---
 
 # Matching Engine Skill
+
+## Trigger Cues
+
+- `matching`
+- `orderbook`
+- `trade match`
+- `price heap`
 
 Use this skill for matching rules, partial fill behavior, or orderbook data-structure bugs.
 
@@ -45,4 +47,3 @@ Use this skill for matching rules, partial fill behavior, or orderbook data-stru
 rg "AddOrder|AddOrderWithoutMatch|match|executeTrade|PruneByMarkPrice" matching vm
 go test ./matching/... -v
 ```
-
