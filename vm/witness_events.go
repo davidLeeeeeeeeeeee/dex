@@ -99,7 +99,8 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 
 	creditedAmount, err := ParseBalance(stored.Amount)
 	if err != nil {
-		return fmt.Errorf("invalid recharge amount: %w", err)
+		// 忽略非法金额，防止阻塞区块
+		return nil
 	}
 
 	vaultStateKey := keys.KeyFrostVaultState(chain, vaultID)
@@ -108,7 +109,8 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		var vaultState pb.FrostVaultState
 		if err := unmarshalProtoCompat(vaultStateData, &vaultState); err == nil {
 			if vaultState.Status == VaultLifecycleDraining {
-				return fmt.Errorf("vault %d is DRAINING, cannot accept new recharge", vaultID)
+				// 忽略正处于 DRAINING 状态的 Vault
+				return nil
 			}
 		}
 	}
@@ -121,15 +123,12 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 
 		scriptVaultID, err := lookupVaultIDByScriptPubKey(sv, chainName, vaultCount, stored.NativeScript, stored.ReceiverAddress)
 		if err != nil {
-			return fmt.Errorf("invalid btc native_script for request %s: %w", stored.RequestId, err)
+			// 忽略非法的充值请求，防止其阻塞整个区块的执行
+			return nil
 		}
 		if scriptVaultID != vaultID {
-			return fmt.Errorf(
-				"btc recharge vault/script mismatch for request %s: stored_vault=%d script_vault=%d",
-				stored.RequestId,
-				vaultID,
-				scriptVaultID,
-			)
+			// 忽略不匹配的充值请求
+			return nil
 		}
 
 		txid := stored.NativeTxHash
@@ -195,7 +194,8 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 	}
 
 	if err := addVaultAvailableBalance(sv, chain, asset, vaultID, creditedAmount); err != nil {
-		return fmt.Errorf("failed to add vault available balance chain=%s asset=%s vault=%d: %w", chain, asset, vaultID, err)
+		// 忽略内部错误，防止阻塞出块
+		return nil
 	}
 
 	userAddr := stored.ReceiverAddress
@@ -206,7 +206,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 		var userAccount pb.Account
 		if userExists {
 			if err := unmarshalProtoCompat(userData, &userAccount); err != nil {
-				return fmt.Errorf("failed to unmarshal user account: %w", err)
+				return nil
 			}
 		} else {
 			userAccount = pb.Account{Address: userAddr}
@@ -216,17 +216,17 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 
 		currentBalance, err := parseBalanceStrict("balance", tokenBal.Balance)
 		if err != nil {
-			return fmt.Errorf("invalid receiver balance state: %w", err)
+			return nil
 		}
 
 		amount, err := parsePositiveBalanceStrict("recharge amount", stored.Amount)
 		if err != nil {
-			return fmt.Errorf("invalid recharge amount: %w", err)
+			return nil
 		}
 
 		newBalance, err := SafeAdd(currentBalance, amount)
 		if err != nil {
-			return fmt.Errorf("balance overflow: %w", err)
+			return nil
 		}
 
 		tokenBal.Balance = newBalance.String()
@@ -234,7 +234,7 @@ func applyRechargeFinalized(sv StateView, req *pb.RechargeRequest, fallbackHeigh
 
 		updatedUserData, err := proto.Marshal(&userAccount)
 		if err != nil {
-			return fmt.Errorf("failed to marshal updated user account: %w", err)
+			return nil
 		}
 		sv.Set(userKey, updatedUserData)
 

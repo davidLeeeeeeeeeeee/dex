@@ -364,6 +364,7 @@ func main() {
 	mux.HandleFunc("/api/wallet/submittx", srv.handleWalletSubmitTx)
 	mux.HandleFunc("/api/wallet/nonce", srv.handleWalletNonce)
 	mux.HandleFunc("/api/wallet/receipt", srv.handleWalletReceipt)
+	mux.HandleFunc("/api/wallet/deposit-address", srv.handleWalletDepositAddress)
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	log.Printf("Explorer listening at http://%s (ui: %s, data: %s)", *listenAddr, webDir, *dataDir)
@@ -829,6 +830,13 @@ func (s *server) handleTx(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 如果是 WitnessRequestTx，获取见证者分配信息（selected_witnesses 在 RechargeRequest 状态中）
+	if anyTx.GetWitnessRequestTx() != nil && req.Node != "" {
+		ctx4, cancel4 := context.WithTimeout(r.Context(), s.timeout)
+		defer cancel4()
+		s.enrichWitnessRequestInfo(ctx4, req.Node, info)
+	}
+
 	writeJSON(w, txResponse{Transaction: info})
 }
 
@@ -895,6 +903,43 @@ func (s *server) enrichTokenInfoLocal(info *txInfo, baseTokenAddr, quoteTokenAdd
 				"symbol":  quoteToken.Symbol,
 			}
 		}
+	}
+}
+
+// enrichWitnessRequestInfo 从 RechargeRequest 状态中获取 selected_witnesses 等信息
+func (s *server) enrichWitnessRequestInfo(ctx context.Context, node string, info *txInfo) {
+	if info == nil || info.Details == nil || info.TxID == "" {
+		return
+	}
+	var resp pb.RechargeRequestList
+	if err := s.fetchProto(ctx, node, "/witness/requests?limit=500", nil, &resp); err != nil {
+		return
+	}
+	for _, req := range resp.Requests {
+		if req.RequestId != info.TxID {
+			continue
+		}
+		if len(req.SelectedWitnesses) > 0 {
+			info.Details["selected_witnesses"] = req.SelectedWitnesses
+		}
+		info.Details["recharge_status"] = req.Status.String()
+		if req.PassCount > 0 || req.FailCount > 0 || req.AbstainCount > 0 {
+			info.Details["pass_count"] = req.PassCount
+			info.Details["fail_count"] = req.FailCount
+			info.Details["abstain_count"] = req.AbstainCount
+		}
+		if len(req.Votes) > 0 {
+			votes := make([]map[string]interface{}, 0, len(req.Votes))
+			for _, v := range req.Votes {
+				votes = append(votes, map[string]interface{}{
+					"witness_address": v.WitnessAddress,
+					"vote_type":       v.VoteType.String(),
+					"reason":          v.Reason,
+				})
+			}
+			info.Details["witness_votes"] = votes
+		}
+		break
 	}
 }
 

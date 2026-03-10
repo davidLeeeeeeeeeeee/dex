@@ -14,7 +14,7 @@ description: 通用集成测试框架，在单进程内模拟多节点 + VM + FR
 - `integration test`
 - `集成测试`
 
-框架位于 `testharness/harness.go`，测试示例见 `testharness/harness_test.go`。
+框架位于 `testharness/harness.go`，测试示例见 `testharness/example_test.go`。
 
 ## 原理
 

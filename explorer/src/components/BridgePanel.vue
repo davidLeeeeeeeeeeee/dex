@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { wallet } from '../walletStore'
+import { fetchDepositAddress, type DepositAddressResponse } from '../api'
 
 const props = defineProps<{ node: string }>()
 
@@ -9,12 +10,57 @@ const mode = ref<Mode>('recharge')
 
 // 跨入表单
 const rChain = ref('BTC')
-const rNativeTxHash = ref('')
 const rReceiverAddress = ref('')
+const rNativeTxHash = ref('')
+const rNativeVout = ref(0)
 const rAmount = ref('')
 const rFee = ref('0')
 const rLoading = ref(false)
+const rFetchingAddr = ref(false)
 const rResult = ref('')
+const depositInfo = ref<DepositAddressResponse | null>(null)
+
+async function fetchAddr() {
+  const receiver = rReceiverAddress.value || wallet.address
+  if (!receiver) return alert('请先连接钱包或填写接收地址')
+  rFetchingAddr.value = true
+  depositInfo.value = null
+  try {
+    const res = await fetchDepositAddress(props.node, rChain.value, receiver)
+    if (res.error) throw new Error(res.error)
+    depositInfo.value = res
+    if (!rReceiverAddress.value) rReceiverAddress.value = receiver
+  } catch (e: any) { alert('获取充值地址失败: ' + (e.message || e)) }
+  finally { rFetchingAddr.value = false }
+}
+
+async function copy(text: string) {
+  await navigator.clipboard.writeText(text)
+}
+
+async function submitRecharge() {
+  if (!wallet.connected) return alert('请先连接钱包')
+  if (!depositInfo.value) return alert('请先点击"获取充值地址"')
+  if (!rNativeTxHash.value) return alert('请输入外链交易哈希')
+  rLoading.value = true
+  rResult.value = ''
+  try {
+    const res = await window.frostbit.sendTransaction({
+      type: 'recharge_request',
+      nativeTxHash: rNativeTxHash.value,
+      nativeScript: depositInfo.value.script_pubkey,
+      nativeVout: rNativeVout.value,
+      receiverAddress: rReceiverAddress.value || wallet.address,
+      chain: rChain.value,
+      tokenAddress: rChain.value,
+      amount: rAmount.value,
+      rechargeFee: rFee.value,
+    })
+    rResult.value = `跨入请求已广播${res?.txId ? '，TxID: ' + res.txId : ''}`
+    rNativeTxHash.value = ''
+  } catch (e: any) { rResult.value = '错误: ' + (e.message || e) }
+  finally { rLoading.value = false }
+}
 
 // 跨出表单
 const wChain = ref('BTC')
@@ -25,27 +71,6 @@ const wLoading = ref(false)
 const wResult = ref('')
 
 const chains = ['BTC', 'ETH', 'SOL']
-
-async function submitRecharge() {
-  if (!wallet.connected) return alert('请先连接钱包')
-  if (!rNativeTxHash.value) return alert('请输入外链交易哈希')
-  if (!rReceiverAddress.value) rReceiverAddress.value = wallet.address
-  rLoading.value = true
-  rResult.value = ''
-  try {
-    const res = await window.frostbit.sendTransaction({
-      type: 'recharge_request',
-      nativeTxHash: rNativeTxHash.value,
-      receiverAddress: rReceiverAddress.value,
-      chain: rChain.value,
-      amount: rAmount.value,
-      rechargeFee: rFee.value,
-    })
-    rResult.value = `跨入请求已广播${res?.txId ? '，TxID: ' + res.txId : ''}`
-    rNativeTxHash.value = ''
-  } catch (e: any) { rResult.value = '错误: ' + (e.message || e) }
-  finally { rLoading.value = false }
-}
 
 async function submitWithdraw() {
   if (!wallet.connected) return alert('请先连接钱包')
@@ -107,42 +132,79 @@ async function submitWithdraw() {
         资产跨入 — 将外链资产充值到本链
       </div>
 
-      <div class="field-group">
-        <label>链</label>
-        <div class="select-wrap">
-          <select v-model="rChain">
-            <option v-for="c in chains" :key="c" :value="c">{{ c }}</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="field-group">
-        <label>外链交易哈希 (TxHash)</label>
-        <input v-model="rNativeTxHash" class="field-input" placeholder="0x... 或 BTC txid" />
-      </div>
-
-      <div class="field-group">
-        <label>接收地址（本链）<span class="hint">留空则使用当前钱包地址</span></label>
-        <input v-model="rReceiverAddress" class="field-input mono" :placeholder="wallet.address || '本链地址'" />
-      </div>
-
+      <!-- Step 1: 选链 + 接收地址 + 获取充值地址 -->
       <div class="field-row">
-        <div class="field-group half">
-          <label>金额</label>
-          <input v-model="rAmount" class="field-input" placeholder="0.001" type="number" min="0" step="any" />
+        <div class="field-group" style="flex:1">
+          <label>链</label>
+          <div class="select-wrap">
+            <select v-model="rChain" @change="depositInfo = null">
+              <option v-for="c in chains" :key="c" :value="c">{{ c }}</option>
+            </select>
+          </div>
         </div>
-        <div class="field-group half">
-          <label>见证费</label>
-          <input v-model="rFee" class="field-input" placeholder="0" type="number" min="0" step="any" />
+        <div class="field-group" style="flex:3">
+          <label>接收地址（本链）<span class="hint">留空则使用当前钱包地址</span></label>
+          <input v-model="rReceiverAddress" class="field-input mono" :placeholder="wallet.address || '本链地址'" @input="depositInfo = null" />
         </div>
       </div>
 
-      <button class="submit-btn green" @click="submitRecharge" :disabled="rLoading || !wallet.connected">
-        <svg v-if="rLoading" class="spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
-        {{ rLoading ? '提交中…' : '发起跨入请求' }}
+      <button class="submit-btn fetch-btn" @click="fetchAddr" :disabled="rFetchingAddr">
+        <svg v-if="rFetchingAddr" class="spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        {{ rFetchingAddr ? '查询中…' : '获取充值地址' }}
       </button>
-      <div v-if="rResult" class="tx-result" :class="{ error: rResult.startsWith('错误') }">{{ rResult }}</div>
+
+      <!-- Vault 信息卡片 -->
+      <div v-if="depositInfo" class="vault-card">
+        <div class="vault-header">
+          <span class="vault-badge">Vault #{{ depositInfo.vault_id }}</span>
+          <span class="vault-label">已为你分配充值地址</span>
+        </div>
+        <div class="vault-row">
+          <span class="vault-key">Vault 公钥</span>
+          <span class="vault-val mono">{{ depositInfo.vault_pubkey.slice(0, 20) }}…</span>
+          <button class="copy-btn" @click="copy(depositInfo!.vault_pubkey)">复制完整</button>
+        </div>
+        <div class="vault-row">
+          <span class="vault-key">充值地址</span>
+          <span class="vault-val mono addr">{{ depositInfo.deposit_address }}</span>
+          <button class="copy-btn green" @click="copy(depositInfo!.deposit_address)">复制</button>
+        </div>
+        <p class="vault-hint">⚠️ 将 {{ rChain }} 转到上方地址，完成后填写下方信息并提交</p>
+      </div>
+
+      <!-- Step 2: 填充交易信息（仅获取到充值地址后显示）-->
+      <template v-if="depositInfo">
+        <div class="field-row" style="margin-top:8px">
+          <div class="field-group" style="flex:3">
+            <label>外链交易哈希 (TxHash)</label>
+            <input v-model="rNativeTxHash" class="field-input mono" placeholder="0x... 或 BTC txid" />
+          </div>
+          <div class="field-group" style="flex:1">
+            <label>Vout <span class="hint">输出索引</span></label>
+            <input v-model.number="rNativeVout" class="field-input" type="number" min="0" placeholder="0" />
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field-group half">
+            <label>金额</label>
+            <input v-model="rAmount" class="field-input" placeholder="0.001" type="number" min="0" step="any" />
+          </div>
+          <div class="field-group half">
+            <label>见证费</label>
+            <input v-model="rFee" class="field-input" placeholder="0" type="number" min="0" step="any" />
+          </div>
+        </div>
+
+        <button class="submit-btn green" @click="submitRecharge" :disabled="rLoading || !wallet.connected">
+          <svg v-if="rLoading" class="spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+          {{ rLoading ? '提交中…' : '发起跨入请求' }}
+        </button>
+        <div v-if="rResult" class="tx-result" :class="{ error: rResult.startsWith('错误') }">{{ rResult }}</div>
+      </template>
     </div>
+
 
     <!-- 跨出表单 -->
     <div v-if="mode === 'withdraw'" class="form-card">
@@ -230,6 +292,24 @@ async function submitWithdraw() {
 
 .tx-result { margin-top: 12px; font-size: 0.8rem; color: #34d399; padding: 10px 14px; background: rgba(16,185,129,0.08); border-radius: 10px; }
 .tx-result.error { color: #f87171; background: rgba(239,68,68,0.08); }
+
+/* Vault 卡片 */
+.fetch-btn { background: rgba(99,102,241,0.12); color: #818cf8; border: 1px solid rgba(99,102,241,0.3); margin-bottom: 16px; }
+.fetch-btn:hover:not(:disabled) { background: rgba(99,102,241,0.2); }
+.vault-card { background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.2); border-radius: 14px; padding: 18px; margin-bottom: 20px; }
+.vault-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.vault-badge { background: rgba(99,102,241,0.2); color: #818cf8; font-size: 0.72rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+.vault-label { font-size: 0.8rem; color: #34d399; font-weight: 600; }
+.vault-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.vault-key { font-size: 0.68rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; min-width: 60px; }
+.vault-val { font-size: 0.8rem; color: #94a3b8; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-val.addr { color: #e2e8f0; }
+.copy-btn { font-size: 0.7rem; font-weight: 700; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(99,102,241,0.3); background: rgba(99,102,241,0.1); color: #818cf8; cursor: pointer; white-space: nowrap; transition: all 0.15s; }
+.copy-btn:hover { background: rgba(99,102,241,0.2); }
+.copy-btn.green { border-color: rgba(16,185,129,0.4); background: rgba(16,185,129,0.1); color: #34d399; }
+.copy-btn.green:hover { background: rgba(16,185,129,0.2); }
+.vault-hint { font-size: 0.75rem; color: #64748b; margin: 10px 0 0; }
+
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .spin { animation: spin 1s linear infinite; }
 </style>

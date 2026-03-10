@@ -206,3 +206,21 @@ export async function fetchRecentTxs(node: string, txType: string = 'all', count
   })
   return resp.json()
 }
+
+// 充值地址查询
+export interface DepositAddressResponse {
+  vault_id: number
+  vault_pubkey: string    // GroupPubkey hex
+  deposit_address: string // bc1p... tweaked taproot 地址
+  script_pubkey: string   // 5120... hex
+  error?: string
+}
+
+export async function fetchDepositAddress(node: string, chain: string, receiverAddress: string): Promise<DepositAddressResponse> {
+  const resp = await fetch('/api/wallet/deposit-address', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ node, chain, receiver_address: receiverAddress }),
+  })
+  return resp.json()
+}

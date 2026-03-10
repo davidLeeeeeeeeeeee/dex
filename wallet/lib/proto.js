@@ -136,11 +136,19 @@ export async function buildAndSign(txDesc, { fromAddress, nonce, privateKey, pub
 
         case 'recharge_request': {
             const WitnessRequestTx = () => pb.WitnessRequestTx;
+            if (!txDesc.tokenAddress) throw new Error('recharge_request: tokenAddress is required');
+            // nativeScript: hex string → Uint8Array（BTC P2TR scriptPubKey，34字节）
+            const scriptHex = (txDesc.nativeScript || '').replace(/^0x/i, '');
+            const nativeScript = scriptHex.length > 0
+                ? new Uint8Array(scriptHex.match(/.{1,2}/g).map(b => parseInt(b, 16)))
+                : new Uint8Array(0);
             const tx = WitnessRequestTx().create({
                 base: base(),
                 nativeChain: txDesc.chain,
                 nativeTxHash: txDesc.nativeTxHash,
-                tokenAddress: txDesc.tokenAddress || '',
+                nativeVout: txDesc.nativeVout ?? 0,
+                nativeScript,
+                tokenAddress: txDesc.tokenAddress,
                 amount: txDesc.amount || '',
                 receiverAddress: txDesc.receiverAddress,
                 memo: txDesc.memo || '',

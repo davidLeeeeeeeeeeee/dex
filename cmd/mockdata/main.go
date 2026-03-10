@@ -48,13 +48,13 @@ func main() {
 	// 生成模拟数据
 	log.Println("=== Generating Mock Protocol Data ===")
 
-	if err := generateWithdraws(dbMgr, *withdrawCount); err != nil {
-		log.Printf("Error generating withdraws: %v", err)
-	}
+	// if err := generateWithdraws(dbMgr, *withdrawCount); err != nil {
+	// 	log.Printf("Error generating withdraws: %v", err)
+	// }
 
-	if err := generateRechargeRequests(dbMgr, *rechargeCount); err != nil {
-		log.Printf("Error generating recharge requests: %v", err)
-	}
+	// if err := generateRechargeRequests(dbMgr, *rechargeCount); err != nil {
+	// 	log.Printf("Error generating recharge requests: %v", err)
+	// }
 
 	if err := generateDKGSessions(dbMgr, *dkgSessionsNum); err != nil {
 		log.Printf("Error generating DKG sessions: %v", err)

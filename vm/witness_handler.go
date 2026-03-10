@@ -448,10 +448,14 @@ func (h *WitnessRequestTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp,
 		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "native tx already used"}, nil
 	}
 
+	if request.TokenAddress == "" {
+		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "token_address is required"}, fmt.Errorf("token_address is required")
+	}
+
 	tokenKey := keys.KeyToken(request.TokenAddress)
 	_, tokenExists, _ := sv.Get(tokenKey)
 	if !tokenExists {
-		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "token not found"}, fmt.Errorf("token not found")
+		return nil, &Receipt{TxID: requestID, Status: "FAILED", Error: "token not found: " + request.TokenAddress}, fmt.Errorf("token not found: %s", request.TokenAddress)
 	}
 
 	var rechargeRequest *pb.RechargeRequest

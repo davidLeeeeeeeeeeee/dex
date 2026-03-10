@@ -23,6 +23,7 @@ import (
 	"dex/pb"
 	"dex/utils"
 	"dex/vm"
+	"dex/witness"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -68,8 +69,9 @@ type txLogEntry struct {
 // New 创建测试线束，committeeSize 个虚拟 committee 成员
 func New(t *testing.T, committeeSize int) *Harness {
 	t.Helper()
+	witnessSvc := witness.NewService(nil)
 	reg := vm.NewHandlerRegistry()
-	if err := vm.RegisterDefaultHandlers(reg); err != nil {
+	if err := vm.RegisterDefaultHandlers(reg, witnessSvc); err != nil {
 		t.Fatalf("register handlers: %v", err)
 	}
 	h := &Harness{
@@ -291,7 +293,7 @@ func (h *Harness) executeTx(tx *pb.AnyTx) error {
 	}
 
 	sv := h.newStateView()
-	_, receipt, err := handler.DryRun(tx, sv)
+	writeOps, receipt, err := handler.DryRun(tx, sv)
 
 	entry := txLogEntry{
 		Height: atomic.LoadUint64(&h.height),
@@ -307,8 +309,16 @@ func (h *Harness) executeTx(tx *pb.AnyTx) error {
 	}
 	h.txLog = append(h.txLog, entry)
 
-	// DryRun 成功则提交 overlay
+	// DryRun 成功则把 WriteOps 写入 overlay 再提交
+	// 部分 handler 通过 sv.Set() 内联写（已在 overlay），部分只靠 WriteOps 返回，两者都需处理
 	if err == nil {
+		for _, op := range writeOps {
+			if op.Del {
+				sv.Del(op.Key)
+			} else {
+				sv.Set(op.Key, op.Value)
+			}
+		}
 		sv.commit()
 	}
 	return err
@@ -440,6 +450,14 @@ func (h *Harness) SeedVaultConfig(chain string, vaultID uint32, vaultCount uint3
 	cfg := &pb.FrostVaultConfig{VaultCount: vaultCount, ThresholdRatio: 0.67}
 	data, _ := proto.Marshal(cfg)
 	h.rawSet(keys.KeyFrostVaultConfig(chain, vaultID), data)
+}
+
+// SeedToken 种 Token 元数据（WitnessRequestTx 需要 token 存在才能通过校验）
+func (h *Harness) SeedToken(tokenAddr string) {
+	h.t.Helper()
+	token := &pb.Token{Address: tokenAddr, Symbol: tokenAddr}
+	data, _ := proto.Marshal(token)
+	h.rawSet(keys.KeyToken(tokenAddr), data)
 }
 
 // SeedVaultState 种 VaultState
@@ -624,6 +642,21 @@ func BuildWitnessStakeTx(addr string, op pb.OrderOp, amount string) *pb.AnyTx {
 	}}}
 }
 
+// BuildWitnessRequestTx 构造入账见证请求 tx
+func BuildWitnessRequestTx(from, chain, nativeTxHash string, vout uint32, nativeScript []byte, tokenAddr, amount, receiver, fee string) *pb.AnyTx {
+	return &pb.AnyTx{Content: &pb.AnyTx_WitnessRequestTx{WitnessRequestTx: &pb.WitnessRequestTx{
+		Base:            &pb.BaseMessage{TxId: nextTxID("wrequest"), FromAddress: from, Status: pb.Status_PENDING},
+		NativeChain:     chain,
+		NativeTxHash:    nativeTxHash,
+		NativeVout:      vout,
+		NativeScript:    nativeScript,
+		TokenAddress:    tokenAddr,
+		Amount:          amount,
+		ReceiverAddress: receiver,
+		RechargeFee:     fee,
+	}}}
+}
+
 // BuildDkgCommitTx 构造 DKG Commit tx
 func BuildDkgCommitTx(sender, chain string, vaultID uint32, epochID uint64, signAlgo pb.SignAlgo, commitPoints [][]byte, ai0 []byte) *pb.AnyTx {
 	return &pb.AnyTx{Content: &pb.AnyTx_FrostVaultDkgCommitTx{FrostVaultDkgCommitTx: &pb.FrostVaultDkgCommitTx{
@@ -661,6 +694,20 @@ func (h *Harness) PrintTxLog() {
 
 // TxLog 返回执行日志
 func (h *Harness) TxLog() []txLogEntry { return h.txLog }
+
+// TxLogCountByKind 统计指定 kind 的 tx 数量
+func (h *Harness) TxLogCountByKind(kind string) int {
+	n := 0
+	for _, e := range h.txLog {
+		if e.Kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
+// TxLogHasKind 是否存在指定 kind 的 tx
+func (h *Harness) TxLogHasKind(kind string) bool { return h.TxLogCountByKind(kind) > 0 }
 
 // RawSet 直接写 KV（用于种子）
 func (h *Harness) RawSet(key string, val []byte) { h.rawSet(key, val) }

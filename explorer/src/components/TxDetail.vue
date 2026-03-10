@@ -107,6 +107,14 @@ function handleClose() {
   emit('back')
 }
 
+// ---- WitnessRequest: 见证者分配信息 ----
+const isWitnessRequest = computed(() => currentTx.value?.tx_type === 'WitnessRequest')
+const selectedWitnesses = computed(() => {
+  const sw = (currentTx.value?.details as any)?.selected_witnesses
+  return Array.isArray(sw) ? sw as string[] : []
+})
+const rechargeStatus = computed(() => (currentTx.value?.details as any)?.recharge_status || '')
+
 // ---- FrostWithdrawSigned: template_data 解析 ----
 const templateExpanded = ref(false)
 
@@ -275,6 +283,22 @@ function satToBtc(sat: string | number): string {
               <div class="card-title">Protocol Payload Data</div>
               <div class="payload-wrapper">
                 <TxTypeRenderer :type="currentTx.tx_type || ''" :details="currentTx.details" />
+              </div>
+            </div>
+
+            <!-- WitnessRequest: 分配的见证者地址 -->
+            <div v-if="isWitnessRequest && selectedWitnesses.length > 0" class="info-card witness-assign-card">
+              <div class="card-title">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline; vertical-align:-2px; margin-right:6px;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Assigned Witnesses
+                <span v-if="rechargeStatus" class="witness-status-pill">{{ rechargeStatus.replace('RECHARGE_', '') }}</span>
+              </div>
+              <div class="witness-list">
+                <div v-for="(addr, idx) in selectedWitnesses" :key="idx" class="witness-item" @click="copyToClipboard(addr)">
+                  <span class="witness-idx">#{{ idx + 1 }}</span>
+                  <code class="witness-addr mono">{{ addr }}</code>
+                  <svg class="copy-icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                </div>
               </div>
             </div>
 
@@ -547,6 +571,26 @@ function satToBtc(sat: string | number): string {
 
 /* Details & Signature */
 .payload-wrapper { background: rgba(0, 0, 0, 0.2); border-radius: 12px; }
+
+/* ---- WitnessRequest: 分配的见证者 ---- */
+.witness-assign-card { border-left: 3px solid #22d3ee; }
+.witness-status-pill {
+  display: inline-block; margin-left: 10px; padding: 2px 10px; border-radius: 99px;
+  font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+  background: rgba(34, 211, 238, 0.12); color: #22d3ee; border: 1px solid rgba(34, 211, 238, 0.25);
+  vertical-align: middle;
+}
+.witness-list { display: flex; flex-direction: column; gap: 6px; }
+.witness-item {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.25); border-radius: 10px; cursor: pointer;
+  transition: all 0.2s; border: 1px solid rgba(255, 255, 255, 0.03);
+}
+.witness-item:hover { background: rgba(34, 211, 238, 0.06); border-color: rgba(34, 211, 238, 0.15); }
+.witness-idx { font-size: 0.7rem; font-weight: 800; color: #22d3ee; min-width: 28px; }
+.witness-addr { font-size: 0.8rem; color: #e2e8f0; word-break: break-all; flex: 1; }
+.witness-item .copy-icon { color: #475569; flex-shrink: 0; }
+.witness-item:hover .copy-icon { color: #22d3ee; }
 
 /* ---- FrostWithdrawSigned template_data 解析面板 ---- */
 .template-card { display: flex; flex-direction: column; gap: 16px; }

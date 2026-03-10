@@ -71,7 +71,11 @@
             "console": "integratedTerminal",
             "showLog": false,
             "output": "${workspaceFolder}/.vscode/__debug_explorer.exe",
-            "preLaunchTask": "Prepare explorer debug run"
+            "preLaunchTask": "Prepare explorer debug run",
+            "args": [
+                "--node-data-dir",
+                "${workspaceFolder}/data/data_node_0"
+            ]
         },
         {
             "name": "Run npm dev",
