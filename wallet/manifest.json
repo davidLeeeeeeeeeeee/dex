@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FrostBit Wallet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "FrostBit DEX 原生钱包 — 私钥管理、转账、DApp 签名",
   "icons": {
     "16": "icons/icon.svg",

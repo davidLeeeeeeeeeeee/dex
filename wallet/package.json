@@ -7,7 +7,7 @@
         "dev": "node build.js --watch",
         "build:popup": "vite build",
         "dev:popup": "vite --port 5174",
-        "proto": "node -e \"const p=require('protobufjs'); p.load('pb/data.proto', (e,r)=>{ if(e) throw e; require('fs').writeFileSync('lib/data_proto.json', JSON.stringify(r.toJSON())); console.log('done'); })\""
+        "proto": "npx pbjs -t static-module -w es6 --es6 -o lib/data_proto.js ../pb/data.proto"
     },
     "dependencies": {
         "@noble/curves": "^1.9.1",

@@ -53,8 +53,8 @@ func (s *TxSimulator) Start() {
 	go s.monitorTxPool() // 监控交易池压力
 	go s.runRandomTransfers()
 	go s.runWitnessRegistration() // 见证者质押注册
-	go s.runRechargeScenario()    // 见证者上账请求
-	go s.runWitnessVoteWorker()   // 自动化见证者投票
+	//go s.runRechargeScenario()    // 见证者上账请求
+	//go s.runWitnessVoteWorker()   // 自动化见证者投票
 	go s.runWithdrawScenario()
 	go s.runOrderScenario()             // 订单交易模拟
 	go s.RunMassOrderScenarioAsync(300) // 自动触发大批量订单场景测试 ShortTxs

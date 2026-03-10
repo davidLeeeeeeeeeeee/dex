@@ -149,10 +149,10 @@ export async function buildAndSign(txDesc, { fromAddress, nonce, privateKey, pub
                 nativeVout: txDesc.nativeVout ?? 0,
                 nativeScript,
                 tokenAddress: txDesc.tokenAddress,
-                amount: txDesc.amount || '',
+                amount: String(txDesc.amount || ''),
                 receiverAddress: txDesc.receiverAddress,
                 memo: txDesc.memo || '',
-                rechargeFee: txDesc.rechargeFee || '0',
+                rechargeFee: String(txDesc.rechargeFee || '0'),
             });
             return signAndWrap({ witnessRequestTx: tx });
         }

@@ -1,5 +1,5 @@
 /*eslint-disable block-scoped-var, id-length, no-control-regex, no-magic-numbers, no-prototype-builtins, no-redeclare, no-shadow, no-var, sort-vars*/
-import * as $protobuf from "protobufjs/minimal.js";
+import * as $protobuf from "protobufjs/minimal";
 
 // Common aliases
 const $Reader = $protobuf.Reader, $Writer = $protobuf.Writer, $util = $protobuf.util;
@@ -21715,7 +21715,6 @@ export const pb = $root.pb = (() => {
          * @property {Uint8Array|null} [templateHash] FrostWithdrawSignedTx templateHash
          * @property {string|null} [chain] FrostWithdrawSignedTx chain
          * @property {string|null} [asset] FrostWithdrawSignedTx asset
-         * @property {Array.<pb.IUtxoInput>|null} [utxoInputs] FrostWithdrawSignedTx utxoInputs
          * @property {Uint8Array|null} [templateData] FrostWithdrawSignedTx templateData
          * @property {Array.<Uint8Array>|null} [inputSigs] FrostWithdrawSignedTx inputSigs
          * @property {Array.<Uint8Array>|null} [scriptPubkeys] FrostWithdrawSignedTx scriptPubkeys
@@ -21731,7 +21730,6 @@ export const pb = $root.pb = (() => {
          */
         function FrostWithdrawSignedTx(properties) {
             this.withdrawIds = [];
-            this.utxoInputs = [];
             this.inputSigs = [];
             this.scriptPubkeys = [];
             if (properties)
@@ -21813,14 +21811,6 @@ export const pb = $root.pb = (() => {
         FrostWithdrawSignedTx.prototype.asset = "";
 
         /**
-         * FrostWithdrawSignedTx utxoInputs.
-         * @member {Array.<pb.IUtxoInput>} utxoInputs
-         * @memberof pb.FrostWithdrawSignedTx
-         * @instance
-         */
-        FrostWithdrawSignedTx.prototype.utxoInputs = $util.emptyArray;
-
-        /**
          * FrostWithdrawSignedTx templateData.
          * @member {Uint8Array} templateData
          * @memberof pb.FrostWithdrawSignedTx
@@ -21887,17 +21877,14 @@ export const pb = $root.pb = (() => {
                 writer.uint32(/* id 8, wireType 2 =*/66).string(message.chain);
             if (message.asset != null && Object.hasOwnProperty.call(message, "asset"))
                 writer.uint32(/* id 9, wireType 2 =*/74).string(message.asset);
-            if (message.utxoInputs != null && message.utxoInputs.length)
-                for (let i = 0; i < message.utxoInputs.length; ++i)
-                    $root.pb.UtxoInput.encode(message.utxoInputs[i], writer.uint32(/* id 10, wireType 2 =*/82).fork()).ldelim();
             if (message.templateData != null && Object.hasOwnProperty.call(message, "templateData"))
-                writer.uint32(/* id 11, wireType 2 =*/90).bytes(message.templateData);
+                writer.uint32(/* id 10, wireType 2 =*/82).bytes(message.templateData);
             if (message.inputSigs != null && message.inputSigs.length)
                 for (let i = 0; i < message.inputSigs.length; ++i)
-                    writer.uint32(/* id 12, wireType 2 =*/98).bytes(message.inputSigs[i]);
+                    writer.uint32(/* id 11, wireType 2 =*/90).bytes(message.inputSigs[i]);
             if (message.scriptPubkeys != null && message.scriptPubkeys.length)
                 for (let i = 0; i < message.scriptPubkeys.length; ++i)
-                    writer.uint32(/* id 13, wireType 2 =*/106).bytes(message.scriptPubkeys[i]);
+                    writer.uint32(/* id 12, wireType 2 =*/98).bytes(message.scriptPubkeys[i]);
             return writer;
         };
 
@@ -21973,22 +21960,16 @@ export const pb = $root.pb = (() => {
                         break;
                     }
                 case 10: {
-                        if (!(message.utxoInputs && message.utxoInputs.length))
-                            message.utxoInputs = [];
-                        message.utxoInputs.push($root.pb.UtxoInput.decode(reader, reader.uint32()));
-                        break;
-                    }
-                case 11: {
                         message.templateData = reader.bytes();
                         break;
                     }
-                case 12: {
+                case 11: {
                         if (!(message.inputSigs && message.inputSigs.length))
                             message.inputSigs = [];
                         message.inputSigs.push(reader.bytes());
                         break;
                     }
-                case 13: {
+                case 12: {
                         if (!(message.scriptPubkeys && message.scriptPubkeys.length))
                             message.scriptPubkeys = [];
                         message.scriptPubkeys.push(reader.bytes());
@@ -22062,15 +22043,6 @@ export const pb = $root.pb = (() => {
             if (message.asset != null && message.hasOwnProperty("asset"))
                 if (!$util.isString(message.asset))
                     return "asset: string expected";
-            if (message.utxoInputs != null && message.hasOwnProperty("utxoInputs")) {
-                if (!Array.isArray(message.utxoInputs))
-                    return "utxoInputs: array expected";
-                for (let i = 0; i < message.utxoInputs.length; ++i) {
-                    let error = $root.pb.UtxoInput.verify(message.utxoInputs[i]);
-                    if (error)
-                        return "utxoInputs." + error;
-                }
-            }
             if (message.templateData != null && message.hasOwnProperty("templateData"))
                 if (!(message.templateData && typeof message.templateData.length === "number" || $util.isString(message.templateData)))
                     return "templateData: buffer expected";
@@ -22142,16 +22114,6 @@ export const pb = $root.pb = (() => {
                 message.chain = String(object.chain);
             if (object.asset != null)
                 message.asset = String(object.asset);
-            if (object.utxoInputs) {
-                if (!Array.isArray(object.utxoInputs))
-                    throw TypeError(".pb.FrostWithdrawSignedTx.utxoInputs: array expected");
-                message.utxoInputs = [];
-                for (let i = 0; i < object.utxoInputs.length; ++i) {
-                    if (typeof object.utxoInputs[i] !== "object")
-                        throw TypeError(".pb.FrostWithdrawSignedTx.utxoInputs: object expected");
-                    message.utxoInputs[i] = $root.pb.UtxoInput.fromObject(object.utxoInputs[i]);
-                }
-            }
             if (object.templateData != null)
                 if (typeof object.templateData === "string")
                     $util.base64.decode(object.templateData, message.templateData = $util.newBuffer($util.base64.length(object.templateData)), 0);
@@ -22195,7 +22157,6 @@ export const pb = $root.pb = (() => {
             let object = {};
             if (options.arrays || options.defaults) {
                 object.withdrawIds = [];
-                object.utxoInputs = [];
                 object.inputSigs = [];
                 object.scriptPubkeys = [];
             }
@@ -22256,11 +22217,6 @@ export const pb = $root.pb = (() => {
                 object.chain = message.chain;
             if (message.asset != null && message.hasOwnProperty("asset"))
                 object.asset = message.asset;
-            if (message.utxoInputs && message.utxoInputs.length) {
-                object.utxoInputs = [];
-                for (let j = 0; j < message.utxoInputs.length; ++j)
-                    object.utxoInputs[j] = $root.pb.UtxoInput.toObject(message.utxoInputs[j], options);
-            }
             if (message.templateData != null && message.hasOwnProperty("templateData"))
                 object.templateData = options.bytes === String ? $util.base64.encode(message.templateData, 0, message.templateData.length) : options.bytes === Array ? Array.prototype.slice.call(message.templateData) : message.templateData;
             if (message.inputSigs && message.inputSigs.length) {
@@ -22305,304 +22261,6 @@ export const pb = $root.pb = (() => {
         return FrostWithdrawSignedTx;
     })();
 
-    pb.UtxoInput = (function() {
-
-        /**
-         * Properties of an UtxoInput.
-         * @memberof pb
-         * @interface IUtxoInput
-         * @property {string|null} [txid] UtxoInput txid
-         * @property {number|null} [vout] UtxoInput vout
-         * @property {number|Long|null} [amount] UtxoInput amount
-         * @property {Uint8Array|null} [scriptPubkey] UtxoInput scriptPubkey
-         */
-
-        /**
-         * Constructs a new UtxoInput.
-         * @memberof pb
-         * @classdesc Represents an UtxoInput.
-         * @implements IUtxoInput
-         * @constructor
-         * @param {pb.IUtxoInput=} [properties] Properties to set
-         */
-        function UtxoInput(properties) {
-            if (properties)
-                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-                    if (properties[keys[i]] != null)
-                        this[keys[i]] = properties[keys[i]];
-        }
-
-        /**
-         * UtxoInput txid.
-         * @member {string} txid
-         * @memberof pb.UtxoInput
-         * @instance
-         */
-        UtxoInput.prototype.txid = "";
-
-        /**
-         * UtxoInput vout.
-         * @member {number} vout
-         * @memberof pb.UtxoInput
-         * @instance
-         */
-        UtxoInput.prototype.vout = 0;
-
-        /**
-         * UtxoInput amount.
-         * @member {number|Long} amount
-         * @memberof pb.UtxoInput
-         * @instance
-         */
-        UtxoInput.prototype.amount = $util.Long ? $util.Long.fromBits(0,0,true) : 0;
-
-        /**
-         * UtxoInput scriptPubkey.
-         * @member {Uint8Array} scriptPubkey
-         * @memberof pb.UtxoInput
-         * @instance
-         */
-        UtxoInput.prototype.scriptPubkey = $util.newBuffer([]);
-
-        /**
-         * Creates a new UtxoInput instance using the specified properties.
-         * @function create
-         * @memberof pb.UtxoInput
-         * @static
-         * @param {pb.IUtxoInput=} [properties] Properties to set
-         * @returns {pb.UtxoInput} UtxoInput instance
-         */
-        UtxoInput.create = function create(properties) {
-            return new UtxoInput(properties);
-        };
-
-        /**
-         * Encodes the specified UtxoInput message. Does not implicitly {@link pb.UtxoInput.verify|verify} messages.
-         * @function encode
-         * @memberof pb.UtxoInput
-         * @static
-         * @param {pb.IUtxoInput} message UtxoInput message or plain object to encode
-         * @param {$protobuf.Writer} [writer] Writer to encode to
-         * @returns {$protobuf.Writer} Writer
-         */
-        UtxoInput.encode = function encode(message, writer) {
-            if (!writer)
-                writer = $Writer.create();
-            if (message.txid != null && Object.hasOwnProperty.call(message, "txid"))
-                writer.uint32(/* id 1, wireType 2 =*/10).string(message.txid);
-            if (message.vout != null && Object.hasOwnProperty.call(message, "vout"))
-                writer.uint32(/* id 2, wireType 0 =*/16).uint32(message.vout);
-            if (message.amount != null && Object.hasOwnProperty.call(message, "amount"))
-                writer.uint32(/* id 3, wireType 0 =*/24).uint64(message.amount);
-            if (message.scriptPubkey != null && Object.hasOwnProperty.call(message, "scriptPubkey"))
-                writer.uint32(/* id 4, wireType 2 =*/34).bytes(message.scriptPubkey);
-            return writer;
-        };
-
-        /**
-         * Encodes the specified UtxoInput message, length delimited. Does not implicitly {@link pb.UtxoInput.verify|verify} messages.
-         * @function encodeDelimited
-         * @memberof pb.UtxoInput
-         * @static
-         * @param {pb.IUtxoInput} message UtxoInput message or plain object to encode
-         * @param {$protobuf.Writer} [writer] Writer to encode to
-         * @returns {$protobuf.Writer} Writer
-         */
-        UtxoInput.encodeDelimited = function encodeDelimited(message, writer) {
-            return this.encode(message, writer).ldelim();
-        };
-
-        /**
-         * Decodes an UtxoInput message from the specified reader or buffer.
-         * @function decode
-         * @memberof pb.UtxoInput
-         * @static
-         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
-         * @param {number} [length] Message length if known beforehand
-         * @returns {pb.UtxoInput} UtxoInput
-         * @throws {Error} If the payload is not a reader or valid buffer
-         * @throws {$protobuf.util.ProtocolError} If required fields are missing
-         */
-        UtxoInput.decode = function decode(reader, length, error) {
-            if (!(reader instanceof $Reader))
-                reader = $Reader.create(reader);
-            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.pb.UtxoInput();
-            while (reader.pos < end) {
-                let tag = reader.uint32();
-                if (tag === error)
-                    break;
-                switch (tag >>> 3) {
-                case 1: {
-                        message.txid = reader.string();
-                        break;
-                    }
-                case 2: {
-                        message.vout = reader.uint32();
-                        break;
-                    }
-                case 3: {
-                        message.amount = reader.uint64();
-                        break;
-                    }
-                case 4: {
-                        message.scriptPubkey = reader.bytes();
-                        break;
-                    }
-                default:
-                    reader.skipType(tag & 7);
-                    break;
-                }
-            }
-            return message;
-        };
-
-        /**
-         * Decodes an UtxoInput message from the specified reader or buffer, length delimited.
-         * @function decodeDelimited
-         * @memberof pb.UtxoInput
-         * @static
-         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
-         * @returns {pb.UtxoInput} UtxoInput
-         * @throws {Error} If the payload is not a reader or valid buffer
-         * @throws {$protobuf.util.ProtocolError} If required fields are missing
-         */
-        UtxoInput.decodeDelimited = function decodeDelimited(reader) {
-            if (!(reader instanceof $Reader))
-                reader = new $Reader(reader);
-            return this.decode(reader, reader.uint32());
-        };
-
-        /**
-         * Verifies an UtxoInput message.
-         * @function verify
-         * @memberof pb.UtxoInput
-         * @static
-         * @param {Object.<string,*>} message Plain object to verify
-         * @returns {string|null} `null` if valid, otherwise the reason why it is not
-         */
-        UtxoInput.verify = function verify(message) {
-            if (typeof message !== "object" || message === null)
-                return "object expected";
-            if (message.txid != null && message.hasOwnProperty("txid"))
-                if (!$util.isString(message.txid))
-                    return "txid: string expected";
-            if (message.vout != null && message.hasOwnProperty("vout"))
-                if (!$util.isInteger(message.vout))
-                    return "vout: integer expected";
-            if (message.amount != null && message.hasOwnProperty("amount"))
-                if (!$util.isInteger(message.amount) && !(message.amount && $util.isInteger(message.amount.low) && $util.isInteger(message.amount.high)))
-                    return "amount: integer|Long expected";
-            if (message.scriptPubkey != null && message.hasOwnProperty("scriptPubkey"))
-                if (!(message.scriptPubkey && typeof message.scriptPubkey.length === "number" || $util.isString(message.scriptPubkey)))
-                    return "scriptPubkey: buffer expected";
-            return null;
-        };
-
-        /**
-         * Creates an UtxoInput message from a plain object. Also converts values to their respective internal types.
-         * @function fromObject
-         * @memberof pb.UtxoInput
-         * @static
-         * @param {Object.<string,*>} object Plain object
-         * @returns {pb.UtxoInput} UtxoInput
-         */
-        UtxoInput.fromObject = function fromObject(object) {
-            if (object instanceof $root.pb.UtxoInput)
-                return object;
-            let message = new $root.pb.UtxoInput();
-            if (object.txid != null)
-                message.txid = String(object.txid);
-            if (object.vout != null)
-                message.vout = object.vout >>> 0;
-            if (object.amount != null)
-                if ($util.Long)
-                    (message.amount = $util.Long.fromValue(object.amount)).unsigned = true;
-                else if (typeof object.amount === "string")
-                    message.amount = parseInt(object.amount, 10);
-                else if (typeof object.amount === "number")
-                    message.amount = object.amount;
-                else if (typeof object.amount === "object")
-                    message.amount = new $util.LongBits(object.amount.low >>> 0, object.amount.high >>> 0).toNumber(true);
-            if (object.scriptPubkey != null)
-                if (typeof object.scriptPubkey === "string")
-                    $util.base64.decode(object.scriptPubkey, message.scriptPubkey = $util.newBuffer($util.base64.length(object.scriptPubkey)), 0);
-                else if (object.scriptPubkey.length >= 0)
-                    message.scriptPubkey = object.scriptPubkey;
-            return message;
-        };
-
-        /**
-         * Creates a plain object from an UtxoInput message. Also converts values to other types if specified.
-         * @function toObject
-         * @memberof pb.UtxoInput
-         * @static
-         * @param {pb.UtxoInput} message UtxoInput
-         * @param {$protobuf.IConversionOptions} [options] Conversion options
-         * @returns {Object.<string,*>} Plain object
-         */
-        UtxoInput.toObject = function toObject(message, options) {
-            if (!options)
-                options = {};
-            let object = {};
-            if (options.defaults) {
-                object.txid = "";
-                object.vout = 0;
-                if ($util.Long) {
-                    let long = new $util.Long(0, 0, true);
-                    object.amount = options.longs === String ? long.toString() : options.longs === Number ? long.toNumber() : long;
-                } else
-                    object.amount = options.longs === String ? "0" : 0;
-                if (options.bytes === String)
-                    object.scriptPubkey = "";
-                else {
-                    object.scriptPubkey = [];
-                    if (options.bytes !== Array)
-                        object.scriptPubkey = $util.newBuffer(object.scriptPubkey);
-                }
-            }
-            if (message.txid != null && message.hasOwnProperty("txid"))
-                object.txid = message.txid;
-            if (message.vout != null && message.hasOwnProperty("vout"))
-                object.vout = message.vout;
-            if (message.amount != null && message.hasOwnProperty("amount"))
-                if (typeof message.amount === "number")
-                    object.amount = options.longs === String ? String(message.amount) : message.amount;
-                else
-                    object.amount = options.longs === String ? $util.Long.prototype.toString.call(message.amount) : options.longs === Number ? new $util.LongBits(message.amount.low >>> 0, message.amount.high >>> 0).toNumber(true) : message.amount;
-            if (message.scriptPubkey != null && message.hasOwnProperty("scriptPubkey"))
-                object.scriptPubkey = options.bytes === String ? $util.base64.encode(message.scriptPubkey, 0, message.scriptPubkey.length) : options.bytes === Array ? Array.prototype.slice.call(message.scriptPubkey) : message.scriptPubkey;
-            return object;
-        };
-
-        /**
-         * Converts this UtxoInput to JSON.
-         * @function toJSON
-         * @memberof pb.UtxoInput
-         * @instance
-         * @returns {Object.<string,*>} JSON object
-         */
-        UtxoInput.prototype.toJSON = function toJSON() {
-            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
-        };
-
-        /**
-         * Gets the default type url for UtxoInput
-         * @function getTypeUrl
-         * @memberof pb.UtxoInput
-         * @static
-         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
-         * @returns {string} The default type url
-         */
-        UtxoInput.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
-            if (typeUrlPrefix === undefined) {
-                typeUrlPrefix = "type.googleapis.com";
-            }
-            return typeUrlPrefix + "/pb.UtxoInput";
-        };
-
-        return UtxoInput;
-    })();
-
     pb.FrostUtxo = (function() {
 
         /**
@@ -22616,6 +22274,7 @@ export const pb = $root.pb = (() => {
          * @property {number|Long|null} [finalizeHeight] FrostUtxo finalizeHeight
          * @property {string|null} [requestId] FrostUtxo requestId
          * @property {Uint8Array|null} [scriptPubkey] FrostUtxo scriptPubkey
+         * @property {Uint8Array|null} [tweak] FrostUtxo tweak
          */
 
         /**
@@ -22690,6 +22349,14 @@ export const pb = $root.pb = (() => {
         FrostUtxo.prototype.scriptPubkey = $util.newBuffer([]);
 
         /**
+         * FrostUtxo tweak.
+         * @member {Uint8Array} tweak
+         * @memberof pb.FrostUtxo
+         * @instance
+         */
+        FrostUtxo.prototype.tweak = $util.newBuffer([]);
+
+        /**
          * Creates a new FrostUtxo instance using the specified properties.
          * @function create
          * @memberof pb.FrostUtxo
@@ -22727,6 +22394,8 @@ export const pb = $root.pb = (() => {
                 writer.uint32(/* id 6, wireType 2 =*/50).string(message.requestId);
             if (message.scriptPubkey != null && Object.hasOwnProperty.call(message, "scriptPubkey"))
                 writer.uint32(/* id 7, wireType 2 =*/58).bytes(message.scriptPubkey);
+            if (message.tweak != null && Object.hasOwnProperty.call(message, "tweak"))
+                writer.uint32(/* id 8, wireType 2 =*/66).bytes(message.tweak);
             return writer;
         };
 
@@ -22791,6 +22460,10 @@ export const pb = $root.pb = (() => {
                         message.scriptPubkey = reader.bytes();
                         break;
                     }
+                case 8: {
+                        message.tweak = reader.bytes();
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -22847,6 +22520,9 @@ export const pb = $root.pb = (() => {
             if (message.scriptPubkey != null && message.hasOwnProperty("scriptPubkey"))
                 if (!(message.scriptPubkey && typeof message.scriptPubkey.length === "number" || $util.isString(message.scriptPubkey)))
                     return "scriptPubkey: buffer expected";
+            if (message.tweak != null && message.hasOwnProperty("tweak"))
+                if (!(message.tweak && typeof message.tweak.length === "number" || $util.isString(message.tweak)))
+                    return "tweak: buffer expected";
             return null;
         };
 
@@ -22886,6 +22562,11 @@ export const pb = $root.pb = (() => {
                     $util.base64.decode(object.scriptPubkey, message.scriptPubkey = $util.newBuffer($util.base64.length(object.scriptPubkey)), 0);
                 else if (object.scriptPubkey.length >= 0)
                     message.scriptPubkey = object.scriptPubkey;
+            if (object.tweak != null)
+                if (typeof object.tweak === "string")
+                    $util.base64.decode(object.tweak, message.tweak = $util.newBuffer($util.base64.length(object.tweak)), 0);
+                else if (object.tweak.length >= 0)
+                    message.tweak = object.tweak;
             return message;
         };
 
@@ -22920,6 +22601,13 @@ export const pb = $root.pb = (() => {
                     if (options.bytes !== Array)
                         object.scriptPubkey = $util.newBuffer(object.scriptPubkey);
                 }
+                if (options.bytes === String)
+                    object.tweak = "";
+                else {
+                    object.tweak = [];
+                    if (options.bytes !== Array)
+                        object.tweak = $util.newBuffer(object.tweak);
+                }
             }
             if (message.txid != null && message.hasOwnProperty("txid"))
                 object.txid = message.txid;
@@ -22938,6 +22626,8 @@ export const pb = $root.pb = (() => {
                 object.requestId = message.requestId;
             if (message.scriptPubkey != null && message.hasOwnProperty("scriptPubkey"))
                 object.scriptPubkey = options.bytes === String ? $util.base64.encode(message.scriptPubkey, 0, message.scriptPubkey.length) : options.bytes === Array ? Array.prototype.slice.call(message.scriptPubkey) : message.scriptPubkey;
+            if (message.tweak != null && message.hasOwnProperty("tweak"))
+                object.tweak = options.bytes === String ? $util.base64.encode(message.tweak, 0, message.tweak.length) : options.bytes === Array ? Array.prototype.slice.call(message.tweak) : message.tweak;
             return object;
         };
 
@@ -23277,6 +22967,7 @@ export const pb = $root.pb = (() => {
          * @property {string|null} [jobId] FrostWithdrawState jobId
          * @property {number|null} [vaultId] FrostWithdrawState vaultId
          * @property {Array.<pb.IFrostPlanningLog>|null} [planningLogs] FrostWithdrawState planningLogs
+         * @property {string|null} [signedTxId] FrostWithdrawState signedTxId
          */
 
         /**
@@ -23392,6 +23083,14 @@ export const pb = $root.pb = (() => {
         FrostWithdrawState.prototype.planningLogs = $util.emptyArray;
 
         /**
+         * FrostWithdrawState signedTxId.
+         * @member {string} signedTxId
+         * @memberof pb.FrostWithdrawState
+         * @instance
+         */
+        FrostWithdrawState.prototype.signedTxId = "";
+
+        /**
          * Creates a new FrostWithdrawState instance using the specified properties.
          * @function create
          * @memberof pb.FrostWithdrawState
@@ -23440,6 +23139,8 @@ export const pb = $root.pb = (() => {
             if (message.planningLogs != null && message.planningLogs.length)
                 for (let i = 0; i < message.planningLogs.length; ++i)
                     $root.pb.FrostPlanningLog.encode(message.planningLogs[i], writer.uint32(/* id 12, wireType 2 =*/98).fork()).ldelim();
+            if (message.signedTxId != null && Object.hasOwnProperty.call(message, "signedTxId"))
+                writer.uint32(/* id 13, wireType 2 =*/106).string(message.signedTxId);
             return writer;
         };
 
@@ -23526,6 +23227,10 @@ export const pb = $root.pb = (() => {
                         message.planningLogs.push($root.pb.FrostPlanningLog.decode(reader, reader.uint32()));
                         break;
                     }
+                case 13: {
+                        message.signedTxId = reader.string();
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -23603,6 +23308,9 @@ export const pb = $root.pb = (() => {
                         return "planningLogs." + error;
                 }
             }
+            if (message.signedTxId != null && message.hasOwnProperty("signedTxId"))
+                if (!$util.isString(message.signedTxId))
+                    return "signedTxId: string expected";
             return null;
         };
 
@@ -23664,6 +23372,8 @@ export const pb = $root.pb = (() => {
                     message.planningLogs[i] = $root.pb.FrostPlanningLog.fromObject(object.planningLogs[i]);
                 }
             }
+            if (object.signedTxId != null)
+                message.signedTxId = String(object.signedTxId);
             return message;
         };
 
@@ -23702,6 +23412,7 @@ export const pb = $root.pb = (() => {
                 object.status = "";
                 object.jobId = "";
                 object.vaultId = 0;
+                object.signedTxId = "";
             }
             if (message.withdrawId != null && message.hasOwnProperty("withdrawId"))
                 object.withdrawId = message.withdrawId;
@@ -23736,6 +23447,8 @@ export const pb = $root.pb = (() => {
                 for (let j = 0; j < message.planningLogs.length; ++j)
                     object.planningLogs[j] = $root.pb.FrostPlanningLog.toObject(message.planningLogs[j], options);
             }
+            if (message.signedTxId != null && message.hasOwnProperty("signedTxId"))
+                object.signedTxId = message.signedTxId;
             return object;
         };
 

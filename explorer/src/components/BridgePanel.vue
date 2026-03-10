@@ -45,7 +45,7 @@ async function submitRecharge() {
   rLoading.value = true
   rResult.value = ''
   try {
-    const res = await window.frostbit.sendTransaction({
+    const txDesc = {
       type: 'recharge_request',
       nativeTxHash: rNativeTxHash.value,
       nativeScript: depositInfo.value.script_pubkey,
@@ -55,7 +55,9 @@ async function submitRecharge() {
       tokenAddress: rChain.value,
       amount: rAmount.value,
       rechargeFee: rFee.value,
-    })
+    }
+    console.log('[BridgePanel] submitRecharge txDesc:', JSON.stringify(txDesc))
+    const res = await window.frostbit.sendTransaction(txDesc)
     rResult.value = `跨入请求已广播${res?.txId ? '，TxID: ' + res.txId : ''}`
     rNativeTxHash.value = ''
   } catch (e: any) { rResult.value = '错误: ' + (e.message || e) }
