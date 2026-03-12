@@ -331,6 +331,8 @@ export interface WitnessRequest {
   vault_id?: number
   selected_witnesses?: string[]
   votes?: WitnessVote[]
+  challenge_id?: string
+  arbitrators?: string[]
 }
 
 

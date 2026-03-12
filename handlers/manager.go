@@ -129,6 +129,7 @@ func (hm *HandlerManager) RegisterRoutes(mux *http.ServeMux) {
 	bind("/frost/dkg/list", hm.HandleFrostDkgList)
 	bind("/witness/requests", hm.HandleWitnessRequests)
 	bind("/witness/list", hm.HandleWitnessList)
+	bind("/witness/challenges", hm.HandleWitnessChallenges)
 	// 订单簿和成交记录
 	bind("/orderbook", hm.HandleOrderBook)
 	bind("/orderbook/debug", hm.HandleOrderBookDebug)

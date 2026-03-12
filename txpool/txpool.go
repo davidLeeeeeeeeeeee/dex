@@ -263,13 +263,13 @@ func (tp *TxPool) CacheAnyTx(anyTx *pb.AnyTx) error {
 	return nil
 }
 
-func (tp *TxPool) storeAnyTx(anyTx *pb.AnyTx) error {
+func (tp *TxPool) storeAnyTx(anyTx *pb.AnyTx) (bool, error) {
 	txID := anyTx.GetTxId()
 	if txID == "" {
-		return fmt.Errorf("txID is empty")
+		return false, fmt.Errorf("txID is empty")
 	}
 	if tp.isTxApplied(txID) {
-		return tp.CacheAnyTx(anyTx)
+		return false, tp.CacheAnyTx(anyTx)
 	}
 
 	tp.mu.Lock()
@@ -277,7 +277,7 @@ func (tp *TxPool) storeAnyTx(anyTx *pb.AnyTx) error {
 	// 如果池里已经有了就跳过
 	if _, exists := tp.pendingAnyTxCache.Get(txID); exists {
 		tp.mu.Unlock()
-		return nil
+		return false, nil
 	}
 
 	// 1. 先同步写入内存缓存（确保立即可用于区块还原）
@@ -288,10 +288,10 @@ func (tp *TxPool) storeAnyTx(anyTx *pb.AnyTx) error {
 	// 2. 入队由固定 worker 异步写 DB（有界队列，满时反压）
 	if err := tp.enqueuePendingSave(anyTx); err != nil {
 		tp.Logger.Debug("[TxPool] enqueue pending save failed for tx %s: %v", txID, err)
-		return err
+		return false, err
 	}
 
-	return nil
+	return true, nil
 }
 
 func (tp *TxPool) enqueuePendingSave(anyTx *pb.AnyTx) error {

@@ -117,7 +117,7 @@ export async function buildAndSign(txDesc, { fromAddress, nonce, privateKey, pub
             const voteType = txDesc.vote === 'FAIL' ? WitnessVoteType.VOTE_FAIL : WitnessVoteType.VOTE_PASS;
             const tx = WitnessVoteTx().create({
                 base: base(),
-                vote: WitnessVote().create({ requestId: txDesc.requestId, voteType }),
+                vote: WitnessVote().create({ requestId: txDesc.requestId, voteType, witnessAddress: fromAddress }),
             });
             return signAndWrap({ witnessVoteTx: tx });
         }

@@ -196,8 +196,8 @@ func (s *TxSimulator) runWitnessRegistration() {
 		return
 	}
 
-	logs.Info("SIMULATOR: Starting witness registration for 5 nodes...")
-	for i := 1; i < 6 && i < len(s.nodes); i++ {
+	logs.Info("SIMULATOR: Starting witness registration for 20 nodes...")
+	for i := 1; i < 21 && i < len(s.nodes); i++ {
 		witnessNode := s.nodes[i]
 		if witnessNode == nil {
 			continue

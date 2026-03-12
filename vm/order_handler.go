@@ -215,6 +215,7 @@ func (h *OrderTxHandler) handleAddOrder(ord *pb.OrderTx, sv StateView) ([]WriteO
 
 	accountCache := map[string]*pb.Account{
 		ord.Base.FromAddress: account,
+		Fee:                  "1000",
 	}
 	ws, err := h.generateWriteOpsFromTrades(ord, tradeEvents, sv, pair, accountCache)
 	if err != nil {

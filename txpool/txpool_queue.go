@@ -94,13 +94,14 @@ func (tq *txPoolQueue) handleAddTx(incoming *pb.AnyTx, ip string, onAdded OnTxAd
 	}
 
 	// 入池
-	if err := tq.pool.storeAnyTx(incoming); err != nil {
+	isNew, err := tq.pool.storeAnyTx(incoming)
+	if err != nil {
 		tq.pool.Logger.Debug("[TxPoolQueue] store tx=%s fail: %v", txID, err)
 		return
 	}
 
-	// 触发广播回调
-	if onAdded != nil {
+	// 触发广播回调 (只有真正新加入 pending 池的交易，即是新请求或是缺失的部分，才会触发广播)
+	if isNew && onAdded != nil {
 		onAdded(txID)
 	}
 }

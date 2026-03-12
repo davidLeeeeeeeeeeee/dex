@@ -243,10 +243,10 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	ws = append(ws, WriteOp{
-		Key:         fromAccountKey,
-		Value:       updatedFromData,
-		Del:         false,
-		Category:    "account",
+		Key:      fromAccountKey,
+		Value:    updatedFromData,
+		Del:      false,
+		Category: "account",
 	})
 
 	// 淇濆瓨鎺ユ敹鏂硅处鎴凤紙涓嶅惈浣欓锛?
@@ -260,10 +260,10 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	}
 
 	ws = append(ws, WriteOp{
-		Key:         toAccountKey,
-		Value:       updatedToData,
-		Del:         false,
-		Category:    "account",
+		Key:      toAccountKey,
+		Value:    updatedToData,
+		Del:      false,
+		Category: "account",
 	})
 
 	// 8. 记录转账历史
@@ -286,10 +286,10 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	historyKey := keys.KeyTransferHistory(transfer.Base.TxId)
 	historyData, _ := proto.Marshal(transfer)
 	ws = append(ws, WriteOp{
-		Key:         historyKey,
-		Value:       historyData,
-		Del:         false,
-		Category:    "history",
+		Key:      historyKey,
+		Value:    historyData,
+		Del:      false,
+		Category: "history",
 	})
 
 	return ws, &Receipt{

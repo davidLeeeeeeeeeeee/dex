@@ -173,6 +173,12 @@ func (sq *SendQueue) Enqueue(task *SendTask) {
 	now := time.Now()
 	if task.NextAttempt.After(now) {
 		// 未到执行时间：先等到 NextAttempt，再真正入队
+		// 限制延迟 goroutine 总数，避免 timer/goroutine 爆炸
+		if sq.delayedTimerBacklog.Load() > 5000 {
+			sq.Logger.Debug("[SendQueue] Too many delayed timers (%d), dropping task target=%s func=%s",
+				sq.delayedTimerBacklog.Load(), task.Target, task.FuncName())
+			return
+		}
 		delay := time.Until(task.NextAttempt)
 		sq.delayedTimerBacklog.Add(1)
 		go func(t *SendTask, d time.Duration) {
@@ -261,7 +267,19 @@ func (sq *SendQueue) workerLoop(workerID int, taskChan chan *SendTask, queueType
 			}
 
 			if !sq.tryAcquireInflight(task.Target, queueType) {
-				sq.requeueForTargetOverload(task, queueType)
+				// 直接在 worker 内短暂 sleep 后非阻塞重投，避免起大量 goroutine + timer
+				delay := cfg.Sender.InflightRequeueDelay
+				if delay <= 0 {
+					delay = 25 * time.Millisecond
+				}
+				time.Sleep(delay)
+				sq.inflightRequeue.Add(1)
+				select {
+				case taskChan <- task:
+				default:
+					sq.Logger.Debug("[SendQueue][%s] Drop overload-requeue: chan full target=%s func=%s",
+						queueType, task.Target, task.FuncName())
+				}
 				continue
 			}
 

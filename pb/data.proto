@@ -669,6 +669,9 @@ message VaultTransitionStateList { repeated VaultTransitionState states = 1; }
 // 见证者列表（用于 API）
 message WitnessInfoList { repeated WitnessInfo witnesses = 1; }
 
+// 挑战记录列表（用于 API）
+message ChallengeRecordList { repeated ChallengeRecord records = 1; }
+
 // 仲裁投票交易
 message ArbitrationVoteTx {
   BaseMessage base = 1;

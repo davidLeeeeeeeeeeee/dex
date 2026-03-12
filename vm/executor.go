@@ -288,10 +288,6 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 		}
 	}
 
-	if x.WitnessService != nil {
-		x.WitnessService.SetCurrentHeight(b.Header.Height)
-	}
-
 	// 创建新的状态视图
 	sv := NewStateView(x.ReadFn, x.ScanFn)
 	receipts := make([]*Receipt, 0, len(b.Body))
@@ -460,6 +456,22 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 			}
 		}
 		durApplyWS += time.Since(applyWSAt)
+
+		// 递增发送者的 Account.Nonce（防止重复 txId）
+		if base := getBaseMessage(tx); base != nil && base.FromAddress != "" {
+			accountKey := keys.KeyAccount(base.FromAddress)
+			accountData, exists, _ := sv.Get(accountKey)
+			var account pb.Account
+			if exists {
+				_ = unmarshalProtoCompat(accountData, &account)
+			} else {
+				account = pb.Account{Address: base.FromAddress}
+			}
+			account.Nonce = base.Nonce
+			updatedData, _ := proto.Marshal(&account)
+			sv.Set(accountKey, updatedData)
+		}
+
 		// 填充 Receipt 元数据
 		// 使用区块时间戳而非本地时间，确保多节点确定性
 		if rc != nil {
@@ -497,6 +509,12 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 		} else {
 			logs.Debug(summary)
 		}
+	}
+
+	// 必须在交易执行完成后再触发超时检查，否则公示期/仲裁期超时判定
+	// 会抢先于同区块内的挑战交易执行，导致请求被错误 finalize。
+	if x.WitnessService != nil {
+		x.WitnessService.SetCurrentHeight(b.Header.Height)
 	}
 
 	witnessAt := time.Now()

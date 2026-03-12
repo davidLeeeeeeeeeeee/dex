@@ -115,6 +115,15 @@ const getVoteLabel = (vote: any) => {
   return 'VOTE'
 }
 
+const getParticipantVoteClass = (req: WitnessRequest, addr: string) => {
+  const vote = req.votes?.find(v => v.witness_address === addr)
+  if (!vote) return ''
+  const vt = vote.vote_type ?? -1
+  if (vt === 0) return 'voted-pass'
+  if (vt === 1) return 'voted-fail'
+  return ''
+}
+
 const getVoteClass = (vote: any) => {
   const status = (vote.status || '').toLowerCase()
   if (status.includes('pass')) return 'pass'
@@ -460,9 +469,33 @@ const handleSelectTx = (txId: string) => {
                 <span class="m-label">Deadline Height</span>
                 <span class="m-value bold highlight">{{ req.deadline_height || 'N/A' }}</span>
               </div>
-              <div class="meta-item" v-if="req.selected_witnesses">
-                <span class="m-label">Selected Witnesses</span>
-                <span class="m-value">{{ req.selected_witnesses.length }} Nodes</span>
+            </div>
+
+            <!-- Selected Witnesses List -->
+            <div v-if="req.selected_witnesses?.length" class="participants-section">
+              <div class="timeline-header">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Selected Witnesses <span class="count-badge">{{ req.selected_witnesses.length }}</span>
+              </div>
+              <div class="participant-list">
+                <div v-for="addr in req.selected_witnesses" :key="addr" class="participant-item witness">
+                  <div :class="['p-marker', getParticipantVoteClass(req, addr) || 'default']"></div>
+                  <span class="mono">{{ truncate(addr, 12, 10) }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Arbitration Panel -->
+            <div v-if="req.arbitrators?.length" class="participants-section arbitration">
+              <div class="timeline-header arbitration">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Arbitration Panel <span class="count-badge arb">{{ req.arbitrators.length }}</span>
+              </div>
+              <div class="participant-list">
+                <div v-for="addr in req.arbitrators" :key="addr" class="participant-item arbitrator">
+                  <div :class="['p-marker', getParticipantVoteClass(req, addr) || 'default']"></div>
+                  <span class="mono">{{ truncate(addr, 12, 10) }}</span>
+                </div>
               </div>
             </div>
 
@@ -866,6 +899,52 @@ const handleSelectTx = (txId: string) => {
 
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* Participants Section (Selected Witnesses & Arbitrators) */
+.participants-section {
+  margin-top: 20px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 12px;
+  padding: 16px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+.participants-section.arbitration {
+  border-color: rgba(245, 158, 11, 0.15);
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.timeline-header { display: flex; align-items: center; gap: 8px; }
+.timeline-header.arbitration { color: #fbbf24; }
+
+.count-badge {
+  font-size: 0.6rem; font-weight: 800;
+  background: rgba(99, 102, 241, 0.15); color: #818cf8;
+  padding: 2px 8px; border-radius: 99px;
+}
+.count-badge.arb { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+
+.participant-list {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 12px;
+}
+
+.participant-item {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 6px 12px; border-radius: 8px;
+  font-size: 0.75rem; color: #94a3b8;
+  transition: all 0.2s;
+}
+.participant-item:hover { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.08); }
+
+.participant-item.arbitrator { border-color: rgba(245, 158, 11, 0.1); }
+.participant-item.arbitrator:hover { border-color: rgba(245, 158, 11, 0.25); }
+
+.p-marker { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.p-marker.default { background: #fbbf24; box-shadow: 0 0 6px #fbbf2466; }
+.p-marker.voted-pass { background: #10b981; box-shadow: 0 0 6px #10b98166; }
+.p-marker.voted-fail { background: #ef4444; box-shadow: 0 0 6px #ef444466; }
 
 @media (max-width: 768px) {
   .stats-matrix { grid-template-columns: 1fr 1fr; }

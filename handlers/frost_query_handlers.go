@@ -774,3 +774,35 @@ func (hm *HandlerManager) HandleWitnessList(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.Write(respData)
 }
+
+// HandleWitnessChallenges 获取挑战记录列表（供 Explorer 使用）
+// 路由: /witness/challenges
+func (hm *HandlerManager) HandleWitnessChallenges(w http.ResponseWriter, r *http.Request) {
+	hm.Stats.RecordAPICall("WitnessChallenges")
+
+	prefix := keys.KeyChallengeRecordPrefix()
+	results, err := hm.dbManager.Scan(prefix)
+	if err != nil {
+		http.Error(w, "scan failed", http.StatusInternalServerError)
+		return
+	}
+
+	var records []*pb.ChallengeRecord
+	for _, data := range results {
+		var rec pb.ChallengeRecord
+		if err := proto.Unmarshal(data, &rec); err != nil {
+			continue
+		}
+		records = append(records, proto.Clone(&rec).(*pb.ChallengeRecord))
+	}
+
+	resp := &pb.ChallengeRecordList{Records: records}
+	respData, err := proto.Marshal(resp)
+	if err != nil {
+		http.Error(w, "failed to marshal response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.Write(respData)
+}

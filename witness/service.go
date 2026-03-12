@@ -875,6 +875,16 @@ func (s *Service) GetActiveRequests() []*pb.RechargeRequest {
 	return result
 }
 
+// MarkRequestChallenged 标记请求为已挑战（供 VM Handler 同步内存状态）
+func (s *Service) MarkRequestChallenged(requestID, challengeID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if req, ok := s.requests[requestID]; ok {
+		req.Status = pb.RechargeRequestStatus_RECHARGE_CHALLENGED
+		req.ChallengeId = challengeID
+	}
+}
+
 // GetWitnessInfo 获取见证者信息
 func (s *Service) GetWitnessInfo(address string) (*pb.WitnessInfo, error) {
 	return s.stakeManager.GetWitness(address)
@@ -923,6 +933,16 @@ func (s *Service) GetActiveWitnesses() []*pb.WitnessInfo {
 // GetAllWitnesses 获取所有见证者列表（包括所有状态）
 func (s *Service) GetAllWitnesses() []*pb.WitnessInfo {
 	return s.stakeManager.GetAllWitnesses()
+}
+
+// GetWitnessCandidates 获取见证者候选人列表（代理到 StakeManager）
+func (s *Service) GetWitnessCandidates() []*WitnessCandidate {
+	return s.stakeManager.GetWitnessCandidates()
+}
+
+// SelectArbitrators 选择仲裁者（代理到 Selector）
+func (s *Service) SelectArbitrators(challengeID string, round uint32, candidates []*WitnessCandidate, excludeWitnesses []string) ([]string, error) {
+	return s.selector.SelectArbitrators(challengeID, round, candidates, excludeWitnesses)
 }
 
 // ==================== 挑战管理代理方法 ====================

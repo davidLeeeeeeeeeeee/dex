@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -454,6 +455,8 @@ type WitnessRequestItem struct {
 	VaultID           uint32            `json:"vault_id"`
 	SelectedWitnesses []string          `json:"selected_witnesses"`
 	Votes             []WitnessVoteItem `json:"votes"`
+	ChallengeID       string            `json:"challenge_id,omitempty"`
+	Arbitrators       []string          `json:"arbitrators,omitempty"`
 }
 
 func (s *server) handleWitnessRequests(w http.ResponseWriter, r *http.Request) {
@@ -472,10 +475,25 @@ func (s *server) handleWitnessRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 获取挑战记录（用于补充仲裁者信息）
+	arbitratorsByReqID := make(map[string][]string)
+	var challengeResp pb.ChallengeRecordList
+	if err := s.fetchProto(ctx, node, "/witness/challenges", nil, &challengeResp); err != nil {
+		log.Printf("[witness/requests] failed to fetch challenges from %s: %v", node, err)
+	} else {
+		log.Printf("[witness/requests] fetched %d challenge records from %s", len(challengeResp.Records), node)
+		for _, rec := range challengeResp.Records {
+			log.Printf("[witness/requests] challenge %s -> request %s, arbitrators=%d", rec.ChallengeId, rec.RequestId, len(rec.Arbitrators))
+			if rec.RequestId != "" {
+				arbitratorsByReqID[rec.RequestId] = rec.Arbitrators
+			}
+		}
+	}
+
 	// 转换为前端格式（snake_case）
 	items := make([]WitnessRequestItem, 0, len(resp.Requests))
 	for _, req := range resp.Requests {
-		items = append(items, WitnessRequestItem{
+		item := WitnessRequestItem{
 			RequestID:         req.RequestId,
 			NativeChain:       req.NativeChain,
 			NativeTxHash:      req.NativeTxHash,
@@ -494,7 +512,10 @@ func (s *server) handleWitnessRequests(w http.ResponseWriter, r *http.Request) {
 			VaultID:           req.VaultId,
 			SelectedWitnesses: req.SelectedWitnesses,
 			Votes:             convertVotes(req.Votes),
-		})
+			ChallengeID:       req.ChallengeId,
+			Arbitrators:       arbitratorsByReqID[req.RequestId],
+		}
+		items = append(items, item)
 	}
 
 	writeJSON(w, items)

@@ -99,6 +99,13 @@ func NewRealBlockStore(nodeID types.NodeID, dbManager *db.Manager, pool *txpool.
 
 	vmExecutor := vm.NewExecutorWithWitnessService(dbManager, registry, cache, witnessSvc)
 
+	// 从 DB 恢复见证者内存状态（见证者信息、活跃入账请求、挑战记录）
+	// NewExecutorWithWitnessService 不自动调用 LoadWitnessState，必须手动调用，
+	// 否则重启后 WitnessService.requests 为空，导致 ProcessVote 报 "recharge request not found"。
+	if err := vmExecutor.LoadWitnessState(); err != nil {
+		logs.Warn("[RealBlockStore] failed to load witness state: %v", err)
+	}
+
 	store := &RealBlockStore{
 		dbManager:             dbManager,
 		pool:                  pool,
