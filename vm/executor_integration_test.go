@@ -31,7 +31,7 @@ func TestIdempotency(t *testing.T) {
 	// 分离存储余额
 	bal := &pb.TokenBalanceRecord{
 		Balance: &pb.TokenBalance{
-			Balance:            "1000",
+			Balance:            "1000000",
 			MinerLockedBalance: "0",
 		},
 	}
@@ -55,6 +55,7 @@ func TestIdempotency(t *testing.T) {
 					TxId:        "tx_idem_001",
 					FromAddress: aliceAddr,
 					Status:      pb.Status_PENDING,
+					Fee:         "1000",
 				},
 				To:           "bob",
 				TokenAddress: "FB",
@@ -99,7 +100,7 @@ func TestCommitFinalizedBlockDoesNotMutateInputTxStatus(t *testing.T) {
 
 	bal := &pb.TokenBalanceRecord{
 		Balance: &pb.TokenBalance{
-			Balance:            "1000",
+			Balance:            "1000000",
 			MinerLockedBalance: "0",
 		},
 	}
@@ -120,6 +121,7 @@ func TestCommitFinalizedBlockDoesNotMutateInputTxStatus(t *testing.T) {
 					TxId:        "tx_input_immutable_001",
 					FromAddress: aliceAddr,
 					Status:      pb.Status_PENDING,
+					Fee:         "1000",
 				},
 				To:           "bob_input_immutable",
 				TokenAddress: "FB",
@@ -159,7 +161,7 @@ func TestReplayTxInLaterBlockShouldNotReapply(t *testing.T) {
 
 	initialBal := &pb.TokenBalanceRecord{
 		Balance: &pb.TokenBalance{
-			Balance:            "1000",
+			Balance:            "1000000",
 			MinerLockedBalance: "0",
 		},
 	}
@@ -183,7 +185,7 @@ func TestReplayTxInLaterBlockShouldNotReapply(t *testing.T) {
 					TxId:        txID,
 					FromAddress: aliceAddr,
 					Status:      pb.Status_PENDING,
-					Fee:         "1",
+					Fee:         "1000",
 				},
 				To:           "bob_replay",
 				TokenAddress: "FB",
@@ -226,13 +228,13 @@ func TestReplayTxInLaterBlockShouldNotReapply(t *testing.T) {
 		t.Fatalf("failed to unmarshal final balance: %v", err)
 	}
 
-	// Only the first execution should be applied: 1000 - (100 + fee 1) = 899.
-	if finalBal.Balance == nil || finalBal.Balance.Balance != "899" {
+	// Only the first execution should be applied: 1000000 - 100 - fee 1000 = 998900.
+	if finalBal.Balance == nil || finalBal.Balance.Balance != "998900" {
 		got := "<nil>"
 		if finalBal.Balance != nil {
 			got = finalBal.Balance.Balance
 		}
-		t.Fatalf("unexpected final balance, want 899 got %s", got)
+		t.Fatalf("unexpected final balance, want 998900 got %s", got)
 	}
 
 	// Tx first execution height should remain unchanged (not overwritten by replay block).
@@ -258,7 +260,7 @@ func TestCommitFinalizedBlockReexecAgainstLatestState(t *testing.T) {
 
 	initialBal := &pb.TokenBalanceRecord{
 		Balance: &pb.TokenBalance{
-			Balance:            "1000",
+			Balance:            "1000000",
 			MinerLockedBalance: "0",
 		},
 	}
@@ -284,7 +286,7 @@ func TestCommitFinalizedBlockReexecAgainstLatestState(t *testing.T) {
 					TxId:        tx1ID,
 					FromAddress: aliceAddr,
 					Status:      pb.Status_PENDING,
-					Fee:         "1",
+					Fee:         "1000",
 				},
 				To:           "bob_stale_parent",
 				TokenAddress: "FB",
@@ -299,7 +301,7 @@ func TestCommitFinalizedBlockReexecAgainstLatestState(t *testing.T) {
 					TxId:        tx2ID,
 					FromAddress: aliceAddr,
 					Status:      pb.Status_PENDING,
-					Fee:         "1",
+					Fee:         "1000",
 				},
 				To:           "bob_stale_child",
 				TokenAddress: "FB",
@@ -351,13 +353,13 @@ func TestCommitFinalizedBlockReexecAgainstLatestState(t *testing.T) {
 		t.Fatalf("failed to unmarshal final balance: %v", err)
 	}
 
-	// Expected: 1000 - (100+1) - (10+1) = 888.
-	if finalBal.Balance == nil || finalBal.Balance.Balance != "888" {
+	// Expected: 1000000 - (100+1000) - (10+1000) = 997890.
+	if finalBal.Balance == nil || finalBal.Balance.Balance != "997890" {
 		got := "<nil>"
 		if finalBal.Balance != nil {
 			got = finalBal.Balance.Balance
 		}
-		t.Fatalf("unexpected final balance, want 888 got %s", got)
+		t.Fatalf("unexpected final balance, want 997890 got %s", got)
 	}
 
 	// Ensure tx2 height reflects finalized child block.
@@ -380,7 +382,7 @@ func TestCommitFinalizedBlockSyncsStateDB(t *testing.T) {
 
 	bal := &pb.TokenBalanceRecord{
 		Balance: &pb.TokenBalance{
-			Balance:            "1000",
+			Balance:            "1000000",
 			MinerLockedBalance: "0",
 		},
 	}
@@ -400,7 +402,7 @@ func TestCommitFinalizedBlockSyncsStateDB(t *testing.T) {
 					TxId:        "tx_state_sync_001",
 					FromAddress: aliceAddr,
 					Status:      pb.Status_PENDING,
-					Fee:         "1",
+					Fee:         "1000",
 				},
 				To:           "bob_state_sync",
 				TokenAddress: "FB",

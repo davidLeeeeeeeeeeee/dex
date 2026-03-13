@@ -62,6 +62,7 @@ func TestWitnessStakeTxHandler(t *testing.T) {
 					TxId:           "stake_tx_001",
 					FromAddress:    address,
 					ExecutedHeight: 100,
+					Fee:            "1000",
 				},
 				Amount: "1000000000000000000000", // 1000 FB
 				Op:     pb.OrderOp_ADD,
@@ -159,6 +160,14 @@ func TestWitnessRequestTxHandler(t *testing.T) {
 		db.data[keys.KeyFrostVaultState("eth", vaultID)] = vaultStateData
 	}
 
+	// 准备请求者账户和 FB 余额
+	requesterAccount := &pb.Account{Address: "0xRequester001"}
+	requesterAccountData, _ := proto.Marshal(requesterAccount)
+	db.data[keys.KeyAccount("0xRequester001")] = requesterAccountData
+	requesterBal := &pb.TokenBalanceRecord{Balance: &pb.TokenBalance{Balance: "100000"}}
+	requesterBalData, _ := proto.Marshal(requesterBal)
+	db.data[keys.KeyBalance("0xRequester001", "FB")] = requesterBalData
+
 	// 创建入账请求交易
 	requestTx := &pb.AnyTx{
 		Content: &pb.AnyTx_WitnessRequestTx{
@@ -167,6 +176,7 @@ func TestWitnessRequestTxHandler(t *testing.T) {
 					TxId:           "request_tx_001",
 					FromAddress:    "0xRequester001",
 					ExecutedHeight: 100,
+					Fee:            "1000",
 				},
 				NativeChain:     "ETH",
 				NativeTxHash:    "0xNativeTxHash001",
@@ -231,6 +241,14 @@ func TestWitnessVoteTxHandler(t *testing.T) {
 	// 同时加载到 WitnessService 内存中
 	executor.GetWitnessService().LoadRequest(request)
 
+	// 准备投票者账户和 FB 余额
+	voterAccount := &pb.Account{Address: "0xWitness001"}
+	voterAccountData, _ := proto.Marshal(voterAccount)
+	db.data[keys.KeyAccount("0xWitness001")] = voterAccountData
+	voterBal := &pb.TokenBalanceRecord{Balance: &pb.TokenBalance{Balance: "100000"}}
+	voterBalData, _ := proto.Marshal(voterBal)
+	db.data[keys.KeyBalance("0xWitness001", "FB")] = voterBalData
+
 	// 创建投票交易
 	voteTx := &pb.AnyTx{
 		Content: &pb.AnyTx_WitnessVoteTx{
@@ -239,6 +257,7 @@ func TestWitnessVoteTxHandler(t *testing.T) {
 					TxId:           "vote_tx_001",
 					FromAddress:    "0xWitness001",
 					ExecutedHeight: 101,
+					Fee:            "1000",
 				},
 				Vote: &pb.WitnessVote{
 					RequestId:      "request_001",
@@ -352,6 +371,7 @@ func TestWitnessChallengeTxHandler(t *testing.T) {
 					TxId:           "challenge_tx_001",
 					FromAddress:    "0xChallenger001",
 					ExecutedHeight: 102,
+					Fee:            "1000",
 				},
 				RequestId:   "request_002",
 				StakeAmount: "100000000000000000000", // 100 FB
@@ -409,6 +429,14 @@ func TestArbitrationVoteTxHandler(t *testing.T) {
 	// 加载到 WitnessService
 	executor.GetWitnessService().LoadChallenge(challenge)
 
+	// 准备仲裁者账户和 FB 余额
+	arbiterAccount := &pb.Account{Address: "0xArbiter001"}
+	arbiterAccountData, _ := proto.Marshal(arbiterAccount)
+	db.data[keys.KeyAccount("0xArbiter001")] = arbiterAccountData
+	arbiterBal := &pb.TokenBalanceRecord{Balance: &pb.TokenBalance{Balance: "100000"}}
+	arbiterBalData, _ := proto.Marshal(arbiterBal)
+	db.data[keys.KeyBalance("0xArbiter001", "FB")] = arbiterBalData
+
 	// 创建仲裁投票交易（使用 WitnessVote 结构）
 	arbVoteTx := &pb.AnyTx{
 		Content: &pb.AnyTx_ArbitrationVoteTx{
@@ -417,6 +445,7 @@ func TestArbitrationVoteTxHandler(t *testing.T) {
 					TxId:           "arb_vote_tx_001",
 					FromAddress:    "0xArbiter001",
 					ExecutedHeight: 105,
+					Fee:            "1000",
 				},
 				ChallengeId: "challenge_001",
 				Vote: &pb.WitnessVote{
@@ -495,6 +524,7 @@ func TestWitnessClaimRewardTxHandler(t *testing.T) {
 					TxId:           "claim_tx_001",
 					FromAddress:    witnessAddr,
 					ExecutedHeight: 110,
+					Fee:            "1000",
 				},
 			},
 		},
@@ -569,6 +599,7 @@ func TestWitnessUnstakeTxHandler(t *testing.T) {
 					TxId:           "unstake_tx_001",
 					FromAddress:    address,
 					ExecutedHeight: 100,
+					Fee:            "1000",
 				},
 				Amount: "500000000000000000000", // 解质押 500 FB
 				Op:     pb.OrderOp_REMOVE,

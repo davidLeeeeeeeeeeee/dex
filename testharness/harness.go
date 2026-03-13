@@ -614,7 +614,7 @@ func nextTxID(prefix string) string {
 // BuildTransferTx 构造转账 tx
 func BuildTransferTx(from, to, token, amount string) *pb.AnyTx {
 	return &pb.AnyTx{Content: &pb.AnyTx_Transaction{Transaction: &pb.Transaction{
-		Base:         &pb.BaseMessage{TxId: nextTxID("transfer"), FromAddress: from, Status: pb.Status_PENDING, Fee: "1"},
+		Base:         &pb.BaseMessage{TxId: nextTxID("transfer"), FromAddress: from, Status: pb.Status_PENDING, Fee: "1000"},
 		To:           to,
 		TokenAddress: token,
 		Amount:       amount,
@@ -624,7 +624,7 @@ func BuildTransferTx(from, to, token, amount string) *pb.AnyTx {
 // BuildOrderTx 构造订单 tx
 func BuildOrderTx(from, baseToken, quoteToken, amount, price string, side pb.OrderSide) *pb.AnyTx {
 	return &pb.AnyTx{Content: &pb.AnyTx_OrderTx{OrderTx: &pb.OrderTx{
-		Base:       &pb.BaseMessage{TxId: nextTxID("order"), FromAddress: from, Status: pb.Status_PENDING},
+		Base:       &pb.BaseMessage{TxId: nextTxID("order"), FromAddress: from, Status: pb.Status_PENDING, Fee: "1000"},
 		BaseToken:  baseToken,
 		QuoteToken: quoteToken,
 		Amount:     amount,
@@ -636,7 +636,7 @@ func BuildOrderTx(from, baseToken, quoteToken, amount, price string, side pb.Ord
 // BuildWitnessStakeTx 构造见证者质押 tx
 func BuildWitnessStakeTx(addr string, op pb.OrderOp, amount string) *pb.AnyTx {
 	return &pb.AnyTx{Content: &pb.AnyTx_WitnessStakeTx{WitnessStakeTx: &pb.WitnessStakeTx{
-		Base:   &pb.BaseMessage{TxId: nextTxID("wstake"), FromAddress: addr, Status: pb.Status_PENDING},
+		Base:   &pb.BaseMessage{TxId: nextTxID("wstake"), FromAddress: addr, Status: pb.Status_PENDING, Fee: "1000"},
 		Op:     op,
 		Amount: amount,
 	}}}
@@ -645,7 +645,7 @@ func BuildWitnessStakeTx(addr string, op pb.OrderOp, amount string) *pb.AnyTx {
 // BuildWitnessRequestTx 构造入账见证请求 tx
 func BuildWitnessRequestTx(from, chain, nativeTxHash string, vout uint32, nativeScript []byte, tokenAddr, amount, receiver, fee string) *pb.AnyTx {
 	return &pb.AnyTx{Content: &pb.AnyTx_WitnessRequestTx{WitnessRequestTx: &pb.WitnessRequestTx{
-		Base:            &pb.BaseMessage{TxId: nextTxID("wrequest"), FromAddress: from, Status: pb.Status_PENDING},
+		Base:            &pb.BaseMessage{TxId: nextTxID("wrequest"), FromAddress: from, Status: pb.Status_PENDING, Fee: "1000"},
 		NativeChain:     chain,
 		NativeTxHash:    nativeTxHash,
 		NativeVout:      vout,
@@ -660,7 +660,7 @@ func BuildWitnessRequestTx(from, chain, nativeTxHash string, vout uint32, native
 // BuildDkgCommitTx 构造 DKG Commit tx
 func BuildDkgCommitTx(sender, chain string, vaultID uint32, epochID uint64, signAlgo pb.SignAlgo, commitPoints [][]byte, ai0 []byte) *pb.AnyTx {
 	return &pb.AnyTx{Content: &pb.AnyTx_FrostVaultDkgCommitTx{FrostVaultDkgCommitTx: &pb.FrostVaultDkgCommitTx{
-		Base:             &pb.BaseMessage{TxId: nextTxID("dkg_commit"), FromAddress: sender, Status: pb.Status_PENDING},
+		Base:             &pb.BaseMessage{TxId: nextTxID("dkg_commit"), FromAddress: sender, Status: pb.Status_PENDING, Fee: "1000"},
 		Chain:            chain,
 		VaultId:          vaultID,
 		EpochId:          epochID,
@@ -673,7 +673,7 @@ func BuildDkgCommitTx(sender, chain string, vaultID uint32, epochID uint64, sign
 // BuildDkgShareTx 构造 DKG Share tx
 func BuildDkgShareTx(dealer, receiver, chain string, vaultID uint32, epochID uint64, ciphertext []byte) *pb.AnyTx {
 	return &pb.AnyTx{Content: &pb.AnyTx_FrostVaultDkgShareTx{FrostVaultDkgShareTx: &pb.FrostVaultDkgShareTx{
-		Base:       &pb.BaseMessage{TxId: nextTxID("dkg_share"), FromAddress: dealer, Status: pb.Status_PENDING},
+		Base:       &pb.BaseMessage{TxId: nextTxID("dkg_share"), FromAddress: dealer, Status: pb.Status_PENDING, Fee: "1000"},
 		Chain:      chain,
 		VaultId:    vaultID,
 		EpochId:    epochID,

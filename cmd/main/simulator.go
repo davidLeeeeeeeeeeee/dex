@@ -176,7 +176,7 @@ func (s *TxSimulator) runRandomTransfers() {
 
 		nonce := s.getNextNonce(fromNode.Address)
 
-		tx := generateTransferTx(fromNode.Address, toNode.Address, "FB", "10", "1", nonce)
+		tx := generateTransferTx(fromNode.Address, toNode.Address, "FB", "10", "1000", nonce)
 
 		s.submitTx(fromNode, tx)
 		logs.Trace("Simulator: Added random transfer %s from %s to %s (nonce=%d)", tx.GetBase().TxId, fromNode.Address, toNode.Address, nonce)

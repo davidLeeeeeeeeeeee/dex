@@ -4,7 +4,6 @@ import (
 	"dex/keys"
 	"dex/pb"
 	"fmt"
-	"math/big"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -96,62 +95,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		}, fmt.Errorf("insufficient balance")
 	}
 
-	// 5. 鎵ｉ櫎浜ゆ槗鎵嬬画璐癸紙濡傛灉鏄?native token锛?
-	// 鍋囪鎵嬬画璐瑰缁堢敤 FB 鏀粯
-	const FeeToken = "FB"
-	feeAmount, err := parseBalanceStrict("tx fee", transfer.Base.Fee)
-	if err != nil {
-		return nil, &Receipt{
-			TxID:   transfer.Base.TxId,
-			Status: "FAILED",
-			Error:  "invalid fee",
-		}, err
-	}
-
-	// 璇诲彇 FB 浣欓鐢ㄤ簬鎵ｈ垂锛堜娇鐢ㄥ垎绂诲瓨鍌級
-	var fbBalance *big.Int
-	var fromFBBal *pb.TokenBalance
-	if transfer.TokenAddress == FeeToken {
-		fbBalance = fromBalance
-		fromFBBal = fromTokenBal
-	} else {
-		fromFBBal = GetBalance(sv, transfer.Base.FromAddress, FeeToken)
-		fbBalance, err = parseBalanceStrict("sender FB balance", fromFBBal.Balance)
-		if err != nil {
-			return nil, &Receipt{
-				TxID:   transfer.Base.TxId,
-				Status: "FAILED",
-				Error:  "invalid sender FB balance",
-			}, err
-		}
-	}
-
-	// 妫€鏌ユ槸鍚﹁冻澶熸敮浠樻墜缁垂
-	if transfer.TokenAddress == FeeToken {
-		// 濡傛灉杞处鐨勬槸 FB锛屾€婚 = amount + fee
-		totalNeeded, err := SafeAdd(amount, feeAmount)
-		if err != nil {
-			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "amount+fee overflow"}, err
-		}
-		if fbBalance.Cmp(totalNeeded) < 0 {
-			return nil, &Receipt{
-				TxID:   transfer.Base.TxId,
-				Status: "FAILED",
-				Error:  fmt.Sprintf("insufficient FB balance for amount + fee: has %s, need %s", fbBalance.String(), totalNeeded.String()),
-			}, fmt.Errorf("insufficient FB balance")
-		}
-	} else {
-		// 濡傛灉杞处涓嶆槸 FB锛岀嫭绔嬫鏌?FB 浣欓鏀粯 fee
-		if fbBalance.Cmp(feeAmount) < 0 {
-			return nil, &Receipt{
-				TxID:   transfer.Base.TxId,
-				Status: "FAILED",
-				Error:  fmt.Sprintf("insufficient FB balance for fee: has %s, need %s", fbBalance.String(), feeAmount.String()),
-			}, fmt.Errorf("insufficient FB balance for fee")
-		}
-	}
-
-	// 6. 璇诲彇鎺ユ敹鏂硅处鎴凤紙鐢ㄤ簬纭繚璐︽埛瀛樺湪锛屽悗缁綑棰濅娇鐢ㄥ垎绂诲瓨鍌級
+	// 5. 读取接收方账户
 	toAccountKey := keys.KeyAccount(transfer.To)
 	toAccountData, toExists, _ := sv.Get(toAccountKey)
 
@@ -165,49 +109,18 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 			}, err
 		}
 	} else {
-		// 鍒涘缓鏂拌处鎴凤紙涓嶅惈浣欓瀛楁锛?
-		toAccount = pb.Account{
-			Address: transfer.To,
-		}
+		toAccount = pb.Account{Address: transfer.To}
 	}
 
-	// 7. 鎵ц杞处涓庢墸璐癸紙浣跨敤鍒嗙瀛樺偍锛?
-	// 鍑忓皯鍙戦€佹柟浣欓
-	if transfer.TokenAddress == FeeToken {
-		// 非 FB 转账：分别扣除 amount 和 fee
-		totalDeduct, err := SafeAdd(amount, feeAmount)
-		if err != nil {
-			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "amount+fee overflow"}, err
-		}
-		newFromBalance, err := SafeSub(fbBalance, totalDeduct)
-		if err != nil {
-			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
-		}
-		fromFBBal.Balance = newFromBalance.String()
-		SetBalance(sv, transfer.Base.FromAddress, FeeToken, fromFBBal)
-	} else {
-		// 闈?FB 杞处锛氬垎鍒墸闄?amount 鍜?fee
-		newFromBalance, err := SafeSub(fromBalance, amount)
-		if err != nil {
-			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
-		}
-		fromTokenBal.Balance = newFromBalance.String()
-		SetBalance(sv, transfer.Base.FromAddress, transfer.TokenAddress, fromTokenBal)
-
-		// 鎵ｉ櫎 FB Fee
-		currentFB, err := ParseBalance(fromFBBal.Balance)
-		if err != nil {
-			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "invalid FB balance"}, err
-		}
-		newFB, err := SafeSub(currentFB, feeAmount)
-		if err != nil {
-			return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "FB fee underflow"}, err
-		}
-		fromFBBal.Balance = newFB.String()
-		SetBalance(sv, transfer.Base.FromAddress, FeeToken, fromFBBal)
+	// 6. 扣除发送方转账金额（fee 由 executor 统一扣除，此处不处理）
+	newFromBalance, err := SafeSub(fromBalance, amount)
+	if err != nil {
+		return nil, &Receipt{TxID: transfer.Base.TxId, Status: "FAILED", Error: "balance underflow"}, err
 	}
+	fromTokenBal.Balance = newFromBalance.String()
+	SetBalance(sv, transfer.Base.FromAddress, transfer.TokenAddress, fromTokenBal)
 
-	// 澧炲姞鎺ユ敹鏂逛綑棰濓紙浣跨敤鍒嗙瀛樺偍锛?
+	// 增加接收方余额
 	toTokenBal := GetBalance(sv, transfer.To, transfer.TokenAddress)
 	toBalance, err := parseBalanceStrict("receiver balance", toTokenBal.Balance)
 	if err != nil {
@@ -217,7 +130,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 			Error:  "invalid receiver balance",
 		}, err
 	}
-	// 浣跨敤瀹夊叏鍔犳硶妫€鏌ユ帴鏀舵柟浣欓婧㈠嚭
+	// 使用安全加法检查接收方余额溢出
 	newToBalance, err := SafeAdd(toBalance, amount)
 	if err != nil {
 		return nil, &Receipt{
@@ -229,10 +142,10 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	toTokenBal.Balance = newToBalance.String()
 	SetBalance(sv, transfer.To, transfer.TokenAddress, toTokenBal)
 
-	// 7. 淇濆瓨鏇存柊鍚庣殑璐︽埛鍜屼綑棰?
+	// 7. 保存更新后的账户和余额
 	ws := make([]WriteOp, 0)
 
-	// 淇濆瓨鍙戦€佹柟璐︽埛锛堜笉鍚綑棰濓級
+	// 保存发送方账户（不含余额）
 	updatedFromData, err := proto.Marshal(&fromAccount)
 	if err != nil {
 		return nil, &Receipt{
@@ -249,7 +162,7 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 		Category: "account",
 	})
 
-	// 淇濆瓨鎺ユ敹鏂硅处鎴凤紙涓嶅惈浣欓锛?
+	// 保存接收方账户（不含余额）
 	updatedToData, err := proto.Marshal(&toAccount)
 	if err != nil {
 		return nil, &Receipt{
@@ -271,31 +184,19 @@ func (h *TransferTxHandler) DryRun(tx *pb.AnyTx, sv StateView) ([]WriteOp, *Rece
 	fromTokenBalData, _, _ := sv.Get(fromTokenBalKey)
 	ws = append(ws, WriteOp{Key: fromTokenBalKey, Value: fromTokenBalData, Category: "balance"})
 
-	if transfer.TokenAddress != FeeToken {
-		fromFBBalKey := keys.KeyBalance(transfer.Base.FromAddress, FeeToken)
-		fromFBBalData, _, _ := sv.Get(fromFBBalKey)
-		ws = append(ws, WriteOp{Key: fromFBBalKey, Value: fromFBBalData, Category: "balance"})
-	}
-
-	// 娣诲姞浣欓 WriteOps锛堟帴鏀舵柟锛?
+	// 添加接收方余额 WriteOps
 	toTokenBalKey := keys.KeyBalance(transfer.To, transfer.TokenAddress)
 	toTokenBalData, _, _ := sv.Get(toTokenBalKey)
 	ws = append(ws, WriteOp{Key: toTokenBalKey, Value: toTokenBalData, Category: "balance"})
 
-	// 8. 璁板綍杞处鍘嗗彶
+	// 记录转账历史
 	historyKey := keys.KeyTransferHistory(transfer.Base.TxId)
 	historyData, _ := proto.Marshal(transfer)
-	ws = append(ws, WriteOp{
-		Key:      historyKey,
-		Value:    historyData,
-		Del:      false,
-		Category: "history",
-	})
+	ws = append(ws, WriteOp{Key: historyKey, Value: historyData, Del: false, Category: "history"})
 
 	return ws, &Receipt{
 		TxID:       transfer.Base.TxId,
 		Status:     "SUCCEED",
-		Fee:        transfer.Base.Fee,
 		WriteCount: len(ws),
 	}, nil
 }

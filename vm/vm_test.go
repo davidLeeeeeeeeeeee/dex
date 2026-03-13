@@ -1191,6 +1191,7 @@ func TestFrostWithdrawSignedBTC_UTXOLock(t *testing.T) {
 	withdrawData, _ := proto.Marshal(withdrawState)
 	db.mu.Lock()
 	db.data[withdrawKey] = withdrawData
+	db.data[keys.KeyFrostVaultAvailableBalance("btc", "native", 1)] = []byte("100000")
 	db.mu.Unlock()
 
 	// 创建 BTC 模板数据
@@ -1365,6 +1366,7 @@ func TestFrostWithdrawSignedBTC_SameJobResubmit(t *testing.T) {
 	withdrawData, _ := proto.Marshal(withdrawState)
 	db.mu.Lock()
 	db.data[withdrawKey] = withdrawData
+	db.data[keys.KeyFrostVaultAvailableBalance("btc", "native", 1)] = []byte("100000")
 	db.mu.Unlock()
 
 	// 创建 BTC 模板数据

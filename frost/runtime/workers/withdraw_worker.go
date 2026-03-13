@@ -372,6 +372,7 @@ func (w *WithdrawWorker) waitAndSubmit(ctx context.Context, job *planning.Job, s
 		Base: &pb.BaseMessage{
 			FromAddress:    w.localAddress,
 			ExecutedHeight: 0, // 由 VM 填充
+			Fee:            "1000",
 		},
 		JobId:              job.JobID,
 		SignedPackageBytes: signedPackageBytes,

@@ -839,6 +839,7 @@ func (w *TransitionWorker) newBaseMessage() *pb.BaseMessage {
 		FromAddress: w.localAddress,
 		Nonce:       nonce,
 		Status:      pb.Status_PENDING,
+		Fee:         "1000",
 	}
 }
 

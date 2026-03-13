@@ -394,20 +394,55 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 		// 创建快照点，用于失败时回滚
 		snapshot := sv.Snapshot()
 
+		// ========== 统一手续费扣除（所有交易类型） ==========
+		var feeActual string
+		var feeWriteOp WriteOp
+		if base := getBaseMessage(tx); base != nil && base.FromAddress != "" {
+			var feeErr error
+			feeWriteOp, feeActual, feeErr = DeductFee(sv, base.FromAddress, base.Fee)
+			if feeErr != nil {
+				// fee 不足/无效：回滚快照，标记 FAILED
+				sv.Revert(snapshot)
+				rc := &Receipt{
+					TxID:        base.TxId,
+					Status:      "FAILED",
+					Error:       feeErr.Error(),
+					BlockHeight: b.Header.Height,
+					Timestamp:   b.Header.Timestamp,
+				}
+				fbBal := GetBalance(sv, base.FromAddress, FeeToken)
+				if fbBal != nil {
+					rc.FBBalanceAfter = balanceToJSON(fbBal)
+				}
+				receipts = append(receipts, rc)
+				failedTxCount++
+				failureReasons["fee_insufficient"]++
+				if len(failedSamples) < cap(failedSamples) {
+					failedSamples = append(failedSamples, fmt.Sprintf("%s:%s", base.TxId, feeErr.Error()))
+				}
+				logs.Debug("[VM] Tx %s fee rejected in block %d hash=%s: %v",
+					base.TxId, b.Header.Height, b.BlockHash, feeErr)
+				continue
+			}
+		}
+		// fee 扣除成功时创建一个新快照，DryRun 失败可回滚到此处（保留 fee）
+		feeSnapshot := sv.Snapshot()
+
 		// 执行交易
 		dryRunAt := time.Now()
 		ws, rc, err := h.DryRun(tx, sv)
 		durDryRun += time.Since(dryRunAt)
 		if err != nil {
 			dryRunErrors++
-			// 如果 Handler 返回了 Receipt，说明是一个可以标记为失败的“业务错误”（如余额不足）
+			// 如果 Handler 返回了 Receipt，说明是一个可以标记为失败的"业务错误"（如余额不足）
 			// 这种情况下不应挂掉整个区块，而是记录失败状态并继续
 			if rc != nil {
-				// 回滚状态到该交易执行前
-				sv.Revert(snapshot)
+				// 回滚 DryRun 状态，但保留 fee 扣除
+				sv.Revert(feeSnapshot)
 
 				// 确保状态标识为 FAILED
 				rc.Status = "FAILED"
+				rc.Fee = feeActual
 				if rc.Error == "" {
 					rc.Error = err.Error()
 				}
@@ -418,7 +453,7 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 				rc.Timestamp = b.Header.Timestamp
 				// FAILED 交易也记录回滚后的余额快照
 				if base := getBaseMessage(tx); base != nil && base.FromAddress != "" {
-					fbBal := GetBalance(sv, base.FromAddress, "FB")
+					fbBal := GetBalance(sv, base.FromAddress, FeeToken)
 					if fbBal != nil {
 						rc.FBBalanceAfter = balanceToJSON(fbBal)
 					}
@@ -455,6 +490,17 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 				sv.Set(w.Key, w.Value)
 			}
 		}
+		// 如果 fee 扣除产生的 balance WriteOp 与 DryRun 产生的 WriteOp 存在 key 冲突，
+		// DryRun 的写入已覆盖 StateView，无需额外处理（最终 Diff 取最新状态）。
+		// 但若 handler 未写回 FB 余额，需确保 fee 的扣除仍然生效：
+		if feeWriteOp.Key != "" {
+			// 重新读取 FB 余额，确保 fee 扣除后的最新状态被写入 overlay
+			latestData, _, _ := sv.Get(feeWriteOp.Key)
+			if latestData == nil {
+				// handler 没有触碰 FB 余额，使用 fee 扣除时的版本
+				sv.Set(feeWriteOp.Key, feeWriteOp.Value)
+			}
+		}
 		durApplyWS += time.Since(applyWSAt)
 
 		// 递增发送者的 Account.Nonce（防止重复 txId）
@@ -477,10 +523,11 @@ func (x *Executor) preExecuteBlock(b *pb.Block, useCache bool) (res *SpecResult,
 		if rc != nil {
 			rc.BlockHeight = b.Header.Height
 			rc.Timestamp = b.Header.Timestamp
+			rc.Fee = feeActual
 
 			// 捕获交易执行后的 FB 余额快照（从 StateView 中读取，反映当前 tx 执行后的真实状态）
 			if base := getBaseMessage(tx); base != nil && base.FromAddress != "" {
-				fbBal := GetBalance(sv, base.FromAddress, "FB")
+				fbBal := GetBalance(sv, base.FromAddress, FeeToken)
 				if fbBal != nil {
 					rc.FBBalanceAfter = balanceToJSON(fbBal)
 				}
