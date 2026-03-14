@@ -136,7 +136,8 @@ describe("frost-vault", () => {
       .withdraw(
         new anchor.BN(amount),
         message,
-        Array.from(signature) as any
+        Array.from(signature) as any,
+        Array.from(msgHash) as any
       )
       .accounts({
         vaultState: vaultPda,
@@ -190,7 +191,8 @@ describe("frost-vault", () => {
         .withdraw(
           new anchor.BN(amount),
           message,
-          Array.from(signature) as any
+          Array.from(signature) as any,
+          Array.from(msgHash) as any
         )
         .accounts({
           vaultState: vaultPda,

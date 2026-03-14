@@ -102,7 +102,7 @@ pub struct ChangePub<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(amount: u64, message: Vec<u8>)]
+#[instruction(amount: u64, message: Vec<u8>, signature: [u8; 64], message_hash: [u8; 32])]
 pub struct Withdraw<'info> {
     #[account(
         seeds = [b"frost_vault", vault_state.vault_id.to_le_bytes().as_ref()],
@@ -118,7 +118,7 @@ pub struct Withdraw<'info> {
     pub vault_sol: AccountInfo<'info>,
     #[account(
         init, payer = payer, space = ConsumedRecord::LEN,
-        seeds = [b"consumed", hash(&message).as_ref()], bump,
+        seeds = [b"consumed", message_hash.as_ref()], bump,
     )]
     pub consumed_record: Account<'info, ConsumedRecord>,
     /// CHECK: recipient bound by signed message
@@ -168,14 +168,16 @@ pub mod frost_vault {
     }
 
     /// 提现（对应 withdraw）— FROST 签名授权提现
-    pub fn withdraw(ctx: Context<Withdraw>, amount: u64, message: Vec<u8>, signature: [u8; 64]) -> Result<()> {
+    pub fn withdraw(ctx: Context<Withdraw>, amount: u64, message: Vec<u8>, signature: [u8; 64], message_hash: [u8; 32]) -> Result<()> {
         require!(amount > 0, VaultError::ZeroAmount);
         let vault = &ctx.accounts.vault_state;
         let consumed = &mut ctx.accounts.consumed_record;
         require!(!consumed.consumed, VaultError::AlreadyConsumed);
 
-        let msg_hash = hash(&message);
-        verify_ed25519_ix(&ctx.accounts.instruction_sysvar, &vault.authority.to_bytes(), msg_hash.as_ref(), &signature)?;
+        // 验证传入的 message_hash 与 hash(message) 一致
+        let computed_hash = hash(&message);
+        require!(computed_hash.to_bytes() == message_hash, VaultError::Ed25519DataMismatch);
+        verify_ed25519_ix(&ctx.accounts.instruction_sysvar, &vault.authority.to_bytes(), message_hash.as_ref(), &signature)?;
         consumed.consumed = true;
 
         let vault_id_bytes = vault.vault_id.to_le_bytes();
@@ -193,7 +195,7 @@ pub mod frost_vault {
                 authority: ctx.accounts.vault_sol.to_account_info(),
             };
             token::transfer(CpiContext::new_with_signer(token_prog.to_account_info(), cpi_accounts, &[seeds]), amount)?;
-            emit!(Withdrawn { vault_id: vault.vault_id, recipient: ctx.accounts.recipient.key(), amount, message_hash: msg_hash.to_bytes(), is_token: true });
+            emit!(Withdrawn { vault_id: vault.vault_id, recipient: ctx.accounts.recipient.key(), amount, message_hash: message_hash, is_token: true });
         } else {
             // SOL transfer
             require!(ctx.accounts.vault_sol.lamports() >= amount, VaultError::InsufficientBalance);
@@ -202,7 +204,7 @@ pub mod frost_vault {
                 &[ctx.accounts.vault_sol.to_account_info(), ctx.accounts.recipient.to_account_info(), ctx.accounts.system_program.to_account_info()],
                 &[seeds],
             )?;
-            emit!(Withdrawn { vault_id: vault.vault_id, recipient: ctx.accounts.recipient.key(), amount, message_hash: msg_hash.to_bytes(), is_token: false });
+            emit!(Withdrawn { vault_id: vault.vault_id, recipient: ctx.accounts.recipient.key(), amount, message_hash: message_hash, is_token: false });
         }
         Ok(())
     }
@@ -211,18 +213,30 @@ pub mod frost_vault {
 // ========== Ed25519 验签辅助 ==========
 
 /// 验证当前交易中是否包含正确的 Ed25519SigVerify 指令
+/// Ed25519 instruction data layout (16-byte header):
+///   [0]  u8  numSignatures
+///   [1]  u8  padding
+///   [2]  u16 signatureOffset
+///   [4]  u16 signatureInstructionIndex
+///   [6]  u16 publicKeyOffset
+///   [8]  u16 publicKeyInstructionIndex
+///   [10] u16 messageDataOffset
+///   [12] u16 messageDataSize
+///   [14] u16 messageInstructionIndex
+/// followed by: publicKey(32) | signature(64) | message(N)
 fn verify_ed25519_ix(ix_sysvar: &AccountInfo, expected_pubkey: &[u8], expected_msg: &[u8], expected_sig: &[u8; 64]) -> Result<()> {
     let ix = load_instruction_at_checked(0, ix_sysvar).map_err(|_| VaultError::MissingEd25519Instruction)?;
     require_keys_eq!(ix.program_id, ed25519_program::ID, VaultError::MissingEd25519Instruction);
 
     let d = &ix.data;
-    if d.len() < 16 + 64 + 32 + expected_msg.len() { return Err(VaultError::Ed25519DataMismatch.into()); }
-    if u16::from_le_bytes([d[0], d[1]]) != 1 { return Err(VaultError::Ed25519DataMismatch.into()); }
+    if d.len() < 16 { return Err(VaultError::Ed25519DataMismatch.into()); }
+    // numSignatures must be 1
+    if d[0] != 1 { return Err(VaultError::Ed25519DataMismatch.into()); }
 
-    let sig_off = u16::from_le_bytes([d[4], d[5]]) as usize;
-    let pub_off = u16::from_le_bytes([d[8], d[9]]) as usize;
-    let msg_off = u16::from_le_bytes([d[12], d[13]]) as usize;
-    let msg_sz = u16::from_le_bytes([d[14], d[15]]) as usize;
+    let sig_off = u16::from_le_bytes([d[2], d[3]]) as usize;
+    let pub_off = u16::from_le_bytes([d[6], d[7]]) as usize;
+    let msg_off = u16::from_le_bytes([d[10], d[11]]) as usize;
+    let msg_sz  = u16::from_le_bytes([d[12], d[13]]) as usize;
 
     if sig_off + 64 > d.len() || pub_off + 32 > d.len() || msg_off + msg_sz > d.len() {
         return Err(VaultError::Ed25519DataMismatch.into());
