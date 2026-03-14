@@ -23,6 +23,7 @@ Use this table to jump to the right area fast.
 | Config and bootstrap defaults | `config/`, `cmd/main/bootstrap.go` | `config` |
 | In-process integration tests | `testharness/` | `testharness` |
 | Solana FROST vault program | `solana/frost-vault/` | `solana-vault` |
+| Go↔链上 FROST 签名跨链集成测试 | `frost/runtime/roast/*_vectors_test.go`, `solana/frost-vault/tests/frost-integration.ts`, `solidity/test/` | `cross-chain-frost-test` |
 
 ## Runtime Entrypoints
 
@@ -70,6 +71,7 @@ Use this table to jump to the right area fast.
   project-overview/
   sender/
   solana-vault/
+  cross-chain-frost-test/
   testharness/
   txpool/
   vm/

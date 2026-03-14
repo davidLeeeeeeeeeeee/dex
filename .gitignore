@@ -21,3 +21,8 @@ wallet/dist/
 miner_keys.txt
 logs/log.txt
 *.txt
+
+# Solidity (Hardhat)
+solidity/artifacts/
+solidity/cache/
+solidity/node_modules/
