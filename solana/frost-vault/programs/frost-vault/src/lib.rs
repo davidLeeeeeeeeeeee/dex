@@ -197,13 +197,10 @@ pub mod frost_vault {
             token::transfer(CpiContext::new_with_signer(token_prog.to_account_info(), cpi_accounts, &[seeds]), amount)?;
             emit!(Withdrawn { vault_id: vault.vault_id, recipient: ctx.accounts.recipient.key(), amount, message_hash: message_hash, is_token: true });
         } else {
-            // SOL transfer
+            // SOL transfer — 直接操作 lamports（带 data 的 PDA 不能用 system_instruction::transfer）
             require!(ctx.accounts.vault_sol.lamports() >= amount, VaultError::InsufficientBalance);
-            invoke_signed(
-                &system_instruction::transfer(&ctx.accounts.vault_sol.key(), &ctx.accounts.recipient.key(), amount),
-                &[ctx.accounts.vault_sol.to_account_info(), ctx.accounts.recipient.to_account_info(), ctx.accounts.system_program.to_account_info()],
-                &[seeds],
-            )?;
+            **ctx.accounts.vault_sol.try_borrow_mut_lamports()? -= amount;
+            **ctx.accounts.recipient.try_borrow_mut_lamports()? += amount;
             emit!(Withdrawn { vault_id: vault.vault_id, recipient: ctx.accounts.recipient.key(), amount, message_hash: message_hash, is_token: false });
         }
         Ok(())
