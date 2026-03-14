@@ -1,0 +1,5 @@
+[workspace]
+members = ["programs/frost-vault"]
+
+[profile.release]
+overflow-checks = true

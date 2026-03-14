@@ -1,4 +1,4 @@
-﻿# DEX Agent Guide
+# DEX Agent Guide
 
 This folder stores AI-facing retrieval metadata for the `dex` codebase.
 Last updated: `2026-03-09`.
@@ -22,6 +22,7 @@ Use this table to jump to the right area fast.
 | Wallet extension and dApp signing popup | `wallet/`, `cmd/explorer/wallet_handlers.go` | `wallet` + `explorer` |
 | Config and bootstrap defaults | `config/`, `cmd/main/bootstrap.go` | `config` |
 | In-process integration tests | `testharness/` | `testharness` |
+| Solana FROST vault program | `solana/frost-vault/` | `solana-vault` |
 
 ## Runtime Entrypoints
 
@@ -68,6 +69,7 @@ Use this table to jump to the right area fast.
   matching/
   project-overview/
   sender/
+  solana-vault/
   testharness/
   txpool/
   vm/

@@ -1,0 +1,19 @@
+[package]
+name = "frost-vault"
+version = "0.1.0"
+description = "FROST Vault Program — Ed25519 threshold signature based vault for Solana"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "frost_vault"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = "0.30"
+anchor-spl = "0.30"
