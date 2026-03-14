@@ -344,8 +344,8 @@ func TestVerifyBN128(t *testing.T) {
 	k := dkg.RandomScalar(grp.Order())
 	R := grp.ScalarBaseMult(k)
 
-	// challenge: e = keccak256(Rx || Px || msg) mod n
-	e := bn128Challenge(R.X, pubPoint.X, msg, grp)
+	// challenge: e = keccak256(R.x || R.y || P.x || P.y || msg) mod n（与 Solidity 合约一致）
+	e := bn128Challenge(R.X, R.Y, pubPoint.X, pubPoint.Y, msg, grp)
 
 	// s = k + e * privKey mod n
 	s := new(big.Int).Mul(e, privKey)

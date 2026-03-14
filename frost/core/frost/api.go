@@ -218,15 +218,14 @@ func VerifyBN128(pubkey, msg, sig []byte) (bool, error) {
 		return false, ErrInvalidSignature
 	}
 
-	// 计算 challenge: e = keccak256(Rx || Px || msg) mod n
-	e := bn128Challenge(Rx, Px, msg, grp)
-
 	// 验证: s * G == R + e * P
-	// 尝试两个可能的 R.y 值
+	// 尝试每个可能的 R.y 值，challenge 依赖完整 (Rx, Ry, Px, Py)
 	sG := grp.ScalarBaseMult(s)
-	eP := grp.ScalarMult(curve.Point{X: Px, Y: Py}, e)
 
 	for _, Ry := range RyOptions {
+		// challenge: e = keccak256(Rx || Ry || Px || Py || msg) mod n
+		e := bn128Challenge(Rx, Ry, Px, Py, msg, grp)
+		eP := grp.ScalarMult(curve.Point{X: Px, Y: Py}, e)
 		R := curve.Point{X: Rx, Y: Ry}
 		expected := grp.Add(R, eP)
 		if sG.X.Cmp(expected.X) == 0 && sG.Y.Cmp(expected.Y) == 0 {
@@ -237,12 +236,11 @@ func VerifyBN128(pubkey, msg, sig []byte) (bool, error) {
 	return false, nil
 }
 
-// bn128Challenge 计算 BN128 Schnorr challenge
-// e = keccak256(Rx || Px || msg) mod n
-func bn128Challenge(Rx, Px *big.Int, msg []byte, grp *curve.BN256Group) *big.Int {
+// bn128Challenge 计算 BN128 Schnorr challenge（与 Solidity schnorr_verify.sol 一致）
+// e = keccak256(R.x || R.y || P.x || P.y || msg) mod n
+func bn128Challenge(Rx, Ry, Px, Py *big.Int, msg []byte, grp *curve.BN256Group) *big.Int {
 	h := sha3.NewLegacyKeccak256()
 
-	// pad32 填充到 32 字节
 	pad32 := func(n *big.Int) []byte {
 		out := make([]byte, 32)
 		b := n.Bytes()
@@ -251,7 +249,9 @@ func bn128Challenge(Rx, Px *big.Int, msg []byte, grp *curve.BN256Group) *big.Int
 	}
 
 	h.Write(pad32(Rx))
+	h.Write(pad32(Ry))
 	h.Write(pad32(Px))
+	h.Write(pad32(Py))
 	h.Write(msg)
 
 	eBytes := h.Sum(nil)

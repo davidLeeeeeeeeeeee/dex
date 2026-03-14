@@ -170,7 +170,10 @@ func (e *BN256ROASTExecutor) ComputeBindingCoefficient(signerID int, msg []byte,
 }
 
 func (e *BN256ROASTExecutor) ComputeChallenge(R runtime.CurvePoint, groupPubX *big.Int, msg []byte) *big.Int {
-	// e = Keccak256(R.x || P.x || msg) mod n
+	// e = Keccak256(R.x || R.y || P.x || P.y || msg) mod n（与 Solidity schnorr_verify.sol 一致）
+	grp := e.group.(*curve.BN256Group)
+	groupPubY := recoverCanonicalYBN128(grp, groupPubX)
+
 	h := sha3.NewLegacyKeccak256()
 	pad32 := func(n *big.Int) []byte {
 		out := make([]byte, 32)
@@ -179,7 +182,9 @@ func (e *BN256ROASTExecutor) ComputeChallenge(R runtime.CurvePoint, groupPubX *b
 		return out
 	}
 	h.Write(pad32(R.X))
+	h.Write(pad32(R.Y))
 	h.Write(pad32(groupPubX))
+	h.Write(pad32(groupPubY))
 	h.Write(msg)
 	eBytes := h.Sum(nil)
 	res := new(big.Int).SetBytes(eBytes)
@@ -621,14 +626,23 @@ func (e *BN256DKGExecutor) VerifyShare(share []byte, commitments [][]byte, sende
 }
 
 func (e *BN256DKGExecutor) SchnorrSign(privateKey *big.Int, msgHash []byte) ([]byte, error) {
-	// BN256 Schnorr using Keccak256
+	// BN256 Schnorr — challenge 与 Solidity schnorr_verify.sol 一致
 	k := dkg.RandomScalar(e.group.Order())
 	R := e.group.ScalarBaseMult(k)
 	P := e.group.ScalarBaseMult(privateKey)
 
+	// e = keccak256(R.x || R.y || P.x || P.y || msgHash) mod n
 	h := sha3.NewLegacyKeccak256()
-	h.Write(e.group.SerializePoint(curve.Point{X: R.X, Y: R.Y}))
-	h.Write(e.group.SerializePoint(curve.Point{X: P.X, Y: P.Y}))
+	pad32 := func(n *big.Int) []byte {
+		out := make([]byte, 32)
+		b := n.Bytes()
+		copy(out[32-len(b):], b)
+		return out
+	}
+	h.Write(pad32(R.X))
+	h.Write(pad32(R.Y))
+	h.Write(pad32(P.X))
+	h.Write(pad32(P.Y))
 	h.Write(msgHash)
 	eVal := new(big.Int).SetBytes(h.Sum(nil))
 	eVal.Mod(eVal, e.group.Order())
@@ -637,11 +651,7 @@ func (e *BN256DKGExecutor) SchnorrSign(privateKey *big.Int, msgHash []byte) ([]b
 	s.Add(s, k)
 	s.Mod(s, e.group.Order())
 
-	// Signature = R || s (64+32 = 96 bytes for uncompressed or 64 bytes total if R is serialized)
-	// For BN256 we use 64 bytes (R.x || s) or full R.
-	// Since group.SerializePoint for BN256 is 64 bytes (X||Y), we use that + 32 bytes s?
-	// Actually, the protocol usually expects 64 bytes for Schnorr.
-	// Let's use R.x (32) || s (32) to keep it 64 bytes.
+	// 签名 = R.x (32) || s (32) = 64 字节
 	sig := make([]byte, 64)
 	R.X.FillBytes(sig[:32])
 	s.FillBytes(sig[32:])
@@ -774,6 +784,29 @@ func (e *Ed25519DKGExecutor) ScalarBaseMult(k *big.Int) runtime.CurvePoint {
 
 func (e *Ed25519DKGExecutor) SerializePoint(P runtime.CurvePoint) []byte {
 	return e.group.SerializePoint(curve.Point{X: P.X, Y: P.Y})
+}
+
+// recoverCanonicalYBN128 从 x 坐标恢复规范化 y 值（bn128: y² = x³ + 3）
+// 规范化规则：取较小的 y 值（y <= (p-1)/2），确保与 Solidity 合约部署时传入的公钥一致
+func recoverCanonicalYBN128(grp *curve.BN256Group, x *big.Int) *big.Int {
+	p := grp.Modulus()
+	// y² = x³ + 3 (mod p)
+	x3 := new(big.Int).Mul(x, x)
+	x3.Mod(x3, p)
+	x3.Mul(x3, x)
+	x3.Mod(x3, p)
+	y2 := new(big.Int).Add(x3, big.NewInt(3))
+	y2.Mod(y2, p)
+	// y = y2^((p+1)/4) mod p（bn128 的 p ≡ 3 (mod 4)）
+	exp := new(big.Int).Add(p, big.NewInt(1))
+	exp.Rsh(exp, 2)
+	y := new(big.Int).Exp(y2, exp, p)
+	// 取较小的 y（规范化）
+	halfP := new(big.Int).Rsh(p, 1)
+	if y.Cmp(halfP) > 0 {
+		y.Sub(p, y)
+	}
+	return y
 }
 
 // ========== 工厂实现 ==========
